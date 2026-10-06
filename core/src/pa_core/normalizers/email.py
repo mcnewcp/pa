@@ -18,9 +18,9 @@ from pa_core.envelope import (
     Source,
     TimeSpan,
     episode_id,
-    raw_ref,
 )
 from pa_core.errors import MalformedPayloadError
+from pa_core.l0 import raw_ref
 
 EXTENSION = ".eml"
 
@@ -43,7 +43,7 @@ def normalize_email(raw: bytes, *, captured_at: datetime) -> Envelope:
         captured_at=captured_at,
         participants=_participants(message),
         thread_ref=_thread_ref(message, native_id),
-        subject=_text(message["Subject"]),
+        subject=_header_text(message["Subject"]),
         body=_body(message),
         labels=_labels(message["X-Gmail-Labels"]),
         raw_ref=raw_ref(Source.GMAIL, occurred_at, eid, EXTENSION),
@@ -84,11 +84,11 @@ def _body(message: EmailMessage) -> str:
     assert isinstance(part, EmailMessage)
     content: str = part.get_content()
     if part.get_content_subtype() == "html":
-        content = _html_text(content)
+        content = _html_header_text(content)
     return content.replace("\r\n", "\n").strip()
 
 
-def _html_text(html: str) -> str:
+def _html_header_text(html: str) -> str:
     extractor = _HtmlText()
     extractor.feed(html)
     extractor.close()
@@ -130,7 +130,7 @@ def _labels(value: object) -> list[str]:
     return [label.strip() for label in str(value).split(",") if label.strip()]
 
 
-def _text(value: object) -> str | None:
+def _header_text(value: object) -> str | None:
     return None if value is None else str(value).strip()
 
 

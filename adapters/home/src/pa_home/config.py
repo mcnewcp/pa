@@ -40,18 +40,22 @@ def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
             "for example ~/.local/share/pa-dev/."
         )
     path = Path(value).expanduser().resolve()
-    repository = repository_root()
-    if repository is not None and path.is_relative_to(repository):
-        raise ConfigError(
-            f"{DATA_DIR_VAR} ({path}) is inside the repository ({repository}). "
-            "PA data must live outside it so it can never be committed."
-        )
+    # The repository holding this code, and the one the command runs in (they differ when
+    # the package is installed rather than run from the workspace).
+    for start in (Path(__file__), Path.cwd()):
+        repository = _repository_root(start)
+        if repository is not None and path.is_relative_to(repository):
+            raise ConfigError(
+                f"{DATA_DIR_VAR} ({path}) is inside the repository ({repository}). "
+                "PA data must live outside it so it can never be committed."
+            )
     return DataRoot(path)
 
 
-def repository_root(start: Path = Path(__file__)) -> Path | None:
-    """The git working tree this code runs from, if any."""
-    for directory in start.resolve().parents:
+def _repository_root(start: Path) -> Path | None:
+    """The git working tree containing `start`, if any."""
+    start = start.resolve()
+    for directory in (start, *start.parents):
         if (directory / ".git").exists():
             return directory
     return None

@@ -7,12 +7,14 @@ import tempfile
 from pathlib import Path
 
 from pa_core.envelope import Envelope
+from pa_core.errors import EpisodeConflictError
+from pa_core.l0 import episode_ref
 
 READ_ONLY = 0o444
 
 
 class FilesystemL0:
-    """Envelopes under `episodes/<source>/<YYYY-MM>/`, raw payloads under `raw/...` alike."""
+    """L0 as files under `root`, laid out by `episode_ref` and `raw_ref`."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -27,15 +29,15 @@ class FilesystemL0:
         # Raw first: an envelope on disk is what makes an episode exist.
         _write_once(self.root / envelope.raw_ref, raw)
         serialized = envelope.model_dump_json(indent=2) + "\n"
-        _write_once(self._episode_path(envelope), serialized.encode())
-
-    def _episode_path(self, envelope: Envelope) -> Path:
-        month = envelope.occurred_month_utc
-        return self.root / "episodes" / envelope.source / month / f"{envelope.episode_id}.json"
+        _write_once(self.root / episode_ref(envelope), serialized.encode())
 
 
 def _write_once(path: Path, data: bytes) -> None:
-    """Write via a temporary file and an atomic rename, so a crash never leaves a partial file."""
+    """Write a read-only file that appears whole or not at all, and never replaces one.
+
+    The data goes to a temporary file first and is hard-linked into place, which fails rather
+    than overwrite. A file left by an interrupted ingest is kept if it holds the same bytes.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     temp_path = Path(temp_name)
@@ -45,10 +47,15 @@ def _write_once(path: Path, data: bytes) -> None:
             temp.flush()
             os.fsync(temp.fileno())
         temp_path.chmod(READ_ONLY)
-        temp_path.replace(path)
-    except BaseException:
+        try:
+            os.link(temp_path, path)
+        except FileExistsError:
+            if path.read_bytes() != data:
+                raise EpisodeConflictError(
+                    f"{path.name} already exists in L0 with different bytes"
+                ) from None
+    finally:
         temp_path.unlink(missing_ok=True)
-        raise
     _fsync_dir(path.parent)
 
 

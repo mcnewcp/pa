@@ -152,3 +152,41 @@ def test_a_recapture_with_different_content_never_overwrites_the_episode(data_ro
     main(["ingest"])
 
     assert snapshot(data_root / "l0") == before
+
+
+def test_a_raw_payload_left_by_an_interrupted_ingest_is_never_replaced(data_root: Path):
+    leftover = data_root / RAW_FILE
+    leftover.parent.mkdir(parents=True)
+    leftover.write_bytes(email(labels="Inbox"))
+    leftover.chmod(0o444)
+    drop_in_inbox(data_root, "hotel.eml", email(labels="Archived"))
+
+    main(["ingest"])
+
+    assert leftover.read_bytes() == email(labels="Inbox")
+
+
+def test_an_interrupted_ingest_completes_when_the_payload_is_recaptured(data_root: Path):
+    leftover = data_root / RAW_FILE
+    leftover.parent.mkdir(parents=True)
+    leftover.write_bytes(email())
+    leftover.chmod(0o444)
+    drop_in_inbox(data_root, "hotel.eml", email())
+
+    assert main(["ingest"]) == 0
+
+    assert (data_root / EPISODE_FILE).exists()
+
+
+def test_commands_refuse_a_data_root_inside_the_repository_they_are_run_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    monkeypatch.chdir(checkout)
+    monkeypatch.setenv("PA_DATA_DIR", "data")
+
+    assert main(["ingest"]) != 0
+
+    assert "inside the repository" in capsys.readouterr().err
+    assert not (checkout / "data").exists()

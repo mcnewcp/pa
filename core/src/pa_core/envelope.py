@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -79,11 +78,6 @@ class Envelope(_Frozen):
         unsealed = cls.model_validate({**fields, "content_hash": ""})
         return unsealed.model_copy(update={"content_hash": content_hash(unsealed)})
 
-    @property
-    def occurred_month_utc(self) -> str:
-        """The `YYYY-MM` partition L0 files this episode under."""
-        return utc_month(self.occurred_at.start)
-
 
 def episode_id(source: Source, native_id: str, version: str = "") -> str:
     """`<source>_` plus the first 16 hex of SHA-256 over the native id and version component.
@@ -99,12 +93,3 @@ def content_hash(envelope: Envelope) -> str:
     content = envelope.model_dump(mode="json", exclude={*VOLATILE_FIELDS, "content_hash"})
     canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def utc_month(moment: datetime) -> str:
-    return moment.astimezone(UTC).strftime("%Y-%m")
-
-
-def raw_ref(source: Source, occurred_at: datetime, episode_id: str, extension: str) -> str:
-    """Where L0 keeps an episode's raw payload, relative to the L0 root (ADR-0001 layout)."""
-    return f"raw/{source}/{utc_month(occurred_at)}/{episode_id}{extension}"

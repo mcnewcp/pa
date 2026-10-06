@@ -26,9 +26,9 @@ def ingest(
 ) -> IngestSummary:
     """Ingest every raw payload in `inbox`, deleting each one once it has landed."""
     summary = IngestSummary()
-    for item in sorted(p for p in inbox.iterdir() if p.is_file() and not p.name.startswith(".")):
-        raw = item.read_bytes()
-        envelope = normalizer_for(item.name)(raw, captured_at=now())
+    for payload_file in _waiting_payloads(inbox):
+        raw = payload_file.read_bytes()
+        envelope = normalizer_for(payload_file.name)(raw, captured_at=now())
         existing = store.get(envelope.episode_id)
         if existing is None:
             store.put(envelope, raw)
@@ -37,7 +37,13 @@ def ingest(
             summary.unchanged += 1
         else:
             raise EpisodeConflictError(
-                f"{item.name}: episode {envelope.episode_id} already exists with different content"
+                f"{payload_file.name}: episode {envelope.episode_id} already exists "
+                "with different content"
             )
-        item.unlink()
+        payload_file.unlink()
     return summary
+
+
+def _waiting_payloads(inbox: Path) -> list[Path]:
+    """Raw payload files in the inbox, in name order; hidden files are in-progress captures."""
+    return sorted(p for p in inbox.iterdir() if p.is_file() and not p.name.startswith("."))
