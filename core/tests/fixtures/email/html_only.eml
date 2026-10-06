@@ -1,0 +1,11 @@
+Message-ID: <confirm-88213@airline.example>
+Date: Fri, 02 Oct 2026 10:15:00 -0400
+From: "Example Air" <no-reply@airline.example>
+To: argus@example.com
+Subject: Your flight confirmation
+Content-Type: text/html; charset="utf-8"
+
+<html><head><style>p { color: red; }</style></head><body>
+<p>Your flight is <b>confirmed</b>.</p>
+<p>Confirmation: QX7P2L<br>Departs Fri 6:40&nbsp;PM</p>
+</body></html>
