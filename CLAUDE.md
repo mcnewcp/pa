@@ -1,3 +1,5 @@
+Commits use Conventional Commits (`type(scope): summary`).
+
 ## Agent skills
 
 ### Issue tracker
