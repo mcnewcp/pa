@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from pa_core.catalog import Catalog
 from pa_core.envelope import Envelope
 from pa_core.errors import EpisodeConflictError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
@@ -40,6 +41,7 @@ class IngestSummary:
 def ingest(
     inbox: Path,
     store: L0Store,
+    catalog: Catalog,
     owner: Owner,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -47,17 +49,20 @@ def ingest(
     """Ingest every raw payload in `inbox`, deleting each one once it has landed.
 
     A payload lands as an episode in L0, or in quarantine when it cannot become one. Either
-    way it leaves the inbox only after that write succeeds, so input is never lost.
+    way it leaves the inbox only after that write succeeds, so input is never lost. Each
+    episode is added to `catalog` as it lands.
     """
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
         raw = payload_file.read_bytes()
-        summary.add(_land(payload_file.name, raw, store, owner, now()))
+        summary.add(_land(payload_file.name, raw, store, catalog, owner, now()))
         payload_file.unlink()
     return summary
 
 
-def _land(inbox_name: str, raw: bytes, store: L0Store, owner: Owner, at: datetime) -> Outcome:
+def _land(
+    inbox_name: str, raw: bytes, store: L0Store, catalog: Catalog, owner: Owner, at: datetime
+) -> Outcome:
     """Write one raw payload to L0 or quarantine, never touching an existing episode."""
     try:
         envelope = normalizer_for(inbox_name, owner)(raw, captured_at=at)
@@ -76,9 +81,14 @@ def _land(inbox_name: str, raw: bytes, store: L0Store, owner: Owner, at: datetim
             if leftover is None:
                 reason = f"episode {envelope.episode_id}: {error}"
                 return _quarantine(store, inbox_name, raw, reason, at)
-            store.put(*leftover)
+            envelope, raw = leftover
+            store.put(envelope, raw)
+        catalog.add(envelope)
         return Outcome.INGESTED
     if existing.content_hash == envelope.content_hash:
+        # Indexing is idempotent, and catches the catalog up when an earlier run wrote the
+        # episode but stopped before cataloging it.
+        catalog.add(existing)
         return Outcome.UNCHANGED
     reason = f"episode {envelope.episode_id} already exists in L0 with different content"
     return _quarantine(store, inbox_name, raw, reason, at)

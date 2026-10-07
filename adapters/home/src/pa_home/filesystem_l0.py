@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 from pa_core.envelope import Envelope
@@ -18,6 +19,10 @@ class FilesystemL0:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+
+    def envelopes(self) -> Iterator[Envelope]:
+        for path in sorted((self.root / "episodes").glob("*/*/*.json")):
+            yield Envelope.model_validate_json(path.read_bytes())
 
     def get(self, episode_id: str) -> Envelope | None:
         source = episode_id.rsplit("_", 1)[0]

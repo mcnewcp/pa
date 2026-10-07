@@ -34,6 +34,10 @@ class DataRoot:
     def l0(self) -> Path:
         return self.path / "l0"
 
+    @property
+    def catalog(self) -> Path:
+        return self.path / "catalog" / "catalog.sqlite"
+
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
     """The configured data root; refuses one that is unset or inside the repository."""
