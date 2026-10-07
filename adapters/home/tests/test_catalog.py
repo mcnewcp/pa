@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -162,3 +163,24 @@ def test_ingest_rebuilds_a_deleted_catalog_before_adding_new_episodes(data_root:
     after = all_entries(data_root)
     assert [entry for entry in after if entry in before] == before
     assert len(after) == len(before) + 1
+
+
+def test_an_episode_that_landed_but_was_not_cataloged_is_cataloged_when_reingested(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    catalog_file = data_root / "catalog" / "catalog.sqlite"
+    assert main(["catalog", "rebuild"]) == 0
+    catalog_file.chmod(0o444)
+    drop_in_inbox(data_root, "hotel.eml", email())
+
+    with pytest.raises(sqlite3.OperationalError):
+        main(["ingest"])
+
+    assert (data_root / "inbox" / "hotel.eml").exists()
+    catalog_file.chmod(0o644)
+    capsys.readouterr()
+    assert main(["ingest"]) == 0
+
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+    with open_catalog(data_root) as catalog:
+        assert catalog.get(EMAIL_ID) is not None

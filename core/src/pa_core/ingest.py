@@ -49,7 +49,7 @@ def ingest(
     """Ingest every raw payload in `inbox`, deleting each one once it has landed.
 
     A payload lands as an episode in L0, or in quarantine when it cannot become one. Either
-    way it leaves the inbox only after that write succeeds, so input is never lost. Each new
+    way it leaves the inbox only after that write succeeds, so input is never lost. Each
     episode is added to `catalog` as it lands.
     """
     summary = IngestSummary()
@@ -86,6 +86,9 @@ def _land(
         catalog.add(envelope)
         return Outcome.INGESTED
     if existing.content_hash == envelope.content_hash:
+        # Indexing is idempotent, and catches the catalog up when an earlier run wrote the
+        # episode but stopped before cataloging it.
+        catalog.add(existing)
         return Outcome.UNCHANGED
     reason = f"episode {envelope.episode_id} already exists in L0 with different content"
     return _quarantine(store, inbox_name, raw, reason, at)
