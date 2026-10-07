@@ -25,6 +25,10 @@ class FilesystemL0:
             return Envelope.model_validate_json(path.read_bytes())
         return None
 
+    def get_raw(self, raw_ref: str) -> bytes | None:
+        path = self.root / raw_ref
+        return path.read_bytes() if path.is_file() else None
+
     def put(self, envelope: Envelope, raw: bytes) -> None:
         # Raw first: an envelope on disk is what makes an episode exist.
         _write_once(self.root / envelope.raw_ref, raw)

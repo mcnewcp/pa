@@ -26,6 +26,10 @@ class L0Store(Protocol):
         """The stored envelope for `episode_id`, or None if no such episode exists."""
         ...
 
+    def get_raw(self, raw_ref: str) -> bytes | None:
+        """The raw payload stored at `raw_ref`, or None if there is none."""
+        ...
+
     def put(self, envelope: Envelope, raw: bytes) -> None:
         """Write a new episode. Never called for an episode id that already exists."""
         ...
@@ -49,13 +53,13 @@ def episode_ref(envelope: Envelope) -> str:
 
 
 # Quarantined payloads keep their inbox name behind the UTC time they were quarantined and a
-# digest of name and bytes, so different payloads never share a path. The record is the same
-# path plus `.json`.
+# digest of record and bytes, so two quarantines share a path only when both files are
+# identical. The record is the same path plus `.json`.
 
 
 def quarantine_ref(record: QuarantineRecord, raw: bytes) -> str:
     stamp = record.quarantined_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    digest = hashlib.sha256(record.inbox_name.encode("utf-8") + b"\0" + raw).hexdigest()[:8]
+    digest = hashlib.sha256(record.model_dump_json().encode("utf-8") + b"\0" + raw).hexdigest()[:8]
     return f"quarantine/{stamp}_{digest}_{record.inbox_name}"
 
 

@@ -1,13 +1,15 @@
 import json
 import stat
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pa_core.ingest import ingest
 from pa_home.cli import main
+from pa_home.filesystem_l0 import FilesystemL0
 
 # Sent late on 30 Sep in Chicago, which is already October in UTC.
 EPISODE_ID = "gmail_9ff7394d0df8584d"
@@ -181,31 +183,50 @@ def test_a_data_root_that_resolves_into_the_repository_through_a_symlink_is_refu
     assert not (REPOSITORY / "inbox").exists()
 
 
+def leave_raw_from_an_interrupted_ingest(data_root: Path, payload: bytes) -> Path:
+    leftover = data_root / RAW_FILE
+    leftover.parent.mkdir(parents=True)
+    leftover.write_bytes(payload)
+    leftover.chmod(0o444)
+    return leftover
+
+
 def test_a_raw_payload_left_by_an_interrupted_ingest_is_never_replaced(
     data_root: Path, capsys: pytest.CaptureFixture[str]
 ):
-    leftover = data_root / RAW_FILE
-    leftover.parent.mkdir(parents=True)
-    leftover.write_bytes(email(labels="Inbox"))
-    leftover.chmod(0o444)
-    drop_in_inbox(data_root, "hotel.eml", email(labels="Archived"))
+    leftover = leave_raw_from_an_interrupted_ingest(data_root, email(body="Closes on Oct 2."))
+    drop_in_inbox(data_root, "hotel.eml", email())
     drop_in_inbox(data_root, "shuttle.eml", email(message_id="wedding-0002@example.net"))
 
     assert main(["ingest"]) == 0
 
-    assert leftover.read_bytes() == email(labels="Inbox")
+    assert leftover.read_bytes() == email(body="Closes on Oct 2.")
+    assert not (data_root / EPISODE_FILE).exists()
     [item] = quarantined(data_root)
-    assert item.raw == email(labels="Archived")
+    assert item.raw == email()
     assert item.record["inbox_name"] == "hotel.eml"
     assert list((data_root / "inbox").iterdir()) == []
     assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"
 
 
+def test_a_labels_only_recapture_finishes_an_interrupted_ingest_from_its_leftover_raw(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    leftover = leave_raw_from_an_interrupted_ingest(data_root, email(labels="Inbox"))
+    drop_in_inbox(data_root, "hotel.eml", email(labels="Archived"))
+
+    assert main(["ingest"]) == 0
+
+    assert leftover.read_bytes() == email(labels="Inbox")
+    episode = json.loads((data_root / EPISODE_FILE).read_bytes())
+    assert episode["labels"] == ["Inbox"]
+    assert quarantined(data_root) == []
+    assert list((data_root / "inbox").iterdir()) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 0\n"
+
+
 def test_an_interrupted_ingest_completes_when_the_payload_is_recaptured(data_root: Path):
-    leftover = data_root / RAW_FILE
-    leftover.parent.mkdir(parents=True)
-    leftover.write_bytes(email())
-    leftover.chmod(0o444)
+    leave_raw_from_an_interrupted_ingest(data_root, email())
     drop_in_inbox(data_root, "hotel.eml", email())
 
     assert main(["ingest"]) == 0
@@ -288,3 +309,36 @@ def test_a_payload_stays_in_the_inbox_when_it_cannot_be_written_to_quarantine(da
         main(["ingest"])
 
     assert (data_root / "inbox" / "no_message_id.eml").read_bytes() == broken
+
+
+def ingest_at(data_root: Path, moment: datetime):
+    inbox = data_root / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    return ingest(inbox, FilesystemL0(data_root / "l0"), now=lambda: moment)
+
+
+def test_a_recapture_that_only_changes_capture_time_is_unchanged(data_root: Path):
+    drop_in_inbox(data_root, "hotel.eml", email())
+    ingest_at(data_root, datetime(2026, 10, 1, 8, 0, tzinfo=UTC))
+    before = snapshot(data_root / "l0")
+
+    drop_in_inbox(data_root, "hotel.eml", email())
+    summary = ingest_at(data_root, datetime(2026, 10, 5, 8, 0, tzinfo=UTC))
+
+    assert (summary.ingested, summary.unchanged, summary.quarantined) == (0, 1, 0)
+    assert snapshot(data_root / "l0") == before
+
+
+def test_the_same_payload_quarantined_twice_in_one_second_keeps_both_and_the_rest_ingests(
+    data_root: Path,
+):
+    broken = drop_fixture_in_inbox(data_root, "no_message_id.eml")
+    ingest_at(data_root, datetime(2026, 10, 1, 8, 0, 0, 100_000, tzinfo=UTC))
+
+    drop_fixture_in_inbox(data_root, "no_message_id.eml")
+    drop_in_inbox(data_root, "hotel.eml", email())
+    summary = ingest_at(data_root, datetime(2026, 10, 1, 8, 0, 0, 200_000, tzinfo=UTC))
+
+    assert (summary.ingested, summary.unchanged, summary.quarantined) == (1, 0, 1)
+    assert [item.raw for item in quarantined(data_root)] == [broken, broken]
+    assert list((data_root / "inbox").iterdir()) == []

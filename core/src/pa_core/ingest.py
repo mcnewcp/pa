@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from pa_core.envelope import Envelope
 from pa_core.errors import EpisodeConflictError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
 from pa_core.normalizers import normalizer_for
@@ -68,13 +69,37 @@ def _land(inbox_name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
             store.put(envelope, raw)
         except EpisodeConflictError as error:
             # A file left in L0 by an interrupted ingest holds other bytes for this episode.
-            reason = f"episode {envelope.episode_id}: {error}"
-            return _quarantine(store, inbox_name, raw, reason, at)
+            # When they say the same thing, they are the episode's raw payload: finish it.
+            leftover = _leftover_episode(store, envelope, at)
+            if leftover is None:
+                reason = f"episode {envelope.episode_id}: {error}"
+                return _quarantine(store, inbox_name, raw, reason, at)
+            store.put(*leftover)
         return Outcome.INGESTED
     if existing.content_hash == envelope.content_hash:
         return Outcome.UNCHANGED
     reason = f"episode {envelope.episode_id} already exists in L0 with different content"
     return _quarantine(store, inbox_name, raw, reason, at)
+
+
+def _leftover_episode(
+    store: L0Store, envelope: Envelope, at: datetime
+) -> tuple[Envelope, bytes] | None:
+    """The envelope and raw payload an interrupted ingest left at `envelope.raw_ref`, if any.
+
+    None unless the leftover raw payload normalizes to the same content as `envelope`, so a
+    recapture that differs only in volatile fields finishes the episode instead of conflicting.
+    """
+    raw = store.get_raw(envelope.raw_ref)
+    if raw is None:
+        return None
+    try:
+        leftover = normalizer_for(envelope.raw_ref)(raw, captured_at=at)
+    except Exception:
+        return None
+    if (leftover.episode_id, leftover.content_hash) != (envelope.episode_id, envelope.content_hash):
+        return None
+    return leftover, raw
 
 
 def _malformed_reason(error: Exception) -> str:
