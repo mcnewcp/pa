@@ -12,6 +12,7 @@ from pa_core.envelope import Envelope
 from pa_core.errors import EpisodeConflictError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
 from pa_core.normalizers import normalizer_for
+from pa_core.owner import Owner
 
 
 class Outcome(StrEnum):
@@ -39,6 +40,7 @@ class IngestSummary:
 def ingest(
     inbox: Path,
     store: L0Store,
+    owner: Owner,
     *,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> IngestSummary:
@@ -50,15 +52,15 @@ def ingest(
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
         raw = payload_file.read_bytes()
-        summary.add(_land(payload_file.name, raw, store, now()))
+        summary.add(_land(payload_file.name, raw, store, owner, now()))
         payload_file.unlink()
     return summary
 
 
-def _land(inbox_name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
+def _land(inbox_name: str, raw: bytes, store: L0Store, owner: Owner, at: datetime) -> Outcome:
     """Write one raw payload to L0 or quarantine, never touching an existing episode."""
     try:
-        envelope = normalizer_for(inbox_name)(raw, captured_at=at)
+        envelope = normalizer_for(inbox_name, owner)(raw, captured_at=at)
     except Exception as error:
         # A normalizer is a pure function of the payload, so any failure means the payload
         # cannot become an episode; keeping it beats stopping the rest of the inbox.
@@ -70,7 +72,7 @@ def _land(inbox_name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
         except EpisodeConflictError as error:
             # A file left in L0 by an interrupted ingest holds other bytes for this episode.
             # When they say the same thing, they are the episode's raw payload: finish it.
-            leftover = _leftover_episode(store, envelope, at)
+            leftover = _leftover_episode(store, envelope, owner, at)
             if leftover is None:
                 reason = f"episode {envelope.episode_id}: {error}"
                 return _quarantine(store, inbox_name, raw, reason, at)
@@ -83,7 +85,7 @@ def _land(inbox_name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
 
 
 def _leftover_episode(
-    store: L0Store, envelope: Envelope, at: datetime
+    store: L0Store, envelope: Envelope, owner: Owner, at: datetime
 ) -> tuple[Envelope, bytes] | None:
     """The envelope and raw payload an interrupted ingest left at `envelope.raw_ref`, if any.
 
@@ -94,7 +96,7 @@ def _leftover_episode(
     if raw is None:
         return None
     try:
-        leftover = normalizer_for(envelope.raw_ref)(raw, captured_at=at)
+        leftover = normalizer_for(envelope.raw_ref, owner)(raw, captured_at=at)
     except Exception:
         return None
     if (leftover.episode_id, leftover.content_hash) != (envelope.episode_id, envelope.content_hash):

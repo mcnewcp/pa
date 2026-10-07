@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pa_core.errors import PaError
+from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
+OWNER_NAME_VAR = "PA_OWNER_NAME"
+OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
+OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
 
 
 class ConfigError(PaError):
@@ -50,6 +54,36 @@ def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
                 "PA data must live outside it so it can never be committed."
             )
     return DataRoot(path)
+
+
+def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
+    """The configured owner; refuses to go on without a display name and an email address.
+
+    Email addresses and other names are comma-separated. The first address is how the owner
+    appears as a participant.
+    """
+    name = environ.get(OWNER_NAME_VAR, "").strip()
+    email_addresses = tuple(address.lower() for address in _list(environ, OWNER_EMAILS_VAR))
+    missing = [
+        var
+        for var, value in ((OWNER_NAME_VAR, name), (OWNER_EMAILS_VAR, email_addresses))
+        if not value
+    ]
+    if missing:
+        raise ConfigError(
+            f"Owner configuration is missing: set {' and '.join(missing)}. "
+            f"{OWNER_NAME_VAR} is the owner's display name and {OWNER_EMAILS_VAR} their "
+            f"comma-separated email addresses ({OWNER_OTHER_NAMES_VAR} is optional)."
+        )
+    return Owner(
+        name=name,
+        email_addresses=email_addresses,
+        other_names=_list(environ, OWNER_OTHER_NAMES_VAR),
+    )
+
+
+def _list(environ: Mapping[str, str], var: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in environ.get(var, "").split(",") if item.strip())
 
 
 def _repository_root(start: Path) -> Path | None:

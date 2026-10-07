@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import partial
 from pathlib import PurePath
 from typing import Protocol
 
 from pa_core.envelope import Envelope
 from pa_core.errors import MalformedPayloadError
-from pa_core.normalizers import calendar, email
+from pa_core.normalizers import calendar, email, note
+from pa_core.owner import Owner
 
 
 class Normalizer(Protocol):
@@ -16,15 +18,14 @@ class Normalizer(Protocol):
 
 
 # Raw payloads keep their native extension, which says which normalizer reads them.
-_BY_EXTENSION: dict[str, Normalizer] = {
-    email.EXTENSION: email.normalize_email,
-    calendar.EXTENSION: calendar.normalize_calendar_event,
-}
-
-
-def normalizer_for(name: str) -> Normalizer:
+def normalizer_for(name: str, owner: Owner) -> Normalizer:
     extension = PurePath(name).suffix.lower()
-    normalizer = _BY_EXTENSION.get(extension)
-    if normalizer is None:
-        raise MalformedPayloadError(f"{name}: no normalizer for '{extension}' files")
-    return normalizer
+    match extension:
+        case email.EXTENSION:
+            return email.normalize_email
+        case calendar.EXTENSION:
+            return calendar.normalize_calendar_event
+        case note.EXTENSION:
+            return partial(note.normalize_daily_note, owner=owner)
+        case _:
+            raise MalformedPayloadError(f"{name}: no normalizer for '{extension}' files")
