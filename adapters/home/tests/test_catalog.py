@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -206,3 +206,36 @@ def test_looking_up_a_participant_finds_their_episodes_in_time_order(data_root: 
     assert mara[1].occurred_end == datetime(2026, 10, 17, 15, 0, tzinfo=UTC)
     assert [entry.episode_id for entry in david] == [EMAIL_ID]
     assert nobody == []
+
+
+CHICAGO = timezone(timedelta(hours=-5))
+
+
+def test_looking_up_a_time_range_finds_the_episodes_that_overlap_it(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+
+    with open_catalog(data_root) as catalog:
+        lunchtime_on_the_notes_day = catalog.between(
+            datetime(2026, 10, 5, 12, 0, tzinfo=UTC), datetime(2026, 10, 5, 13, 0, tzinfo=UTC)
+        )
+        from_the_end_of_the_first_lesson = catalog.between(
+            datetime(2026, 10, 17, 15, 0, tzinfo=UTC), datetime(2026, 10, 18, tzinfo=UTC)
+        )
+        the_minute_the_email_was_sent = catalog.between(
+            datetime(2026, 9, 30, 21, 30, tzinfo=CHICAGO),
+            datetime(2026, 9, 30, 21, 31, tzinfo=CHICAGO),
+        )
+        up_to_the_email = catalog.between(
+            datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 1, 2, 30, tzinfo=UTC)
+        )
+
+    note_day = datetime(2026, 10, 5, tzinfo=UTC)
+    assert when_and_what(lunchtime_on_the_notes_day) == [
+        (note_day, Kind.NOTE, None),
+        (note_day, Kind.NOTE, None),
+    ]
+    assert when_and_what(from_the_end_of_the_first_lesson) == [
+        (datetime(2026, 10, 17, 15, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
+    ]
+    assert [entry.episode_id for entry in the_minute_the_email_was_sent] == [EMAIL_ID]
+    assert up_to_the_email == []

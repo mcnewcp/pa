@@ -138,6 +138,17 @@ class Catalog:
             (identifier.lower(),),
         )
 
+    def between(self, start: datetime, end: datetime) -> list[CatalogEntry]:
+        """Episodes that overlap the range from `start` up to but not including `end`.
+
+        An episode with no end is the moment it starts; one with an end spans up to it.
+        """
+        start_text, end_text = _utc_text(start), _utc_text(end)
+        return self._select(
+            "WHERE occurred_start < ? AND (occurred_start >= ? OR occurred_end > ?)",
+            (end_text, start_text, start_text),
+        )
+
     def _select(self, where: str, parameters: tuple[str, ...]) -> list[CatalogEntry]:
         rows = self._db.execute(
             f"SELECT * FROM episodes {where} ORDER BY occurred_start, episode_id", parameters
