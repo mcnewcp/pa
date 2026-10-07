@@ -3,7 +3,7 @@ name = "pa-evals"
 version = "0.1.0"
 description = "Evals for the personal assistant: storyline spec, synthetic corpus, eval set, harness"
 requires-python = ">=3.12"
-dependencies = ["pa-core", "pa-home"]
+dependencies = ["pa-core", "pa-home", "pyyaml==6.0.3"]
 
 [project.scripts]
 pa-eval = "pa_evals.cli:main"

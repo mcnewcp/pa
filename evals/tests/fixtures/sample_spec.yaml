@@ -1,0 +1,122 @@
+# A small storyline spec that exercises every channel. Not the real Argus corpus.
+owner: argus
+timezone: America/Chicago
+
+cast:
+  - id: argus
+    name: Argus McNevans
+    aliases: [Gus]
+    emails: [argus@example.com, argus.mcnevans@example.org]
+  - id: mara
+    name: Mara McNevans
+    emails: [mara@example.com]
+  - id: dave
+    name: David Kim
+    aliases: [Dave]
+    emails: [dkim@example.net, david.kim@kimlaw.example]
+  - id: ymca
+    name: Westside YMCA Aquatics
+    emails: [aquatics@westsideymca.example]
+
+calendars:
+  - id: family
+    name: Family
+  - id: mara-work
+    name: Mara Work
+    timezone: America/Chicago
+
+storylines:
+  - id: swim
+    title: Swim lessons
+    summary: Argus signs Theo and June up for swim lessons before the registration deadline.
+    events:
+      - id: swim-registration-opens
+        channel: email
+        at: 2026-10-01T09:15:00
+        from: ymca
+        to: [argus]
+        subject: Fall swim lessons registration is open
+        what: The YMCA announces weekday-evening and Saturday sessions; registration closes Oct 9.
+      - id: swim-registration-question
+        channel: email
+        at: 2026-10-01T20:40:00
+        from: argus
+        to: [aquatics@westsideymca.example]
+        cc: [mara]
+        reply_to: swim-registration-opens
+        what: Argus asks whether siblings can be in the same Saturday session.
+      - id: swim-note-weekdays
+        channel: note
+        date: 2026-10-01
+        heading: Swim lessons
+        participants: [mara]
+        what: Mara prefers the weekday-evening session so Saturdays stay free.
+      - id: swim-note-saturdays
+        channel: note
+        date: 2026-10-03
+        heading: Swim lessons
+        participants: [mara]
+        what: After her shift change Mara now prefers Saturdays.
+      - id: swim-note-correction
+        channel: note_correction
+        at: 2026-10-04T08:00:00
+        corrects: swim-note-saturdays
+        what: The Saturday session starts at 9:00, not 10:00.
+
+  - id: shifts
+    title: Mara's shifts
+    summary: Mara works late shifts as a hospitalist; one shift moves.
+    events:
+      - id: shift-oct-5
+        channel: calendar
+        at: 2026-09-28T10:00:00
+        calendar: mara-work
+        title: Evening shift
+        start: 2026-10-05T15:00:00
+        end: 2026-10-05T23:30:00
+        location: St. Luke's Hospital
+        organizer: mara
+        what: Mara has an evening shift on Monday Oct 5.
+      - id: shift-oct-5-moved
+        channel: calendar_update
+        at: 2026-10-02T16:20:00
+        updates: shift-oct-5
+        start: 2026-10-06T15:00:00
+        end: 2026-10-06T23:30:00
+        what: The shift moves to Tuesday Oct 6.
+      - id: shift-oct-5-cancelled
+        channel: calendar_update
+        at: 2026-10-03T07:05:00
+        updates: shift-oct-5-moved
+        status: cancelled
+        what: The shift is cancelled.
+
+  - id: wedding
+    title: Dave's wedding
+    summary: Argus's friend Dave is getting married; Argus RSVPs and books travel.
+    events:
+      - id: wedding-hotel-block
+        channel: email
+        at: 2026-10-02T21:30:00
+        from: david.kim@kimlaw.example
+        to: [argus, mara]
+        cc: [dkim@example.net]
+        subject: Hotel block for the wedding
+        what: Dave says the hotel block closes on Oct 9.
+      - id: wedding-day
+        channel: calendar
+        at: 2026-09-20T12:00:00
+        calendar: family
+        title: Dave & Priya's wedding
+        start: 2026-10-24
+        end: 2026-10-25
+        description: "Ceremony at 4pm; reception to follow at Café Rosé, a long walk away.\nDress: cocktail."
+        organizer: argus
+        attendees: [mara]
+        what: The wedding weekend is Oct 24-25.
+      - id: wedding-note
+        channel: note
+        date: 2026-10-03
+        heading: Dave's wedding
+        participants: [dave]
+        what: Argus still needs to book the hotel and pick a gift.
