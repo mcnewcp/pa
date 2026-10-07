@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -31,6 +31,10 @@ class L0Store(Protocol):
         """The stored envelope for `episode_id`, or None if no such episode exists."""
         ...
 
+    def raw_refs(self) -> Iterator[str]:
+        """Where every raw payload in L0 is stored (each one's `raw_ref`)."""
+        ...
+
     def get_raw(self, raw_ref: str) -> bytes | None:
         """The raw payload stored at `raw_ref`, or None if there is none."""
         ...
@@ -41,6 +45,13 @@ class L0Store(Protocol):
 
     def quarantine(self, record: QuarantineRecord, raw: bytes) -> None:
         """Keep a raw payload that cannot become an episode, with the record of why."""
+        ...
+
+    def replace_envelopes(self, envelopes: Iterable[Envelope]) -> None:
+        """Swap in `envelopes` as every envelope in L0, all at once or not at all.
+
+        Only renormalize calls this. Raw payloads and quarantine are untouched.
+        """
         ...
 
 

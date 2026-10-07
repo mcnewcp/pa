@@ -1,0 +1,49 @@
+{
+  "as_of": "2026-10-10T09:00:00-05:00",
+  "owner": {
+    "name": "Argus McNevans",
+    "email_addresses": ["argus@example.com"],
+    "other_names": ["Gus"]
+  },
+  "questions": [
+    {
+      "id": "day-of-week",
+      "category": "canary",
+      "question": "What day of the week is it?",
+      "expected_answer": "Saturday.",
+      "evidence": []
+    },
+    {
+      "id": "todays-date",
+      "category": "canary",
+      "question": "What's today's date?",
+      "expected_answer": "Thursday, November 19, 2026.",
+      "evidence": [],
+      "as_of": "2026-11-19T08:00:00-06:00"
+    },
+    {
+      "id": "hotel-days-left",
+      "category": "canary",
+      "question": "How many days do I have left to book the hotel for Dave's wedding?",
+      "expected_answer": "Two days: the hotel block closes on October 9, and today is October 7.",
+      "evidence": ["gmail_94f6b4cbc55a3b85"],
+      "as_of": "2026-10-07T12:00:00-05:00"
+    },
+    {
+      "id": "hotel-block-open",
+      "category": "canary",
+      "question": "Is the hotel block for Dave's wedding still open?",
+      "expected_answer": "No: it closed on October 9, and today is October 12.",
+      "evidence": ["gmail_94f6b4cbc55a3b85"],
+      "as_of": "2026-10-12T09:00:00-05:00"
+    },
+    {
+      "id": "swim-started",
+      "category": "canary",
+      "question": "Have the kids' swim lessons started yet?",
+      "expected_answer": "Yes: they started on Saturday, October 17 at 9 am at the Westside YMCA, a week before today (October 24).",
+      "evidence": ["icloud_calendar_9d69b653f9a42b18"],
+      "as_of": "2026-10-24T10:00:00-05:00"
+    }
+  ]
+}

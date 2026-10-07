@@ -6,3 +6,9 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Eval run outputs (pa-eval run). Baseline reports are copied to evals/baselines/ and committed.
+evals/runs/
+
+# Local scratch work (summaries, notes); never committed.
+.scratch/

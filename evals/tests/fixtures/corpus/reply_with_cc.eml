@@ -1,0 +1,29 @@
+Return-Path: <dkim@example.net>
+X-Gmail-Labels: Inbox,Important,Category Personal
+Message-ID: <CAF3x9-reply-0002@mail.example.net>
+In-Reply-To: <CAF3x9-mid-0001@mail.example.org>
+References: <CAF3x9-root-0000@mail.example.com>
+ <CAF3x9-mid-0001@mail.example.org>
+Date: Wed, 30 Sep 2026 21:30:00 -0500
+From: David Kim <DKim@Example.net>
+To: Argus McNevans <argus@example.com>, "Mara McNevans" <mara@example.com>
+Cc: wedding-party@example.org
+Subject: Re: Hotel block for the wedding
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi both,
+
+The hotel block closes on Oct 9 =E2=80=94 book soon!
+
+Dave
+
+--b1
+Content-Type: text/html; charset="utf-8"
+
+<p>Hi both,</p><p>The hotel block closes on Oct 9 &mdash; book soon!</p><p>Dave</p>
+--b1--

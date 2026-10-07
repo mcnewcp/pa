@@ -14,6 +14,10 @@ DATA_DIR_VAR = "PA_DATA_DIR"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
+# Backup is configured with restic's own variables, so an off-box repository's credentials
+# (also restic's own variables) need no translation.
+BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
+BACKUP_PASSWORD_VARS = ("RESTIC_PASSWORD", "RESTIC_PASSWORD_FILE", "RESTIC_PASSWORD_COMMAND")
 
 
 class ConfigError(PaError):
@@ -67,9 +71,7 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     appears as a participant.
     """
     name = environ.get(OWNER_NAME_VAR, "").strip()
-    email_addresses = tuple(
-        address.lower() for address in _comma_separated(environ, OWNER_EMAILS_VAR)
-    )
+    email_addresses = _comma_separated(environ, OWNER_EMAILS_VAR)
     missing = [
         var
         for var, value in ((OWNER_NAME_VAR, name), (OWNER_EMAILS_VAR, email_addresses))
@@ -86,6 +88,20 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
         email_addresses=email_addresses,
         other_names=_comma_separated(environ, OWNER_OTHER_NAMES_VAR),
     )
+
+
+def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
+    """Refuses to go on unless restic's repository and password are configured."""
+    missing = [
+        " or ".join(group)
+        for group in (BACKUP_REPOSITORY_VARS, BACKUP_PASSWORD_VARS)
+        if not any(environ.get(var, "").strip() for var in group)
+    ]
+    if missing:
+        raise ConfigError(
+            f"Backup configuration is missing: set {' and '.join(missing)}. "
+            "These are restic's own variables: the repository to back up to and its password."
+        )
 
 
 def _comma_separated(environ: Mapping[str, str], var: str) -> tuple[str, ...]:

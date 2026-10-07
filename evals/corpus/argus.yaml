@@ -1,0 +1,637 @@
+# The storyline spec of the synthetic corpus: six weeks (Sep 7 - Oct 14, 2026) in the fictional
+# life of Argus McNevans (he/him). It is the ground truth for the eval set
+# (evals/corpus/questions.yaml).
+#
+# The frozen payloads in evals/corpus/payloads/ were generated from this file with
+#   uv run pa-eval corpus generate evals/corpus/argus.yaml evals/corpus/payloads --model sonnet
+# and then read by hand. Two lines of prose were fixed by hand after generation: the hotel
+# confirmation's greeting ("Dear Gus" became "Dear Argus McNevans") and a stray email address
+# at the end of the Sep 15 note's Kitchen section. Change this file only together with a
+# regenerated (and re-read) corpus and a rebuilt eval set (uv run pa-eval eval-set build).
+#
+# Everything in the corpus happens before the eval set's as-of time, Wednesday Oct 14, 2026 at
+# 8 pm. Calendar events may lie after it; they were added to the calendar before it.
+#
+# Family: Argus and his wife Mara (a hospitalist who works late shifts), and their kids Theo (7)
+# and June (4). They live in Minneapolis.
+
+owner: argus
+timezone: America/Chicago
+vault_folder: Daily
+
+cast:
+  - id: argus
+    name: Argus McNevans
+    aliases: [Gus]
+    emails: [argus@example.com]
+  - id: mara
+    name: Mara McNevans
+    emails: [mara@example.com]
+  - id: dave
+    name: David Kim
+    aliases: [Dave]
+    emails: [dkim@example.net, david.kim@kimlaw.example]
+  - id: ben
+    name: Ben Okafor
+    emails: [ben.okafor@example.com]
+  - id: rick
+    name: Rick Alvarez
+    emails: [rick@alvarezkb.example]
+  - id: hannah
+    name: Hannah Lee
+    emails: [hannah@birchwoodremodeling.example]
+  - id: kate
+    name: Kate Brennan
+    emails: [kate.brennan@example.com]
+  # Organizations that send mail.
+  - id: ymca
+    name: Westside YMCA Aquatics
+    emails: [aquatics@westsideymca.example]
+  - id: lakeside
+    name: Lakeside Family Medicine
+    emails: [appointments@lakesidefm.example]
+  - id: prairie-air
+    name: Prairie Air
+    emails: [reservations@prairieair.example]
+  - id: harborview
+    name: Harborview Inn
+    emails: [reservations@harborviewinn.example]
+
+calendars:
+  - id: family
+    name: Family
+  - id: mara-work
+    name: Mara Work
+  - id: personal
+    name: Personal
+
+storylines:
+  # ---------------------------------------------------------------------------------------------
+  - id: family
+    title: Family scheduling and swim lessons
+    summary: >-
+      Argus and Mara McNevans are picking a YMCA swim lesson time for their kids Theo (7) and
+      June (4), fitting it around Mara's late shifts as a hospitalist, Argus's Saturday morning
+      soccer games, a weekend trip Argus is taking with his friend Ben, and the kids' friends'
+      birthday parties.
+    events:
+      # Mara's late shifts, Mon/Wed/Fri, posted at the start of the period.
+      - {id: shift-oct-05, channel: calendar, at: 2026-09-07T07:30:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-05T15:00:00, end: 2026-10-05T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-07, channel: calendar, at: 2026-09-07T07:31:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-07T15:00:00, end: 2026-10-07T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-09, channel: calendar, at: 2026-09-07T07:32:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-09T15:00:00, end: 2026-10-09T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-12, channel: calendar, at: 2026-09-07T07:33:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-12T15:00:00, end: 2026-10-12T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-14, channel: calendar, at: 2026-09-07T07:34:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-14T15:00:00, end: 2026-10-14T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-16, channel: calendar, at: 2026-09-07T07:35:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-16T15:00:00, end: 2026-10-16T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-19, channel: calendar, at: 2026-09-07T07:36:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-19T15:00:00, end: 2026-10-19T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-21, channel: calendar, at: 2026-09-07T07:37:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-21T15:00:00, end: 2026-10-21T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-23, channel: calendar, at: 2026-09-07T07:38:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-23T15:00:00, end: 2026-10-23T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-26, channel: calendar, at: 2026-09-07T07:39:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-26T15:00:00, end: 2026-10-26T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-28, channel: calendar, at: 2026-09-07T07:40:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-28T15:00:00, end: 2026-10-28T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+      - {id: shift-oct-30, channel: calendar, at: 2026-09-07T07:41:00, calendar: mara-work,
+         title: Late shift, start: 2026-10-30T15:00:00, end: 2026-10-30T23:30:00,
+         location: St. Luke's Hospital, organizer: mara, what: Mara works a late shift.}
+
+      # Argus's Saturday soccer games, from the season schedule.
+      - {id: soccer-sep-12, channel: calendar, at: 2026-09-07T19:00:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-09-12T08:30:00,
+         end: 2026-09-12T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-sep-19, channel: calendar, at: 2026-09-07T19:01:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-09-19T08:30:00,
+         end: 2026-09-19T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-sep-26, channel: calendar, at: 2026-09-07T19:02:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-09-26T08:30:00,
+         end: 2026-09-26T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-oct-03, channel: calendar, at: 2026-09-07T19:03:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-10-03T08:30:00,
+         end: 2026-10-03T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-oct-10, channel: calendar, at: 2026-09-07T19:04:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-10-10T08:30:00,
+         end: 2026-10-10T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-oct-17, channel: calendar, at: 2026-09-07T19:05:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-10-17T08:30:00,
+         end: 2026-10-17T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-oct-24, channel: calendar, at: 2026-09-07T19:06:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-10-24T08:30:00,
+         end: 2026-10-24T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-oct-31, channel: calendar, at: 2026-09-07T19:07:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-10-31T08:30:00,
+         end: 2026-10-31T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-nov-07, channel: calendar, at: 2026-09-07T19:08:00, calendar: personal,
+         title: "Soccer: Riverside FC game", start: 2026-11-07T08:30:00,
+         end: 2026-11-07T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+
+      # Swim lessons: the options and the first preference.
+      - id: ymca-registration
+        channel: email
+        at: 2026-09-14T10:00:00
+        from: ymca
+        to: [argus, mara]
+        subject: "Fall II youth swim lessons: registration is open"
+        what: >-
+          The Westside YMCA announces that registration for Fall II youth swim lessons is open
+          now and closes Friday, October 16 at 5:00 pm. Preschool levels (ages 3-5) and Levels
+          1-4 (ages 6-12) are offered at two times: Tuesday and Thursday 5:30-6:15 pm (classes
+          run October 20 to December 10, $160 per child) or Saturday 9:00-9:45 am (classes run
+          October 24 to December 12, $90 per child). Members register in the online member
+          portal. Classes fill quickly. Sign it as the Westside YMCA Aquatics team, with no
+          individual staff names.
+      - id: swim-note-weekdays
+        channel: note
+        date: 2026-09-15
+        heading: Swim lessons
+        participants: [mara]
+        what: >-
+          Talked with Mara about the YMCA swim lesson options for Theo and June. Mara prefers
+          the Tuesday/Thursday 5:30 pm class: her late shifts are Monday, Wednesday and Friday,
+          so she's free to take the kids on Tuesday and Thursday evenings, and it keeps Saturday
+          mornings clear for Argus's soccer. They're leaning toward Tuesday/Thursday.
+
+      # The friend trip.
+      - id: ben-austin-trip
+        channel: email
+        at: 2026-09-17T13:05:00
+        from: ben
+        to: [argus]
+        subject: "Austin, Nov 6-8"
+        what: >-
+          Ben confirms the guys' trip to Austin is on for Friday, November 6 through Sunday,
+          November 8. He has booked the rental house. He asks Argus to book his own flights and
+          send him his arrival time.
+      - id: argus-austin-reply
+        channel: email
+        at: 2026-09-18T21:00:00
+        from: argus
+        to: [ben]
+        reply_to: ben-austin-trip
+        what: Argus says Mara is fine with him going and he'll book his flights this week.
+      - id: austin-note
+        channel: note
+        date: 2026-09-18
+        heading: Austin trip
+        participants: [ben, mara]
+        what: >-
+          Ben's Austin trip is Friday Nov 6 to Sunday Nov 8. Checked with Mara: she's fine with
+          Argus going and will handle the kids that weekend. Argus still needs to book flights.
+      - id: airline-confirmation
+        channel: email
+        at: 2026-09-22T19:45:00
+        from: prairie-air
+        to: [argus]
+        subject: "Your Prairie Air trip confirmation: QX7R2M"
+        what: >-
+          An automated booking confirmation from Prairie Air for passenger Argus McNevans,
+          confirmation code QX7R2M. Outbound: Friday, November 6, flight PA 1182, departs
+          Minneapolis (MSP) at 4:10 pm, arrives Austin (AUS) at 6:55 pm. Return: Sunday,
+          November 8, flight PA 1191, departs Austin (AUS) at 5:20 pm, arrives Minneapolis
+          (MSP) at 8:05 pm. Check in online 24 hours before departure.
+      - id: austin-trip
+        channel: calendar
+        at: 2026-09-22T20:00:00
+        calendar: personal
+        title: Austin trip with Ben
+        start: 2026-11-06
+        end: 2026-11-08
+        location: Austin, TX
+        organizer: argus
+        what: Argus's weekend in Austin with Ben.
+
+      # Birthday parties.
+      - id: olivia-party-invite
+        channel: email
+        at: 2026-09-28T12:00:00
+        from: kate
+        to: [argus, mara]
+        subject: "Olivia's 7th birthday party!"
+        what: >-
+          Kate invites Theo to her daughter Olivia's 7th birthday party on Saturday, October 17
+          from 10:00 am to noon at Jump Zone trampoline park. Kids need grip socks. She asks
+          them to RSVP by October 10.
+      - id: argus-olivia-rsvp
+        channel: email
+        at: 2026-09-29T20:15:00
+        from: argus
+        to: [kate]
+        cc: [mara]
+        reply_to: olivia-party-invite
+        what: Argus RSVPs yes for Theo and thanks Kate for the invite.
+      - id: olivia-party
+        channel: calendar
+        at: 2026-09-29T20:20:00
+        calendar: family
+        title: Olivia's birthday party (Theo)
+        start: 2026-10-17T10:00:00
+        end: 2026-10-17T12:00:00
+        location: Jump Zone
+        description: Grip socks!
+        organizer: argus
+        attendees: [mara]
+        what: Theo goes to Olivia's 7th birthday party.
+      - id: nora-party
+        channel: calendar
+        at: 2026-10-02T21:00:00
+        calendar: family
+        title: Nora's 4th birthday (June)
+        start: 2026-11-14T09:30:00
+        end: 2026-11-14T11:30:00
+        location: Lin family's house
+        description: Costumes welcome.
+        organizer: mara
+        attendees: [argus]
+        what: June goes to her friend Nora's 4th birthday party; Mara added it.
+
+      # Mara's shift change: from the week of Oct 19 her Wednesday and Friday late shifts move to
+      # Tuesday and Thursday.
+      - {id: shift-oct-21-moved, channel: calendar_update, at: 2026-10-05T13:00:00,
+         updates: shift-oct-21, start: 2026-10-20T15:00:00, end: 2026-10-20T23:30:00,
+         what: The Wednesday Oct 21 shift moves to Tuesday Oct 20.}
+      - {id: shift-oct-23-moved, channel: calendar_update, at: 2026-10-05T13:01:00,
+         updates: shift-oct-23, start: 2026-10-22T15:00:00, end: 2026-10-22T23:30:00,
+         what: The Friday Oct 23 shift moves to Thursday Oct 22.}
+      - {id: shift-oct-28-moved, channel: calendar_update, at: 2026-10-05T13:02:00,
+         updates: shift-oct-28, start: 2026-10-27T15:00:00, end: 2026-10-27T23:30:00,
+         what: The Wednesday Oct 28 shift moves to Tuesday Oct 27.}
+      - {id: shift-oct-30-moved, channel: calendar_update, at: 2026-10-05T13:03:00,
+         updates: shift-oct-30, start: 2026-10-29T15:00:00, end: 2026-10-29T23:30:00,
+         what: The Friday Oct 30 shift moves to Thursday Oct 29.}
+
+      # The stance change and the open loop. The note gets the deadline wrong (Oct 9 is the
+      # hotel block deadline for Dave's wedding) and is corrected two days later.
+      - id: swim-note-saturdays
+        channel: note
+        date: 2026-10-05
+        heading: Swim lessons
+        participants: [mara]
+        what: >-
+          The hospital is moving Mara's late shifts to Tuesday and Thursday starting the week of
+          Oct 19, so she can't do the Tuesday/Thursday 5:30 class anymore. Mara now wants the
+          Saturday 9 am class instead, and she'll take both kids on Saturday mornings while
+          Argus is at soccer. Argus will register Theo and June for the Saturday class before
+          the registration deadline, Friday Oct 9.
+      - id: ymca-question
+        channel: email
+        at: 2026-10-06T12:10:00
+        from: argus
+        to: [ymca]
+        cc: [mara]
+        reply_to: ymca-registration
+        what: >-
+          Argus asks whether Theo (7) and June (4) can both be in Saturday 9:00 classes at the
+          same time, whether there are still spots in the Saturday preschool class, and which
+          level Theo should sign up for, since he finished Level 2 last spring.
+      - id: ymca-answer
+        channel: email
+        at: 2026-10-07T09:30:00
+        from: ymca
+        to: [argus]
+        cc: [mara]
+        reply_to: ymca-question
+        what: >-
+          Yes: Preschool 1 and Level 3 both meet Saturdays 9:00-9:45 am in the same pool, in
+          separate lanes, so both kids can swim at the same time. As of this morning there are
+          4 spots left in Saturday Preschool 1 and 6 in Saturday Level 3. Since Theo passed
+          Level 2, he should register for Level 3. Registration still closes Friday, October 16
+          at 5:00 pm, and spots are not held until registration is complete. Sign it as the
+          Westside YMCA Aquatics team, with no individual staff names.
+      - id: swim-deadline-fix
+        channel: note_correction
+        at: 2026-10-07T08:10:00
+        corrects: swim-note-saturdays
+        what: >-
+          The registration deadline is Friday Oct 16 at 5 pm, not Oct 9 (Oct 9 is the hotel
+          block deadline for Dave's wedding).
+
+  # ---------------------------------------------------------------------------------------------
+  - id: kitchen
+    title: Kitchen remodel
+    summary: >-
+      Argus and Mara McNevans are getting quotes to remodel their kitchen, from Rick Alvarez of
+      Alvarez Kitchen & Bath and from Hannah Lee of Birchwood Remodeling.
+    events:
+      - id: kitchen-quote-request
+        channel: email
+        at: 2026-09-08T12:15:00
+        from: argus
+        to: [rick]
+        cc: [mara]
+        subject: Kitchen remodel quote
+        what: >-
+          Argus says a neighbor recommended Rick, and asks for a quote to remodel their kitchen:
+          new cabinets, quartz countertops, and new flooring, keeping the current layout. He
+          asks when Rick could come by to see the space; weekday evenings after 6 work best.
+      - id: kitchen-visit-reply
+        channel: email
+        at: 2026-09-09T07:45:00
+        from: rick
+        to: [argus]
+        cc: [mara]
+        reply_to: kitchen-quote-request
+        what: >-
+          Rick thanks Argus and offers to come by Tuesday, September 15 at 6:00 pm to look at
+          the kitchen and take measurements. He'll have a written quote about a week after the
+          visit.
+      - id: kitchen-site-visit
+        channel: calendar
+        at: 2026-09-09T20:30:00
+        calendar: family
+        title: "Kitchen site visit: Rick Alvarez"
+        start: 2026-09-15T18:00:00
+        end: 2026-09-15T19:00:00
+        location: Home
+        description: Alvarez Kitchen & Bath walkthrough and measurements.
+        organizer: argus
+        attendees: [rick, mara]
+        what: Rick visits to see the kitchen and measure.
+      - id: kitchen-note-visit
+        channel: note
+        date: 2026-09-15
+        heading: Kitchen
+        participants: [rick, mara]
+        what: >-
+          Rick came by at 6 and measured the kitchen. Mara wants to move the sink to a new
+          island; Rick said that's doable but adds plumbing and electrical cost. He'll email a
+          written quote in about a week.
+      - id: birchwood-quote
+        channel: email
+        at: 2026-09-21T10:30:00
+        from: hannah
+        to: [argus]
+        subject: "Birchwood Remodeling: your kitchen estimate"
+        what: >-
+          Hannah, following up on the photos and measurements Argus submitted through
+          Birchwood's website, sends an estimate of $44,900 for new cabinets, quartz
+          countertops, new flooring, and moving the sink to a new island. The work would take
+          about eight weeks, and Birchwood's next opening is in January. The estimate is good
+          for 30 days.
+      - id: rick-quote
+        channel: email
+        at: 2026-09-23T16:40:00
+        from: rick
+        to: [argus]
+        cc: [mara]
+        subject: "Quote: McNevans kitchen"
+        what: >-
+          Rick sends his quote: $38,400 for new cabinets, quartz countertops, and new flooring,
+          with the sink staying where it is. Moving the sink to an island would add about
+          $4,500 for plumbing and electrical. The job would take five to six weeks, and he could
+          start the week of November 16.
+      - id: kitchen-note-compare
+        channel: note
+        date: 2026-09-24
+        heading: Kitchen
+        participants: [mara, rick, hannah]
+        what: >-
+          Compared the two quotes: Rick $38,400 (about $42,900 with the sink moved to the
+          island) vs. Birchwood $44,900 with the island sink. Mara and Argus are leaning toward
+          Rick: cheaper, and he can start sooner. Argus wants to ask Rick for a revised number
+          with a butcher-block top on the island instead of quartz, to save money.
+      - id: argus-revision-request
+        channel: email
+        at: 2026-09-28T08:05:00
+        from: argus
+        to: [rick]
+        cc: [mara]
+        reply_to: rick-quote
+        what: >-
+          Argus thanks Rick and says they'd like to move the sink to the island. He asks for a
+          revised quote that includes the island sink and uses a butcher-block countertop on the
+          island, keeping quartz on the perimeter counters.
+      - id: rick-revision-promise
+        channel: email
+        at: 2026-09-29T18:20:00
+        from: rick
+        to: [argus]
+        cc: [mara]
+        reply_to: argus-revision-request
+        what: Rick says no problem, and he'll send the revised quote by this Friday, October 2.
+      - id: argus-rick-nudge
+        channel: email
+        at: 2026-10-08T12:30:00
+        from: argus
+        to: [rick]
+        cc: [mara]
+        reply_to: rick-revision-promise
+        what: >-
+          Argus follows up politely: he hasn't received the revised quote Rick said he'd send by
+          last Friday, October 2, and asks whether Rick can still send it.
+      - id: kitchen-note-birchwood
+        channel: note
+        date: 2026-10-13
+        heading: Kitchen
+        participants: [mara, rick, hannah]
+        what: >-
+          Still no revised quote from Rick, and no reply to Argus's Oct 8 follow-up. Mara and
+          Argus are now leaning toward Birchwood even though it costs more; they'd rather have a
+          contractor who responds. Birchwood's estimate is good until about Oct 21.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: medical
+    title: Argus's physical and follow-ups
+    summary: >-
+      Argus McNevans has his annual physical at Lakeside Family Medicine with Dr. Lena Ortiz,
+      and follow-up care after it.
+    events:
+      - id: physical-confirmation
+        channel: email
+        at: 2026-09-09T11:00:00
+        from: lakeside
+        to: [argus]
+        subject: "Appointment confirmation: annual physical"
+        what: >-
+          An automated message from Lakeside Family Medicine confirming Argus's annual physical
+          with Dr. Lena Ortiz on Wednesday, September 16 at 8:00 am. Please arrive 15 minutes
+          early and bring your insurance card.
+      - id: physical
+        channel: calendar
+        at: 2026-09-09T11:10:00
+        calendar: personal
+        title: "Annual physical: Dr. Ortiz"
+        start: 2026-09-16T08:00:00
+        end: 2026-09-16T08:45:00
+        location: Lakeside Family Medicine
+        organizer: argus
+        what: Argus's annual physical.
+      - id: physical-note
+        channel: note
+        date: 2026-09-16
+        heading: Physical
+        what: >-
+          Physical with Dr. Ortiz this morning; blood pressure fine. Told her about Argus's
+          right knee hurting after soccer: she recommends seeing sports medicine and sent a
+          referral to North Star Sports Medicine. She also wants fasting blood work, since his
+          cholesterol was borderline last year. Argus booked the blood draw for Thursday Oct 8
+          at 7:30 am. Argus will call North Star to book the knee appointment this week.
+      - id: blood-draw
+        channel: calendar
+        at: 2026-09-16T10:15:00
+        calendar: personal
+        title: Fasting blood draw
+        start: 2026-10-08T07:30:00
+        end: 2026-10-08T07:50:00
+        location: Lakeside Family Medicine lab
+        description: "Fasting: nothing but water after midnight."
+        organizer: argus
+        what: Argus's fasting blood draw.
+      - id: knee-note
+        channel: note
+        date: 2026-09-26
+        heading: Knee
+        what: >-
+          Knee flared up again at this morning's soccer game. Argus still hasn't called North
+          Star Sports Medicine and needs to.
+      - id: lab-reschedule
+        channel: email
+        at: 2026-10-02T09:40:00
+        from: lakeside
+        to: [argus]
+        subject: Your lab appointment has been moved
+        what: >-
+          An automated message from Lakeside Family Medicine: the lab will be closed on
+          Thursday, October 8 for an equipment upgrade, so Argus's fasting blood draw has been
+          moved from Thursday, October 8 at 7:30 am to Tuesday, October 13 at 7:30 am. Call the
+          clinic if the new time doesn't work.
+      - id: blood-draw-moved
+        channel: calendar_update
+        at: 2026-10-02T09:45:00
+        updates: blood-draw
+        start: 2026-10-13T07:30:00
+        end: 2026-10-13T07:50:00
+        what: The blood draw moves to Tuesday Oct 13 at 7:30 am.
+      - id: blood-work-note
+        channel: note
+        date: 2026-10-13
+        heading: Blood work
+        what: >-
+          Did the fasting blood draw at 7:30 this morning. Results will be in the patient portal
+          in 3 to 5 days.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: wedding
+    title: Dave and Priya's wedding
+    summary: >-
+      Argus's close friend Dave (David Kim, a lawyer, who emails from a personal and a work
+      address) is marrying Priya Shah in Duluth. Argus and Mara are invited.
+    events:
+      - id: dave-wedding-invite
+        channel: email
+        at: 2026-09-08T21:15:00
+        from: dave
+        to: [argus, mara]
+        subject: Wedding details!
+        what: >-
+          Dave tells Argus and Mara that formal invitations are going out but he wanted them to
+          have the details now: he and Priya are getting married Saturday, October 24 at 4:00 pm
+          at North Shore Lodge in Duluth, with the reception after. Please RSVP on the wedding
+          website by October 1. There is a hotel block at the Harborview Inn (mention the
+          Kim-Shah wedding); the block closes October 9.
+      - id: wedding-day
+        channel: calendar
+        at: 2026-09-08T21:40:00
+        calendar: family
+        title: Dave & Priya's wedding
+        start: 2026-10-24
+        location: Duluth, MN
+        description: "Ceremony 4 pm at North Shore Lodge, reception to follow.\nDress: cocktail."
+        organizer: argus
+        attendees: [mara]
+        what: Dave and Priya's wedding day.
+      - id: wedding-note-plan
+        channel: note
+        date: 2026-09-10
+        heading: Dave's wedding
+        participants: [dave, mara]
+        what: >-
+          Dave and Priya's wedding is Saturday Oct 24 in Duluth. Mara and Argus are going;
+          Mara's parents will keep the kids that weekend. To do: RSVP by Oct 1, book the
+          Harborview Inn before the hotel block closes Oct 9, pick a gift from the registry.
+      - id: dave-rsvp
+        channel: email
+        at: 2026-09-20T21:30:00
+        from: argus
+        to: [dave]
+        reply_to: dave-wedding-invite
+        what: >-
+          Argus tells Dave they just RSVP'd yes for both of them on the wedding website (Mara
+          chose the salmon, Argus the short rib) and that they can't wait.
+      - id: dave-reading-request
+        channel: email
+        at: 2026-09-22T11:20:00
+        from: david.kim@kimlaw.example
+        to: [argus]
+        subject: Quick favor
+        what: >-
+          Dave, writing from his work address, thanks Argus for the RSVP and asks whether Argus
+          would do a short reading at the ceremony; Priya would love it. He'll send the text
+          once they've picked it.
+      - id: argus-reading-yes
+        channel: email
+        at: 2026-09-23T07:50:00
+        from: argus
+        to: [david.kim@kimlaw.example]
+        reply_to: dave-reading-request
+        what: >-
+          Argus says he'd be honored to do the reading and asks Dave to send the text when it's
+          ready.
+      - id: gift-note
+        channel: note
+        date: 2026-10-01
+        heading: Dave's wedding
+        participants: [dave]
+        what: Ordered the cast-iron Dutch oven from Dave and Priya's registry for $165.
+      - id: gift-fix
+        channel: note_correction
+        at: 2026-10-02T19:30:00
+        corrects: gift-note
+        what: >-
+          Mara had already bought the knife set from the registry ($210) on Sept 30, so Argus
+          cancelled the Dutch oven order. The knife set is their gift.
+      - id: wedding-note-travel
+        channel: note
+        date: 2026-10-05
+        heading: Dave's wedding
+        participants: [mara]
+        what: >-
+          Mara's Friday Oct 23 shift moved to Thursday, so she's off that Friday. They'll drive
+          up to Duluth on Friday Oct 23 and come back Sunday. Argus still needs to book the
+          Harborview Inn before the hotel block closes Oct 9.
+      - id: hotel-confirmation
+        channel: email
+        at: 2026-10-06T20:10:00
+        from: harborview
+        to: [argus]
+        subject: "Reservation confirmed: Harborview Inn"
+        what: >-
+          An automated message from the Harborview Inn confirming Argus's reservation:
+          confirmation number HV-48213, one king room, check in Friday, October 23 and check out
+          Sunday, October 25 (2 nights), at the Kim-Shah wedding block rate of $169 per night.
+          Check-in is at 3:00 pm.

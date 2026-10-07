@@ -1,0 +1,46 @@
+{
+  "as_of": "2026-10-06T20:00:00-05:00",
+  "owner": {
+    "name": "Argus McNevans",
+    "email_addresses": ["argus@example.com"],
+    "other_names": ["Gus"]
+  },
+  "questions": [
+    {
+      "id": "hotel-block-deadline",
+      "category": "single_fact_recall",
+      "question": "When does the hotel block for Dave's wedding close?",
+      "expected_answer": "October 9.",
+      "evidence": ["gmail_94f6b4cbc55a3b85"]
+    },
+    {
+      "id": "swim-lessons-plan",
+      "category": "cross_channel_synthesis",
+      "question": "What's the plan for the kids' swim lessons?",
+      "expected_answer": "Theo and June start Saturday Oct 17 at 9 am at the Westside YMCA; Argus said he'd register them by Thursday.",
+      "evidence": ["icloud_calendar_9d69b653f9a42b18", "obsidian_0510599eb323eee0"]
+    },
+    {
+      "id": "who-asked-about-hotel",
+      "category": "attribution",
+      "question": "Who first asked about a hotel block for the wedding?",
+      "expected_answer": "Argus asked Dave (David Kim) on Sep 14.",
+      "evidence": ["gmail_424bdea9b0d82720"]
+    },
+    {
+      "id": "swim-instructor",
+      "category": "abstention",
+      "question": "What's the swim instructor's name?",
+      "expected_answer": "Unknown: nothing captured names the instructor.",
+      "evidence": []
+    },
+    {
+      "id": "day-of-week",
+      "category": "canary",
+      "question": "What day of the week is it?",
+      "expected_answer": "Saturday.",
+      "evidence": [],
+      "as_of": "2026-10-10T09:00:00-05:00"
+    }
+  ]
+}

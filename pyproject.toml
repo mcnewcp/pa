@@ -31,6 +31,11 @@ extend-exclude = [".agents", ".claude"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "PTH", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# Their models subclass pa_evals.models.FrozenModel, which ruff can't see is a pydantic model
+# (pydantic copies mutable defaults, so RUF012 doesn't apply).
+"evals/src/pa_evals/{eval_set,questions,storyline}.py" = ["RUF012"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["pa_core", "pa_home", "pa_evals"]
 
@@ -42,5 +47,5 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "adapters/home/tests"]
+testpaths = ["core/tests", "adapters/home/tests", "evals/tests"]
 addopts = ["--import-mode=importlib", "--strict-markers"]
