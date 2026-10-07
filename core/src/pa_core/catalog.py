@@ -131,6 +131,10 @@ class Catalog:
         rows = self._db.execute("SELECT * FROM episodes ORDER BY episode_id").fetchall()
         return [self._entry(row) for row in rows]
 
+    def from_source(self, source: Source) -> list[CatalogEntry]:
+        """Episodes captured from `source`, in time order."""
+        return self._select("WHERE source = ?", (source,))
+
     def with_participant(self, identifier: str) -> list[CatalogEntry]:
         """Episodes `identifier` (an email address, any case) takes part in, in time order."""
         return self._select(

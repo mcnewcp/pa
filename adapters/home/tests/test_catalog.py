@@ -239,3 +239,15 @@ def test_looking_up_a_time_range_finds_the_episodes_that_overlap_it(data_root: P
     ]
     assert [entry.episode_id for entry in the_minute_the_email_was_sent] == [EMAIL_ID]
     assert up_to_the_email == []
+
+
+def test_looking_up_a_source_finds_its_episodes_in_time_order(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+
+    with open_catalog(data_root) as catalog:
+        calendar = catalog.from_source(Source.ICLOUD_CALENDAR)
+
+    assert when_and_what(calendar) == [
+        (datetime(2026, 10, 17, 14, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
+        (datetime(2026, 10, 17, 15, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
+    ]
