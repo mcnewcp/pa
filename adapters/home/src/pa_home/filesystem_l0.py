@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
+import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from pa_core.envelope import Envelope
@@ -37,14 +40,60 @@ class FilesystemL0:
     def put(self, envelope: Envelope, raw: bytes) -> None:
         # Raw first: an envelope on disk is what makes an episode exist.
         _write_once(self.root / envelope.raw_ref, raw)
-        serialized = envelope.model_dump_json(indent=2) + "\n"
-        _write_once(self.root / episode_ref(envelope), serialized.encode())
+        _write_once(self.root / episode_ref(envelope), _serialized(envelope))
 
     def quarantine(self, record: QuarantineRecord, raw: bytes) -> None:
         # Raw first, so a record never points at bytes that were not kept.
         _write_once(self.root / quarantine_ref(record, raw), raw)
         serialized = record.model_dump_json(indent=2) + "\n"
         _write_once(self.root / quarantine_record_ref(record, raw), serialized.encode())
+
+    def replace_envelopes(self, envelopes: Iterable[Envelope]) -> None:
+        # The new tree is built whole beside the old one, then the two are exchanged in one
+        # rename, so L0 never holds a mix of old and new envelopes.
+        episodes = self.root / "episodes"
+        building = self.root / ".episodes.renormalize"
+        shutil.rmtree(building, ignore_errors=True)  # left by an interrupted renormalize
+        building.mkdir(parents=True)
+        try:
+            for envelope in envelopes:
+                path = building / Path(episode_ref(envelope)).relative_to("episodes")
+                _write_once(path, _serialized(envelope))
+            episodes.mkdir(exist_ok=True)
+            _exchange(building, episodes)
+            _fsync_dir(self.root)
+        finally:
+            # Before the exchange this is the unfinished new tree; after it, the old one.
+            shutil.rmtree(building, ignore_errors=True)
+
+
+def _serialized(envelope: Envelope) -> bytes:
+    return (envelope.model_dump_json(indent=2) + "\n").encode()
+
+
+_AT_FDCWD = -100
+_RENAME_EXCHANGE = 2
+
+
+def _exchange(a: Path, b: Path) -> None:
+    """Swap two directories in place, atomically where the system allows it.
+
+    Linux's renameat2 exchanges them in one step. Elsewhere, or on a filesystem without
+    support, they are swapped with three renames, so a crash in between can leave `b` missing
+    while both trees are still on disk.
+    """
+    renameat2 = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if renameat2 is not None:
+        result = renameat2(_AT_FDCWD, os.fsencode(a), _AT_FDCWD, os.fsencode(b), _RENAME_EXCHANGE)
+        if result == 0:
+            return
+        error = ctypes.get_errno()
+        if error not in (errno.ENOSYS, errno.EINVAL):
+            raise OSError(error, os.strerror(error), str(a), None, str(b))
+    aside = a.with_name(f"{a.name}.swap")
+    b.rename(aside)
+    a.rename(b)
+    aside.rename(a)
 
 
 def _write_once(path: Path, data: bytes) -> None:

@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
+from pa_core.renormalize import renormalize
 from pa_home.backup import back_up
 from pa_home.config import DataRoot, load_data_root, load_owner, require_backup_config
 from pa_home.filesystem_l0 import FilesystemL0
@@ -22,6 +23,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
     commands.add_parser("backup", help="Back up L0 to the configured restic repository.")
+    commands.add_parser(
+        "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -32,6 +36,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _rebuild_catalog(data_root)
         elif args.command == "backup":
             _backup(data_root)
+        elif args.command == "renormalize":
+            _renormalize(data_root)
     except PaError as error:
         print(f"pa: {error}", file=sys.stderr)
         return 1
@@ -59,3 +65,11 @@ def _backup(data_root: DataRoot) -> None:
     require_backup_config()
     snapshot_id = back_up(data_root.l0)
     print(f"backed up L0 to snapshot {snapshot_id[:8]}")
+
+
+def _renormalize(data_root: DataRoot) -> None:
+    store = FilesystemL0(data_root.l0)
+    count = renormalize(store, load_owner())
+    # The catalog indexes the old envelopes until it is rebuilt from the new ones.
+    rebuild_catalog(data_root.catalog, store)
+    print(f"renormalized {count} episodes; catalog rebuilt")
