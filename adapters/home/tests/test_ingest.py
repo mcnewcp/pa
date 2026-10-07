@@ -9,6 +9,7 @@ import pytest
 
 from pa_core.ingest import ingest
 from pa_home.cli import main
+from pa_home.config import load_owner
 from pa_home.filesystem_l0 import FilesystemL0
 
 # Sent late on 30 Sep in Chicago, which is already October in UTC.
@@ -39,6 +40,9 @@ def email(
 def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "pa-data"
     monkeypatch.setenv("PA_DATA_DIR", str(root))
+    monkeypatch.setenv("PA_OWNER_NAME", "Argus McNevans")
+    monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com, Argus.McNevans@example.org")
+    monkeypatch.setenv("PA_OWNER_OTHER_NAMES", "Gus")
     return root
 
 
@@ -314,7 +318,7 @@ def test_a_payload_stays_in_the_inbox_when_it_cannot_be_written_to_quarantine(da
 def ingest_at(data_root: Path, moment: datetime):
     inbox = data_root / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
-    return ingest(inbox, FilesystemL0(data_root / "l0"), now=lambda: moment)
+    return ingest(inbox, FilesystemL0(data_root / "l0"), load_owner(), now=lambda: moment)
 
 
 def test_a_recapture_that_only_changes_capture_time_is_unchanged(data_root: Path):
@@ -467,3 +471,83 @@ def test_a_malformed_calendar_is_quarantined_with_a_reason(data_root: Path):
     [item] = quarantined(data_root)
     assert item.raw == broken
     assert "no UID" in item.record["reason"]
+
+
+def daily_note(text: str = "## Swim lessons\n\nMara prefers weekday evenings.\n") -> bytes:
+    return f"Vault-Path: Daily/2026-10-05.md\n\n{text}".encode()
+
+
+def note_episodes(data_root: Path) -> list[dict[str, Any]]:
+    episodes = data_root / "l0" / "episodes" / "obsidian"
+    return [json.loads(path.read_bytes()) for path in sorted(episodes.rglob("*.json"))]
+
+
+def test_a_daily_note_ingests_authored_by_the_configured_owner_on_the_notes_day(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "2026-10-05.md", daily_note())
+
+    assert main(["ingest"]) == 0
+
+    [episode] = note_episodes(data_root)
+    assert episode["kind"] == "note"
+    assert episode["participants"] == [
+        {"identifier": "argus@example.com", "name": "Argus McNevans", "role": "author"}
+    ]
+    assert episode["occurred_at"] == {
+        "start": "2026-10-05T00:00:00Z",
+        "end": "2026-10-06T00:00:00Z",
+    }
+    assert episode["body"] == "## Swim lessons\n\nMara prefers weekday evenings."
+    assert (data_root / "l0" / episode["raw_ref"]).read_bytes() == daily_note()
+    assert episode["raw_ref"].startswith("raw/obsidian/2026-10/")
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 0\n"
+
+
+def test_a_corrected_note_is_a_new_episode_in_the_same_thread_and_the_original_is_kept(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    original = daily_note("## Swim lessons\n\nMara prefers weekday evenings.\n")
+    corrected = daily_note("## Swim lessons\n\nMara prefers Saturday mornings.\n")
+    drop_in_inbox(data_root, "2026-10-05.md", original)
+    main(["ingest"])
+    drop_in_inbox(data_root, "2026-10-05.md", corrected)
+
+    assert main(["ingest"]) == 0
+
+    first, second = sorted(note_episodes(data_root), key=lambda e: "Saturday" in e["body"])
+    assert first["episode_id"] != second["episode_id"]
+    assert first["thread_ref"] == second["thread_ref"] == "Daily/2026-10-05.md"
+    assert (data_root / "l0" / first["raw_ref"]).read_bytes() == original
+    assert (data_root / "l0" / second["raw_ref"]).read_bytes() == corrected
+    assert quarantined(data_root) == []
+    assert capsys.readouterr().out.splitlines()[-1] == "ingested 1, unchanged 0, quarantined 0"
+
+
+def test_reingesting_the_same_note_is_a_no_op(data_root: Path, capsys: pytest.CaptureFixture[str]):
+    drop_in_inbox(data_root, "2026-10-05.md", daily_note())
+    main(["ingest"])
+    before = snapshot(data_root / "l0")
+    capsys.readouterr()
+
+    drop_in_inbox(data_root, "2026-10-05.md", daily_note())
+    assert main(["ingest"]) == 0
+
+    assert snapshot(data_root / "l0") == before
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
+@pytest.mark.parametrize("unset", ["PA_OWNER_NAME", "PA_OWNER_EMAILS"])
+def test_ingest_refuses_to_start_without_the_owner_configured(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], unset: str
+):
+    monkeypatch.delenv(unset)
+    drop_in_inbox(data_root, "hotel.eml", email())
+
+    assert main(["ingest"]) != 0
+
+    error = capsys.readouterr().err
+    assert "Owner configuration is missing" in error
+    assert unset in error
+    assert (data_root / "inbox" / "hotel.eml").read_bytes() == email()
+    assert not (data_root / "l0").exists()

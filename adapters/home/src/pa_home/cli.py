@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
-from pa_home.config import DataRoot, load_data_root
+from pa_home.config import DataRoot, load_data_root, load_owner
 from pa_home.filesystem_l0 import FilesystemL0
 
 
@@ -29,8 +29,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _ingest(data_root: DataRoot) -> None:
+    owner = load_owner()
     data_root.inbox.mkdir(parents=True, exist_ok=True)
-    summary = ingest(data_root.inbox, FilesystemL0(data_root.l0))
+    summary = ingest(data_root.inbox, FilesystemL0(data_root.l0), owner)
     print(
         f"ingested {summary.ingested}, unchanged {summary.unchanged}, "
         f"quarantined {summary.quarantined}"
