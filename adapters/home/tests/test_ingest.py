@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pa_core.catalog import Catalog
+from pa_core.catalog import SqliteCatalog
 from pa_core.ingest import ingest
 from pa_home.cli import main
 from pa_home.config import load_owner
@@ -319,7 +319,7 @@ def test_a_payload_stays_in_the_inbox_when_it_cannot_be_written_to_quarantine(da
 def ingest_at(data_root: Path, moment: datetime):
     inbox = data_root / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
-    with Catalog(data_root / "catalog" / "catalog.sqlite") as catalog:
+    with SqliteCatalog(data_root / "catalog" / "catalog.sqlite") as catalog:
         return ingest(
             inbox, FilesystemL0(data_root / "l0"), catalog, load_owner(), now=lambda: moment
         )

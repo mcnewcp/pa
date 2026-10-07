@@ -1,4 +1,4 @@
-"""The catalog: a derived SQLite index of the episodes in L0 (ADR-0001).
+"""The catalog: a derived index of the episodes in L0 (ADR-0001), and its SQLite implementation.
 
 It carries no integrity burden: L0 is the truth, and the catalog can be deleted and rebuilt
 from the envelopes at any time.
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
+from typing import Protocol
 
 from pa_core.envelope import Envelope, Kind, Participant, Role, Source, TimeSpan
 from pa_core.l0 import L0Store, episode_ref
@@ -57,7 +58,13 @@ class CatalogEntry:
     raw_ref: str
 
 
-class Catalog:
+class Catalog(Protocol):
+    def add(self, envelope: Envelope) -> None:
+        """Index an episode, replacing what the catalog held for its id."""
+        ...
+
+
+class SqliteCatalog:
     """The catalog in the SQLite file at `path`, created if it does not exist."""
 
     def __init__(self, path: Path) -> None:
@@ -67,7 +74,7 @@ class Catalog:
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(_SCHEMA)
 
-    def __enter__(self) -> Catalog:
+    def __enter__(self) -> SqliteCatalog:
         return self
 
     def __exit__(
@@ -189,14 +196,14 @@ def _utc_text(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
-def open_catalog(path: Path, store: L0Store) -> Catalog:
+def open_catalog(path: Path, store: L0Store) -> SqliteCatalog:
     """The catalog at `path`, rebuilt from L0 first if it is missing.
 
     A catalog created empty beside a populated L0 would silently miss every earlier episode.
     """
     if not path.exists():
         rebuild_catalog(path, store)
-    return Catalog(path)
+    return SqliteCatalog(path)
 
 
 def rebuild_catalog(path: Path, store: L0Store) -> int:
@@ -208,7 +215,7 @@ def rebuild_catalog(path: Path, store: L0Store) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     building = path.with_name(f".{path.name}.rebuild")
     _remove_catalog_files(building)
-    with Catalog(building) as catalog:
+    with SqliteCatalog(building) as catalog:
         count = catalog.add_all(store.envelopes())
     # A journal left by a crash would otherwise be replayed into the new catalog.
     _journal(path).unlink(missing_ok=True)

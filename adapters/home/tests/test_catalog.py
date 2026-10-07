@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pa_core.catalog import Catalog, CatalogEntry
+from pa_core.catalog import CatalogEntry, SqliteCatalog
 from pa_core.envelope import Kind, Participant, Role, Source, TimeSpan
 from pa_home.cli import main
 
@@ -46,8 +46,8 @@ def drop_in_inbox(data_root: Path, name: str, payload: bytes) -> None:
     (inbox / name).write_bytes(payload)
 
 
-def open_catalog(data_root: Path) -> Catalog:
-    return Catalog(data_root / "catalog" / "catalog.sqlite")
+def open_catalog(data_root: Path) -> SqliteCatalog:
+    return SqliteCatalog(data_root / "catalog" / "catalog.sqlite")
 
 
 def test_an_ingested_email_is_in_the_catalog_with_its_fields(data_root: Path):
