@@ -6,3 +6,6 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Eval run outputs (pa-eval run). The committed baseline report is a deliberate exception.
+evals/runs/

@@ -42,5 +42,5 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "adapters/home/tests"]
+testpaths = ["core/tests", "adapters/home/tests", "evals/tests"]
 addopts = ["--import-mode=importlib", "--strict-markers"]

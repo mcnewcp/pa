@@ -63,10 +63,14 @@ version = "0.1.0"
 source = { editable = "evals" }
 dependencies = [
     { name = "pa-core" },
+    { name = "pa-home" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pa-core", editable = "core" }]
+requires-dist = [
+    { name = "pa-core", editable = "core" },
+    { name = "pa-home", editable = "adapters/home" },
+]
 
 [[package]]
 name = "pa-home"
