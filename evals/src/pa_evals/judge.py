@@ -29,7 +29,7 @@ class Verdict(BaseModel):
     correct: bool = Field(description="Whether the answer is correct against the expected answer.")
     reasoning: str = Field(description="A short explanation of the decision.")
     relevant_citations: list[str] = Field(
-        description="The ids of the cited episodes that are relevant to the answer."
+        description="The ids of the cited episodes that support the claims they are cited for."
     )
 
 
@@ -70,8 +70,11 @@ Rubric for `correct`:
 - When the expected answer says the information is not known, the answer is correct only if it
   says it does not know (or cannot find it) instead of inventing an answer.
 
-For `relevant_citations`, list the ids of the cited episodes below whose content supports a claim
-in the answer. Leave out episodes that are unrelated to the answer.
+For `relevant_citations`, check each citation separately from `correct`. The answer cites an
+episode as [ep:<id>] next to the claim it backs. List the id when the episode's content supports
+the claim it is cited for, even when that claim goes beyond the expected answer or the question:
+extra detail that is accurately cited is still a relevant citation. Leave the id out when the
+episode does not support the claim it is cited for, or has nothing to do with the answer.
 
 Keep `reasoning` to a few sentences."""
 

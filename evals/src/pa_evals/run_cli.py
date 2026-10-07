@@ -35,6 +35,10 @@ DEFAULT_RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 """`evals/runs/` in the workspace, which git ignores."""
 
 
+AS_OF_ADR = "docs/adr/0003-as-of-time-injection.md"
+"""Where the as-of injection methods were compared, and why the default won."""
+
+
 class ScriptError(PaError):
     """A scripted answers or verdicts file that is missing or malformed."""
 
@@ -200,6 +204,7 @@ def _setup(args: argparse.Namespace) -> dict[str, str]:
     if args.agent == "claude":
         setup["agent model"] = args.agent_model or "default"
         setup["as-of method"] = str(args.as_of_method)
+        setup["as-of methods compared in"] = AS_OF_ADR
     setup["judge"] = args.judge
     if args.judge == "model":
         setup["judge model"] = args.judge_model or "default"

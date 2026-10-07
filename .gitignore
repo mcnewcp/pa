@@ -7,5 +7,5 @@ dist/
 build/
 *.egg-info/
 
-# Eval run outputs (pa-eval run). The committed baseline report is a deliberate exception.
+# Eval run outputs (pa-eval run). Baseline reports are copied to evals/baselines/ and committed.
 evals/runs/

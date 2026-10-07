@@ -79,9 +79,12 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
         "agent": "claude",
         "agent model": "sonnet",
         "as-of method": "system-prompt",
+        "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
         "judge": "scripted",
     }
-    assert "- As-of method: system-prompt" in (run_dir / "report.md").read_text()
+    report = (run_dir / "report.md").read_text()
+    assert "- As-of method: system-prompt" in report
+    assert "- As-of methods compared in: docs/adr/0003-as-of-time-injection.md" in report
 
 
 @pytest.mark.skipif(
