@@ -75,3 +75,67 @@ def test_an_ingested_email_is_in_the_catalog_with_its_fields(data_root: Path):
             episode_path=str(envelope_file),
             raw_path=f"raw/gmail/2026-10/{EMAIL_ID}.eml",
         )
+
+
+def calendar_event(
+    uid: str = "swim-lessons-0001@icloud.com",
+    sequence: int = 0,
+    start: str = "20261017T090000",
+    end: str = "20261017T100000",
+    calendar: str = "Family",
+    attendee: str = "mailto:mara@example.com",
+) -> bytes:
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        f"X-WR-CALNAME:{calendar}",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"SEQUENCE:{sequence}",
+        "DTSTAMP:20261001T140000Z",
+        f"DTSTART;TZID=America/Chicago:{start}",
+        f"DTEND;TZID=America/Chicago:{end}",
+        "SUMMARY:Swim lessons",
+        "ORGANIZER;CN=Argus McNevans:mailto:argus@example.com",
+        f"ATTENDEE:{attendee}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "".join(f"{line}\r\n" for line in lines).encode()
+
+
+def daily_note(day: str = "2026-10-05", text: str = "## Swim lessons\n\nMara prefers weekdays.\n"):
+    return f"Vault-Path: Daily/{day}.md\n\n{text}".encode()
+
+
+def ingest_a_bit_of_everything(data_root: Path) -> None:
+    drop_in_inbox(data_root, "hotel.eml", email())
+    drop_in_inbox(data_root, "swim.ics", calendar_event())
+    drop_in_inbox(data_root, "2026-10-05.md", daily_note())
+    assert main(["ingest"]) == 0
+    drop_in_inbox(
+        data_root,
+        "swim.ics",
+        calendar_event(sequence=1, start="20261017T100000", end="20261017T110000"),
+    )
+    drop_in_inbox(data_root, "2026-10-05.md", daily_note(text="## Swim lessons\n\nSaturdays.\n"))
+    assert main(["ingest"]) == 0
+
+
+def all_entries(data_root: Path) -> list[CatalogEntry]:
+    with open_catalog(data_root) as catalog:
+        return catalog.entries()
+
+
+def test_a_rebuilt_catalog_has_the_same_contents_as_the_one_ingest_built(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    ingest_a_bit_of_everything(data_root)
+    built_by_ingest = all_entries(data_root)
+    capsys.readouterr()
+
+    assert main(["catalog", "rebuild"]) == 0
+
+    assert all_entries(data_root) == built_by_ingest
+    assert len(built_by_ingest) == 5
+    assert capsys.readouterr().out == "catalog rebuilt: 5 episodes\n"

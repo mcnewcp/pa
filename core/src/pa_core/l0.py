@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -22,6 +23,10 @@ class QuarantineRecord(BaseModel):
 
 
 class L0Store(Protocol):
+    def envelopes(self) -> Iterator[Envelope]:
+        """Every episode's envelope in L0."""
+        ...
+
     def get(self, episode_id: str) -> Envelope | None:
         """The stored envelope for `episode_id`, or None if no such episode exists."""
         ...
