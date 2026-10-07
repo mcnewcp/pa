@@ -342,3 +342,128 @@ def test_the_same_payload_quarantined_twice_in_one_second_keeps_both_and_the_res
     assert (summary.ingested, summary.unchanged, summary.quarantined) == (1, 0, 1)
     assert [item.raw for item in quarantined(data_root)] == [broken, broken]
     assert list((data_root / "inbox").iterdir()) == []
+
+
+def calendar_event(
+    sequence: int = 0,
+    last_modified: str = "20261001T135900Z",
+    start: str = "20261017T090000",
+    status: str = "CONFIRMED",
+    dtstamp: str = "20261001T140000Z",
+    people: tuple[str, ...] = (
+        "ORGANIZER;CN=Argus McNevans:mailto:argus@example.com",
+        "ATTENDEE;CN=Mara McNevans:mailto:mara@example.com",
+    ),
+) -> bytes:
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "X-WR-CALNAME:Family",
+        "BEGIN:VEVENT",
+        "UID:swim-lessons-0001@icloud.com",
+        f"SEQUENCE:{sequence}",
+        f"DTSTAMP:{dtstamp}",
+        f"LAST-MODIFIED:{last_modified}",
+        f"DTSTART;TZID=America/Chicago:{start}",
+        "SUMMARY:Swim lessons",
+        f"STATUS:{status}",
+        *people,
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "".join(f"{line}\r\n" for line in lines).encode()
+
+
+def calendar_episodes(data_root: Path) -> list[dict[str, Any]]:
+    episodes = data_root / "l0" / "episodes" / "icloud_calendar"
+    return [json.loads(path.read_bytes()) for path in sorted(episodes.rglob("*.json"))]
+
+
+def test_an_event_and_its_update_are_two_episodes_with_their_raw_payloads(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    original = calendar_event()
+    moved = calendar_event(sequence=1, last_modified="20261005T120000Z", start="20261017T100000")
+    drop_in_inbox(data_root, "swim.ics", original)
+    main(["ingest"])
+    drop_in_inbox(data_root, "swim.ics", moved)
+
+    assert main(["ingest"]) == 0
+
+    first, second = sorted(calendar_episodes(data_root), key=lambda e: e["occurred_at"]["start"])
+    assert first["episode_id"] != second["episode_id"]
+    assert first["thread_ref"] == second["thread_ref"]
+    assert (first["occurred_at"]["start"], second["occurred_at"]["start"]) == (
+        "2026-10-17T09:00:00-05:00",
+        "2026-10-17T10:00:00-05:00",
+    )
+    assert (data_root / "l0" / first["raw_ref"]).read_bytes() == original
+    assert (data_root / "l0" / second["raw_ref"]).read_bytes() == moved
+    assert first["raw_ref"].startswith("raw/icloud_calendar/2026-10/")
+    assert capsys.readouterr().out.splitlines()[-1] == "ingested 1, unchanged 0, quarantined 0"
+
+
+def test_a_cancellation_is_its_own_episode_and_the_original_is_kept(data_root: Path):
+    drop_in_inbox(data_root, "swim.ics", calendar_event())
+    main(["ingest"])
+    cancelled = calendar_event(sequence=1, last_modified="20261008T120000Z", status="CANCELLED")
+    drop_in_inbox(data_root, "swim.ics", cancelled)
+
+    main(["ingest"])
+
+    statuses = sorted(episode["body"] for episode in calendar_episodes(data_root))
+    assert statuses == ["Status: cancelled", "Status: confirmed"]
+    assert quarantined(data_root) == []
+
+
+def test_the_envelope_carries_the_calendar_name_organizer_and_attendees(data_root: Path):
+    drop_in_inbox(data_root, "swim.ics", calendar_event())
+
+    main(["ingest"])
+
+    [episode] = calendar_episodes(data_root)
+    assert episode["calendar_name"] == "Family"
+    assert episode["participants"] == [
+        {"identifier": "argus@example.com", "name": "Argus McNevans", "role": "organizer"},
+        {"identifier": "mara@example.com", "name": "Mara McNevans", "role": "attendee"},
+    ]
+
+
+def test_an_event_with_no_attendees_ingests_cleanly(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "swim.ics", calendar_event(people=()))
+
+    assert main(["ingest"]) == 0
+
+    [episode] = calendar_episodes(data_root)
+    assert episode["participants"] == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 0\n"
+
+
+def test_reingesting_the_same_version_of_an_event_is_a_no_op(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "swim.ics", calendar_event())
+    main(["ingest"])
+    before = snapshot(data_root / "l0")
+    capsys.readouterr()
+
+    drop_in_inbox(data_root, "swim.ics", calendar_event())
+    drop_in_inbox(data_root, "swim-reexported.ics", calendar_event(dtstamp="20261009T080000Z"))
+    assert main(["ingest"]) == 0
+
+    assert snapshot(data_root / "l0") == before
+    assert list((data_root / "inbox").iterdir()) == []
+    assert capsys.readouterr().out == "ingested 0, unchanged 2, quarantined 0\n"
+
+
+def test_a_malformed_calendar_is_quarantined_with_a_reason(data_root: Path):
+    broken = calendar_event().replace(b"UID:", b"X-UID:")
+    drop_in_inbox(data_root, "swim.ics", broken)
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.raw == broken
+    assert "no UID" in item.record["reason"]
