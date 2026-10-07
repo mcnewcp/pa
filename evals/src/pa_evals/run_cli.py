@@ -16,11 +16,18 @@ from pydantic import ValidationError
 
 from pa_core.errors import PaError
 from pa_core.model_client import ModelClient
-from pa_evals.agent import AgentError, AgentRunner, ScriptedAgent, ScriptedAnswer
+from pa_evals.agent import (
+    AgentError,
+    AgentRunner,
+    ClaudeAgentRunner,
+    ScriptedAgent,
+    ScriptedAnswer,
+)
 from pa_evals.eval_set import load_eval_set
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.report import write_run
+from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
 
 DEFAULT_RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
@@ -48,6 +55,16 @@ def _scripted_agent(args: argparse.Namespace) -> AgentRunner:
     return ScriptedAgent(answers)
 
 
+def _claude_agent(args: argparse.Namespace) -> AgentRunner:
+    return ClaudeAgentRunner(
+        ClaudeAgent(
+            model=args.agent_model,
+            timeout_seconds=args.agent_timeout,
+            as_of_method=args.as_of_method,
+        )
+    )
+
+
 def _scripted_judge(args: argparse.Namespace) -> Judge:
     if args.verdicts is None:
         raise ScriptError("--judge scripted needs --verdicts FILE")
@@ -67,6 +84,7 @@ def _model_judge(args: argparse.Namespace) -> Judge:
 
 AGENTS: dict[str, Callable[[argparse.Namespace], AgentRunner]] = {
     "scripted": _scripted_agent,
+    "claude": _claude_agent,
 }
 JUDGES: dict[str, Callable[[argparse.Namespace], Judge]] = {
     "scripted": _scripted_judge,
@@ -105,6 +123,24 @@ def add_run_command(commands: Any) -> None:
         type=Path,
         help='For --agent scripted: JSON of question id to answer text or {"error": "..."}.',
     )
+    run.add_argument(
+        "--agent-model", help="For --agent claude: the claude model (default: the CLI's default)."
+    )
+    run.add_argument(
+        "--as-of-method",
+        type=AsOfMethod,
+        choices=list(AsOfMethod),
+        default=DEFAULT_AS_OF_METHOD,
+        help="For --agent claude: how the agent is told the as-of time "
+        f"(default: {DEFAULT_AS_OF_METHOD}; see docs/adr/0003). 'none' is the control.",
+    )
+    run.add_argument(
+        "--agent-timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="For --agent claude: seconds before a question fails as timed out "
+        f"(default: {DEFAULT_TIMEOUT_SECONDS}).",
+    )
     run.add_argument("--judge", choices=sorted(JUDGES), required=True, help="Judge.")
     run.add_argument(
         "--verdicts",
@@ -132,7 +168,7 @@ def _run(args: argparse.Namespace) -> int:
         agent,
         judge,
         concurrency=args.concurrency,
-        setup={"agent": args.agent, "judge": args.judge},
+        setup=_setup(args),
     )
     run_dir = write_run(results, args.runs_dir)
     overall = results.overall
@@ -145,6 +181,18 @@ def _run(args: argparse.Namespace) -> int:
     print(f"report: {run_dir / 'report.md'}")
     print(f"results: {run_dir / 'results.json'}")
     return 0
+
+
+def _setup(args: argparse.Namespace) -> dict[str, str]:
+    """How the run was set up, as shown at the top of the report."""
+    setup = {"agent": args.agent}
+    if args.agent == "claude":
+        setup["agent model"] = args.agent_model or "default"
+        setup["as-of method"] = str(args.as_of_method)
+    setup["judge"] = args.judge
+    if args.judge == "model":
+        setup["judge model"] = args.judge_model or "default"
+    return setup
 
 
 def _number(value: float | None) -> str:

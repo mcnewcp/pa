@@ -12,17 +12,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from pa_core.errors import PaError
 from pa_core.owner import Owner
+from pa_home.agent import AgentError, AgentTimeoutError, ClaudeAgent
 from pa_home.config import DataRoot
 
-
-class AgentError(PaError):
-    """The agent could not answer a question."""
-
-
-class AgentTimeoutError(AgentError):
-    """The agent took longer than its runner allows."""
+__all__ = [
+    "AgentError",
+    "AgentRequest",
+    "AgentRunner",
+    "AgentTimeoutError",
+    "ClaudeAgentRunner",
+    "ScriptedAgent",
+]
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,18 @@ class AgentRunner(Protocol):
     def answer(self, request: AgentRequest) -> str:
         """The agent's answer, citing evidence as `[ep:<episode_id>]`."""
         ...
+
+
+class ClaudeAgentRunner:
+    """The real agent (`claude -p` in the agent project), asked at the question's as-of time."""
+
+    def __init__(self, agent: ClaudeAgent) -> None:
+        self._agent = agent
+
+    def answer(self, request: AgentRequest) -> str:
+        return self._agent.answer(
+            request.question, owner=request.owner, l0=request.data_root.l0, now=request.as_of
+        )
 
 
 type ScriptedAnswer = str | Exception

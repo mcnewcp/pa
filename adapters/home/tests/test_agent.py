@@ -1,0 +1,253 @@
+"""The agent: `claude -p` in the agent project, driven through a stand-in `claude` executable.
+
+The stand-in records what the real CLI would see (argv, the prompt on stdin, the project's
+CLAUDE.md in its working directory) and prints a result shaped like
+`claude -p --output-format json`. The real CLI is exercised only by the opt-in smoke tests.
+"""
+
+import json
+import os
+import stat
+import sys
+import textwrap
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from pa_core.owner import Owner
+from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent
+
+SATURDAY_MORNING = datetime(2026, 10, 10, 9, 0, tzinfo=timezone(timedelta(hours=-5)))
+OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
+
+
+def _fake_claude(tmp_path: Path, body: str = "") -> Path:
+    """A `claude` stand-in that saves what it saw to `seen.json`, then runs `body`.
+
+    It replies with `reply` (default: an answer citing one episode) unless `body` exits first.
+    """
+    script = tmp_path / "claude"
+    seen = tmp_path / "seen.json"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            f"""\
+            import json, os, sys
+            from pathlib import Path
+            argv = sys.argv[1:]
+            prompt = sys.stdin.read()
+            claude_md = Path("CLAUDE.md")
+            Path({str(seen)!r}).write_text(json.dumps({{
+                "argv": argv,
+                "prompt": prompt,
+                "cwd": os.getcwd(),
+                "claude_md": claude_md.read_text() if claude_md.exists() else None,
+            }}))
+            reply = "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+            """
+        )
+        + textwrap.dedent(body)
+        + textwrap.dedent(
+            """\
+            print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                              "result": reply}))
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
+def _seen(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / "seen.json").read_text())
+
+
+def _flag_values(argv: list[str], flag: str) -> list[str]:
+    """The values following `flag` in `argv`, up to the next flag."""
+    start = argv.index(flag) + 1
+    values = []
+    for value in argv[start:]:
+        if value.startswith("--"):
+            break
+        values.append(value)
+    return values
+
+
+@pytest.fixture
+def l0(tmp_path: Path) -> Path:
+    path = tmp_path / "data" / "l0"
+    path.mkdir(parents=True)
+    return path
+
+
+def test_the_agents_answer_is_returned(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert answer == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+
+
+def test_the_agent_can_only_read_grep_and_glob_within_l0(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    argv = _seen(tmp_path)["argv"]
+    assert argv[0] == "-p"
+    assert _flag_values(argv, "--tools") == ["Read,Grep,Glob"]
+    assert _flag_values(argv, "--add-dir") == [str(l0)]
+    # Restricted mode confines the file tools to the working directories and ignores user,
+    # project and local settings; no MCP servers and no skills are loaded.
+    for flag in ("--restricted", "--strict-mcp-config", "--disable-slash-commands"):
+        assert flag in argv
+
+
+def test_the_agent_runs_in_the_agent_project_told_who_the_owner_is_and_where_l0_is(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    claude_md = _seen(tmp_path)["claude_md"]
+    for value in ("Argus McNevans", "Gus", "argus@example.com", str(l0), "[ep:<episode_id>]"):
+        assert value in claude_md
+    assert "$" not in claude_md, "a placeholder was left unfilled"
+    # Claude Code's own system prompt casts it as a coding assistant; it is told otherwise.
+    [system_prompt] = _flag_values(_seen(tmp_path)["argv"], "--append-system-prompt")
+    assert "personal assistant" in system_prompt and "CLAUDE.md" in system_prompt
+
+
+def test_the_agent_project_names_no_owner_of_its_own(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+    other = Owner(name="Wren Okafor", email_addresses=("wren@example.org",))
+
+    agent.answer("What's on today?", owner=other, l0=l0)
+
+    claude_md = _seen(tmp_path)["claude_md"]
+    assert "Wren Okafor" in claude_md and "wren@example.org" in claude_md
+    assert "Argus" not in claude_md and "argus@" not in claude_md
+
+
+def test_the_agent_runs_outside_the_repository_so_no_other_instructions_are_picked_up(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    cwd = Path(_seen(tmp_path)["cwd"])
+    repository = Path(__file__).resolve().parents[3]
+    assert not cwd.is_relative_to(repository)
+    assert not cwd.exists(), "the per-question project copy is cleaned up"
+
+
+def test_now_is_appended_to_the_system_prompt(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(
+        executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.SYSTEM_PROMPT
+    )
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "Saturday, October 10, 2026, 09:00" in system_prompt
+    assert "2026-10-10T09:00:00-05:00" in system_prompt
+    assert seen["prompt"] == "What day of the week is it?"
+
+
+def test_now_can_be_stated_in_a_message_before_the_question(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.PREAMBLE)
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "2026" not in system_prompt
+    preamble, question = seen["prompt"].rsplit("\n\n", 1)
+    assert "Saturday, October 10, 2026, 09:00" in preamble
+    assert question == "What day of the week is it?"
+
+
+def test_without_an_injected_now_the_agent_tells_the_time_by_its_clock(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(
+        executable=str(_fake_claude(tmp_path)),
+        as_of_method=AsOfMethod.PREAMBLE,
+        clock=lambda: SATURDAY_MORNING,
+    )
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0)
+
+    assert "Saturday, October 10, 2026, 09:00" in _seen(tmp_path)["prompt"]
+
+
+def test_the_control_method_injects_no_time_at_all(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.NONE)
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "2026" not in system_prompt
+    assert seen["prompt"] == "What day of the week is it?"
+
+
+def test_the_agent_runs_on_the_chosen_model(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), model="sonnet")
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert _flag_values(_seen(tmp_path)["argv"], "--model") == ["sonnet"]
+
+
+def test_a_failed_claude_session_is_an_agent_error_with_the_reason(tmp_path: Path, l0: Path):
+    claude = _fake_claude(
+        tmp_path,
+        """\
+        print(json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": True,
+                          "result": "Usage limit reached"}))
+        sys.exit(1)
+        """,
+    )
+    agent = ClaudeAgent(executable=str(claude))
+
+    with pytest.raises(AgentError, match="Usage limit reached"):
+        agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+
+def test_an_agent_that_runs_too_long_is_stopped_with_a_timeout_error(tmp_path: Path, l0: Path):
+    claude = _fake_claude(tmp_path, "import time; time.sleep(10)\n")
+    agent = ClaudeAgent(executable=str(claude), timeout_seconds=0.5)
+
+    with pytest.raises(AgentTimeoutError, match=r"0\.5 seconds"):
+        agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+
+def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(tmp_path / "no-such-claude"))
+
+    with pytest.raises(AgentError, match="installed"):
+        agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+
+@pytest.mark.skipif(
+    os.environ.get("PA_SMOKE_CLAUDE") != "1",
+    reason="calls the real claude CLI; set PA_SMOKE_CLAUDE=1 to run",
+)
+def test_smoke_the_real_agent_cannot_write_files(tmp_path: Path, l0: Path):
+    episode = l0 / "episodes" / "gmail" / "2026-10" / "gmail_94f6b4cbc55a3b85.json"
+    episode.parent.mkdir(parents=True)
+    episode.write_text('{"body": "The hotel block closes on Oct 9."}')
+    agent = ClaudeAgent(model=os.environ.get("PA_SMOKE_CLAUDE_MODEL", "haiku"))
+
+    agent.answer(
+        f"Please change {episode} so its body says Oct 10 instead of Oct 9, then create a "
+        f"file named {l0 / 'todo.txt'} that says 'book hotel'. Use any tool you have.",
+        owner=OWNER,
+        l0=l0,
+    )
+
+    assert episode.read_text() == '{"body": "The hotel block closes on Oct 9."}'
+    assert [p.name for p in l0.rglob("*") if p.is_file()] == [episode.name]
