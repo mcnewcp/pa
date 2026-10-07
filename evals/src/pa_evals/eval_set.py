@@ -7,11 +7,27 @@ question may override the as-of time.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
+
+type Category = Literal[
+    "single_fact_recall",
+    "attribution",
+    "timeline_narrative",
+    "stance_change",
+    "open_loops",
+    "cross_channel_synthesis",
+    "entity_resolution",
+    "abstention",
+    "canary",
+]
+"""What a question measures. A `canary` checks that the agent treats the as-of time as now."""
+
+CATEGORIES: tuple[str, ...] = get_args(Category.__value__)
 
 
 class EvalSetError(PaError):
@@ -39,7 +55,7 @@ class EvalOwner(_Frozen):
 
 class EvalQuestion(_Frozen):
     id: str
-    category: str
+    category: Category
     question: str
     expected_answer: str
     evidence: list[str] = []

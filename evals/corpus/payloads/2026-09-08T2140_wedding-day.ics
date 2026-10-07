@@ -1,0 +1,23 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//pa//synthetic corpus//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Family
+X-WR-TIMEZONE:America/Chicago
+BEGIN:VEVENT
+UID:wedding-day@corpus.pa.invalid
+SEQUENCE:0
+DTSTAMP:20260909T024000Z
+CREATED:20260909T024000Z
+LAST-MODIFIED:20260909T024000Z
+DTSTART;VALUE=DATE:20261024
+DTEND;VALUE=DATE:20261025
+SUMMARY:Dave & Priya's wedding
+LOCATION:Duluth\, MN
+DESCRIPTION:Ceremony 4 pm at North Shore Lodge\, reception to follow.\nDres
+ s: cocktail.
+ORGANIZER;CN=Argus McNevans:mailto:argus@example.com
+ATTENDEE;CN=Mara McNevans:mailto:mara@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

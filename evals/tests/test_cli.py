@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from pa_evals import frozen
 from pa_evals.cli import main
+from pa_evals.eval_set import load_eval_set
 from pa_evals.run_cli import DEFAULT_RUNS_DIR
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -148,3 +150,32 @@ def test_run_outputs_in_the_default_runs_directory_are_ignored_by_git():
     )
 
     assert ignored.returncode == 0
+
+
+def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
+    verdicts = tmp_path / "verdicts.json"
+    verdict = {"correct": True, "reasoning": "Wednesday.", "relevant_citations": []}
+    verdicts.write_text(json.dumps({"day-of-week": verdict}))
+    runs = tmp_path / "runs"
+
+    status = main(
+        [
+            "run",
+            *["--runs-dir", str(runs), "--only", "day-of-week"],
+            *["--agent", "scripted", "--answers", str(answers)],
+            *["--judge", "scripted", "--verdicts", str(verdicts)],
+        ]
+    )
+
+    assert status == 0
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["ingest"] == {
+        "ingested": len(list(frozen.PAYLOADS.iterdir())),
+        "unchanged": 0,
+        "quarantined": 0,
+    }
+    assert results["as_of"] == load_eval_set(frozen.EVAL_SET).as_of.isoformat()
+    assert [question["id"] for question in results["questions"]] == ["day-of-week"]

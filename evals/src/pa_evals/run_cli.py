@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from pa_core.errors import PaError
 from pa_core.model_client import ModelClient
+from pa_evals import frozen
 from pa_evals.agent import (
     AgentError,
     AgentRunner,
@@ -97,8 +98,18 @@ def add_run_command(commands: Any) -> None:
         "run",
         help="Build a throwaway PA from the corpus, ask the eval set, and write a scored report.",
     )
-    run.add_argument("--corpus", type=Path, required=True, help="Directory of raw payloads.")
-    run.add_argument("--eval-set", type=Path, required=True, help="Eval set JSON file.")
+    run.add_argument(
+        "--corpus",
+        type=Path,
+        default=frozen.PAYLOADS,
+        help="Directory of raw payloads (default: the frozen corpus, evals/corpus/payloads/).",
+    )
+    run.add_argument(
+        "--eval-set",
+        type=Path,
+        default=frozen.EVAL_SET,
+        help="Eval set JSON file (default: the Argus eval set, evals/corpus/eval_set.json).",
+    )
     run.add_argument(
         "--runs-dir",
         type=Path,
