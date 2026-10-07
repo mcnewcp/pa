@@ -9,6 +9,7 @@ from pa_core.normalizers.calendar import normalize_calendar_event
 
 FIXTURES = Path(__file__).parent / "fixtures" / "calendar"
 CAPTURED_AT = datetime(2026, 10, 2, 7, 0, tzinfo=UTC)
+SWIM = (FIXTURES / "swim_lessons.ics").read_bytes()
 
 
 def normalize_fixture(name: str):
@@ -62,6 +63,42 @@ def test_body_has_the_status_location_and_description():
     )
 
 
+def test_a_repeating_event_says_how_it_repeats():
+    weekly = SWIM.replace(b"STATUS:CONFIRMED", b"STATUS:CONFIRMED\r\nRRULE:FREQ=WEEKLY;COUNT=6")
+
+    envelope = normalize_calendar_event(weekly, captured_at=CAPTURED_AT)
+
+    assert envelope.body.startswith(
+        "Status: confirmed\nLocation: Westside YMCA, 400 Elm St\nRepeats: FREQ=WEEKLY;COUNT=6\n\n"
+    )
+
+
+def test_a_line_folded_inside_a_multibyte_character_is_unfolded_before_decoding():
+    folded = SWIM.replace(
+        b"SUMMARY:Swim lessons\\, Theo & June", "SUMMARY:Swim lessons\\, Th\u00e9o & June".encode()
+    )
+    split_at = folded.index("\u00e9".encode()) + 1
+    folded = folded[:split_at] + b"\r\n " + folded[split_at:]
+
+    envelope = normalize_calendar_event(folded, captured_at=CAPTURED_AT)
+
+    assert envelope.subject == "Swim lessons, Th\u00e9o & June"
+
+
+def test_a_multi_valued_parameter_does_not_hide_the_attendee():
+    delegated = SWIM.replace(
+        b"ATTENDEE;CN=Mara McNevans;",
+        b'ATTENDEE;DELEGATED-FROM="mailto:a@example.com","mailto:b@example.com";CN=Mara McNevans;',
+    )
+
+    envelope = normalize_calendar_event(delegated, captured_at=CAPTURED_AT)
+
+    assert (
+        Participant(identifier="mara@example.com", name="Mara McNevans", role=Role.ATTENDEE)
+        in envelope.participants
+    )
+
+
 def test_every_version_of_an_event_shares_its_uid_as_the_thread():
     envelope = normalize_fixture("swim_lessons.ics")
 
@@ -77,12 +114,11 @@ def a_later_version(raw: bytes, sequence: int, last_modified: str, *changes: tup
 
 
 def test_an_update_is_a_new_version_of_the_same_event():
-    raw = (FIXTURES / "swim_lessons.ics").read_bytes()
     moved = a_later_version(
-        raw, 1, "20261005T120000Z", (b"20261017T09", b"20261017T10"), (b"T094500", b"T104500")
+        SWIM, 1, "20261005T120000Z", (b"20261017T09", b"20261017T10"), (b"T094500", b"T104500")
     )
 
-    original = normalize_calendar_event(raw, captured_at=CAPTURED_AT)
+    original = normalize_calendar_event(SWIM, captured_at=CAPTURED_AT)
     update = normalize_calendar_event(moved, captured_at=CAPTURED_AT)
 
     assert update.episode_id != original.episode_id
@@ -91,12 +127,11 @@ def test_an_update_is_a_new_version_of_the_same_event():
 
 
 def test_a_cancellation_is_a_new_version_that_says_it_is_cancelled():
-    raw = (FIXTURES / "swim_lessons.ics").read_bytes()
     cancelled = a_later_version(
-        raw, 2, "20261008T120000Z", (b"STATUS:CONFIRMED", b"STATUS:CANCELLED")
+        SWIM, 2, "20261008T120000Z", (b"STATUS:CONFIRMED", b"STATUS:CANCELLED")
     )
 
-    original = normalize_calendar_event(raw, captured_at=CAPTURED_AT)
+    original = normalize_calendar_event(SWIM, captured_at=CAPTURED_AT)
     cancellation = normalize_calendar_event(cancelled, captured_at=CAPTURED_AT)
 
     assert cancellation.episode_id != original.episode_id
@@ -104,17 +139,16 @@ def test_a_cancellation_is_a_new_version_that_says_it_is_cancelled():
 
 
 def test_a_reexport_with_a_new_dtstamp_is_the_same_version_with_the_same_content():
-    raw = (FIXTURES / "swim_lessons.ics").read_bytes()
-    reexported = raw.replace(b"DTSTAMP:20261001T140000Z", b"DTSTAMP:20261009T080000Z")
+    reexported = SWIM.replace(b"DTSTAMP:20261001T140000Z", b"DTSTAMP:20261009T080000Z")
 
-    first = normalize_calendar_event(raw, captured_at=CAPTURED_AT)
+    first = normalize_calendar_event(SWIM, captured_at=CAPTURED_AT)
     second = normalize_calendar_event(reexported, captured_at=datetime(2026, 10, 9, tzinfo=UTC))
 
     assert second.episode_id == first.episode_id
     assert second.content_hash == first.content_hash
 
 
-def test_an_event_with_no_organizer_or_attendees_has_no_participants():
+def test_a_bare_event_has_no_participants_an_empty_body_and_utc_times():
     envelope = normalize_fixture("night_shift.ics")
 
     assert envelope.participants == []
@@ -127,8 +161,7 @@ def test_an_event_with_no_organizer_or_attendees_has_no_participants():
 
 
 def test_an_all_day_event_spans_its_days_from_midnight_in_the_calendars_time_zone():
-    raw = (FIXTURES / "swim_lessons.ics").read_bytes()
-    all_day = raw.replace(
+    all_day = SWIM.replace(
         b"DTSTART;TZID=America/Chicago:20261017T090000", b"DTSTART;VALUE=DATE:20261009"
     ).replace(b"DTEND;TZID=America/Chicago:20261017T094500", b"DTEND;VALUE=DATE:20261010")
 
@@ -140,7 +173,6 @@ def test_an_all_day_event_spans_its_days_from_midnight_in_the_calendars_time_zon
     }
 
 
-SWIM = (FIXTURES / "swim_lessons.ics").read_bytes()
 SWIM_EVENT = SWIM[SWIM.index(b"BEGIN:VEVENT") : SWIM.index(b"END:VCALENDAR")]
 
 

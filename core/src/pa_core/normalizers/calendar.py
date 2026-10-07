@@ -16,14 +16,15 @@ EXTENSION = ".ics"
 
 def normalize_calendar_event(raw: bytes, *, captured_at: datetime) -> Envelope:
     calendar = _parse(raw)
-    event = _the_event(calendar)
+    event = _only_event(calendar)
     native_id = event.text("UID")
     if not native_id:
         raise MalformedPayloadError("calendar event has no UID")
-    start = _moment(event, "DTSTART", calendar)
+    calendar_zone = calendar.text("X-WR-TIMEZONE")
+    start = _moment(event, "DTSTART", calendar_zone)
     if start is None:
         raise MalformedPayloadError("calendar event has no DTSTART")
-    end = _moment(event, "DTEND", calendar)
+    end = _moment(event, "DTEND", calendar_zone)
     eid = episode_id(Source.ICLOUD_CALENDAR, native_id, _version(event))
     return Envelope.seal(
         episode_id=eid,
@@ -60,9 +61,13 @@ def _address(value: str) -> str:
 
 
 def _body(event: _Component) -> str:
-    """The event's status and location as labelled lines, then its description."""
+    """The event's status, location and repeat rule as labelled lines, then its description."""
     status = event.text("STATUS")
-    fields = [("Status", status.lower() if status else None), ("Location", event.text("LOCATION"))]
+    fields = [
+        ("Status", status.lower() if status else None),
+        ("Location", event.text("LOCATION")),
+        ("Repeats", event.text("RRULE")),
+    ]
     header = "\n".join(f"{label}: {value}" for label, value in fields if value)
     description = (event.text("DESCRIPTION") or "").replace("\r\n", "\n")
     return "\n\n".join(part for part in (header, description) if part)
@@ -76,7 +81,7 @@ def _version(event: _Component) -> str:
     return f"{event.text('SEQUENCE') or '0'}:{event.text('LAST-MODIFIED') or ''}"
 
 
-def _the_event(calendar: _Component) -> _Component:
+def _only_event(calendar: _Component) -> _Component:
     events = [child for child in calendar.children if child.name == "VEVENT"]
     if len(events) != 1:
         raise MalformedPayloadError(f"calendar has {len(events)} events; expected exactly one")
@@ -87,7 +92,7 @@ def _the_event(calendar: _Component) -> _Component:
 _DATE_TIME = re.compile(r"(\d{8})(?:T(\d{6}))?(Z?)")
 
 
-def _moment(event: _Component, name: str, calendar: _Component) -> datetime | None:
+def _moment(event: _Component, name: str, calendar_zone: str | None) -> datetime | None:
     """A DATE or DATE-TIME property as an aware datetime, if present.
 
     A time keeps the zone the source gave it. A date, or a time with no zone, is read in the
@@ -97,9 +102,9 @@ def _moment(event: _Component, name: str, calendar: _Component) -> datetime | No
     if prop is None:
         return None
     match = _DATE_TIME.fullmatch(prop.value.strip())
-    if match is None or (match[3] and not match[2]):
-        raise MalformedPayloadError(f"calendar event has an unreadable {name} ({prop.value!r})")
     try:
+        if match is None or (match[3] and not match[2]):
+            raise ValueError
         naive = datetime.strptime(match[1] + (match[2] or "000000"), "%Y%m%d%H%M%S")
     except ValueError:
         raise MalformedPayloadError(
@@ -107,7 +112,7 @@ def _moment(event: _Component, name: str, calendar: _Component) -> datetime | No
         ) from None
     if match[3]:
         return naive.replace(tzinfo=UTC)
-    return naive.replace(tzinfo=_zone(prop.params.get("TZID") or calendar.text("X-WR-TIMEZONE")))
+    return naive.replace(tzinfo=_zone(prop.params.get("TZID") or calendar_zone))
 
 
 def _zone(name: str | None) -> tzinfo:
@@ -145,11 +150,11 @@ class _Component:
 
 
 def _parse(raw: bytes) -> _Component:
+    # Folding counts octets, so a fold can split a UTF-8 character: unfold before decoding.
     try:
-        text = raw.decode("utf-8")
+        unfolded = re.sub(rb"\r?\n[ \t]", b"", raw).decode("utf-8")
     except UnicodeDecodeError as error:
         raise MalformedPayloadError(f"calendar is not UTF-8 ({error})") from None
-    unfolded = re.sub(r"\r?\n[ \t]", "", text)
     stack: list[_Component] = []
     root: _Component | None = None
     for line in unfolded.splitlines():
@@ -178,8 +183,11 @@ def _parse(raw: bytes) -> _Component:
     return root
 
 
-# A parameter value may be quoted, and quoted values may contain `;`, `:` and `,`.
-_PARAM = re.compile(r';([A-Za-z0-9-]+)=("[^"]*"|[^";:]*)')
+# A parameter is one or more comma-separated values. A value may be quoted, and quoted values
+# may contain `;`, `:` and `,`.
+_PARAM_VALUE = r'(?:"[^"]*"|[^";:,]*)'
+_PARAM = re.compile(rf";([A-Za-z0-9-]+)=({_PARAM_VALUE}(?:,{_PARAM_VALUE})*)")
+_QUOTED = re.compile(r'"([^"]*)"')
 _NAME = re.compile(r"[A-Za-z0-9-]+")
 
 
@@ -190,7 +198,8 @@ def _content_line(line: str) -> tuple[str, dict[str, str], str]:
     position = name_match.end()
     params: dict[str, str] = {}
     while (param := _PARAM.match(line, position)) is not None:
-        params[param[1].upper()] = param[2].strip('"')
+        quoted = _QUOTED.fullmatch(param[2])
+        params[param[1].upper()] = quoted[1] if quoted else param[2]
         position = param.end()
     if not line.startswith(":", position):
         raise MalformedPayloadError(f"calendar has an unreadable line: {line[:40]!r}")
