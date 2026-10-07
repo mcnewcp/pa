@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pa_core.errors import MalformedPayloadError
+from pa_core.errors import EpisodeConflictError, MalformedPayloadError
 from pa_core.l0 import L0Store, QuarantineRecord
 from pa_core.normalizers import normalizer_for
 
@@ -62,7 +62,11 @@ def _land(name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
         return _quarantine(store, name, raw, str(error), at)
     existing = store.get(envelope.episode_id)
     if existing is None:
-        store.put(envelope, raw)
+        try:
+            store.put(envelope, raw)
+        except EpisodeConflictError as error:
+            # A file left in L0 by an interrupted ingest holds other bytes for this episode.
+            return _quarantine(store, name, raw, f"episode {envelope.episode_id}: {error}", at)
         return Outcome.INGESTED
     if existing.content_hash == envelope.content_hash:
         return Outcome.UNCHANGED

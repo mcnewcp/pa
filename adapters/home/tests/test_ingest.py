@@ -15,10 +15,14 @@ EPISODE_FILE = Path("l0/episodes/gmail/2026-10") / f"{EPISODE_ID}.json"
 RAW_FILE = Path("l0/raw/gmail/2026-10") / f"{EPISODE_ID}.eml"
 
 
-def email(labels: str = "Inbox", body: str = "The hotel block closes on Oct 9.") -> bytes:
+def email(
+    labels: str = "Inbox",
+    body: str = "The hotel block closes on Oct 9.",
+    message_id: str = "wedding-0001@example.net",
+) -> bytes:
     return (
         f"X-Gmail-Labels: {labels}\r\n"
-        "Message-ID: <wedding-0001@example.net>\r\n"
+        f"Message-ID: <{message_id}>\r\n"
         "Date: Wed, 30 Sep 2026 21:30:00 -0500\r\n"
         "From: David Kim <dkim@example.net>\r\n"
         "To: Argus McNevans <argus@example.com>\r\n"
@@ -176,16 +180,24 @@ def test_a_data_root_that_resolves_into_the_repository_through_a_symlink_is_refu
     assert not (REPOSITORY / "inbox").exists()
 
 
-def test_a_raw_payload_left_by_an_interrupted_ingest_is_never_replaced(data_root: Path):
+def test_a_raw_payload_left_by_an_interrupted_ingest_is_never_replaced(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
     leftover = data_root / RAW_FILE
     leftover.parent.mkdir(parents=True)
     leftover.write_bytes(email(labels="Inbox"))
     leftover.chmod(0o444)
     drop_in_inbox(data_root, "hotel.eml", email(labels="Archived"))
+    drop_in_inbox(data_root, "shuttle.eml", email(message_id="wedding-0002@example.net"))
 
-    main(["ingest"])
+    assert main(["ingest"]) == 0
 
     assert leftover.read_bytes() == email(labels="Inbox")
+    [item] = quarantined(data_root)
+    assert item.raw == email(labels="Archived")
+    assert item.record["inbox_name"] == "hotel.eml"
+    assert list((data_root / "inbox").iterdir()) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"
 
 
 def test_an_interrupted_ingest_completes_when_the_payload_is_recaptured(data_root: Path):
