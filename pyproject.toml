@@ -1,0 +1,46 @@
+[project]
+name = "pa-workspace"
+version = "0.0.0"
+description = "Workspace root for the personal assistant monorepo"
+requires-python = ">=3.12"
+dependencies = ["pa-core", "pa-home", "pa-evals"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+pa-core = { workspace = true }
+pa-home = { workspace = true }
+pa-evals = { workspace = true }
+
+[tool.uv.workspace]
+members = ["core", "adapters/home", "evals"]
+
+[dependency-groups]
+dev = [
+    "pyright==1.1.414",
+    "pytest==9.1.1",
+    "ruff==0.16.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".agents", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "PTH", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pa_core", "pa_home", "pa_evals"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+include = ["core", "adapters/home", "evals"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["core/tests", "adapters/home/tests"]
+addopts = ["--import-mode=importlib", "--strict-markers"]

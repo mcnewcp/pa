@@ -1,0 +1,16 @@
+[project]
+name = "pa-home"
+version = "0.1.0"
+description = "Home adapter for the personal assistant: filesystem L0 and the pa command"
+requires-python = ">=3.12"
+dependencies = ["pa-core"]
+
+[project.scripts]
+pa = "pa_home.cli:main"
+
+[tool.uv.sources]
+pa-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"

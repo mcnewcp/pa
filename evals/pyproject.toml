@@ -1,0 +1,13 @@
+[project]
+name = "pa-evals"
+version = "0.1.0"
+description = "Evals for the personal assistant: storyline spec, synthetic corpus, eval set, harness"
+requires-python = ">=3.12"
+dependencies = ["pa-core"]
+
+[tool.uv.sources]
+pa-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
