@@ -251,3 +251,12 @@ def test_looking_up_a_source_finds_its_episodes_in_time_order(data_root: Path):
         (datetime(2026, 10, 17, 14, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
         (datetime(2026, 10, 17, 15, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
     ]
+
+
+def test_a_participant_is_found_whatever_the_case_of_their_identifier(data_root: Path):
+    drop_in_inbox(data_root, "swim.ics", calendar_event(attendee="urn:x-family:Theo"))
+    main(["ingest"])
+
+    with open_catalog(data_root) as catalog:
+        assert len(catalog.with_participant("urn:x-family:Theo")) == 1
+        assert len(catalog.with_participant("URN:X-FAMILY:THEO")) == 1

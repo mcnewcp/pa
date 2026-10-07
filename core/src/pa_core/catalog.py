@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS episodes (
 CREATE TABLE IF NOT EXISTS participants (
     episode_id TEXT NOT NULL REFERENCES episodes (episode_id),
     position INTEGER NOT NULL,
-    identifier TEXT NOT NULL,
+    identifier TEXT NOT NULL COLLATE NOCASE,
     role TEXT NOT NULL,
     name TEXT,
     PRIMARY KEY (episode_id, position)
@@ -136,10 +136,10 @@ class Catalog:
         return self._select("WHERE source = ?", (source,))
 
     def with_participant(self, identifier: str) -> list[CatalogEntry]:
-        """Episodes `identifier` (an email address, any case) takes part in, in time order."""
+        """Episodes `identifier` (an email address, in any case) takes part in, in time order."""
         return self._select(
             "WHERE episode_id IN (SELECT episode_id FROM participants WHERE identifier = ?)",
-            (identifier.lower(),),
+            (identifier,),
         )
 
     def between(self, start: datetime, end: datetime) -> list[CatalogEntry]:
