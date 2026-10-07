@@ -19,6 +19,12 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CORPUS = FIXTURES / "corpus"
 EVAL_SET = FIXTURES / "eval_set.json"
 
+# Why the default won, as docs/adr/0003 records it.
+WHY_SYSTEM_PROMPT = (
+    "the default: it and a preamble both passed every as-of canary, and it leaves the question "
+    "exactly as asked and works in an interactive session too"
+)
+
 
 @pytest.fixture
 def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -79,11 +85,13 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
         "agent": "claude",
         "agent model": "sonnet",
         "as-of method": "system-prompt",
+        "why this as-of method": WHY_SYSTEM_PROMPT,
         "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
         "judge": "scripted",
     }
     report = (run_dir / "report.md").read_text()
     assert "- As-of method: system-prompt" in report
+    assert f"- Why this as-of method: {WHY_SYSTEM_PROMPT}" in report
     assert "- As-of methods compared in: docs/adr/0003-as-of-time-injection.md" in report
 
 

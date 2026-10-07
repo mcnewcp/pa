@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from pa_evals.eval_set import Category
+
 
 class QuestionResult(BaseModel):
     """One question's answer and scores.
@@ -18,7 +20,7 @@ class QuestionResult(BaseModel):
     """
 
     id: str
-    category: str
+    category: Category
     question: str
     as_of: datetime
     expected_answer: str
@@ -75,7 +77,7 @@ class RunResults(BaseModel):
     """The eval set's default as-of time."""
     ingest: IngestCounts
     overall: Scores
-    categories: dict[str, Scores]
+    categories: dict[Category, Scores]
     """Scores per category, in the order categories first appear in the eval set."""
     questions: list[QuestionResult]
     """Per-question results, in eval set order."""

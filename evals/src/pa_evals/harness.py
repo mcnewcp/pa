@@ -15,7 +15,7 @@ from pa_core.l0 import L0Store
 from pa_core.owner import Owner
 from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import parse_citations
-from pa_evals.eval_set import EvalQuestion, EvalSet
+from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.judge import Judge, JudgeRequest
 from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores
 from pa_home.config import DataRoot
@@ -24,7 +24,7 @@ from pa_home.filesystem_l0 import FilesystemL0
 DEFAULT_CONCURRENCY = 4
 
 
-class CorpusError(PaError):
+class CorpusCopyError(PaError):
     """A corpus directory that cannot be copied into the inbox."""
 
 
@@ -63,7 +63,7 @@ def run_eval(
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
 
-    categories: dict[str, list[QuestionResult]] = {}
+    categories: dict[Category, list[QuestionResult]] = {}
     for result in questions:
         categories.setdefault(result.category, []).append(result)
     return RunResults(
@@ -169,7 +169,7 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
 
 def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
     if not corpus.is_dir():
-        raise CorpusError(f"corpus directory not found: {corpus}")
+        raise CorpusCopyError(f"corpus directory not found: {corpus}")
     inbox.mkdir(parents=True)
     for payload in sorted(corpus.rglob("*")):
         relative = payload.relative_to(corpus)
@@ -177,5 +177,5 @@ def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
             continue
         target = inbox / payload.name
         if target.exists():
-            raise CorpusError(f"two corpus files share the name {payload.name}")
+            raise CorpusCopyError(f"two corpus files share the name {payload.name}")
         shutil.copyfile(payload, target)

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Callable
 from datetime import datetime
@@ -14,6 +12,7 @@ from string import Template
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
+from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print
 
 AGENT_PROJECT = Path(__file__).resolve().parents[2] / "agent"
 """`adapters/home/agent/`: the agent project. Its CLAUDE.md is a template (see `ClaudeAgent`)."""
@@ -94,14 +93,16 @@ class ClaudeAgent:
         self._clock = clock
 
     def answer(self, question: str, *, owner: Owner, l0: Path, now: datetime | None = None) -> str:
-        """The agent's answer to `question`, asked at `now` (default: the clock's time)."""
-        statement = now_statement(now or self._clock())
+        """The agent's answer to `question`, asked at `now` (default: the clock's time).
+
+        Raises ValueError if that time has no UTC offset, since the agent is told it with one.
+        """
+        now = now or self._clock()
+        if now.utcoffset() is None:
+            raise ValueError(f"the agent's now must have a UTC offset (got {now.isoformat()})")
+        statement = now_statement(now)
         prompt = question
-        command = [
-            self._executable,
-            "-p",
-            "--output-format",
-            "json",
+        args = [
             "--no-session-persistence",
             "--restricted",
             "--tools",
@@ -112,35 +113,29 @@ class ClaudeAgent:
             str(l0),
         ]
         if self._model:
-            command += ["--model", self._model]
+            args += ["--model", self._model]
         system_prompt = ROLE
         if self._as_of_method is AsOfMethod.SYSTEM_PROMPT:
             system_prompt += f"\n\n{statement}"
         elif self._as_of_method is AsOfMethod.PREAMBLE:
             prompt = f"{statement}\n\n{question}"
-        command += ["--append-system-prompt", system_prompt]
+        args += ["--append-system-prompt", system_prompt]
         with tempfile.TemporaryDirectory(prefix="pa-agent-") as directory:
             workdir = Path(directory) / "project"
             self._copy_project(workdir, owner, l0)
             try:
-                completed = subprocess.run(
-                    command,
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
+                result = run_print(
+                    self._executable,
+                    args,
+                    prompt=prompt,
                     cwd=workdir,
-                    timeout=self._timeout_seconds,
-                    check=False,
+                    timeout_seconds=self._timeout_seconds,
                 )
-            except FileNotFoundError as error:
-                raise AgentError(
-                    f"Could not run {self._executable!r}: is Claude Code installed and on PATH?"
-                ) from error
-            except subprocess.TimeoutExpired as error:
-                raise AgentTimeoutError(
-                    f"the agent did not answer within {self._timeout_seconds:g} seconds"
-                ) from error
-        return _answer_text(completed)
+            except ClaudeCliTimeoutError as error:
+                raise AgentTimeoutError(str(error)) from error
+            except ClaudeCliError as error:
+                raise AgentError(str(error)) from error
+        return str(result.get("result", ""))
 
     def _copy_project(self, workdir: Path, owner: Owner, l0: Path) -> None:
         shutil.copytree(self._project, workdir)
@@ -153,18 +148,3 @@ class ClaudeAgent:
                 l0=str(l0),
             )
         )
-
-
-def _answer_text(completed: subprocess.CompletedProcess[str]) -> str:
-    """The answer from `claude -p --output-format json` output, or an AgentError."""
-    try:
-        result = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        result = None
-    if not isinstance(result, dict) or completed.returncode != 0 or result.get("is_error"):
-        detail = (
-            (result.get("result") or result.get("subtype")) if isinstance(result, dict) else None
-        )
-        detail = detail or completed.stderr.strip() or completed.stdout.strip() or "no output"
-        raise AgentError(f"claude -p failed (exit {completed.returncode}): {detail}")
-    return str(result.get("result", ""))

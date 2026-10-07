@@ -13,21 +13,44 @@ class RenormalizeError(PaError):
     """Renormalize stopped before the swap; the envelopes in L0 are as they were."""
 
 
-def renormalize(store: L0Store, owner: Owner) -> int:
-    """Rebuild every envelope in L0 from its raw payload with the current normalizers.
+# What a raw payload the normalizers can no longer read raises: an expected PaError
+# (MalformedPayloadError, or a RenormalizeError from `_rebuild`), a ValueError (bad values,
+# undecodable text, an envelope that does not validate), or a LookupError for an unknown text
+# encoding. Anything else is a bug in the code and is raised as is.
+_PAYLOAD_ERRORS = (PaError, ValueError, LookupError)
 
-    The whole new envelope tree is built before anything changes, and then swapped in at
-    once. Raw payloads are never touched. If any raw payload no longer normalizes to its
-    episode's id, or no longer normalizes at all, nothing is swapped. Returns how many
-    episodes were renormalized. The catalog is left for the caller to rebuild.
+
+def renormalize(store: L0Store, owner: Owner) -> int:
+    """Rebuild the envelope of every raw payload in L0 with the current normalizers.
+
+    The whole new envelope tree is built from the raw payloads before anything changes, and
+    then swapped in at once. Raw payloads are never touched. Nothing is swapped if any raw
+    payload no longer normalizes to its episode's id, or no longer normalizes at all, or has no
+    envelope, or if an envelope's raw payload is missing. Returns how many episodes were
+    renormalized. The catalog is left for the caller to rebuild.
     """
+    old_envelopes = {envelope.raw_ref: envelope for envelope in store.envelopes()}
     rebuilt: list[Envelope] = []
     problems: list[str] = []
-    for old in store.envelopes():
+    for raw_ref in store.raw_refs():
+        old = old_envelopes.pop(raw_ref, None)
+        if old is None:
+            # Its capture time is only in an envelope, so it cannot be rebuilt here. Ingest
+            # stopped between the two writes, and the payload is still in the inbox.
+            problems.append(
+                f"{raw_ref}: raw payload has no envelope (an ingest stopped part way); "
+                "run `pa ingest` to finish it"
+            )
+            continue
         try:
             rebuilt.append(_rebuild(store, owner, old))
-        except Exception as error:
+        except _PAYLOAD_ERRORS as error:
+            if isinstance(error, KeyError | IndexError):
+                raise  # lookup errors from code, not from reading a payload
             problems.append(f"{old.episode_id}: {error}")
+    problems += [
+        f"{old.episode_id}: raw payload {old.raw_ref} is missing" for old in old_envelopes.values()
+    ]
     if problems:
         raise RenormalizeError(
             f"renormalize aborted, envelopes left unchanged ({len(problems)} problems):\n  "

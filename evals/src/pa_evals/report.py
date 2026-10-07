@@ -72,7 +72,7 @@ def render_report(results: RunResults) -> str:
     ]
     lines += [
         f"| {_cell(q.id)} | {_cell(q.category)} | {q.status} | {_yes_no(q.correct)} | "
-        f"{_number(q.evidence_recall)} | {_number(q.citation_validity)} |"
+        f"{format_score(q.evidence_recall)} | {format_score(q.citation_validity)} |"
         for q in results.questions
     ]
     lines += ["", "## Answers"]
@@ -107,12 +107,13 @@ def _answer_section(q: QuestionResult) -> list[str]:
 
 def _score_cells(scores: Scores) -> str:
     return (
-        f"{scores.questions} | {scores.failed} | {_number(scores.correctness)} | "
-        f"{_number(scores.evidence_recall)} | {_number(scores.citation_validity)}"
+        f"{scores.questions} | {scores.failed} | {format_score(scores.correctness)} | "
+        f"{format_score(scores.evidence_recall)} | {format_score(scores.citation_validity)}"
     )
 
 
-def _number(value: float | None) -> str:
+def format_score(value: float | None) -> str:
+    """A score to two decimals, or n/a where it does not apply."""
     return "n/a" if value is None else f"{value:.2f}"
 
 

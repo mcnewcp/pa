@@ -15,4 +15,5 @@ All data lives under one configured data root (`PA_DATA_DIR`) outside the reposi
 
 - Idempotent ingest is a file-existence check: the same id with the same `content_hash` is a no-op, and the same id with a different hash is quarantined, never overwritten.
 - `content_hash` covers the envelope's meaningful content, not raw bytes, so a re-capture that differs only in volatile fields (labels, capture time) collapses instead of being quarantined. A renormalize can change hashes, and the catalog is rebuilt with it.
+- The swap is atomic only where Linux's `renameat2` can exchange the two trees. Elsewhere, or on a filesystem without it, they are swapped with three renames, so a crash in between can leave `episodes/` missing, or the old tree beside the new one. Opening L0 repairs either: it puts the old tree back, or discards it, and an unfinished renormalize is simply run again.
 - On the work instance, the same envelope schema maps to columns in an append-only Delta table behind the same L0 storage interface.

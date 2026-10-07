@@ -22,8 +22,8 @@ def add_corpus_command(commands: Any) -> None:
         "generate",
         help="Generate a synthetic corpus of raw payloads from a storyline spec.",
         description="Generate a synthetic corpus of raw payloads from a storyline spec. "
-        "Metadata comes from the spec; claude -p writes only prose, one call per email, daily "
-        "note section, and correction.",
+        "People, times, and calendars come from the spec; claude -p writes only prose, one call "
+        "per email, daily note section, and correction.",
     )
     generate.add_argument("spec", type=Path, help="The storyline spec (YAML).")
     generate.add_argument("out", type=Path, help="An empty or new directory for the payloads.")

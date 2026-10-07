@@ -10,7 +10,7 @@ from pa_core.catalog import SqliteCatalog
 from pa_core.envelope import Envelope
 from pa_core.ingest import IngestSummary, ingest
 from pa_core.model_client import FakeModelBackend, ModelClient, ModelRequest
-from pa_evals.corpus import CorpusError, evidence_ids, generate_corpus
+from pa_evals.corpus import GeneratedCorpusError, evidence_ids, generate_corpus
 from pa_evals.storyline import StorylineSpec, load_spec
 from pa_home.claude_model import ClaudeCliBackend
 from pa_home.filesystem_l0 import FilesystemL0
@@ -240,7 +240,7 @@ def test_the_corpus_is_only_written_to_an_empty_directory(
 ) -> None:
     before = snapshot(corpus)
 
-    with pytest.raises(CorpusError, match="is not empty"):
+    with pytest.raises(GeneratedCorpusError, match="is not empty"):
         generate_corpus(spec, fake_client(), corpus)
     assert snapshot(corpus) == before
 
@@ -248,7 +248,7 @@ def test_the_corpus_is_only_written_to_an_empty_directory(
 def test_evidence_ids_need_every_payload(spec: StorylineSpec, corpus: Path) -> None:
     next(corpus.glob("*_wedding-day.ics")).unlink()
 
-    with pytest.raises(CorpusError, match="event wedding-day: its payload"):
+    with pytest.raises(GeneratedCorpusError, match="event wedding-day: its payload"):
         evidence_ids(spec, corpus)
 
 

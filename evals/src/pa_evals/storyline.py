@@ -19,10 +19,11 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
+from pa_evals.models import FrozenModel
 
 NOTE_CAPTURE_TIME = dt.time(1, 0)  # local time, the night after the note's day
 
@@ -35,11 +36,7 @@ class SpecError(PaError):
 Id = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]*$")]
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class Person(_Model):
+class Person(FrozenModel):
     """A cast member: a person, or an organization that sends email."""
 
     id: Id
@@ -48,14 +45,14 @@ class Person(_Model):
     emails: Annotated[list[str], Field(min_length=1)]
 
 
-class Calendar(_Model):
+class Calendar(FrozenModel):
     id: Id
     name: str
     # The calendar's own time zone (iCloud's X-WR-TIMEZONE); the spec's timezone if unset.
     timezone: str | None = None
 
 
-class EmailEvent(_Model):
+class EmailEvent(FrozenModel):
     id: Id
     channel: Literal["email"]
     at: dt.datetime
@@ -68,7 +65,7 @@ class EmailEvent(_Model):
     what: str
 
 
-class CalendarEvent(_Model):
+class CalendarEvent(FrozenModel):
     """A calendar event as first added. `at` is when it was added to the calendar.
 
     A `start` that is a date (no time) makes an all-day event; its `end`, if given, is the last
@@ -89,7 +86,7 @@ class CalendarEvent(_Model):
     what: str
 
 
-class CalendarUpdate(_Model):
+class CalendarUpdate(FrozenModel):
     """A new version of a calendar event: the fields given replace those of the version it updates.
 
     `updates` names the calendar event or the earlier update this one follows. `at` is when
@@ -111,7 +108,7 @@ class CalendarUpdate(_Model):
     what: str
 
 
-class NoteSection(_Model):
+class NoteSection(FrozenModel):
     """One topic, under its own heading, in the owner's daily note for `date`."""
 
     id: Id
@@ -122,7 +119,7 @@ class NoteSection(_Model):
     what: str
 
 
-class NoteCorrection(_Model):
+class NoteCorrection(FrozenModel):
     """A later correction to one daily note section, captured as a new version of that note."""
 
     id: Id
@@ -135,19 +132,19 @@ class NoteCorrection(_Model):
 type Event = EmailEvent | CalendarEvent | CalendarUpdate | NoteSection | NoteCorrection
 
 
-class Storyline(_Model):
+class Storyline(FrozenModel):
     id: Id
     title: str
     summary: str = ""
     events: list[Annotated[Event, Field(discriminator="channel")]]
 
 
-class Address(_Model):
+class Address(FrozenModel):
     name: str
     email: str
 
 
-class StorylineSpec(_Model):
+class StorylineSpec(FrozenModel):
     owner: str
     timezone: str
     # The vault folder daily notes live in.
@@ -175,7 +172,7 @@ class StorylineSpec(_Model):
         return self._storyline_by_event[event_id]
 
     def calendar(self, calendar_id: str) -> Calendar:
-        return {calendar.id: calendar for calendar in self.calendars}[calendar_id]
+        return self._calendars_by_id[calendar_id]
 
     def calendar_zone(self, calendar: Calendar) -> ZoneInfo:
         return ZoneInfo(calendar.timezone) if calendar.timezone else self.zone
@@ -204,13 +201,17 @@ class StorylineSpec(_Model):
         person = self.person(self.owner)
         return Owner(
             name=person.name,
-            email_addresses=tuple(email.lower() for email in person.emails),
+            email_addresses=tuple(person.emails),
             other_names=tuple(person.aliases),
         )
 
     @cached_property
     def _events_by_id(self) -> dict[str, Event]:
         return {event.id: event for event in self.events}
+
+    @cached_property
+    def _calendars_by_id(self) -> dict[str, Calendar]:
+        return {calendar.id: calendar for calendar in self.calendars}
 
     @cached_property
     def _storyline_by_event(self) -> dict[str, Storyline]:

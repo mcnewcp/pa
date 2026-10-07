@@ -71,9 +71,7 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     appears as a participant.
     """
     name = environ.get(OWNER_NAME_VAR, "").strip()
-    email_addresses = tuple(
-        address.lower() for address in _comma_separated(environ, OWNER_EMAILS_VAR)
-    )
+    email_addresses = _comma_separated(environ, OWNER_EMAILS_VAR)
     missing = [
         var
         for var, value in ((OWNER_NAME_VAR, name), (OWNER_EMAILS_VAR, email_addresses))

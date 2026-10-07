@@ -31,6 +31,10 @@ class L0Store(Protocol):
         """The stored envelope for `episode_id`, or None if no such episode exists."""
         ...
 
+    def raw_refs(self) -> Iterator[str]:
+        """Where every raw payload in L0 is stored (each one's `raw_ref`)."""
+        ...
+
     def get_raw(self, raw_ref: str) -> bytes | None:
         """The raw payload stored at `raw_ref`, or None if there is none."""
         ...

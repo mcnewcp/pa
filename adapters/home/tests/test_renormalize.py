@@ -162,15 +162,22 @@ def test_an_id_mismatch_aborts_and_leaves_the_original_envelopes_and_catalog(
     assert "gmail_0000000000000000" in error
 
 
+# A value the code cannot parse, text it cannot decode, an encoding it does not know.
+@pytest.mark.parametrize("failure", [ValueError, UnicodeDecodeError, LookupError])
 def test_a_payload_that_no_longer_normalizes_aborts_and_leaves_the_original_envelopes(
-    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: type[Exception],
 ):
     ingest_a_bit_of_everything(data_root)
     l0_before = snapshot(data_root / "l0")
     capsys.readouterr()
 
     def broken_body(message: object) -> str:
-        raise ValueError("the new code cannot read this body")
+        if failure is UnicodeDecodeError:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "the new code cannot read this body")
+        raise failure("the new code cannot read this body")
 
     monkeypatch.setattr(email_normalizer, "_body", broken_body)
 
@@ -180,6 +187,55 @@ def test_a_payload_that_no_longer_normalizes_aborts_and_leaves_the_original_enve
     error = capsys.readouterr().err
     assert EMAIL_ID in error
     assert "the new code cannot read this body" in error
+
+
+def test_a_raw_payload_whose_ingest_stopped_before_its_envelope_aborts_until_ingest_finishes_it(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    ingest(data_root, {"hotel.eml": email(), "swim.ics": calendar_event()})
+    # As if ingest stopped between writing the raw payload and the envelope: the payload is
+    # still in the inbox, since it leaves only once it has landed.
+    [swim_envelope] = (data_root / "l0" / "episodes" / "icloud_calendar").rglob("*.json")
+    swim_envelope.unlink()
+    (data_root / "inbox" / "swim.ics").write_bytes(calendar_event())
+    l0_before = snapshot(data_root / "l0")
+    capsys.readouterr()
+
+    assert main(["renormalize"]) == 1
+
+    assert snapshot(data_root / "l0") == l0_before
+    error = capsys.readouterr().err
+    assert f"raw/icloud_calendar/2026-10/{swim_envelope.stem}.ics" in error
+    assert "no envelope" in error
+    assert "pa ingest" in error
+    assert main(["ingest"]) == 0
+    assert main(["renormalize"]) == 0
+
+
+def test_a_temporary_file_left_by_an_interrupted_write_is_not_a_raw_payload(data_root: Path):
+    ingest(data_root, {"hotel.eml": email()})
+    leftover = data_root / "l0" / "raw" / "gmail" / "2026-10" / f".{EMAIL_ID}.eml.k2j4.tmp"
+    leftover.write_bytes(b"partial")
+
+    assert main(["renormalize"]) == 0
+
+
+@pytest.mark.parametrize("bug", [AttributeError, KeyError, TypeError])
+def test_a_bug_in_the_new_code_is_raised_not_reported_as_a_payload_problem(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, bug: type[Exception]
+):
+    ingest_a_bit_of_everything(data_root)
+    l0_before = snapshot(data_root / "l0")
+
+    def buggy_body(message: object) -> str:
+        raise bug("a mistake in the new code")
+
+    monkeypatch.setattr(email_normalizer, "_body", buggy_body)
+
+    with pytest.raises(bug, match="a mistake in the new code"):
+        main(["renormalize"])
+
+    assert snapshot(data_root / "l0") == l0_before
 
 
 def catalog_entries(data_root: Path) -> list[CatalogEntry]:
@@ -271,6 +327,38 @@ def test_a_tree_left_by_an_interrupted_renormalize_is_discarded_by_the_next_one(
         Path("episodes/gmail/2026-10") / f"{EMAIL_ID}.json",
         Path("raw/gmail/2026-10") / f"{EMAIL_ID}.eml",
     ]
+
+
+# Without renameat2, the new and old trees are swapped with three renames: episodes/ is moved
+# aside to .episodes.renormalize.swap, the new tree moved in, then the old tree moved out.
+
+
+def test_an_old_tree_left_aside_after_the_new_one_went_in_is_discarded(data_root: Path):
+    ingest(data_root, {"hotel.eml": email()})
+    old = data_root / "l0" / ".episodes.renormalize.swap" / "gmail" / "2026-10" / "gmail_old.json"
+    old.parent.mkdir(parents=True)
+    old.write_text("{}")
+
+    assert main(["renormalize"]) == 0
+
+    assert files_under(data_root / "l0") == [
+        Path("episodes/gmail/2026-10") / f"{EMAIL_ID}.json",
+        Path("raw/gmail/2026-10") / f"{EMAIL_ID}.eml",
+    ]
+
+
+def test_an_old_tree_moved_aside_before_the_new_one_went_in_is_put_back(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+    before = envelopes(data_root)
+    l0 = data_root / "l0"
+    (l0 / "episodes").rename(l0 / ".episodes.renormalize.swap")
+    (l0 / ".episodes.renormalize" / "gmail").mkdir(parents=True)
+
+    assert main(["catalog", "rebuild"]) == 0
+
+    assert envelopes(data_root) == before
+    assert sorted(p.name for p in l0.iterdir()) == ["episodes", "raw"]
+    assert len(catalog_entries(data_root)) == 5
 
 
 def test_renormalizing_an_empty_l0_succeeds_with_nothing_to_do(

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 
 from pa_core.model_client import ModelBackendError, ModelRequest
+from pa_home.claude_cli import ClaudeCliError, run_print
 
 
 class ClaudeCliBackend:
@@ -28,11 +28,7 @@ class ClaudeCliBackend:
         self._timeout_seconds = timeout_seconds
 
     def complete(self, request: ModelRequest) -> str:
-        command = [
-            self._executable,
-            "-p",
-            "--output-format",
-            "json",
+        args = [
             "--json-schema",
             json.dumps(request.schema),
             "--no-session-persistence",
@@ -41,41 +37,18 @@ class ClaudeCliBackend:
             "--strict-mcp-config",
         ]
         if self._model:
-            command += ["--model", self._model]
+            args += ["--model", self._model]
         with tempfile.TemporaryDirectory(prefix="pa-claude-") as workdir:
             try:
-                completed = subprocess.run(
-                    command,
-                    input=request.prompt,
-                    capture_output=True,
-                    text=True,
+                result = run_print(
+                    self._executable,
+                    args,
+                    prompt=request.prompt,
                     cwd=workdir,
-                    timeout=self._timeout_seconds,
-                    check=False,
+                    timeout_seconds=self._timeout_seconds,
                 )
-            except FileNotFoundError as error:
-                raise ModelBackendError(
-                    f"Could not run {self._executable!r}: is Claude Code installed and on PATH?"
-                ) from error
-            except subprocess.TimeoutExpired as error:
-                raise ModelBackendError(
-                    f"claude -p did not answer within {self._timeout_seconds:g} seconds."
-                ) from error
-        return _reply_text(completed)
-
-
-def _reply_text(completed: subprocess.CompletedProcess[str]) -> str:
-    """The model's reply from `claude -p --output-format json` output, or a ModelBackendError."""
-    try:
-        result = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        result = None
-    if not isinstance(result, dict) or completed.returncode != 0 or result.get("is_error"):
-        detail = (
-            (result.get("result") or result.get("subtype")) if isinstance(result, dict) else None
-        )
-        detail = detail or completed.stderr.strip() or completed.stdout.strip() or "no output"
-        raise ModelBackendError(f"claude -p failed (exit {completed.returncode}): {detail}")
-    if "structured_output" in result:
-        return json.dumps(result["structured_output"])
-    return str(result.get("result", ""))
+            except ClaudeCliError as error:
+                raise ModelBackendError(str(error)) from error
+        if "structured_output" in result:
+            return json.dumps(result["structured_output"])
+        return str(result.get("result", ""))

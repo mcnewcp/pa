@@ -23,11 +23,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
+from pydantic import AwareDatetime, ValidationError
 
 from pa_core.errors import PaError
 from pa_evals.corpus import evidence_ids
-from pa_evals.eval_set import EvalOwner, EvalSet
+from pa_evals.eval_set import Category, EvalOwner, EvalSet
+from pa_evals.models import FrozenModel
 from pa_evals.storyline import StorylineSpec
 
 
@@ -35,13 +36,9 @@ class QuestionsError(PaError):
     """A questions file that cannot be read or does not fit the spec."""
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class SourceQuestion(_Model):
+class SourceQuestion(FrozenModel):
     id: str
-    category: str
+    category: Category
     question: str
     expected_answer: str
     evidence: list[str] = []
@@ -49,7 +46,7 @@ class SourceQuestion(_Model):
     as_of: AwareDatetime | None = None
 
 
-class Questions(_Model):
+class Questions(FrozenModel):
     as_of: AwareDatetime
     questions: list[SourceQuestion]
 
@@ -77,14 +74,9 @@ def build_eval_set(questions_path: Path, spec: StorylineSpec, corpus_dir: Path) 
     if unknown:
         raise QuestionsError(f"evidence names events not in the spec: {'; '.join(unknown)}")
     ids = evidence_ids(spec, corpus_dir)
-    owner = spec.owner_identity
     data = {
         "as_of": questions.as_of,
-        "owner": EvalOwner(
-            name=owner.name,
-            email_addresses=list(owner.email_addresses),
-            other_names=list(owner.other_names),
-        ),
+        "owner": EvalOwner.from_owner(spec.owner_identity),
         "questions": [
             {**question.model_dump(), "evidence": [ids[event] for event in question.evidence]}
             for question in questions.questions

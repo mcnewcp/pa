@@ -100,6 +100,23 @@ def test_a_restored_snapshot_reproduces_l0_byte_for_byte_without_the_catalog(
     assert not list(restored.rglob("catalog*"))
 
 
+@requires_restic
+def test_a_tree_left_by_an_interrupted_renormalize_is_not_backed_up(
+    data_root: Path, restic_repository: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    populate(data_root, monkeypatch)
+    l0 = files_under(data_root / "l0")
+    leftover = data_root / "l0" / ".episodes.renormalize" / "gmail" / "2026-09" / "gmail_x.json"
+    leftover.parent.mkdir(parents=True)
+    leftover.write_text("{}")
+
+    assert main(["backup"]) == 0
+    restored = tmp_path / "restored"
+    restic("restore", "latest", "--target", str(restored))
+
+    assert files_under(restored) == l0
+
+
 def test_backup_without_a_repository_fails_with_a_clear_message(
     data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

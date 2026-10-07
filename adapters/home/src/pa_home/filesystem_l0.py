@@ -16,12 +16,24 @@ from pa_core.l0 import QuarantineRecord, episode_ref, quarantine_record_ref, qua
 
 READ_ONLY = 0o444
 
+# Renormalize builds the new envelope tree here, beside `episodes/`, then swaps the two.
+_BUILDING = ".episodes.renormalize"
+# Where `episodes/` waits while the trees are swapped without renameat2 (see `_exchange`).
+_ASIDE = f"{_BUILDING}.swap"
+RENORMALIZE_LEFTOVERS = f"{_BUILDING}*"
+"""A glob for what an interrupted renormalize can leave in the L0 root, once L0 is opened."""
+
 
 class FilesystemL0:
-    """L0 as files under `root`, laid out by `episode_ref` and `raw_ref`."""
+    """L0 as files under `root`, laid out by `episode_ref` and `raw_ref`.
+
+    Opening L0 first finishes off an envelope swap that a crash interrupted (see `_exchange`),
+    so every command sees one whole envelope tree.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        _recover_interrupted_swap(root)
 
     def envelopes(self) -> Iterator[Envelope]:
         for path in sorted((self.root / "episodes").glob("*/*/*.json")):
@@ -32,6 +44,12 @@ class FilesystemL0:
         for path in (self.root / "episodes" / source).glob(f"*/{episode_id}.json"):
             return Envelope.model_validate_json(path.read_bytes())
         return None
+
+    def raw_refs(self) -> Iterator[str]:
+        for path in sorted((self.root / "raw").glob("*/*/*")):
+            # A hidden file is the temporary file of a write that was interrupted.
+            if path.is_file() and not path.name.startswith("."):
+                yield path.relative_to(self.root).as_posix()
 
     def get_raw(self, raw_ref: str) -> bytes | None:
         path = self.root / raw_ref
@@ -52,7 +70,7 @@ class FilesystemL0:
         # The new tree is built whole beside the old one, then the two are exchanged in one
         # rename, so L0 never holds a mix of old and new envelopes.
         episodes = self.root / "episodes"
-        building = self.root / ".episodes.renormalize"
+        building = self.root / _BUILDING
         shutil.rmtree(building, ignore_errors=True)  # left by an interrupted renormalize
         building.mkdir(parents=True)
         try:
@@ -90,10 +108,28 @@ def _exchange(a: Path, b: Path) -> None:
         error = ctypes.get_errno()
         if error not in (errno.ENOSYS, errno.EINVAL):
             raise OSError(error, os.strerror(error), str(a), None, str(b))
-    aside = a.with_name(f"{a.name}.swap")
+    aside = a.with_name(_ASIDE)
     b.rename(aside)
     a.rename(b)
     aside.rename(a)
+
+
+def _recover_interrupted_swap(root: Path) -> None:
+    """Undo or finish a three-rename swap that stopped part way.
+
+    If `episodes/` is missing, the old tree had been moved aside and the new one not yet moved
+    in: put the old one back (the unfinished renormalize can simply be run again). If both are
+    there, the new tree is in place and the one aside is the old tree: discard it.
+    """
+    episodes, aside = root / "episodes", root / _ASIDE
+    if not aside.exists():
+        return
+    if episodes.exists():
+        shutil.rmtree(aside)
+    else:
+        aside.rename(episodes)
+        shutil.rmtree(root / _BUILDING, ignore_errors=True)
+    _fsync_dir(root)
 
 
 def _write_once(path: Path, data: bytes) -> None:

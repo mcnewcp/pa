@@ -9,10 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, get_args
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, Field, ValidationError, model_validator
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
+from pa_evals.models import FrozenModel
 
 type Category = Literal[
     "single_fact_recall",
@@ -34,26 +35,30 @@ class EvalSetError(PaError):
     """An eval set file that is missing or does not match the format."""
 
 
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class EvalOwner(_Frozen):
+class EvalOwner(FrozenModel):
     """The owner the corpus belongs to; ingest and the agent treat them as the owner."""
 
     name: str
     email_addresses: list[str] = Field(min_length=1)
     other_names: list[str] = []
 
+    @classmethod
+    def from_owner(cls, owner: Owner) -> EvalOwner:
+        return cls(
+            name=owner.name,
+            email_addresses=list(owner.email_addresses),
+            other_names=list(owner.other_names),
+        )
+
     def to_owner(self) -> Owner:
         return Owner(
             name=self.name,
-            email_addresses=tuple(address.lower() for address in self.email_addresses),
+            email_addresses=tuple(self.email_addresses),
             other_names=tuple(self.other_names),
         )
 
 
-class EvalQuestion(_Frozen):
+class EvalQuestion(FrozenModel):
     id: str
     category: Category
     question: str
@@ -64,7 +69,7 @@ class EvalQuestion(_Frozen):
     """Overrides the set's as-of time for this question."""
 
 
-class EvalSet(_Frozen):
+class EvalSet(FrozenModel):
     as_of: AwareDatetime
     """When the questions are asked from, unless a question overrides it."""
     owner: EvalOwner

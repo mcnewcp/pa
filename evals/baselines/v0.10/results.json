@@ -3,6 +3,7 @@
     "agent": "claude",
     "agent model": "sonnet",
     "as-of method": "system-prompt",
+    "why this as-of method": "the default: it and a preamble both passed every as-of canary, and it leaves the question exactly as asked and works in an interactive session too",
     "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
     "judge": "model",
     "judge model": "sonnet"

@@ -1,6 +1,6 @@
 """The corpus generator: a storyline spec in, native-shaped raw payloads out.
 
-Every piece of metadata (senders, recipients, attendees, times, calendars, note dates) comes
+Everything but the prose (senders, recipients, attendees, times, calendars, note dates) comes
 straight from the spec. The model client writes only prose: email bodies and daily note text.
 Each payload is written in its source's native shape (`.eml`, `.ics`, a captured Obsidian
 daily note `.md`) to one flat directory, ready to be dropped into an inbox.
@@ -39,8 +39,8 @@ from pa_evals.storyline import (
 UID_DOMAIN = "corpus.pa.invalid"
 
 
-class CorpusError(PaError):
-    """The corpus cannot be generated or read."""
+class GeneratedCorpusError(PaError):
+    """The generated corpus cannot be written, or lacks the payload a spec event is in."""
 
 
 class Prose(BaseModel):
@@ -56,7 +56,7 @@ def generate_corpus(spec: StorylineSpec, client: ModelClient, out_dir: Path) -> 
     failed model call leaves `out_dir` as it was. Returns the payload files, in name order.
     """
     if out_dir.exists() and any(out_dir.iterdir()):
-        raise CorpusError(f"{out_dir} is not empty; delete it or choose another directory")
+        raise GeneratedCorpusError(f"{out_dir} is not empty; delete it or choose another directory")
     payloads = _Generator(spec, client).payloads()
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, raw in payloads.items():
@@ -94,7 +94,7 @@ def evidence_ids(spec: StorylineSpec, corpus_dir: Path) -> dict[str, str]:
         try:
             raw = (corpus_dir / name).read_bytes()
         except OSError:
-            raise CorpusError(
+            raise GeneratedCorpusError(
                 f"event {event.id}: its payload {name} is not in {corpus_dir}"
             ) from None
         normalize = normalizer_for(name, spec.owner_identity)
@@ -126,7 +126,7 @@ class _Generator:
         payloads.update(self._daily_notes())
         return dict(sorted(payloads.items()))
 
-    def _write(self, prompt: str) -> str:
+    def _prose(self, prompt: str) -> str:
         return self.client.generate(prompt, Prose).text.strip()
 
     # Email
@@ -144,7 +144,7 @@ class _Generator:
             assert parent is None or isinstance(parent, EmailEvent)
             subject = event.subject or _reply_subject(subjects[parent.id] if parent else "")
             subjects[event.id] = subject
-            bodies[event.id] = self._write(
+            bodies[event.id] = self._prose(
                 self._email_prompt(event, subject, parent, bodies.get(event.reply_to or ""))
             )
             payloads[payload_name(spec, event)] = self._email(event, subject, bodies[event.id])
@@ -279,7 +279,7 @@ class _Generator:
         notes: dict[dt.date, dict[str, _Section]] = {}
         for day in sorted(days):
             notes[day] = {
-                section.id: _Section(section.heading, self._write(self._note_prompt(section)))
+                section.id: _Section(section.heading, self._prose(self._note_prompt(section)))
                 for section in days[day]
             }
             payloads[payload_name(spec, days[day][0])] = self._note(
@@ -289,7 +289,7 @@ class _Generator:
             section_event = spec.event(correction.corrects)
             assert isinstance(section_event, NoteSection)
             section = notes[section_event.date][section_event.id]
-            section.text = self._write(self._correction_prompt(section_event, section, correction))
+            section.text = self._prose(self._correction_prompt(section_event, section, correction))
             payloads[payload_name(spec, correction)] = self._note(
                 section_event.date,
                 notes[section_event.date].values(),

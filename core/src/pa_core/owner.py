@@ -7,7 +7,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Owner:
-    """Who the owner is. Instance configuration, never written into code."""
+    """Who the owner is. Instance configuration, never written into code.
+
+    Email addresses are kept in lower case, as normalizers record participant identifiers.
+    """
 
     name: str
     email_addresses: tuple[str, ...]
@@ -16,6 +19,8 @@ class Owner:
     def __post_init__(self) -> None:
         if not self.email_addresses:
             raise ValueError("an owner needs at least one email address")
+        lowered = tuple(address.lower() for address in self.email_addresses)
+        object.__setattr__(self, "email_addresses", lowered)
 
     @property
     def identifier(self) -> str:

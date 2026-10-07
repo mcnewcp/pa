@@ -194,6 +194,26 @@ def test_the_control_method_injects_no_time_at_all(tmp_path: Path, l0: Path):
     assert seen["prompt"] == "What day of the week is it?"
 
 
+def test_a_now_without_a_utc_offset_is_refused_before_the_agent_runs(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    with pytest.raises(ValueError, match="UTC offset"):
+        agent.answer(
+            "What day of the week is it?", owner=OWNER, l0=l0, now=datetime(2026, 10, 10, 9, 0)
+        )
+
+    assert not (tmp_path / "seen.json").exists()
+
+
+def test_a_clock_without_a_utc_offset_is_refused_too(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(
+        executable=str(_fake_claude(tmp_path)), clock=lambda: datetime(2026, 10, 10, 9, 0)
+    )
+
+    with pytest.raises(ValueError, match="UTC offset"):
+        agent.answer("What day of the week is it?", owner=OWNER, l0=l0)
+
+
 def test_the_agent_runs_on_the_chosen_model(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), model="sonnet")
 
