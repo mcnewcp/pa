@@ -1,5 +1,9 @@
+import json
 import stat
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -50,6 +54,35 @@ def is_read_only(path: Path) -> bool:
     return stat.S_IMODE(path.stat().st_mode) & 0o222 == 0
 
 
+MALFORMED = Path(__file__).parent / "fixtures" / "malformed"
+
+
+def drop_fixture_in_inbox(data_root: Path, name: str) -> bytes:
+    payload = (MALFORMED / name).read_bytes()
+    drop_in_inbox(data_root, name, payload)
+    return payload
+
+
+@dataclass
+class Quarantined:
+    raw: bytes
+    record: dict[str, Any]
+
+
+def quarantined(data_root: Path) -> list[Quarantined]:
+    """Each quarantined item: its raw bytes and its record, which sits beside it as `.json`."""
+    quarantine = data_root / "l0" / "quarantine"
+    if not quarantine.exists():
+        return []
+    return [
+        Quarantined(
+            raw=record_file.with_suffix("").read_bytes(),
+            record=json.loads(record_file.read_bytes()),
+        )
+        for record_file in sorted(quarantine.glob("*.json"))
+    ]
+
+
 def test_ingested_email_lands_in_l0_as_a_read_only_envelope_and_raw_payload(data_root: Path):
     drop_in_inbox(data_root, "hotel.eml", email())
 
@@ -72,7 +105,7 @@ def test_inbox_is_empty_after_ingest_and_the_summary_is_printed(
     main(["ingest"])
 
     assert list((data_root / "inbox").iterdir()) == []
-    assert capsys.readouterr().out == "ingested 1, unchanged 0\n"
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 0\n"
 
 
 def test_reingesting_the_same_email_adds_nothing_and_reports_it_unchanged(
@@ -88,7 +121,7 @@ def test_reingesting_the_same_email_adds_nothing_and_reports_it_unchanged(
 
     assert snapshot(data_root / "l0") == before
     assert list((data_root / "inbox").iterdir()) == []
-    assert capsys.readouterr().out == "ingested 0, unchanged 1\n"
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
 
 
 def test_a_recapture_that_only_changes_labels_is_unchanged(
@@ -101,7 +134,7 @@ def test_a_recapture_that_only_changes_labels_is_unchanged(
     drop_in_inbox(data_root, "hotel.eml", email(labels="Archived,Wedding"))
     main(["ingest"])
 
-    assert capsys.readouterr().out == "ingested 0, unchanged 1\n"
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
     assert (data_root / RAW_FILE).read_bytes() == email(labels="Inbox")
 
 
@@ -190,3 +223,21 @@ def test_commands_refuse_a_data_root_inside_the_repository_they_are_run_from(
 
     assert "inside the repository" in capsys.readouterr().err
     assert not (checkout / "data").exists()
+
+
+def test_a_malformed_payload_is_quarantined_with_a_reason_and_the_rest_still_ingests(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    broken = drop_fixture_in_inbox(data_root, "no_message_id.eml")
+    drop_in_inbox(data_root, "hotel.eml", email())
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.raw == broken
+    assert item.record["inbox_name"] == "no_message_id.eml"
+    assert "Message-ID" in item.record["reason"]
+    assert datetime.fromisoformat(item.record["quarantined_at"]).tzinfo is not None
+    assert (data_root / EPISODE_FILE).exists()
+    assert list((data_root / "inbox").iterdir()) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"

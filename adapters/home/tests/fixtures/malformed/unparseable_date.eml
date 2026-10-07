@@ -1,0 +1,8 @@
+Message-ID: <undated-0001@example.net>
+Date: sometime next week
+From: David Kim <dkim@example.net>
+To: Argus McNevans <argus@example.com>
+Subject: Rehearsal dinner
+Content-Type: text/plain; charset="utf-8"
+
+The Date header does not parse.

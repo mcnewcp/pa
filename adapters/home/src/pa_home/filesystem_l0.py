@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pa_core.envelope import Envelope
 from pa_core.errors import EpisodeConflictError
-from pa_core.l0 import episode_ref
+from pa_core.l0 import QuarantineRecord, episode_ref, quarantine_record_ref, quarantine_ref
 
 READ_ONLY = 0o444
 
@@ -30,6 +30,12 @@ class FilesystemL0:
         _write_once(self.root / envelope.raw_ref, raw)
         serialized = envelope.model_dump_json(indent=2) + "\n"
         _write_once(self.root / episode_ref(envelope), serialized.encode())
+
+    def quarantine(self, record: QuarantineRecord, raw: bytes) -> None:
+        # Raw first, so a record never points at bytes that were not kept.
+        _write_once(self.root / quarantine_ref(record, raw), raw)
+        serialized = record.model_dump_json(indent=2) + "\n"
+        _write_once(self.root / quarantine_record_ref(record, raw), serialized.encode())
 
 
 def _write_once(path: Path, data: bytes) -> None:
