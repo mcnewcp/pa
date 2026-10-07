@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS participants (
     name TEXT,
     PRIMARY KEY (episode_id, position)
 );
+CREATE INDEX IF NOT EXISTS participants_by_identifier ON participants (identifier);
+CREATE INDEX IF NOT EXISTS episodes_by_time ON episodes (occurred_start);
+CREATE INDEX IF NOT EXISTS episodes_by_source ON episodes (source, occurred_start);
 """
 
 
@@ -126,6 +129,19 @@ class Catalog:
     def entries(self) -> list[CatalogEntry]:
         """Every episode in the catalog, by episode id."""
         rows = self._db.execute("SELECT * FROM episodes ORDER BY episode_id").fetchall()
+        return [self._entry(row) for row in rows]
+
+    def with_participant(self, identifier: str) -> list[CatalogEntry]:
+        """Episodes `identifier` (an email address, any case) takes part in, in time order."""
+        return self._select(
+            "WHERE episode_id IN (SELECT episode_id FROM participants WHERE identifier = ?)",
+            (identifier.lower(),),
+        )
+
+    def _select(self, where: str, parameters: tuple[str, ...]) -> list[CatalogEntry]:
+        rows = self._db.execute(
+            f"SELECT * FROM episodes {where} ORDER BY occurred_start, episode_id", parameters
+        ).fetchall()
         return [self._entry(row) for row in rows]
 
     def _entry(self, row: tuple[str, ...]) -> CatalogEntry:

@@ -184,3 +184,25 @@ def test_an_episode_that_landed_but_was_not_cataloged_is_cataloged_when_reingest
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
     with open_catalog(data_root) as catalog:
         assert catalog.get(EMAIL_ID) is not None
+
+
+def when_and_what(entries: list[CatalogEntry]) -> list[tuple[datetime, Kind, str | None]]:
+    return [(entry.occurred_start, entry.kind, entry.calendar_name) for entry in entries]
+
+
+def test_looking_up_a_participant_finds_their_episodes_in_time_order(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+
+    with open_catalog(data_root) as catalog:
+        mara = catalog.with_participant("Mara@Example.com")
+        david = catalog.with_participant("dkim@example.net")
+        nobody = catalog.with_participant("swim-instructor@example.com")
+
+    assert when_and_what(mara) == [
+        (datetime(2026, 10, 1, 2, 30, tzinfo=UTC), Kind.EMAIL, None),
+        (datetime(2026, 10, 17, 14, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
+        (datetime(2026, 10, 17, 15, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
+    ]
+    assert mara[1].occurred_end == datetime(2026, 10, 17, 15, 0, tzinfo=UTC)
+    assert [entry.episode_id for entry in david] == [EMAIL_ID]
+    assert nobody == []
