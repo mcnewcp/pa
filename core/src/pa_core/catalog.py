@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 
-from pa_core.envelope import Envelope, Kind, Participant, Role, Source
+from pa_core.envelope import Envelope, Kind, Participant, Role, Source, TimeSpan
 from pa_core.l0 import L0Store, episode_ref
 
 _SCHEMA = """
@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     occurred_end TEXT,
     calendar_name TEXT,
     content_hash TEXT NOT NULL,
-    episode_path TEXT NOT NULL,
-    raw_path TEXT NOT NULL
+    episode_ref TEXT NOT NULL,
+    raw_ref TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS participants (
     episode_id TEXT NOT NULL REFERENCES episodes (episode_id),
@@ -44,18 +44,17 @@ CREATE INDEX IF NOT EXISTS episodes_by_source ON episodes (source, occurred_star
 
 @dataclass(frozen=True)
 class CatalogEntry:
-    """What the catalog knows about one episode. Paths are relative to the L0 root."""
+    """What the catalog knows about one episode. Refs are paths relative to the L0 root."""
 
     episode_id: str
     source: Source
     kind: Kind
-    occurred_start: datetime
-    occurred_end: datetime | None
+    occurred_at: TimeSpan
     participants: tuple[Participant, ...]
     calendar_name: str | None
     content_hash: str
-    episode_path: str
-    raw_path: str
+    episode_ref: str
+    raw_ref: str
 
 
 class Catalog:
@@ -64,6 +63,7 @@ class Catalog:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path)
+        self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(_SCHEMA)
 
@@ -136,7 +136,7 @@ class Catalog:
         return self._select("WHERE source = ?", (source,))
 
     def with_participant(self, identifier: str) -> list[CatalogEntry]:
-        """Episodes `identifier` (an email address, in any case) takes part in, in time order."""
+        """Episodes the participant `identifier` (in any case) takes part in, in time order."""
         return self._select(
             "WHERE episode_id IN (SELECT episode_id FROM participants WHERE identifier = ?)",
             (identifier,),
@@ -159,27 +159,28 @@ class Catalog:
         ).fetchall()
         return [self._entry(row) for row in rows]
 
-    def _entry(self, row: tuple[str, ...]) -> CatalogEntry:
-        episode_id, source, kind, start, end, calendar_name, content_hash, episode, raw = row
+    def _entry(self, row: sqlite3.Row) -> CatalogEntry:
         participants = self._db.execute(
             "SELECT identifier, role, name FROM participants WHERE episode_id = ? "
             "ORDER BY position",
-            (episode_id,),
+            (row["episode_id"],),
         )
         return CatalogEntry(
-            episode_id=episode_id,
-            source=Source(source),
-            kind=Kind(kind),
-            occurred_start=datetime.fromisoformat(start),
-            occurred_end=datetime.fromisoformat(end) if end else None,
-            participants=tuple(
-                Participant(identifier=identifier, role=Role(role), name=name)
-                for identifier, role, name in participants
+            episode_id=row["episode_id"],
+            source=Source(row["source"]),
+            kind=Kind(row["kind"]),
+            occurred_at=TimeSpan(
+                start=datetime.fromisoformat(row["occurred_start"]),
+                end=datetime.fromisoformat(row["occurred_end"]) if row["occurred_end"] else None,
             ),
-            calendar_name=calendar_name,
-            content_hash=content_hash,
-            episode_path=episode,
-            raw_path=raw,
+            participants=tuple(
+                Participant(identifier=p["identifier"], role=Role(p["role"]), name=p["name"])
+                for p in participants
+            ),
+            calendar_name=row["calendar_name"],
+            content_hash=row["content_hash"],
+            episode_ref=row["episode_ref"],
+            raw_ref=row["raw_ref"],
         )
 
 
@@ -206,15 +207,19 @@ def rebuild_catalog(path: Path, store: L0Store) -> int:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     building = path.with_name(f".{path.name}.rebuild")
-    _remove_database(building)
+    _remove_catalog_files(building)
     with Catalog(building) as catalog:
         count = catalog.add_all(store.envelopes())
     # A journal left by a crash would otherwise be replayed into the new catalog.
-    _remove_database(path)
+    _journal(path).unlink(missing_ok=True)
     building.replace(path)
     return count
 
 
-def _remove_database(path: Path) -> None:
-    for leftover in (path, path.with_name(f"{path.name}-journal")):
+def _remove_catalog_files(path: Path) -> None:
+    for leftover in (path, _journal(path)):
         leftover.unlink(missing_ok=True)
+
+
+def _journal(path: Path) -> Path:
+    return path.with_name(f"{path.name}-journal")

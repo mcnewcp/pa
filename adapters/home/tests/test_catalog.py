@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.catalog import Catalog, CatalogEntry
-from pa_core.envelope import Kind, Participant, Role, Source
+from pa_core.envelope import Kind, Participant, Role, Source, TimeSpan
 from pa_home.cli import main
 
 EMAIL_ID = "gmail_9ff7394d0df8584d"
@@ -62,8 +62,7 @@ def test_an_ingested_email_is_in_the_catalog_with_its_fields(data_root: Path):
             episode_id=EMAIL_ID,
             source=Source.GMAIL,
             kind=Kind.EMAIL,
-            occurred_start=datetime(2026, 10, 1, 2, 30, tzinfo=UTC),
-            occurred_end=None,
+            occurred_at=TimeSpan(start=datetime(2026, 10, 1, 2, 30, tzinfo=UTC)),
             participants=(
                 Participant(identifier="dkim@example.net", name="David Kim", role=Role.SENDER),
                 Participant(
@@ -73,8 +72,8 @@ def test_an_ingested_email_is_in_the_catalog_with_its_fields(data_root: Path):
             ),
             calendar_name=None,
             content_hash=stored_hash,
-            episode_path=str(envelope_file),
-            raw_path=f"raw/gmail/2026-10/{EMAIL_ID}.eml",
+            episode_ref=str(envelope_file),
+            raw_ref=f"raw/gmail/2026-10/{EMAIL_ID}.eml",
         )
 
 
@@ -187,7 +186,7 @@ def test_an_episode_that_landed_but_was_not_cataloged_is_cataloged_when_reingest
 
 
 def when_and_what(entries: list[CatalogEntry]) -> list[tuple[datetime, Kind, str | None]]:
-    return [(entry.occurred_start, entry.kind, entry.calendar_name) for entry in entries]
+    return [(entry.occurred_at.start, entry.kind, entry.calendar_name) for entry in entries]
 
 
 def test_looking_up_a_participant_finds_their_episodes_in_time_order(data_root: Path):
@@ -203,7 +202,7 @@ def test_looking_up_a_participant_finds_their_episodes_in_time_order(data_root: 
         (datetime(2026, 10, 17, 14, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
         (datetime(2026, 10, 17, 15, 0, tzinfo=UTC), Kind.CALENDAR_EVENT, "Family"),
     ]
-    assert mara[1].occurred_end == datetime(2026, 10, 17, 15, 0, tzinfo=UTC)
+    assert mara[1].occurred_at.end == datetime(2026, 10, 17, 15, 0, tzinfo=UTC)
     assert [entry.episode_id for entry in david] == [EMAIL_ID]
     assert nobody == []
 
