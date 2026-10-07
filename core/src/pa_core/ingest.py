@@ -60,6 +60,10 @@ def _land(name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
         envelope = normalizer_for(name)(raw, captured_at=at)
     except MalformedPayloadError as error:
         return _quarantine(store, name, raw, str(error), at)
+    except Exception as error:
+        # A normalizer is a pure function of the payload, so any failure means the payload
+        # cannot become an episode; keeping it beats stopping the rest of the inbox.
+        return _quarantine(store, name, raw, f"{type(error).__name__}: {error}", at)
     existing = store.get(envelope.episode_id)
     if existing is None:
         try:

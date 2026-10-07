@@ -1,0 +1,8 @@
+Message-ID: <sender-0001@example.net>
+Date: Wed, 30 Sep 2026 21:30:00 -0500
+From: David KimŞ <dkim@example.net>
+To: Argus McNevans <argus@example.com>
+Subject: Rehearsal dinner
+Content-Type: text/plain; charset="utf-8"
+
+A stray non-UTF-8 byte sits in the sender name.
