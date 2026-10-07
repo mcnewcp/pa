@@ -140,6 +140,7 @@ def test_a_recapture_that_only_changes_labels_is_unchanged(
 
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
     assert (data_root / RAW_FILE).read_bytes() == email(labels="Inbox")
+    assert quarantined(data_root) == []
 
 
 REPOSITORY = Path(__file__).resolve().parents[3]
@@ -226,18 +227,28 @@ def test_commands_refuse_a_data_root_inside_the_repository_they_are_run_from(
     assert not (checkout / "data").exists()
 
 
+@pytest.mark.parametrize(
+    ("fixture", "reason"),
+    [
+        ("no_message_id.eml", "no Message-ID"),
+        ("unparseable_date.eml", "no valid Date"),
+        ("unknown_shape.txt", "no normalizer for '.txt'"),
+        ("unknown_charset.eml", "unknown encoding: x-nonexistent"),
+        ("undecodable_sender.eml", "codec can't encode"),
+    ],
+)
 def test_a_malformed_payload_is_quarantined_with_a_reason_and_the_rest_still_ingests(
-    data_root: Path, capsys: pytest.CaptureFixture[str]
+    data_root: Path, capsys: pytest.CaptureFixture[str], fixture: str, reason: str
 ):
-    broken = drop_fixture_in_inbox(data_root, "no_message_id.eml")
+    broken = drop_fixture_in_inbox(data_root, fixture)
     drop_in_inbox(data_root, "hotel.eml", email())
 
     assert main(["ingest"]) == 0
 
     [item] = quarantined(data_root)
     assert item.raw == broken
-    assert item.record["inbox_name"] == "no_message_id.eml"
-    assert "Message-ID" in item.record["reason"]
+    assert item.record["inbox_name"] == fixture
+    assert reason in item.record["reason"]
     assert datetime.fromisoformat(item.record["quarantined_at"]).tzinfo is not None
     assert (data_root / EPISODE_FILE).exists()
     assert list((data_root / "inbox").iterdir()) == []
@@ -265,3 +276,15 @@ def test_a_recapture_with_different_content_is_quarantined_and_the_episode_is_un
     assert EPISODE_ID in item.record["reason"]
     assert list((data_root / "inbox").iterdir()) == []
     assert capsys.readouterr().out == "ingested 0, unchanged 0, quarantined 1\n"
+
+
+def test_a_payload_stays_in_the_inbox_when_it_cannot_be_written_to_quarantine(data_root: Path):
+    broken = drop_fixture_in_inbox(data_root, "no_message_id.eml")
+    # A file where the quarantine directory belongs makes every quarantine write fail.
+    (data_root / "l0").mkdir()
+    (data_root / "l0" / "quarantine").write_bytes(b"")
+
+    with pytest.raises(OSError):
+        main(["ingest"])
+
+    assert (data_root / "inbox" / "no_message_id.eml").read_bytes() == broken
