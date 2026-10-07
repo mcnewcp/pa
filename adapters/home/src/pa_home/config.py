@@ -63,7 +63,9 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     appears as a participant.
     """
     name = environ.get(OWNER_NAME_VAR, "").strip()
-    email_addresses = tuple(address.lower() for address in _list(environ, OWNER_EMAILS_VAR))
+    email_addresses = tuple(
+        address.lower() for address in _comma_separated(environ, OWNER_EMAILS_VAR)
+    )
     missing = [
         var
         for var, value in ((OWNER_NAME_VAR, name), (OWNER_EMAILS_VAR, email_addresses))
@@ -78,11 +80,11 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     return Owner(
         name=name,
         email_addresses=email_addresses,
-        other_names=_list(environ, OWNER_OTHER_NAMES_VAR),
+        other_names=_comma_separated(environ, OWNER_OTHER_NAMES_VAR),
     )
 
 
-def _list(environ: Mapping[str, str], var: str) -> tuple[str, ...]:
+def _comma_separated(environ: Mapping[str, str], var: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in environ.get(var, "").split(",") if item.strip())
 
 

@@ -5,10 +5,10 @@ import pytest
 
 from pa_core.envelope import Kind, Participant, Role, Source
 from pa_core.errors import MalformedPayloadError
-from pa_core.normalizers.note import normalize_daily_note
+from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.owner import Owner
 
-FIXTURES = Path(__file__).parent / "fixtures" / "notes"
+FIXTURES = Path(__file__).parent / "fixtures" / "daily_notes"
 CAPTURED_AT = datetime(2026, 10, 6, 4, 0, tzinfo=UTC)
 NOTE = (FIXTURES / "daily_note.md").read_bytes()
 OWNER = Owner(
@@ -56,12 +56,13 @@ def test_the_body_is_the_note_with_its_topic_headings():
     )
 
 
-def test_the_native_id_and_thread_are_the_notes_vault_path():
+def test_the_vault_path_is_the_native_id_and_thread_and_with_the_note_text_makes_the_id():
     envelope = normalize()
 
     assert envelope.native_id == "Daily/2026-10-05.md"
     assert envelope.thread_ref == "Daily/2026-10-05.md"
-    assert envelope.raw_ref == f"raw/obsidian/2026-10/{envelope.episode_id}.md"
+    assert envelope.episode_id == "obsidian_0510599eb323eee0"
+    assert envelope.raw_ref == "raw/obsidian/2026-10/obsidian_0510599eb323eee0.md"
 
 
 CORRECTED = NOTE.replace(b"weekday evenings work best", b"Saturday mornings work best")
@@ -111,3 +112,8 @@ def test_a_note_without_a_readable_capture_header_or_dated_path_is_malformed(
 ):
     with pytest.raises(MalformedPayloadError, match=reason):
         normalize(raw)
+
+
+def test_an_owner_needs_an_email_address_to_author_notes():
+    with pytest.raises(ValueError, match="at least one email address"):
+        Owner(name="Argus McNevans", email_addresses=())

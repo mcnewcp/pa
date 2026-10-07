@@ -11,3 +11,4 @@ A daily note's episode id is its vault path plus a hash of its text, and ADR-000
 
 - The corpus generator and the future Obsidian collector must write this header. Unknown header fields are ignored, so either can add fields later without breaking older payloads.
 - A note's `occurred_at` is its day from midnight to midnight UTC, because neither the note nor the vault records a time zone.
+- The owner, from instance configuration, is the note's author, so a note's envelope and `content_hash` depend on that configuration as well as the raw payload. Changing the owner's name or first email address makes a re-capture of an already ingested note go to quarantine. Run renormalize after changing it.

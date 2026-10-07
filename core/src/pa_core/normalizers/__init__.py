@@ -9,7 +9,7 @@ from typing import Protocol
 
 from pa_core.envelope import Envelope
 from pa_core.errors import MalformedPayloadError
-from pa_core.normalizers import calendar, email, note
+from pa_core.normalizers import calendar, daily_note, email
 from pa_core.owner import Owner
 
 
@@ -25,7 +25,7 @@ def normalizer_for(name: str, owner: Owner) -> Normalizer:
             return email.normalize_email
         case calendar.EXTENSION:
             return calendar.normalize_calendar_event
-        case note.EXTENSION:
-            return partial(note.normalize_daily_note, owner=owner)
+        case daily_note.EXTENSION:
+            return partial(daily_note.normalize_daily_note, owner=owner)
         case _:
             raise MalformedPayloadError(f"{name}: no normalizer for '{extension}' files")
