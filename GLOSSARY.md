@@ -50,6 +50,28 @@ _Avoid_: Journal, log
 A derived, rebuildable index of the episodes in L0, for fast lookups by id, source, time, and participant.
 _Avoid_: Database, manifest
 
+## Assistant
+
+**Assistant**:
+The PA as the owner meets it: Claude answering from the store, whether in chat, a scheduled run, or an eval run.
+_Avoid_: Agent, bot
+
+**Agent project**:
+The Claude Code project directory that configures the assistant: persona, skills, tool and permission settings, hooks. Shared by both instances and free of instance values.
+_Avoid_: Harness config, agent
+
+**Session**:
+One conversation with the assistant, from its first message to its last, whether started by the owner, a schedule, or an eval run.
+_Avoid_: Chat, thread, conversation
+
+**Exchange**:
+One owner message in a session together with the assistant's reply to it. A captured exchange is an `assistant_chat` episode; the exchanges of one session share its thread.
+_Avoid_: Message, transcript
+
+**Turn**:
+One speaker's contiguous words within an exchange or a meeting transcript. In an exchange, each turn is the owner's or the assistant's; only owner turns are evidence about the world.
+_Avoid_: Utterance, message
+
 ## Evaluation
 
 **Synthetic corpus**:
@@ -65,8 +87,8 @@ The fixed questions, with expected answers and required evidence episodes, that 
 _Avoid_: Test suite, benchmark
 
 **As-of time**:
-The moment an eval question is asked from; the agent treats it as "now".
+The moment an eval question is asked from; the assistant treats it as "now".
 _Avoid_: Eval date, reference date
 
 **Baseline**:
-The agent answering by plain file search over L0, with no derived layers. The first score that later milestones are compared against.
+The assistant answering by plain file search over L0, with no derived layers. The first score that later milestones are compared against.
