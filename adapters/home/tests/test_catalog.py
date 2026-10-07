@@ -139,3 +139,26 @@ def test_a_rebuilt_catalog_has_the_same_contents_as_the_one_ingest_built(
     assert all_entries(data_root) == built_by_ingest
     assert len(built_by_ingest) == 5
     assert capsys.readouterr().out == "catalog rebuilt: 5 episodes\n"
+
+
+def test_deleting_the_catalog_and_rebuilding_it_loses_nothing(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+    before = all_entries(data_root)
+    (data_root / "catalog" / "catalog.sqlite").unlink()
+
+    assert main(["catalog", "rebuild"]) == 0
+
+    assert all_entries(data_root) == before
+
+
+def test_ingest_rebuilds_a_deleted_catalog_before_adding_new_episodes(data_root: Path):
+    ingest_a_bit_of_everything(data_root)
+    before = all_entries(data_root)
+    (data_root / "catalog" / "catalog.sqlite").unlink()
+
+    drop_in_inbox(data_root, "shuttle.eml", email(message_id="wedding-0002@example.net"))
+    assert main(["ingest"]) == 0
+
+    after = all_entries(data_root)
+    assert [entry for entry in after if entry in before] == before
+    assert len(after) == len(before) + 1

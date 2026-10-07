@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from pa_core.catalog import Catalog, rebuild_catalog
+from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_home.config import DataRoot, load_data_root, load_owner
@@ -37,8 +37,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _ingest(data_root: DataRoot) -> None:
     owner = load_owner()
     data_root.inbox.mkdir(parents=True, exist_ok=True)
-    with Catalog(data_root.catalog) as catalog:
-        summary = ingest(data_root.inbox, FilesystemL0(data_root.l0), catalog, owner)
+    store = FilesystemL0(data_root.l0)
+    with open_catalog(data_root.catalog, store) as catalog:
+        summary = ingest(data_root.inbox, store, catalog, owner)
     print(
         f"ingested {summary.ingested}, unchanged {summary.unchanged}, "
         f"quarantined {summary.quarantined}"

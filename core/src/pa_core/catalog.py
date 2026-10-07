@@ -157,6 +157,16 @@ def _utc_text(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
 
 
+def open_catalog(path: Path, store: L0Store) -> Catalog:
+    """The catalog at `path`, rebuilt from L0 first if it is missing.
+
+    A catalog created empty beside a populated L0 would silently miss every earlier episode.
+    """
+    if not path.exists():
+        rebuild_catalog(path, store)
+    return Catalog(path)
+
+
 def rebuild_catalog(path: Path, store: L0Store) -> int:
     """Replace the catalog at `path` with one built from every envelope in L0.
 
