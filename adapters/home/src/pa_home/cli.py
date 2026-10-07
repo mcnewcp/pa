@@ -31,4 +31,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _ingest(data_root: DataRoot) -> None:
     data_root.inbox.mkdir(parents=True, exist_ok=True)
     summary = ingest(data_root.inbox, FilesystemL0(data_root.l0))
-    print(f"ingested {summary.ingested}, unchanged {summary.unchanged}")
+    print(
+        f"ingested {summary.ingested}, unchanged {summary.unchanged}, "
+        f"quarantined {summary.quarantined}"
+    )
