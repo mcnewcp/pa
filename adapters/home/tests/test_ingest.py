@@ -176,17 +176,6 @@ def test_a_data_root_that_resolves_into_the_repository_through_a_symlink_is_refu
     assert not (REPOSITORY / "inbox").exists()
 
 
-def test_a_recapture_with_different_content_never_overwrites_the_episode(data_root: Path):
-    drop_in_inbox(data_root, "hotel.eml", email(body="The hotel block closes on Oct 9."))
-    main(["ingest"])
-    before = snapshot(data_root / "l0")
-
-    drop_in_inbox(data_root, "hotel.eml", email(body="The hotel block closes on Oct 2."))
-    main(["ingest"])
-
-    assert snapshot(data_root / "l0") == before
-
-
 def test_a_raw_payload_left_by_an_interrupted_ingest_is_never_replaced(data_root: Path):
     leftover = data_root / RAW_FILE
     leftover.parent.mkdir(parents=True)
@@ -241,3 +230,26 @@ def test_a_malformed_payload_is_quarantined_with_a_reason_and_the_rest_still_ing
     assert (data_root / EPISODE_FILE).exists()
     assert list((data_root / "inbox").iterdir()) == []
     assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"
+
+
+def test_a_recapture_with_different_content_is_quarantined_and_the_episode_is_unchanged(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "hotel.eml", email(body="The hotel block closes on Oct 9."))
+    main(["ingest"])
+    episodes_before = snapshot(data_root / "l0" / "episodes")
+    raw_before = snapshot(data_root / "l0" / "raw")
+    capsys.readouterr()
+
+    edited = email(body="The hotel block closes on Oct 2.")
+    drop_in_inbox(data_root, "hotel.eml", edited)
+    assert main(["ingest"]) == 0
+
+    assert snapshot(data_root / "l0" / "episodes") == episodes_before
+    assert snapshot(data_root / "l0" / "raw") == raw_before
+    [item] = quarantined(data_root)
+    assert item.raw == edited
+    assert item.record["inbox_name"] == "hotel.eml"
+    assert EPISODE_ID in item.record["reason"]
+    assert list((data_root / "inbox").iterdir()) == []
+    assert capsys.readouterr().out == "ingested 0, unchanged 0, quarantined 1\n"
