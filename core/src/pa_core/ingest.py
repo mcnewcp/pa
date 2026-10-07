@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pa_core.errors import EpisodeConflictError, MalformedPayloadError
+from pa_core.errors import EpisodeConflictError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
 from pa_core.normalizers import normalizer_for
 
@@ -54,32 +54,37 @@ def ingest(
     return summary
 
 
-def _land(name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
+def _land(inbox_name: str, raw: bytes, store: L0Store, at: datetime) -> Outcome:
     """Write one raw payload to L0 or quarantine, never touching an existing episode."""
     try:
-        envelope = normalizer_for(name)(raw, captured_at=at)
-    except MalformedPayloadError as error:
-        return _quarantine(store, name, raw, str(error), at)
+        envelope = normalizer_for(inbox_name)(raw, captured_at=at)
     except Exception as error:
         # A normalizer is a pure function of the payload, so any failure means the payload
         # cannot become an episode; keeping it beats stopping the rest of the inbox.
-        return _quarantine(store, name, raw, f"{type(error).__name__}: {error}", at)
+        return _quarantine(store, inbox_name, raw, _malformed_reason(error), at)
     existing = store.get(envelope.episode_id)
     if existing is None:
         try:
             store.put(envelope, raw)
         except EpisodeConflictError as error:
             # A file left in L0 by an interrupted ingest holds other bytes for this episode.
-            return _quarantine(store, name, raw, f"episode {envelope.episode_id}: {error}", at)
+            reason = f"episode {envelope.episode_id}: {error}"
+            return _quarantine(store, inbox_name, raw, reason, at)
         return Outcome.INGESTED
     if existing.content_hash == envelope.content_hash:
         return Outcome.UNCHANGED
     reason = f"episode {envelope.episode_id} already exists in L0 with different content"
-    return _quarantine(store, name, raw, reason, at)
+    return _quarantine(store, inbox_name, raw, reason, at)
 
 
-def _quarantine(store: L0Store, name: str, raw: bytes, reason: str, at: datetime) -> Outcome:
-    store.quarantine(QuarantineRecord(inbox_name=name, reason=reason, quarantined_at=at), raw)
+def _malformed_reason(error: Exception) -> str:
+    """The owner-facing message of an expected failure, else the error type and message."""
+    return str(error) if isinstance(error, PaError) else f"{type(error).__name__}: {error}"
+
+
+def _quarantine(store: L0Store, inbox_name: str, raw: bytes, reason: str, at: datetime) -> Outcome:
+    record = QuarantineRecord(inbox_name=inbox_name, reason=reason, quarantined_at=at)
+    store.quarantine(record, raw)
     return Outcome.QUARANTINED
 
 
