@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from string import Template
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
+from pa_home.agent_project import AGENT_PROJECT, render_agent_project
 from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print
 
-AGENT_PROJECT = Path(__file__).resolve().parents[2] / "agent"
-"""`adapters/home/agent/`: the agent project. Its CLAUDE.md is a template (see `ClaudeAgent`)."""
-
-READ_ONLY_TOOLS = "Read,Grep,Glob"
 DEFAULT_TIMEOUT_SECONDS = 600
 
 ROLE = (
@@ -68,11 +63,12 @@ def now_statement(now: datetime) -> str:
 
 
 class ClaudeAgent:
-    """Answers each question with one `claude -p` session that can only read L0.
+    """Answers each question with one `claude -p` session in a rendered agent project.
 
-    Each question runs in a fresh copy of the agent project in the system temporary directory,
-    outside the repository, so no other CLAUDE.md is picked up. The copy's CLAUDE.md is filled
-    in with the owner and the L0 path: the project itself names no instance.
+    Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
+    in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
+    up, with a fresh scratch directory beside it. What the session may do comes from the
+    project's settings.json alone, as in chat.
     """
 
     def __init__(
@@ -102,16 +98,7 @@ class ClaudeAgent:
             raise ValueError(f"the agent's now must have a UTC offset (got {now.isoformat()})")
         statement = now_statement(now)
         prompt = question
-        args = [
-            "--no-session-persistence",
-            "--restricted",
-            "--tools",
-            READ_ONLY_TOOLS,
-            "--strict-mcp-config",
-            "--disable-slash-commands",
-            "--add-dir",
-            str(l0),
-        ]
+        args = ["--no-session-persistence"]
         if self._model:
             args += ["--model", self._model]
         system_prompt = ROLE
@@ -122,7 +109,12 @@ class ClaudeAgent:
         args += ["--append-system-prompt", system_prompt]
         with tempfile.TemporaryDirectory(prefix="pa-agent-") as directory:
             workdir = Path(directory) / "project"
-            self._copy_project(workdir, owner, l0)
+            scratch = Path(directory) / "scratch"
+            scratch.mkdir()
+            render_agent_project(workdir, owner=owner, l0=l0, scratch=scratch, source=self._project)
+            # claude -p never trusts a folder, so it drops a project's allow rules and
+            # additional directories. Passing the same file as flag settings keeps them.
+            args += ["--settings", str(workdir / ".claude" / "settings.json")]
             try:
                 result = run_print(
                     self._executable,
@@ -136,15 +128,3 @@ class ClaudeAgent:
             except ClaudeCliError as error:
                 raise AgentError(str(error)) from error
         return str(result.get("result", ""))
-
-    def _copy_project(self, workdir: Path, owner: Owner, l0: Path) -> None:
-        shutil.copytree(self._project, workdir)
-        claude_md = workdir / "CLAUDE.md"
-        claude_md.write_text(
-            Template(claude_md.read_text()).substitute(
-                owner_name=owner.name,
-                owner_other_names=", ".join(owner.other_names) or "(none)",
-                owner_email_addresses=", ".join(f"`{a}`" for a in owner.email_addresses),
-                l0=str(l0),
-            )
-        )
