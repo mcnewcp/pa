@@ -3,7 +3,8 @@
 Everything but the prose (senders, recipients, attendees, times, calendars, note dates) comes
 straight from the spec. The model client writes only prose: email bodies and daily note text.
 Each payload is written in its source's native shape (`.eml`, `.ics`, a captured Obsidian
-daily note `.md`) to one flat directory, ready to be dropped into an inbox.
+daily note `.md`) into its source's directory, laid out as the inbox is (ADR-0004), ready to be
+copied into one.
 """
 
 from __future__ import annotations
@@ -16,13 +17,15 @@ from email import policy
 from email.headerregistry import Address as MailAddress
 from email.message import EmailMessage
 from email.utils import format_datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel
 
+from pa_core.envelope import Source
 from pa_core.errors import PaError
+from pa_core.ingest import inbox_normalizer
 from pa_core.model_client import ModelClient
-from pa_core.normalizers import normalizer_for
+from pa_core.normalizers import payload_extension
 from pa_evals.storyline import (
     CalendarEvent,
     CalendarUpdate,
@@ -50,35 +53,39 @@ class Prose(BaseModel):
 
 
 def generate_corpus(spec: StorylineSpec, client: ModelClient, out_dir: Path) -> list[Path]:
-    """Write a raw payload for every event in `spec` to `out_dir`, which must be empty.
+    """Write a raw payload for every event in `spec` under `out_dir`, which must be empty.
 
-    The model is asked for prose only. Nothing is written until all of it is generated, so a
-    failed model call leaves `out_dir` as it was. Returns the payload files, in name order.
+    Each payload goes in its source's directory, as in the inbox. The model is asked for prose
+    only. Nothing is written until all of it is generated, so a failed model call leaves
+    `out_dir` as it was. Returns the payload files, in path order.
     """
     if out_dir.exists() and any(out_dir.iterdir()):
         raise GeneratedCorpusError(f"{out_dir} is not empty; delete it or choose another directory")
     payloads = _Generator(spec, client).payloads()
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name, raw in payloads.items():
-        (out_dir / name).write_bytes(raw)
-    return sorted(out_dir / name for name in payloads)
+    for path, raw in payloads.items():
+        target = out_dir / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    return sorted(out_dir / path for path in payloads)
 
 
-def payload_name(spec: StorylineSpec, event: Event) -> str:
-    """The corpus file holding the payload where `event` first appears.
+def payload_path(spec: StorylineSpec, event: Event) -> str:
+    """The corpus path of the payload where `event` first appears, as `<source>/<file>`.
 
-    Every section of a day's daily note is in that day's note; a correction is in the version
-    of the note it produces.
+    For example `gmail/2026-09-08T2115_dave-wedding-invite.eml`. Every section of a day's
+    daily note is in that day's note; a correction is in the version of the note it produces.
     """
     match event:
         case EmailEvent():
-            return f"{_stamp(spec.local(event.at))}_{event.id}.eml"
+            source, stem = Source.GMAIL, f"{_stamp(spec.local(event.at))}_{event.id}"
         case CalendarEvent() | CalendarUpdate():
-            return f"{_stamp(spec.local(event.at))}_{event.id}.ics"
+            source, stem = Source.ICLOUD_CALENDAR, f"{_stamp(spec.local(event.at))}_{event.id}"
         case NoteSection():
-            return f"{event.date.isoformat()}_daily-note.md"
+            source, stem = Source.OBSIDIAN, f"{event.date.isoformat()}_daily-note"
         case NoteCorrection():
-            return f"{_stamp(spec.local(event.at))}_{event.id}.md"
+            source, stem = Source.OBSIDIAN, f"{_stamp(spec.local(event.at))}_{event.id}"
+    return f"{source}/{stem}{payload_extension(source)}"
 
 
 def evidence_ids(spec: StorylineSpec, corpus_dir: Path) -> dict[str, str]:
@@ -90,14 +97,14 @@ def evidence_ids(spec: StorylineSpec, corpus_dir: Path) -> dict[str, str]:
     ids: dict[str, str] = {}
     captured_at = dt.datetime.now(dt.UTC)
     for event in spec.events:
-        name = payload_name(spec, event)
+        path = payload_path(spec, event)
         try:
-            raw = (corpus_dir / name).read_bytes()
+            raw = (corpus_dir / path).read_bytes()
         except OSError:
             raise GeneratedCorpusError(
-                f"event {event.id}: its payload {name} is not in {corpus_dir}"
+                f"event {event.id}: its payload {path} is not in {corpus_dir}"
             ) from None
-        normalize = normalizer_for(name, spec.owner_identity)
+        normalize = inbox_normalizer(PurePosixPath(path), spec.owner_identity)
         ids[event.id] = normalize(raw, captured_at=captured_at).episode_id
     return ids
 
@@ -122,7 +129,7 @@ class _Generator:
         payloads.update(self._emails())
         for event in self.spec.events:
             if isinstance(event, CalendarEvent | CalendarUpdate):
-                payloads[payload_name(self.spec, event)] = self._calendar(event)
+                payloads[payload_path(self.spec, event)] = self._calendar(event)
         payloads.update(self._daily_notes())
         return dict(sorted(payloads.items()))
 
@@ -147,7 +154,7 @@ class _Generator:
             bodies[event.id] = self._prose(
                 self._email_prompt(event, subject, parent, bodies.get(event.reply_to or ""))
             )
-            payloads[payload_name(spec, event)] = self._email(event, subject, bodies[event.id])
+            payloads[payload_path(spec, event)] = self._email(event, subject, bodies[event.id])
         return payloads
 
     def _email(self, event: EmailEvent, subject: str, body: str) -> bytes:
@@ -282,7 +289,7 @@ class _Generator:
                 section.id: _Section(section.heading, self._prose(self._note_prompt(section)))
                 for section in days[day]
             }
-            payloads[payload_name(spec, days[day][0])] = self._note(
+            payloads[payload_path(spec, days[day][0])] = self._note(
                 day, notes[day].values(), spec.note_captured_at(day)
             )
         for correction in corrections:
@@ -290,7 +297,7 @@ class _Generator:
             assert isinstance(section_event, NoteSection)
             section = notes[section_event.date][section_event.id]
             section.text = self._prose(self._correction_prompt(section_event, section, correction))
-            payloads[payload_name(spec, correction)] = self._note(
+            payloads[payload_path(spec, correction)] = self._note(
                 section_event.date,
                 notes[section_event.date].values(),
                 spec.local(correction.at),

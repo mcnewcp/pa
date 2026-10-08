@@ -41,9 +41,9 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def drop_in_inbox(data_root: Path, name: str, payload: bytes) -> None:
-    inbox = data_root / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
-    (inbox / name).write_bytes(payload)
+    target = data_root / "inbox" / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
 
 
 def open_catalog(data_root: Path) -> SqliteCatalog:
@@ -51,7 +51,7 @@ def open_catalog(data_root: Path) -> SqliteCatalog:
 
 
 def test_an_ingested_email_is_in_the_catalog_with_its_fields(data_root: Path):
-    drop_in_inbox(data_root, "hotel.eml", email())
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
 
     assert main(["ingest"]) == 0
 
@@ -109,16 +109,18 @@ def daily_note(day: str = "2026-10-05", text: str = "## Swim lessons\n\nMara pre
 
 
 def ingest_a_bit_of_everything(data_root: Path) -> None:
-    drop_in_inbox(data_root, "hotel.eml", email())
-    drop_in_inbox(data_root, "swim.ics", calendar_event())
-    drop_in_inbox(data_root, "2026-10-05.md", daily_note())
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
+    drop_in_inbox(data_root, "icloud_calendar/swim.ics", calendar_event())
+    drop_in_inbox(data_root, "obsidian/2026-10-05.md", daily_note())
     assert main(["ingest"]) == 0
     drop_in_inbox(
         data_root,
-        "swim.ics",
+        "icloud_calendar/swim.ics",
         calendar_event(sequence=1, start="20261017T100000", end="20261017T110000"),
     )
-    drop_in_inbox(data_root, "2026-10-05.md", daily_note(text="## Swim lessons\n\nSaturdays.\n"))
+    drop_in_inbox(
+        data_root, "obsidian/2026-10-05.md", daily_note(text="## Swim lessons\n\nSaturdays.\n")
+    )
     assert main(["ingest"]) == 0
 
 
@@ -156,7 +158,7 @@ def test_ingest_rebuilds_a_deleted_catalog_before_adding_new_episodes(data_root:
     before = all_entries(data_root)
     (data_root / "catalog" / "catalog.sqlite").unlink()
 
-    drop_in_inbox(data_root, "shuttle.eml", email(message_id="wedding-0002@example.net"))
+    drop_in_inbox(data_root, "gmail/shuttle.eml", email(message_id="wedding-0002@example.net"))
     assert main(["ingest"]) == 0
 
     after = all_entries(data_root)
@@ -170,12 +172,12 @@ def test_an_episode_that_landed_but_was_not_cataloged_is_cataloged_when_reingest
     catalog_file = data_root / "catalog" / "catalog.sqlite"
     assert main(["catalog", "rebuild"]) == 0
     catalog_file.chmod(0o444)
-    drop_in_inbox(data_root, "hotel.eml", email())
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
 
     with pytest.raises(sqlite3.OperationalError):
         main(["ingest"])
 
-    assert (data_root / "inbox" / "hotel.eml").exists()
+    assert (data_root / "inbox" / "gmail" / "hotel.eml").exists()
     catalog_file.chmod(0o644)
     capsys.readouterr()
     assert main(["ingest"]) == 0
@@ -253,7 +255,9 @@ def test_looking_up_a_source_finds_its_episodes_in_time_order(data_root: Path):
 
 
 def test_a_participant_is_found_whatever_the_case_of_their_identifier(data_root: Path):
-    drop_in_inbox(data_root, "swim.ics", calendar_event(attendee="urn:x-family:Theo"))
+    drop_in_inbox(
+        data_root, "icloud_calendar/swim.ics", calendar_event(attendee="urn:x-family:Theo")
+    )
     main(["ingest"])
 
     with open_catalog(data_root) as catalog:

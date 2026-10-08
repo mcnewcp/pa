@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from pa_core.catalog import SqliteCatalog
-from pa_core.ingest import IngestSummary, ingest
 from pa_evals import frozen
-from pa_evals.corpus import payload_name
+from pa_evals.agent import AgentRequest
+from pa_evals.corpus import payload_path
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
+from pa_evals.harness import run_eval
+from pa_evals.judge import ScriptedJudge
 from pa_evals.questions import build_eval_set, load_questions
+from pa_evals.results import IngestCounts
 from pa_evals.storyline import (
     CalendarEvent,
     CalendarUpdate,
@@ -35,27 +37,38 @@ def eval_set() -> EvalSet:
 
 
 @pytest.fixture(scope="module")
-def data_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tmp_path_factory.mktemp("pa-data")
+def harness_l0(eval_set: EvalSet) -> tuple[IngestCounts, dict[str, str]]:
+    """The whole frozen corpus ingested by the eval harness, and each episode in its L0 by id.
+
+    An episode is the text of its files (the envelope and the raw payload), as the agent's file
+    search reads them.
+    """
+    episodes: dict[str, str] = {}
+
+    class ListingAgent:
+        def answer(self, request: AgentRequest) -> str:
+            l0 = request.data_root.l0
+            for envelope in FilesystemL0(l0).envelopes():
+                files = sorted(l0.rglob(f"{envelope.episode_id}.*"))
+                episodes[envelope.episode_id] = "\n".join(p.read_text("utf-8") for p in files)
+            return "answer"
+
+    one_question = eval_set.only(eval_set.questions[0].id)
+    results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
+    return results.ingest, episodes
 
 
 @pytest.fixture(scope="module")
-def ingested(data_root: Path, eval_set: EvalSet) -> tuple[IngestSummary, set[str]]:
-    """The whole frozen corpus ingested into a fresh data root, as the eval set's owner."""
-    inbox = data_root / "inbox"
-    inbox.mkdir()
-    for payload in frozen.PAYLOADS.iterdir():
-        (inbox / payload.name).write_bytes(payload.read_bytes())
-    store = FilesystemL0(data_root / "l0")
-    with SqliteCatalog(data_root / "catalog.sqlite") as catalog:
-        summary = ingest(
-            inbox, store, catalog, eval_set.owner.to_owner(), now=lambda: eval_set.as_of
-        )
-    return summary, {envelope.episode_id for envelope in store.envelopes()}
+def ingested(harness_l0: tuple[IngestCounts, dict[str, str]]) -> tuple[IngestCounts, set[str]]:
+    """The ingest counts, and the episode ids in L0."""
+    counts, episodes = harness_l0
+    return counts, set(episodes)
 
 
 def payloads() -> list[Path]:
-    return sorted(frozen.PAYLOADS.iterdir())
+    return sorted(
+        path.relative_to(frozen.PAYLOADS) for path in frozen.PAYLOADS.rglob("*") if path.is_file()
+    )
 
 
 def test_ingesting_the_whole_corpus_lands_every_payload_and_quarantines_nothing(ingested):
@@ -92,18 +105,11 @@ def test_the_paraphrase_category_has_one_question_per_storyline(spec):
     storyline_of = {
         event.id: storyline.id for storyline in spec.storylines for event in storyline.events
     }
-    paraphrases = [
-        q for q in load_questions(frozen.QUESTIONS).questions if q.category == "paraphrase"
-    ]
+    questions = load_questions(frozen.QUESTIONS).questions
+    paraphrases = [q for q in questions if q.category == "paraphrase"]
 
     storylines = [{storyline_of[event] for event in q.evidence} for q in paraphrases]
     assert sorted(storylines, key=sorted) == [{"family"}, {"kitchen"}, {"medical"}, {"wedding"}]
-
-
-def test_abstention_and_canary_questions_need_no_evidence_and_the_rest_do(eval_set: EvalSet):
-    for question in eval_set.questions:
-        expects_evidence = question.category not in {"abstention", "canary"}
-        assert bool(question.evidence) == expects_evidence, question.id
 
 
 PARAPHRASE_KEY_WORDS = {
@@ -116,19 +122,24 @@ PARAPHRASE_KEY_WORDS = {
 
 
 def test_a_plain_grep_for_a_paraphrase_questions_key_words_misses_its_evidence(
-    ingested, data_root: Path, eval_set: EvalSet
+    harness_l0, eval_set: EvalSet
 ):
+    _, episodes = harness_l0
     paraphrases = [q for q in eval_set.questions if q.category == "paraphrase"]
     assert {q.id for q in paraphrases} == set(PARAPHRASE_KEY_WORDS)
 
     for question in paraphrases:
         for episode_id in question.evidence:
-            # The envelope and the raw payload, as `grep -ril` over L0 would read them.
-            files = sorted((data_root / "l0").rglob(f"{episode_id}.*"))
-            assert len(files) == 2, files
-            text = " ".join(path.read_text(encoding="utf-8").lower() for path in files)
+            # Case-insensitive, like `grep -ril` over L0.
+            text = episodes[episode_id].lower()
             hits = [w for w in PARAPHRASE_KEY_WORDS[question.id] if w.lower() in text]
             assert hits == [], f"{question.id}: {episode_id} contains {hits}"
+
+
+def test_abstention_and_canary_questions_need_no_evidence_and_the_rest_do(eval_set: EvalSet):
+    for question in eval_set.questions:
+        expects_evidence = question.category not in {"abstention", "canary"}
+        assert bool(question.evidence) == expects_evidence, question.id
 
 
 def test_the_eval_set_owner_is_argus_as_the_spec_names_him(spec, eval_set: EvalSet):
@@ -137,8 +148,8 @@ def test_the_eval_set_owner_is_argus_as_the_spec_names_him(spec, eval_set: EvalS
 
 
 def test_the_corpus_holds_exactly_the_payloads_the_spec_describes(spec):
-    assert {path.name for path in payloads()} == {
-        payload_name(spec, event) for event in spec.events
+    assert {path.as_posix() for path in payloads()} == {
+        payload_path(spec, event) for event in spec.events
     }
 
 
