@@ -5,13 +5,21 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.renormalize import renormalize
+from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
-from pa_home.config import DataRoot, load_data_root, load_owner, require_backup_config
+from pa_home.config import (
+    DataRoot,
+    load_data_root,
+    load_owner,
+    require_backup_config,
+    require_outside_repository,
+)
 from pa_home.filesystem_l0 import FilesystemL0
 
 
@@ -26,9 +34,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
     )
+    agent_project = commands.add_parser(
+        "agent-project", help="Manage the agent project the assistant runs in."
+    )
+    agent_project_commands = agent_project.add_subparsers(
+        dest="agent_project_command", required=True
+    )
+    render = agent_project_commands.add_parser(
+        "render",
+        help="Write a copy of the agent project filled in with the owner and instance paths.",
+    )
+    render.add_argument("target", type=Path, help="New or empty directory to render into.")
+    render.add_argument(
+        "--l0", type=Path, required=True, help="The L0 directory the assistant reads."
+    )
+    render.add_argument(
+        "--scratch",
+        type=Path,
+        required=True,
+        help="The only directory the assistant may write to (with sandboxed Bash).",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "agent-project":
+            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch)
+            return 0
         data_root = load_data_root()
         if args.command == "ingest":
             _ingest(data_root)
@@ -73,3 +104,17 @@ def _renormalize(data_root: DataRoot) -> None:
     # The catalog indexes the old envelopes until it is rebuilt from the new ones.
     rebuild_catalog(data_root.catalog, store)
     print(f"renormalized {count} episodes; catalog rebuilt")
+
+
+def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
+    owner = load_owner()
+    target = target.expanduser().resolve()
+    require_outside_repository(
+        target,
+        "The render target",
+        "A rendered agent project names the owner, so it must live outside the repository.",
+    )
+    render_agent_project(
+        target, owner=owner, l0=l0.expanduser().resolve(), scratch=scratch.expanduser().resolve()
+    )
+    print(f"rendered the agent project into {target}")
