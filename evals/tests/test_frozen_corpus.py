@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from pa_core.catalog import SqliteCatalog
-from pa_core.ingest import IngestSummary, ingest
 from pa_evals import frozen
-from pa_evals.corpus import payload_name
+from pa_evals.agent import AgentRequest
+from pa_evals.corpus import payload_path
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
+from pa_evals.harness import run_eval
+from pa_evals.judge import ScriptedJudge
 from pa_evals.questions import build_eval_set
+from pa_evals.results import IngestCounts
 from pa_evals.storyline import (
     CalendarEvent,
     CalendarUpdate,
@@ -35,25 +37,25 @@ def eval_set() -> EvalSet:
 
 
 @pytest.fixture(scope="module")
-def ingested(
-    tmp_path_factory: pytest.TempPathFactory, eval_set: EvalSet
-) -> tuple[IngestSummary, set[str]]:
-    """The whole frozen corpus ingested into a fresh data root, as the eval set's owner."""
-    data_root = tmp_path_factory.mktemp("pa-data")
-    inbox = data_root / "inbox"
-    inbox.mkdir()
-    for payload in frozen.PAYLOADS.iterdir():
-        (inbox / payload.name).write_bytes(payload.read_bytes())
-    store = FilesystemL0(data_root / "l0")
-    with SqliteCatalog(data_root / "catalog.sqlite") as catalog:
-        summary = ingest(
-            inbox, store, catalog, eval_set.owner.to_owner(), now=lambda: eval_set.as_of
-        )
-    return summary, {envelope.episode_id for envelope in store.envelopes()}
+def ingested(eval_set: EvalSet) -> tuple[IngestCounts, set[str]]:
+    """The whole frozen corpus ingested by the eval harness, and the episode ids in its L0."""
+    episodes: set[str] = set()
+
+    class ListingAgent:
+        def answer(self, request: AgentRequest) -> str:
+            store = FilesystemL0(request.data_root.l0)
+            episodes.update(envelope.episode_id for envelope in store.envelopes())
+            return "answer"
+
+    one_question = eval_set.only(eval_set.questions[0].id)
+    results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
+    return results.ingest, episodes
 
 
 def payloads() -> list[Path]:
-    return sorted(frozen.PAYLOADS.iterdir())
+    return sorted(
+        path.relative_to(frozen.PAYLOADS) for path in frozen.PAYLOADS.rglob("*") if path.is_file()
+    )
 
 
 def test_ingesting_the_whole_corpus_lands_every_payload_and_quarantines_nothing(ingested):
@@ -98,8 +100,8 @@ def test_the_eval_set_owner_is_argus_as_the_spec_names_him(spec, eval_set: EvalS
 
 
 def test_the_corpus_holds_exactly_the_payloads_the_spec_describes(spec):
-    assert {path.name for path in payloads()} == {
-        payload_name(spec, event) for event in spec.events
+    assert {path.as_posix() for path in payloads()} == {
+        payload_path(spec, event) for event in spec.events
     }
 
 

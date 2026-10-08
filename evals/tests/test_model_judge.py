@@ -1,12 +1,12 @@
 import os
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
+from pa_core.ingest import inbox_normalizer
 from pa_core.model_client import FakeModelBackend, InvalidModelOutputError, ModelClient
-from pa_core.normalizers import normalizer_for
 from pa_core.owner import Owner
 from pa_evals.judge import JudgeRequest, ModelJudge, Verdict
 from pa_home.claude_model import ClaudeCliBackend
@@ -15,9 +15,10 @@ CORPUS = Path(__file__).parent / "fixtures" / "corpus"
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",))
 
 
-def episode(name: str):
-    raw = (CORPUS / name).read_bytes()
-    return normalizer_for(name, OWNER)(raw, captured_at=datetime(2026, 10, 6, tzinfo=UTC))
+def episode(path: str):
+    raw = (CORPUS / path).read_bytes()
+    normalize = inbox_normalizer(PurePosixPath(path), OWNER)
+    return normalize(raw, captured_at=datetime(2026, 10, 6, tzinfo=UTC))
 
 
 def request(answer: str = "Oct 9 [ep:gmail_94f6b4cbc55a3b85].") -> JudgeRequest:
@@ -27,7 +28,7 @@ def request(answer: str = "Oct 9 [ep:gmail_94f6b4cbc55a3b85].") -> JudgeRequest:
         expected_answer="October 9.",
         as_of=datetime.fromisoformat("2026-10-06T20:00:00-05:00"),
         answer=answer,
-        cited_episodes=(episode("reply_with_cc.eml"),),
+        cited_episodes=(episode("gmail/reply_with_cc.eml"),),
     )
 
 
@@ -75,7 +76,12 @@ def test_the_model_judge_raises_when_the_model_keeps_replying_badly():
 )
 def test_smoke_a_citation_is_relevant_when_it_supports_its_claim_even_beyond_the_expected_answer():
     hotel, swim, question = (
-        episode(name) for name in ("reply_with_cc.eml", "swim_lessons.ics", "thread_start.eml")
+        episode(path)
+        for path in (
+            "gmail/reply_with_cc.eml",
+            "icloud_calendar/swim_lessons.ics",
+            "gmail/thread_start.eml",
+        )
     )
     answer = (
         f"The hotel block closes on Oct 9 [ep:{hotel.episode_id}].\n\n"

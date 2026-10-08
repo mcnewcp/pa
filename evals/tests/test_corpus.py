@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -40,15 +41,18 @@ def corpus(tmp_path: Path, spec: StorylineSpec) -> Path:
     return out
 
 
-def snapshot(directory: Path) -> dict[str, bytes]:
-    return {path.name: path.read_bytes() for path in directory.iterdir()}
+def snapshot(directory: Path) -> dict[Path, bytes]:
+    return {
+        path.relative_to(directory): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
 
 
 def ingest_corpus(corpus: Path, spec: StorylineSpec, data_root: Path) -> IngestSummary:
     inbox = data_root / "inbox"
-    inbox.mkdir(parents=True)
-    for payload in corpus.iterdir():
-        (inbox / payload.name).write_bytes(payload.read_bytes())
+    data_root.mkdir(parents=True)
+    shutil.copytree(corpus, inbox)
     store = FilesystemL0(data_root / "l0")
     with SqliteCatalog(data_root / "catalog.sqlite") as catalog:
         return ingest(
@@ -74,6 +78,16 @@ def test_every_generated_payload_ingests_without_quarantine(
 
     # 3 emails, 4 calendar versions, 2 daily notes plus 1 correction.
     assert (summary.ingested, summary.unchanged, summary.quarantined) == (10, 0, 0)
+
+
+def test_every_payload_is_written_into_its_source_directory(corpus: Path) -> None:
+    layout = sorted((path.parent.name, path.suffix) for path in snapshot(corpus))
+
+    assert layout == [
+        *[("gmail", ".eml")] * 3,
+        *[("icloud_calendar", ".ics")] * 4,
+        *[("obsidian", ".md")] * 3,
+    ]
 
 
 def by_subject(episodes: list[Envelope], subject: str) -> list[Envelope]:
@@ -246,7 +260,7 @@ def test_the_corpus_is_only_written_to_an_empty_directory(
 
 
 def test_evidence_ids_need_every_payload(spec: StorylineSpec, corpus: Path) -> None:
-    next(corpus.glob("*_wedding-day.ics")).unlink()
+    next(corpus.glob("icloud_calendar/*_wedding-day.ics")).unlink()
 
     with pytest.raises(GeneratedCorpusError, match="event wedding-day: its payload"):
         evidence_ids(spec, corpus)
