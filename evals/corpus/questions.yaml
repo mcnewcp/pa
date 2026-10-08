@@ -183,6 +183,47 @@ questions:
       david.kim@kimlaw.example, his work address (the Sept 22 reading request).
     evidence: [dave-wedding-invite, dave-reading-request]
 
+  # Paraphrase -------------------------------------------------------------------------------
+  # One per storyline, worded unlike the sources: a plain grep for the question's key words
+  # hits none of its evidence episodes. test_frozen_corpus lists the key words and checks it.
+  - id: texas-flight-times
+    category: paraphrase
+    question: When does my plane land in Texas, and when do I get home?
+    expected_answer: >-
+      Out Friday Nov 6 on Prairie Air PA 1182, leaving Minneapolis (MSP) at 4:10 pm and landing
+      in Austin (AUS) at 6:55 pm. Back Sunday Nov 8 on PA 1191, leaving Austin at 5:20 pm and
+      getting into Minneapolis at 8:05 pm. (Confirmation QX7R2M.)
+    evidence: [airline-confirmation]
+
+  - id: cabinet-guy-update
+    category: paraphrase
+    question: Did the cabinet guy ever send me his updated price?
+    expected_answer: >-
+      No. Rick Alvarez (Alvarez Kitchen & Bath) said on Sept 29 he'd send the revised quote (the
+      sink moved to the island, with a butcher-block island top) by Friday Oct 2. It never came:
+      Argus followed up on Oct 8, and as of his Oct 13 note there was still no quote and no
+      reply, so they're now leaning toward Birchwood.
+    evidence: [rick-revision-promise, argus-rick-nudge, kitchen-note-birchwood]
+
+  - id: leg-specialist
+    category: paraphrase
+    question: Did I ever get my bad leg looked at by that specialist the doc wanted me to see?
+    expected_answer: >-
+      Not as far as anything captured shows. At the Sept 16 physical Dr. Lena Ortiz recommended
+      sports medicine for Argus's right knee (it hurts after soccer) and sent a referral to North
+      Star Sports Medicine; he meant to call North Star that week to book. On Sept 26, after the
+      knee flared up again at soccer, he still hadn't called, and nothing since shows he booked.
+    evidence: [physical-note, knee-note]
+
+  - id: hitched-lodging
+    category: paraphrase
+    question: Where are we crashing up north when my buddy gets hitched?
+    expected_answer: >-
+      The Harborview Inn in Duluth, for Dave and Priya's wedding: one king room, checking in
+      Friday Oct 23 (from 3 pm) and out Sunday Oct 25, 2 nights at the Kim-Shah wedding block
+      rate of $169 a night. Confirmation HV-48213.
+    evidence: [hotel-confirmation]
+
   # Abstention -------------------------------------------------------------------------------
   - id: swim-instructor
     category: abstention

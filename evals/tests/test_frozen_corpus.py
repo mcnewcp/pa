@@ -11,7 +11,7 @@ from pa_core.ingest import IngestSummary, ingest
 from pa_evals import frozen
 from pa_evals.corpus import payload_name
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
-from pa_evals.questions import build_eval_set
+from pa_evals.questions import build_eval_set, load_questions
 from pa_evals.storyline import (
     CalendarEvent,
     CalendarUpdate,
@@ -35,11 +35,13 @@ def eval_set() -> EvalSet:
 
 
 @pytest.fixture(scope="module")
-def ingested(
-    tmp_path_factory: pytest.TempPathFactory, eval_set: EvalSet
-) -> tuple[IngestSummary, set[str]]:
+def data_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("pa-data")
+
+
+@pytest.fixture(scope="module")
+def ingested(data_root: Path, eval_set: EvalSet) -> tuple[IngestSummary, set[str]]:
     """The whole frozen corpus ingested into a fresh data root, as the eval set's owner."""
-    data_root = tmp_path_factory.mktemp("pa-data")
     inbox = data_root / "inbox"
     inbox.mkdir()
     for payload in frozen.PAYLOADS.iterdir():
@@ -80,16 +82,53 @@ def test_the_eval_set_covers_every_category_with_at_least_two_questions(eval_set
     counts = Counter(question.category for question in eval_set.questions)
 
     measured = [category for category in CATEGORIES if category != "canary"]
-    assert len(measured) == 8
+    assert len(measured) == 9
     assert {category: counts[category] for category in measured if counts[category] < 2} == {}
     assert 1 <= counts["canary"] <= 2
-    assert 18 <= len(eval_set.questions) <= 24
+    assert 22 <= len(eval_set.questions) <= 28
+
+
+def test_the_paraphrase_category_has_one_question_per_storyline(spec):
+    storyline_of = {
+        event.id: storyline.id for storyline in spec.storylines for event in storyline.events
+    }
+    paraphrases = [
+        q for q in load_questions(frozen.QUESTIONS).questions if q.category == "paraphrase"
+    ]
+
+    storylines = [{storyline_of[event] for event in q.evidence} for q in paraphrases]
+    assert sorted(storylines, key=sorted) == [{"family"}, {"kitchen"}, {"medical"}, {"wedding"}]
 
 
 def test_abstention_and_canary_questions_need_no_evidence_and_the_rest_do(eval_set: EvalSet):
     for question in eval_set.questions:
         expects_evidence = question.category not in {"abstention", "canary"}
         assert bool(question.evidence) == expects_evidence, question.id
+
+
+PARAPHRASE_KEY_WORDS = {
+    "texas-flight-times": ["plane", "land", "Texas", "home"],
+    "cabinet-guy-update": ["cabinet", "guy", "updated", "price"],
+    "leg-specialist": ["leg", "specialist", "doc", "looked"],
+    "hitched-lodging": ["crashing", "north", "buddy", "hitched"],
+}
+"""The words a lexical search would try for each paraphrase question."""
+
+
+def test_a_plain_grep_for_a_paraphrase_questions_key_words_misses_its_evidence(
+    ingested, data_root: Path, eval_set: EvalSet
+):
+    paraphrases = [q for q in eval_set.questions if q.category == "paraphrase"]
+    assert {q.id for q in paraphrases} == set(PARAPHRASE_KEY_WORDS)
+
+    for question in paraphrases:
+        for episode_id in question.evidence:
+            # The envelope and the raw payload, as `grep -ril` over L0 would read them.
+            files = sorted((data_root / "l0").rglob(f"{episode_id}.*"))
+            assert len(files) == 2, files
+            text = " ".join(path.read_text(encoding="utf-8").lower() for path in files)
+            hits = [w for w in PARAPHRASE_KEY_WORDS[question.id] if w.lower() in text]
+            assert hits == [], f"{question.id}: {episode_id} contains {hits}"
 
 
 def test_the_eval_set_owner_is_argus_as_the_spec_names_him(spec, eval_set: EvalSet):
