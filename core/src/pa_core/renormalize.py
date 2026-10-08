@@ -65,7 +65,7 @@ def _rebuild(store: L0Store, owner: Owner, old: Envelope) -> Envelope:
     if raw is None:
         raise RenormalizeError(f"raw payload {old.raw_ref} is missing")
     # The capture time is not in the raw payload, so it carries over from the old envelope.
-    new = normalizer_for(old.raw_ref, owner)(raw, captured_at=old.captured_at)
+    new = normalizer_for(old.source, owner)(raw, captured_at=old.captured_at)
     if new.episode_id != old.episode_id:
         raise RenormalizeError(f"raw payload {old.raw_ref} now normalizes to {new.episode_id}")
     # Raw payloads never move, so the envelope keeps pointing at where its raw payload is,

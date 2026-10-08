@@ -56,8 +56,8 @@ def populate(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PA_OWNER_NAME", "Argus McNevans")
     monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com")
     inbox = data_root / "inbox"
-    inbox.mkdir(parents=True)
-    (inbox / "hotel.eml").write_bytes(
+    (inbox / "gmail").mkdir(parents=True)
+    (inbox / "gmail" / "hotel.eml").write_bytes(
         b"Message-ID: <wedding-0001@example.net>\r\n"
         b"Date: Wed, 30 Sep 2026 21:30:00 -0500\r\n"
         b"From: David Kim <dkim@example.net>\r\n"

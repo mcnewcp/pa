@@ -173,7 +173,7 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     [run_dir] = runs.iterdir()
     results = json.loads((run_dir / "results.json").read_text())
     assert results["ingest"] == {
-        "ingested": len(list(frozen.PAYLOADS.iterdir())),
+        "ingested": len([path for path in frozen.PAYLOADS.rglob("*") if path.is_file()]),
         "unchanged": 0,
         "quarantined": 0,
     }
