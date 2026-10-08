@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,8 @@ from pa_evals.report import format_score, write_run
 from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
 
-DEFAULT_RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
+WORKSPACE = Path(__file__).resolve().parents[3]
+DEFAULT_RUNS_DIR = WORKSPACE / "evals" / "runs"
 """`evals/runs/` in the workspace, which git ignores."""
 
 
@@ -250,11 +252,32 @@ def _run(args: argparse.Namespace) -> int:
 def _setup(args: argparse.Namespace) -> dict[str, str]:
     """How the run was set up, as shown at the top of the report."""
     return {
+        "commit": _workspace_commit(),
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
         "judge": args.judge,
         **JUDGES[args.judge].setup(args),
     }
+
+
+def _workspace_commit() -> str:
+    """The commit of the workspace the run's code comes from, so a report says what it ran.
+
+    That commit also pins the agent project and the eval set. Changes to tracked files are
+    flagged, since the commit alone doesn't describe them.
+    """
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=WORKSPACE, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    try:
+        commit = git("rev-parse", "HEAD")
+        changed = git("status", "--porcelain", "--untracked-files=no")
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown (not run from a git checkout)"
+    return f"{commit} (with uncommitted changes)" if changed else commit
 
 
 def _at_least_one(value: str) -> int:

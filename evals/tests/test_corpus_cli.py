@@ -35,8 +35,8 @@ def test_corpus_generate_writes_a_payload_per_spec_item(
     status = main(["corpus", "generate", str(SAMPLE_SPEC), str(out), "--model", "sonnet"])
 
     assert status == 0
-    suffixes = sorted(path.suffix for path in out.iterdir())
-    assert suffixes == [".eml"] * 3 + [".ics"] * 4 + [".md"] * 3
+    payloads = sorted(path.relative_to(out).parent.name for path in out.rglob("*.*"))
+    assert payloads == ["gmail"] * 3 + ["icloud_calendar"] * 4 + ["obsidian"] * 3
     assert f"generated 10 payloads in {out}" in capsys.readouterr().out
     assert claude == ["sonnet"]
 

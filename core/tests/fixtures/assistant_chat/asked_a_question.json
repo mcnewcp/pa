@@ -1,0 +1,24 @@
+{
+  "session_id": "5b0f3c2e-8d41-4a7e-9c16-2f7d0a9e4b13",
+  "message_id": "9a7d5e1c-0f2b-4c83-b6e4-1d8a3f5c7e92",
+  "started_at": "2026-10-08T01:15:40.003Z",
+  "ended_at": "2026-10-08T01:17:02.288Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "Remind me what we decided about the kitchen."
+    },
+    {
+      "role": "assistant",
+      "text": "Do you mean the countertop quote or the cabinet colour?"
+    },
+    {
+      "role": "owner",
+      "text": "The countertop quote."
+    },
+    {
+      "role": "assistant",
+      "text": "You went with Birchwood's quote of $4,200 [ep:gmail_0123456789abcdef].\nRick's quote was higher [ep:gmail_fedcba9876543210]."
+    }
+  ]
+}
