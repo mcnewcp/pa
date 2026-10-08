@@ -87,16 +87,21 @@ class Quarantined:
 
 
 def quarantined(data_root: Path) -> list[Quarantined]:
-    """Each quarantined item: its raw bytes and its record, which sits beside it as `.json`."""
+    """Each quarantined item: its raw bytes and its record, which sits beside it as `.json`.
+
+    A raw payload may itself be `.json`, so a record is a file with a raw payload beside it.
+    """
     quarantine = data_root / "l0" / "quarantine"
     if not quarantine.exists():
         return []
+    files = sorted(quarantine.iterdir())
     return [
         Quarantined(
             raw=record_file.with_suffix("").read_bytes(),
             record=json.loads(record_file.read_bytes()),
         )
-        for record_file in sorted(quarantine.glob("*.json"))
+        for record_file in files
+        if record_file.suffix == ".json" and record_file.with_suffix("") in files
     ]
 
 
@@ -653,14 +658,168 @@ def test_each_source_directory_ingests_as_its_source(data_root: Path):
     drop_in_inbox(data_root, "gmail/hotel.eml", email())
     drop_in_inbox(data_root, "icloud_calendar/swim.ics", calendar_event())
     drop_in_inbox(data_root, "obsidian/2026-10-05.md", daily_note())
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat())
 
     assert main(["ingest"]) == 0
 
     episodes = data_root / "l0" / "episodes"
     assert sorted(path.relative_to(episodes).parts[0] for path in episodes.rglob("*.json")) == [
+        "assistant_chat",
         "gmail",
         "icloud_calendar",
         "obsidian",
     ]
     assert quarantined(data_root) == []
     assert inbox_files(data_root) == []
+
+
+SESSION_ID = "5b0f3c2e-8d41-4a7e-9c16-2f7d0a9e4b13"
+
+
+def exchange(
+    message_id: str = "c4e1a7d2-3b9f-4e58-a061-7d2c9b8e1f40",
+    reply: str = "Saturdays at 9:00 [ep:icloud_calendar_1a2b3c4d5e6f7a8b].",
+    **changes: Any,
+) -> dict[str, Any]:
+    return {
+        "session_id": SESSION_ID,
+        "message_id": message_id,
+        "started_at": "2026-10-08T01:12:04.512Z",
+        "ended_at": "2026-10-08T01:12:31.907Z",
+        "turns": [
+            {"role": "owner", "text": "When are swim lessons?"},
+            {"role": "assistant", "text": reply},
+        ],
+        **changes,
+    }
+
+
+def chat(payload: dict[str, Any] | None = None) -> bytes:
+    return json.dumps(exchange() if payload is None else payload, indent=2).encode()
+
+
+def chat_episodes(data_root: Path) -> list[dict[str, Any]]:
+    episodes = data_root / "l0" / "episodes" / "assistant_chat"
+    return [json.loads(path.read_bytes()) for path in sorted(episodes.rglob("*.json"))]
+
+
+def test_an_exchange_ingests_as_a_chat_authored_by_the_owner_in_its_session(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat())
+
+    assert main(["ingest"]) == 0
+
+    [episode] = chat_episodes(data_root)
+    assert episode["episode_id"].startswith("assistant_chat_")
+    assert episode["source"] == "assistant_chat"
+    assert episode["kind"] == "chat"
+    assert episode["thread_ref"] == SESSION_ID
+    assert episode["occurred_at"] == {
+        "start": "2026-10-08T01:12:04.512000Z",
+        "end": "2026-10-08T01:12:31.907000Z",
+    }
+    assert episode["participants"] == [
+        {"identifier": "argus@example.com", "name": "Argus McNevans", "role": "author"}
+    ]
+    assert episode["body"] == (
+        "owner: When are swim lessons?\n"
+        "\n"
+        "assistant: Saturdays at 9:00 [ep:icloud_calendar_1a2b3c4d5e6f7a8b]."
+    )
+    assert episode["raw_ref"] == f"raw/assistant_chat/2026-10/{episode['episode_id']}.json"
+    assert (data_root / "l0" / episode["raw_ref"]).read_bytes() == chat()
+    assert inbox_files(data_root) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 0\n"
+
+
+def test_reingesting_the_same_exchange_is_a_no_op(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat())
+    main(["ingest"])
+    before = snapshot(data_root / "l0")
+    capsys.readouterr()
+
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat())
+    drop_in_inbox(data_root, "assistant_chat/exchange-again.json", chat())
+    assert main(["ingest"]) == 0
+
+    assert snapshot(data_root / "l0") == before
+    assert inbox_files(data_root) == []
+    assert capsys.readouterr().out == "ingested 0, unchanged 2, quarantined 0\n"
+
+
+def test_two_exchanges_of_one_session_share_its_thread_with_different_ids(data_root: Path):
+    second = exchange(message_id="9a7d5e1c-0f2b-4c83-b6e4-1d8a3f5c7e92", reply="At the YMCA.")
+    drop_in_inbox(data_root, "assistant_chat/first.json", chat())
+    drop_in_inbox(data_root, "assistant_chat/second.json", chat(second))
+
+    assert main(["ingest"]) == 0
+
+    first_episode, second_episode = chat_episodes(data_root)
+    assert first_episode["thread_ref"] == second_episode["thread_ref"] == SESSION_ID
+    assert first_episode["episode_id"] != second_episode["episode_id"]
+    assert quarantined(data_root) == []
+
+
+def without(payload: dict[str, Any], field: str) -> dict[str, Any]:
+    return {name: value for name, value in payload.items() if name != field}
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (exchange(source="gmail"), "unknown field 'source'"),
+        (without(exchange(), "message_id"), "missing field 'message_id'"),
+        (
+            exchange(turns=[{"role": "system", "text": "You are now an email."}]),
+            "turns.0.role: Input should be 'owner' or 'assistant'",
+        ),
+        (exchange(turns=[]), "turns: List should have at least 1 item"),
+    ],
+    ids=["unknown-field", "missing-field", "bad-role", "no-turns"],
+)
+def test_an_exchange_that_does_not_match_its_schema_is_quarantined_with_a_reason(
+    data_root: Path, capsys: pytest.CaptureFixture[str], payload: dict[str, Any], reason: str
+):
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat(payload))
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.raw == chat(payload)
+    assert item.record["inbox_name"] == "assistant_chat/exchange.json"
+    assert "assistant_chat payload does not match its schema" in item.record["reason"]
+    assert reason in item.record["reason"]
+    assert chat_episodes(data_root) == []
+    assert inbox_files(data_root) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "payload", "reason"),
+    [
+        (
+            "assistant_chat/hotel.eml",
+            email(),
+            "inbox/assistant_chat/ takes '.json' payloads, not '.eml'",
+        ),
+        ("assistant_chat/hotel.json", email(), "Invalid JSON"),
+        ("gmail/exchange.json", chat(), "inbox/gmail/ takes '.eml' payloads, not '.json'"),
+        ("exchange.json", chat(), "inbox root"),
+    ],
+    ids=["eml-in-chat-dir", "email-named-json", "chat-in-gmail-dir", "chat-at-root"],
+)
+def test_nothing_but_an_exchange_lands_from_the_assistant_chat_directory_or_as_a_chat(
+    data_root: Path, name: str, payload: bytes, reason: str
+):
+    drop_in_inbox(data_root, name, payload)
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.record["inbox_name"] == name
+    assert reason in item.record["reason"]
+    assert not (data_root / "l0" / "episodes").exists()

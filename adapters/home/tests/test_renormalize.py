@@ -306,6 +306,45 @@ def test_after_the_owner_changes_name_renormalize_lets_a_recaptured_note_ingest_
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
 
 
+def chat(reply: str = "Saturdays at 9:00 [ep:icloud_calendar_1a2b3c4d5e6f7a8b].") -> bytes:
+    exchange = {
+        "session_id": "5b0f3c2e-8d41-4a7e-9c16-2f7d0a9e4b13",
+        "message_id": "c4e1a7d2-3b9f-4e58-a061-7d2c9b8e1f40",
+        "started_at": "2026-10-08T01:12:04.512Z",
+        "ended_at": "2026-10-08T01:12:31.907Z",
+        "turns": [
+            {"role": "owner", "text": "When are swim lessons?"},
+            {"role": "assistant", "text": reply},
+        ],
+    }
+    return json.dumps(exchange).encode()
+
+
+def test_an_exchange_renormalizes_from_its_raw_payload_to_the_same_id(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    ingest(data_root, {"assistant_chat/exchange.json": chat()})
+    [before] = envelopes(data_root).values()
+    raw_before = snapshot(data_root / "l0" / "raw")
+    monkeypatch.setenv("PA_OWNER_NAME", "Gus McNevans")
+    capsys.readouterr()
+
+    assert main(["renormalize"]) == 0
+
+    [after] = envelopes(data_root).values()
+    assert after["episode_id"] == before["episode_id"]
+    assert after["thread_ref"] == before["thread_ref"]
+    assert after["body"] == before["body"]
+    assert after["participants"] == [
+        {"identifier": "argus@example.com", "name": "Gus McNevans", "role": "author"}
+    ]
+    assert snapshot(data_root / "l0" / "raw") == raw_before
+    assert [entry.episode_id for entry in catalog_entries(data_root)] == [before["episode_id"]]
+    assert capsys.readouterr().out == "renormalized 1 episodes; catalog rebuilt\n"
+    ingest(data_root, {"assistant_chat/exchange.json": chat()})
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
 def test_renormalize_refuses_to_start_without_the_owner_configured(
     data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

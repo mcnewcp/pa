@@ -1,0 +1,16 @@
+{
+  "session_id": "5b0f3c2e-8d41-4a7e-9c16-2f7d0a9e4b13",
+  "message_id": "c4e1a7d2-3b9f-4e58-a061-7d2c9b8e1f40",
+  "started_at": "2026-10-08T01:12:04.512Z",
+  "ended_at": "2026-10-08T01:12:31.907Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "When are Theo and June's swim lessons?"
+    },
+    {
+      "role": "assistant",
+      "text": "Saturdays at 9:00 at the YMCA, starting October 17 [ep:icloud_calendar_1a2b3c4d5e6f7a8b]."
+    }
+  ]
+}
