@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
 from pa_core.errors import PaError
+from pa_core.exchange_capture import CAPTURE_VARS
 from pa_core.owner import Owner
 from pa_home.agent_project import AGENT_PROJECT, render_agent_project
 from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print
@@ -68,7 +70,8 @@ class ClaudeAgent:
     Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
     in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
     up, with a fresh scratch directory beside it. What the session may do comes from the
-    project's settings.json alone, as in chat.
+    project's settings.json alone, as in chat. Exchange capture is always off: the session's
+    environment drops its settings, whatever the caller's environment says.
     """
 
     def __init__(
@@ -122,9 +125,16 @@ class ClaudeAgent:
                     prompt=prompt,
                     cwd=workdir,
                     timeout_seconds=self._timeout_seconds,
+                    env=_without_capture(os.environ),
                 )
             except ClaudeCliTimeoutError as error:
                 raise AgentTimeoutError(str(error)) from error
             except ClaudeCliError as error:
                 raise AgentError(str(error)) from error
         return str(result.get("result", ""))
+
+
+def _without_capture(environ: Mapping[str, str]) -> dict[str, str]:
+    """`environ` with exchange capture turned off: the agent's own answers are never captured,
+    so they can't come back into L0 as if the owner had said them."""
+    return {name: value for name, value in environ.items() if name not in CAPTURE_VARS}

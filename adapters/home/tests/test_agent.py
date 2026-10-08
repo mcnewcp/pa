@@ -267,6 +267,48 @@ def test_an_agent_that_runs_too_long_is_stopped_with_a_timeout_error(tmp_path: P
         agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
 
+TWO_EXCHANGES = (
+    Path(__file__).parents[3] / "core/tests/fixtures/claude_code_transcripts/two_exchanges.jsonl"
+)
+INSTALL_REPLY = (
+    "L0 doesn't say when the countertop will be installed. Birchwood's last email only "
+    "confirms the order [ep:gmail_0123456789abcdef]."
+)
+
+
+def test_an_agent_run_captures_no_exchange_even_where_capture_is_on(
+    tmp_path: Path, l0: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Eval runs are never captured, even from a shell where the chat service's settings leak."""
+    inbox = tmp_path / "data" / "inbox" / "assistant_chat"
+    inbox.mkdir(parents=True)
+    monkeypatch.setenv("PA_CAPTURE_EXCHANGES", "1")
+    monkeypatch.setenv("PA_CAPTURE_INBOX", str(inbox))
+    hook_statuses = tmp_path / "hook_statuses.json"
+    # The stand-in stops the way Claude Code does: it fires the project's Stop hooks.
+    claude = _fake_claude(
+        tmp_path,
+        f"""\
+        import subprocess
+        stop = {{"session_id": "3f0c9a7e-5b21-4d8e-a6f3-91c2e7d40b58",
+                 "transcript_path": {str(TWO_EXCHANGES)!r}, "hook_event_name": "Stop",
+                 "stop_hook_active": False, "last_assistant_message": {INSTALL_REPLY!r}}}
+        statuses = [
+            subprocess.run([hook["command"], *hook["args"]], input=json.dumps(stop), text=True,
+                           env={{**os.environ, "CLAUDE_PROJECT_DIR": os.getcwd()}}).returncode
+            for group in settings["hooks"]["Stop"] for hook in group["hooks"]
+        ]
+        Path({str(hook_statuses)!r}).write_text(json.dumps(statuses))
+        """,
+    )
+    agent = ClaudeAgent(executable=str(claude))
+
+    agent.answer("When are they installing the countertop?", owner=OWNER, l0=l0)
+
+    assert json.loads(hook_statuses.read_text()) == [0]
+    assert list(inbox.iterdir()) == []
+
+
 def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(tmp_path / "no-such-claude"))
 

@@ -45,6 +45,22 @@
       ]
     }
   },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${python}",
+            "args": [
+              "${project}/.claude/hooks/capture_exchange.py"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "enableAllProjectMcpServers": false,
   "disableClaudeAiConnectors": true
 }
