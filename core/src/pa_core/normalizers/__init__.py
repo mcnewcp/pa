@@ -7,7 +7,7 @@ from functools import partial
 from typing import Protocol
 
 from pa_core.envelope import Envelope, Source
-from pa_core.normalizers import calendar, daily_note, email
+from pa_core.normalizers import assistant_chat, calendar, daily_note, email
 from pa_core.owner import Owner
 
 
@@ -24,6 +24,8 @@ def payload_extension(source: Source) -> str:
             return calendar.EXTENSION
         case Source.OBSIDIAN:
             return daily_note.EXTENSION
+        case Source.ASSISTANT_CHAT:
+            return assistant_chat.EXTENSION
 
 
 def normalizer_for(source: Source, owner: Owner) -> Normalizer:
@@ -35,3 +37,5 @@ def normalizer_for(source: Source, owner: Owner) -> Normalizer:
             return calendar.normalize_calendar_event
         case Source.OBSIDIAN:
             return partial(daily_note.normalize_daily_note, owner=owner)
+        case Source.ASSISTANT_CHAT:
+            return partial(assistant_chat.normalize_assistant_chat, owner=owner)
