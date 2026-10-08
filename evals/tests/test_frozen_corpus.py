@@ -12,7 +12,7 @@ from pa_evals.corpus import payload_path
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
 from pa_evals.harness import run_eval
 from pa_evals.judge import ScriptedJudge
-from pa_evals.questions import build_eval_set
+from pa_evals.questions import build_eval_set, load_questions
 from pa_evals.results import IngestCounts
 from pa_evals.storyline import (
     CalendarEvent,
@@ -37,19 +37,32 @@ def eval_set() -> EvalSet:
 
 
 @pytest.fixture(scope="module")
-def ingested(eval_set: EvalSet) -> tuple[IngestCounts, set[str]]:
-    """The whole frozen corpus ingested by the eval harness, and the episode ids in its L0."""
-    episodes: set[str] = set()
+def harness_l0(eval_set: EvalSet) -> tuple[IngestCounts, dict[str, str]]:
+    """The whole frozen corpus ingested by the eval harness, and each episode in its L0 by id.
+
+    An episode is the text of its files (the envelope and the raw payload), as the agent's file
+    search reads them.
+    """
+    episodes: dict[str, str] = {}
 
     class ListingAgent:
         def answer(self, request: AgentRequest) -> str:
-            store = FilesystemL0(request.data_root.l0)
-            episodes.update(envelope.episode_id for envelope in store.envelopes())
+            l0 = request.data_root.l0
+            for envelope in FilesystemL0(l0).envelopes():
+                files = sorted(l0.rglob(f"{envelope.episode_id}.*"))
+                episodes[envelope.episode_id] = "\n".join(p.read_text("utf-8") for p in files)
             return "answer"
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
     return results.ingest, episodes
+
+
+@pytest.fixture(scope="module")
+def ingested(harness_l0: tuple[IngestCounts, dict[str, str]]) -> tuple[IngestCounts, set[str]]:
+    """The ingest counts, and the episode ids in L0."""
+    counts, episodes = harness_l0
+    return counts, set(episodes)
 
 
 def payloads() -> list[Path]:
@@ -82,10 +95,45 @@ def test_the_eval_set_covers_every_category_with_at_least_two_questions(eval_set
     counts = Counter(question.category for question in eval_set.questions)
 
     measured = [category for category in CATEGORIES if category != "canary"]
-    assert len(measured) == 8
+    assert len(measured) == 9
     assert {category: counts[category] for category in measured if counts[category] < 2} == {}
     assert 1 <= counts["canary"] <= 2
-    assert 18 <= len(eval_set.questions) <= 24
+    assert 22 <= len(eval_set.questions) <= 28
+
+
+def test_the_paraphrase_category_has_one_question_per_storyline(spec):
+    storyline_of = {
+        event.id: storyline.id for storyline in spec.storylines for event in storyline.events
+    }
+    questions = load_questions(frozen.QUESTIONS).questions
+    paraphrases = [q for q in questions if q.category == "paraphrase"]
+
+    storylines = [{storyline_of[event] for event in q.evidence} for q in paraphrases]
+    assert sorted(storylines, key=sorted) == [{"family"}, {"kitchen"}, {"medical"}, {"wedding"}]
+
+
+PARAPHRASE_KEY_WORDS = {
+    "texas-flight-times": ["plane", "land", "Texas", "home"],
+    "cabinet-guy-update": ["cabinet", "guy", "updated", "price"],
+    "leg-specialist": ["leg", "specialist", "doc", "looked"],
+    "hitched-lodging": ["crashing", "north", "buddy", "hitched"],
+}
+"""The words a lexical search would try for each paraphrase question."""
+
+
+def test_a_plain_grep_for_a_paraphrase_questions_key_words_misses_its_evidence(
+    harness_l0, eval_set: EvalSet
+):
+    _, episodes = harness_l0
+    paraphrases = [q for q in eval_set.questions if q.category == "paraphrase"]
+    assert {q.id for q in paraphrases} == set(PARAPHRASE_KEY_WORDS)
+
+    for question in paraphrases:
+        for episode_id in question.evidence:
+            # Case-insensitive, like `grep -ril` over L0.
+            text = episodes[episode_id].lower()
+            hits = [w for w in PARAPHRASE_KEY_WORDS[question.id] if w.lower() in text]
+            assert hits == [], f"{question.id}: {episode_id} contains {hits}"
 
 
 def test_abstention_and_canary_questions_need_no_evidence_and_the_rest_do(eval_set: EvalSet):
