@@ -6,6 +6,7 @@ differs.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,20 @@ def test_the_rendered_settings_hold_the_instance_paths(instance):
     assert settings["sandbox"]["filesystem"]["denyWrite"] == [str(target), l0]
     assert settings["sandbox"]["filesystem"]["allowRead"] == [str(target), l0, scratch]
     assert "${" not in (target / SETTINGS).read_text()
+
+
+def test_the_rendered_capture_hook_runs_the_projects_hook_script_with_the_rendering_python(
+    instance,
+):
+    target = _render(instance)
+    settings = json.loads((target / SETTINGS).read_text())
+
+    [group] = settings["hooks"]["Stop"]
+    [hook] = group["hooks"]
+    # Exec form (command and args, no shell), so no path needs quoting.
+    assert hook["command"] == sys.executable
+    assert hook["args"] == [str(target / ".claude" / "hooks" / "capture_exchange.py")]
+    assert (target / ".claude" / "hooks" / "capture_exchange.py").is_file()
 
 
 def test_a_rendered_project_differs_from_the_source_only_where_instance_values_go(instance):
