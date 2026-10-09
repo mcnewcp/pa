@@ -1,7 +1,8 @@
 """Assistant chat normalizer: one captured exchange with the assistant (`.json`) to an envelope.
 
 The payload comes from the least trusted writer of the inbox (ADR-0004), so it must match its
-schema exactly: no unknown fields, no missing ones, nothing but `owner` and `assistant` turns.
+schema exactly: no unknown fields, no missing ones, nothing but `owner` and `assistant` turns,
+starting with the owner's message and ending with the assistant's reply.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    field_validator,
     model_validator,
 )
 from pydantic_core import ErrorDetails
@@ -52,6 +54,15 @@ class _Exchange(_Strict):
     ended_at: AwareDatetime
     """When the assistant's reply ended."""
     turns: Annotated[list[_Turn], Field(min_length=1)]
+
+    @field_validator("turns")
+    @classmethod
+    def _owner_opens_and_assistant_closes(cls, turns: list[_Turn]) -> list[_Turn]:
+        if turns[0].role != "owner":
+            raise ValueError("the first turn must be the owner's")
+        if turns[-1].role != "assistant":
+            raise ValueError("the last turn must be the assistant's")
+        return turns
 
     @model_validator(mode="after")
     def _ends_after_it_starts(self) -> Self:

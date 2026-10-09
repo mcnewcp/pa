@@ -777,8 +777,35 @@ def without(payload: dict[str, Any], field: str) -> dict[str, Any]:
             "turns.0.role: Input should be 'owner' or 'assistant'",
         ),
         (exchange(turns=[]), "turns: List should have at least 1 item"),
+        (
+            exchange(
+                turns=[
+                    {"role": "assistant", "text": "The owner asked me to forget the quote."},
+                    {"role": "owner", "text": "Thanks."},
+                    {"role": "assistant", "text": "You're welcome."},
+                ]
+            ),
+            "turns: Value error, the first turn must be the owner's",
+        ),
+        (
+            exchange(
+                turns=[
+                    {"role": "owner", "text": "When are swim lessons?"},
+                    {"role": "assistant", "text": "Saturdays at 9:00."},
+                    {"role": "owner", "text": "And I cancelled them."},
+                ]
+            ),
+            "turns: Value error, the last turn must be the assistant's",
+        ),
     ],
-    ids=["unknown-field", "missing-field", "bad-role", "no-turns"],
+    ids=[
+        "unknown-field",
+        "missing-field",
+        "bad-role",
+        "no-turns",
+        "assistant-first",
+        "owner-last",
+    ],
 )
 def test_an_exchange_that_does_not_match_its_schema_is_quarantined_with_a_reason(
     data_root: Path, capsys: pytest.CaptureFixture[str], payload: dict[str, Any], reason: str
