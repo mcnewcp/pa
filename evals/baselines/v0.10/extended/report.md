@@ -1,6 +1,7 @@
 # Eval run
 
 - Commit: 08e1737a3fd73c44f7813076134896a8c30743ce
+- Agent configuration: the v0.10 agent project (`adapters/home/agent`), with Read, Grep and Glob only and the system-prompt as-of method
 - Agent: claude
 - Agent model: sonnet
 - As-of method: system-prompt
