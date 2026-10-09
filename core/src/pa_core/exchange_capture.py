@@ -17,9 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pa_core.envelope import Source, episode_id
 from pa_core.errors import PaError
-from pa_core.normalizers.assistant_chat import EXTENSION
+from pa_core.normalizers.assistant_chat import (
+    EXTENSION,
+    TurnRole,
+    encode_exchange,
+    exchange_episode_id,
+)
 
 CAPTURE_VAR = "PA_CAPTURE_EXCHANGES"
 """Turns capture on for a session when set to 1 in its environment. Off when unset."""
@@ -50,7 +54,7 @@ class CapturedExchange:
     @property
     def file_name(self) -> str:
         """The payload's name in the inbox: its episode's id, the same on every recapture."""
-        return episode_id(Source.ASSISTANT_CHAT, self.session_id, self.message_id) + EXTENSION
+        return exchange_episode_id(self.session_id, self.message_id) + EXTENSION
 
 
 class ReplyNotInTranscriptError(PaError):
@@ -72,7 +76,8 @@ def capture_exchange(transcript: str, *, final_reply: str | None) -> CapturedExc
     `final_reply` is the reply's text as Claude Code reports it at the stop (None or empty to
     skip the check). Claude Code writes the transcript asynchronously, so it may not hold that
     reply yet: then, or when the latest reply in the transcript doesn't end with that text,
-    raises ReplyNotInTranscriptError.
+    raises ReplyNotInTranscriptError. Raises MalformedPayloadError for an exchange that ingest
+    would quarantine.
     """
     chain = _active_chain(transcript)
     reply = _final_reply(chain)
@@ -86,33 +91,30 @@ def capture_exchange(transcript: str, *, final_reply: str | None) -> CapturedExc
         )
     if reply is None:
         return None
-    turns: list[dict[str, str]] = []
+    turns: list[tuple[TurnRole, str]] = []
     owner_message: _Entry | None = None
     questions: dict[str, list[str]] = {}
     for entry in chain[_exchange_start(chain, reply.start) : reply.start]:
         text = _owner_text(entry)
         if text:
             owner_message = owner_message or entry
-            turns.append({"role": "owner", "text": text})
+            turns.append(("owner", text))
         questions.update(_questions_asked(entry))
         for question, answer in _answers(entry, questions):
-            turns.append({"role": "assistant", "text": question})
-            turns.append({"role": "owner", "text": answer})
+            turns.append(("assistant", question))
+            turns.append(("owner", answer))
     if owner_message is None:
         return None
-    turns.append({"role": "assistant", "text": reply.text})
-    payload = {
-        "session_id": owner_message["sessionId"],
-        "message_id": owner_message["uuid"],
-        "started_at": owner_message["timestamp"],
-        "ended_at": reply.ended_at,
-        "turns": turns,
-    }
-    return CapturedExchange(
-        session_id=payload["session_id"],
-        message_id=payload["message_id"],
-        payload=(json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(),
+    turns.append(("assistant", reply.text))
+    session_id, message_id = owner_message["sessionId"], owner_message["uuid"]
+    payload = encode_exchange(
+        session_id=session_id,
+        message_id=message_id,
+        started_at=owner_message["timestamp"],
+        ended_at=reply.ended_at,
+        turns=turns,
     )
+    return CapturedExchange(session_id=session_id, message_id=message_id, payload=payload)
 
 
 def _active_chain(transcript: str) -> list[_Entry]:

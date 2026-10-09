@@ -7,6 +7,8 @@ starting with the owner's message and ending with the assistant's reply.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
@@ -31,6 +33,9 @@ EXTENSION = ".json"
 
 _Text = Annotated[str, StringConstraints(min_length=1)]
 
+TurnRole = Literal["owner", "assistant"]
+"""Whose words a turn is: the owner's, or the assistant's."""
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
@@ -39,7 +44,7 @@ class _Strict(BaseModel):
 class _Turn(_Strict):
     """One speaker's words: the owner's, or the assistant's."""
 
-    role: Literal["owner", "assistant"]
+    role: TurnRole
     text: _Text
 
 
@@ -71,10 +76,43 @@ class _Exchange(_Strict):
         return self
 
 
+def exchange_episode_id(session_id: str, message_id: str) -> str:
+    """The id of the exchange opened by the owner's message `message_id` in `session_id`.
+
+    The owner's message is unique within its session, so the two make the exchange's id.
+    """
+    return episode_id(Source.ASSISTANT_CHAT, session_id, message_id)
+
+
+def encode_exchange(
+    *,
+    session_id: str,
+    message_id: str,
+    started_at: str,
+    ended_at: str,
+    turns: Sequence[tuple[TurnRole, str]],
+) -> bytes:
+    """One exchange as its raw payload, held to the schema ingest holds it to.
+
+    `started_at` and `ended_at` are ISO 8601 timestamps, kept as given. Raises
+    MalformedPayloadError when the exchange doesn't match the schema, so a payload that would
+    be quarantined is never written.
+    """
+    payload = {
+        "session_id": session_id,
+        "message_id": message_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "turns": [{"role": role, "text": text} for role, text in turns],
+    }
+    raw = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
+    _parse(raw)
+    return raw
+
+
 def normalize_assistant_chat(raw: bytes, *, captured_at: datetime, owner: Owner) -> Envelope:
     exchange = _parse(raw)
-    # The owner's message is unique within its session, so the two make the exchange's id.
-    eid = episode_id(Source.ASSISTANT_CHAT, exchange.session_id, exchange.message_id)
+    eid = exchange_episode_id(exchange.session_id, exchange.message_id)
     return Envelope.seal(
         episode_id=eid,
         source=Source.ASSISTANT_CHAT,
