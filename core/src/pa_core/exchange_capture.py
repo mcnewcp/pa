@@ -287,6 +287,8 @@ def run_stop_hook(
 
     Returns the hook's exit status: 0, or 1 with the reason on stderr, which Claude Code shows
     without stopping the session. Never 2, which would make the assistant carry on talking.
+    When capture is on but the turn holds no exchange to capture, says so in one line on stderr
+    and returns 0.
     """
     setting = environ.get(CAPTURE_VAR, "").strip()
     if setting in ("", "0"):
@@ -307,7 +309,13 @@ def run_stop_hook(
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(_TRANSCRIPT_POLL_SECONDS)
-        if exchange is not None:
+        if exchange is None:
+            print(
+                "exchange capture: nothing captured: "
+                "no message from the owner opened the turn that just ended",
+                file=sys.stderr,
+            )
+        else:
             _drop(exchange, inbox)
     except (PaError, OSError, ValueError, KeyError, TypeError) as error:
         print(f"exchange capture: {error}", file=sys.stderr)

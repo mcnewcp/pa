@@ -241,3 +241,36 @@ def test_capture_into_an_inbox_directory_that_is_missing_fails_rather_than_creat
     assert result.returncode == 1
     assert "not an existing" in result.stderr
     assert not missing.exists()
+
+
+def with_origin(transcript: str, line: int, kind: str) -> str:
+    """`transcript` with the message on `line` (counted from 1) sent from another origin."""
+    lines = transcript.splitlines(keepends=True)
+    lines[line - 1] = lines[line - 1].replace(
+        '"origin":{"kind":"human"}', f'"origin":{{"kind":"{kind}"}}'
+    )
+    return "".join(lines)
+
+
+@pytest.mark.parametrize(
+    ("transcript", "final_reply"),
+    [
+        (with_origin(TWO_EXCHANGES, 25, "channel"), INSTALL_REPLY),
+        (
+            until_line((TRANSCRIPTS / "declined_question.jsonl").read_text(), 8),
+            "It's Saturday, October 10, a little after 9:10 in the morning.",
+        ),
+    ],
+    ids=["unknown-origin", "shell-command"],
+)
+def test_a_stop_with_nothing_to_capture_says_so_without_failing(
+    session: Session, inbox: Path, transcript: str, final_reply: str
+):
+    # No owner message is recognised in the turn: a message from an origin capture doesn't
+    # know, or the owner ran a shell command from the prompt.
+    [result] = session.stop(transcript, final_reply, env=capture_on(inbox))
+
+    assert result.returncode == 0
+    assert result.stderr.count("\n") == 1
+    assert "exchange capture: nothing captured" in result.stderr
+    assert files_under(inbox) == []
