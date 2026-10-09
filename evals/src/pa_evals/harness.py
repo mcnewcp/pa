@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
-from pa_core.ingest import ingest
+from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
 from pa_evals.agent import AgentRequest, AgentRunner
@@ -174,7 +174,7 @@ def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
     inbox.mkdir(parents=True)
     for payload in sorted(corpus.rglob("*")):
         relative = payload.relative_to(corpus)
-        if not payload.is_file() or any(part.startswith(".") for part in relative.parts):
+        if not payload.is_file() or is_hidden(relative):
             continue
         target = inbox / relative
         target.parent.mkdir(parents=True, exist_ok=True)

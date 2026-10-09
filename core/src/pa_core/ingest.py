@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath
 
 from pa_core.catalog import Catalog
 from pa_core.envelope import Envelope, Source
@@ -154,14 +154,18 @@ def inbox_normalizer(inbox_name: PurePosixPath, owner: Owner) -> Normalizer:
     return normalizer_for(source, owner)
 
 
-def _waiting_payloads(inbox: Path) -> list[Path]:
-    """Raw payload files under the inbox, in path order.
+def is_hidden(inbox_name: PurePath) -> bool:
+    """Whether `inbox_name`, a path within the inbox, is a hidden file or in a hidden directory.
 
-    Hidden files, and anything in a hidden directory, are in-progress captures.
+    Hidden paths are in-progress captures, never raw payloads waiting to be ingested.
     """
+    return any(part.startswith(".") for part in inbox_name.parts)
+
+
+def _waiting_payloads(inbox: Path) -> list[Path]:
+    """Raw payload files under the inbox, in path order."""
     return sorted(
         path
         for path in inbox.rglob("*")
-        if path.is_file()
-        and not any(part.startswith(".") for part in path.relative_to(inbox).parts)
+        if path.is_file() and not is_hidden(path.relative_to(inbox))
     )
