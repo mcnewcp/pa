@@ -1,0 +1,32 @@
+description: The PA VM (pa-home)
+config:
+  limits.cpu: "4"
+  limits.memory: 6GiB
+  boot.autostart: "true"
+  cloud-init.user-data: |
+    #cloud-config
+    # One unprivileged user and no default ubuntu user. Admin goes through `incus exec` on the
+    # devbox; the owner reaches assistant over Tailscale SSH.
+    users:
+      - name: assistant
+        gecos: PA assistant
+        shell: /bin/bash
+        lock_passwd: true
+    package_update: true
+    package_upgrade: true
+    packages:
+      - ca-certificates
+      - curl
+      - git
+    runcmd:
+      - curl -fsSL https://tailscale.com/install.sh | sh
+devices:
+  root:
+    type: disk
+    path: /
+    pool: pa
+    size: 40GiB
+  eth0:
+    type: nic
+    name: eth0
+    network: pabr0
