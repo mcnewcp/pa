@@ -70,8 +70,8 @@ class ClaudeAgent:
     Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
     in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
     up, with a fresh scratch directory beside it. What the session may do comes from the
-    project's settings.json alone, as in chat. Exchange capture is always off: the session's
-    environment drops its settings, whatever the caller's environment says.
+    project's settings.json in auto permission mode, as in chat. Exchange capture is always
+    off: the session's environment drops its settings, whatever the caller's environment says.
     """
 
     def __init__(
@@ -101,7 +101,8 @@ class ClaudeAgent:
             raise ValueError(f"the agent's now must have a UTC offset (got {now.isoformat()})")
         statement = now_statement(now)
         prompt = question
-        args = ["--no-session-persistence"]
+        # Auto, the mode the Claude app starts chat sessions in, so evals run as chat does.
+        args = ["--no-session-persistence", "--permission-mode", "auto"]
         if self._model:
             args += ["--model", self._model]
         system_prompt = ROLE
