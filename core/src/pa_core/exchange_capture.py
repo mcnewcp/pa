@@ -30,9 +30,11 @@ CAPTURE_VAR = "PA_CAPTURE_EXCHANGES"
 INBOX_VAR = "PA_CAPTURE_INBOX"
 """The inbox directory captured exchanges go into (`inbox/assistant_chat/`)."""
 CAPTURE_VARS = (CAPTURE_VAR, INBOX_VAR)
+"""Every variable that configures capture; a session's environment without them captures nothing."""
 TRANSCRIPT_WAIT_SECONDS = 10.0
 """How long the hook waits for Claude Code to write the reply to the transcript."""
 _TRANSCRIPT_POLL_SECONDS = 0.1
+"""How often the hook looks at the transcript again while it waits for the reply."""
 
 _Entry = dict[str, Any]
 
