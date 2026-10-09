@@ -108,7 +108,10 @@ def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0:
     assert _flag_values(argv, "--settings") == [str(Path(seen["cwd"]) / ".claude/settings.json")]
     assert seen["settings"]["permissions"]["additionalDirectories"][0] == str(l0)
     assert seen["scratch_is_a_directory"]
-    # Permissions come from settings.json alone, as in chat: no command-line restrictions.
+    # The same permission mode as chat, where the Claude app starts sessions in auto.
+    assert _flag_values(argv, "--permission-mode") == ["auto"]
+    # Otherwise permissions come from settings.json alone, as in chat: no command-line
+    # restrictions.
     for flag in (
         "--tools",
         "--allowedTools",
@@ -117,7 +120,6 @@ def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0:
         "--strict-mcp-config",
         "--disable-slash-commands",
         "--add-dir",
-        "--permission-mode",
         "--dangerously-skip-permissions",
     ):
         assert flag not in argv
@@ -320,9 +322,10 @@ def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path)
     os.environ.get("PA_SMOKE_CLAUDE") != "1",
     reason="calls the real claude CLI; set PA_SMOKE_CLAUDE=1 to run",
 )
-def test_smoke_the_real_agent_cannot_write_files(tmp_path: Path, l0: Path):
-    """No settings rule fences writes any more (the VM's read-only L0 mount does, in chat), but
-    `claude -p` runs in default mode, where a write needs an approval it can't give."""
+def test_smoke_the_real_agent_declines_to_change_l0(tmp_path: Path, l0: Path):
+    """Nothing here fences writes: no settings rule does (the VM's read-only L0 mount does, in
+    chat), and `claude -p` runs in auto mode, as chat does, which lets them through. The agent
+    leaves L0 alone because its CLAUDE.md tells it to."""
     episode = l0 / "episodes" / "gmail" / "2026-10" / "gmail_94f6b4cbc55a3b85.json"
     episode.parent.mkdir(parents=True)
     episode.write_text('{"body": "The hotel block closes on Oct 9."}')
