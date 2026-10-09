@@ -101,7 +101,7 @@ class ClaudeAgent:
             raise ValueError(f"the agent's now must have a UTC offset (got {now.isoformat()})")
         statement = now_statement(now)
         prompt = question
-        # Auto, the mode the Claude app starts chat sessions in, so evals run as chat does.
+        # Auto, the mode the Claude app starts sessions in, so eval sessions run as the owner's do.
         args = ["--no-session-persistence", "--permission-mode", "auto"]
         if self._model:
             args += ["--model", self._model]
@@ -136,6 +136,6 @@ class ClaudeAgent:
 
 
 def _without_capture(environ: Mapping[str, str]) -> dict[str, str]:
-    """`environ` with exchange capture turned off: the agent's own answers are never captured,
-    so they can't come back into L0 as if the owner had said them."""
+    """`environ` with exchange capture turned off: an eval session's exchanges are never
+    captured, so the assistant's answers can't come back into L0 as if the owner had said them."""
     return {name: value for name, value in environ.items() if name not in CAPTURE_VARS}
