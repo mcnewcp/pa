@@ -47,7 +47,7 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
                 "claude_md": claude_md.read_text() if claude_md.exists() else None,
                 "settings": settings,
                 "scratch_is_a_directory": bool(settings) and Path(
-                    settings["sandbox"]["filesystem"]["allowWrite"][0]
+                    settings["permissions"]["additionalDirectories"][1]
                 ).is_dir(),
             }}))
             reply = "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
@@ -161,7 +161,7 @@ def test_the_agent_runs_outside_the_repository_so_no_other_instructions_are_pick
     repository = Path(__file__).resolve().parents[3]
     assert not cwd.is_relative_to(repository)
     assert not cwd.exists(), "the per-question project copy is cleaned up"
-    scratch = Path(_seen(tmp_path)["settings"]["sandbox"]["filesystem"]["allowWrite"][0])
+    scratch = Path(_seen(tmp_path)["settings"]["permissions"]["additionalDirectories"][1])
     assert not scratch.is_relative_to(repository)
     assert not scratch.exists(), "the per-question scratch directory is cleaned up"
 
@@ -321,6 +321,8 @@ def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path)
     reason="calls the real claude CLI; set PA_SMOKE_CLAUDE=1 to run",
 )
 def test_smoke_the_real_agent_cannot_write_files(tmp_path: Path, l0: Path):
+    """No settings rule fences writes any more (the VM's read-only L0 mount does, in chat), but
+    `claude -p` runs in default mode, where a write needs an approval it can't give."""
     episode = l0 / "episodes" / "gmail" / "2026-10" / "gmail_94f6b4cbc55a3b85.json"
     episode.parent.mkdir(parents=True)
     episode.write_text('{"body": "The hotel block closes on Oct 9."}')

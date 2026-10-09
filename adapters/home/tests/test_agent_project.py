@@ -63,9 +63,6 @@ def test_the_rendered_settings_hold_the_instance_paths(instance):
 
     l0, scratch = str(instance["l0"]), str(instance["scratch"])
     assert settings["permissions"]["additionalDirectories"] == [l0, scratch]
-    assert settings["sandbox"]["filesystem"]["allowWrite"] == [scratch]
-    assert settings["sandbox"]["filesystem"]["denyWrite"] == [str(target), l0]
-    assert settings["sandbox"]["filesystem"]["allowRead"] == [str(target), l0, scratch]
     assert "${" not in (target / SETTINGS).read_text()
 
 
@@ -107,31 +104,28 @@ def test_the_source_project_names_no_owner_and_no_instance_path():
         assert not value.startswith("/"), f"settings.json names an absolute path: {value!r}"
 
 
-def test_the_permission_policy_fences_hold_in_every_permission_mode(instance):
-    """The shared policy (roadmap's permissions table, #22): every fence is a deny rule or the
-    Bash sandbox, never an ask rule, since the chat client picks the permission mode."""
+def test_the_permission_policy_leaves_the_fences_to_the_vm_and_holds_in_every_mode(instance):
+    """The shared policy (roadmap's permissions table, #22). Isolation is the VM's: its
+    tailnet rules, the host firewall and the read-only L0 mount. Inside it the assistant has
+    its normal tools, so there is no Bash sandbox and no file-tool deny rule. What the settings
+    do fence is a deny rule, never an ask rule, since the chat client picks the permission
+    mode."""
     settings = json.loads((_render(instance) / SETTINGS).read_text())
-    permissions, sandbox = settings["permissions"], settings["sandbox"]
+    permissions = settings["permissions"]
 
     assert "ask" not in permissions
     assert "defaultMode" not in permissions
+    assert "sandbox" not in settings
     # Web search and fetch (any domain) without a prompt.
     assert {"WebSearch", "WebFetch"} <= set(permissions["allow"])
-    # The file tools write nowhere: scratch is written with sandboxed Bash.
-    assert {"Edit", "Write", "NotebookEdit"} <= set(permissions["deny"])
+    # The normal tools stay: no tool is denied outright except MCP's.
+    assert [rule for rule in permissions["deny"] if "(" not in rule] == ["mcp__*"]
     # No MCP servers: none configured, claude.ai connectors off, and every MCP tool denied.
-    assert "mcp__*" in permissions["deny"]
     assert settings["disableClaudeAiConnectors"] is True
     assert settings["enableAllProjectMcpServers"] is False
     assert "mcpServers" not in settings
-    # Bash runs sandboxed or not at all, with no network, writing only to scratch.
-    assert sandbox["enabled"] is True
-    assert sandbox["failIfUnavailable"] is True
-    assert sandbox["allowUnsandboxedCommands"] is False
-    assert "excludedCommands" not in sandbox
-    assert sandbox["network"] == {"deniedDomains": ["*"]}
-    assert sandbox["filesystem"]["allowWrite"] == [str(instance["scratch"])]
-    assert sandbox["filesystem"]["denyRead"] == ["~/"]
+    # The Stop hook captures each exchange (see the capture hook test).
+    assert settings["hooks"]["Stop"]
 
 
 def test_two_owners_get_their_own_rendered_projects(tmp_path: Path, instance):

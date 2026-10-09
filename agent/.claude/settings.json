@@ -5,9 +5,6 @@
       "WebFetch"
     ],
     "deny": [
-      "Edit",
-      "Write",
-      "NotebookEdit",
       "mcp__*",
       "Read(~/.claude/.credentials.json)",
       "Read(~/.claude.json)"
@@ -16,34 +13,6 @@
       "${l0}",
       "${scratch}"
     ]
-  },
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "allowUnsandboxedCommands": false,
-    "autoAllowBashIfSandboxed": true,
-    "filesystem": {
-      "allowWrite": [
-        "${scratch}"
-      ],
-      "denyWrite": [
-        "${project}",
-        "${l0}"
-      ],
-      "denyRead": [
-        "~/"
-      ],
-      "allowRead": [
-        "${project}",
-        "${l0}",
-        "${scratch}"
-      ]
-    },
-    "network": {
-      "deniedDomains": [
-        "*"
-      ]
-    }
   },
   "hooks": {
     "Stop": [
