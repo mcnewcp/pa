@@ -1,7 +1,7 @@
 """The agent project, and rendering it for one instance.
 
 `agent/` at the repository root is the Claude Code project the assistant runs in: CLAUDE.md,
-.claude/settings.json (permissions, sandbox and hooks) and .claude/hooks/ (the exchange capture
+.claude/settings.json (permissions and hooks) and .claude/hooks/ (the exchange capture
 hook). It is shared by both instances and names none of them. CLAUDE.md and settings.json are
 templates with `${name}` placeholders; rendering writes a filled-in copy with the owner and the
 instance paths.
@@ -40,11 +40,10 @@ def render_agent_project(
 ) -> None:
     """Writes a copy of the agent project to `target`, filled in for this instance.
 
-    `l0` is the store the assistant reads, and `scratch` the only directory it may write to
-    (with sandboxed Bash). `python` runs the project's hooks; the default, the interpreter
-    rendering it, has the core package installed. `target` must not exist yet, or be empty: a
-    rendered project is replaced by deleting it and rendering again, never by writing over
-    files.
+    `l0` is the store the assistant reads, and `scratch` the only directory it may write to.
+    `python` runs the project's hooks; the default, the interpreter rendering it, has the core
+    package installed. `target` must not exist yet, or be empty: a rendered project is replaced
+    by deleting it and rendering again, never by writing over files.
     """
     if target.exists() and (not target.is_dir() or any(target.iterdir())):
         raise AgentProjectError(

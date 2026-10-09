@@ -52,7 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--scratch",
         type=Path,
         required=True,
-        help="The only directory the assistant may write to (with sandboxed Bash).",
+        help="The only directory the assistant may write to.",
     )
     args = parser.parse_args(argv)
 
