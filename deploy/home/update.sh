@@ -8,7 +8,7 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 ref=${1:?usage: update.sh <commit|branch|tag>}
-[[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
+require_owner_env
 
 snapshot="pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
 log "snapshot $PA_VM/$snapshot"

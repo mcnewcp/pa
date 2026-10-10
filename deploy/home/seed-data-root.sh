@@ -7,7 +7,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-if [[ -d $PA_DATA_ROOT/l0 ]]; then
+if [[ -d $PA_L0 ]]; then
   log "data root $PA_DATA_ROOT is seeded"
 else
   log "seeding $PA_DATA_ROOT from the frozen corpus"
@@ -32,4 +32,4 @@ EOF
 fi
 
 # The VM's only way back; it must exist before it can be mounted.
-mkdir -p "$PA_DATA_ROOT/inbox/assistant_chat"
+mkdir -p "$PA_CHAT_INBOX"

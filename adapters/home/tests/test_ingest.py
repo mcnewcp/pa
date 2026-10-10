@@ -857,7 +857,7 @@ def l0_holds(data_root: Path, payload: bytes) -> bool:
     return any(payload in (l0 / path).read_bytes() for path in files_under(l0))
 
 
-@pytest.mark.parametrize("target_name", ["exchange.json", "secrets"])
+@pytest.mark.parametrize("target_name", ["exchange.json", "a_directory"])
 def test_a_symlink_in_the_inbox_is_quarantined_without_reading_what_it_points_to(
     data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], target_name: str
 ):
@@ -867,7 +867,7 @@ def test_a_symlink_in_the_inbox_is_quarantined_without_reading_what_it_points_to
     outside.mkdir()
     (outside / "exchange.json").write_bytes(chat())
     target = outside / target_name
-    if target_name == "secrets":
+    if target_name == "a_directory":
         target.mkdir()
     link = data_root / "inbox" / "assistant_chat" / "exchange.json"
     link.parent.mkdir(parents=True)

@@ -48,15 +48,15 @@ done
 echo "In $PA_VM, the inbox directory is writable, and it reaches the devbox:"
 probe=.store-check-$$
 if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
-  [[ -e $PA_DATA_ROOT/inbox/assistant_chat/$probe ]]; then
-  pass "$PA_USER's file in $PA_VM_CHAT_INBOX lands in $PA_DATA_ROOT/inbox/assistant_chat"
+  [[ -e $PA_CHAT_INBOX/$probe ]]; then
+  pass "$PA_USER's file in $PA_VM_CHAT_INBOX lands in $PA_CHAT_INBOX"
 else
   fail "$PA_USER's file in $PA_VM_CHAT_INBOX doesn't reach the devbox"
 fi
-rm -f "$PA_DATA_ROOT/inbox/assistant_chat/$probe"
+rm -f "$PA_CHAT_INBOX/$probe"
 
 echo "Nothing else of the data root is visible in $PA_VM:"
-expected=$(printf '%s\n' "$PA_DATA_ROOT/inbox/assistant_chat" "$PA_DATA_ROOT/l0" | sort)
+expected=$(printf '%s\n' "$PA_CHAT_INBOX" "$PA_L0" | sort)
 shared=$(incus query "/1.0/instances/$PA_VM" |
   python3 -c 'import json, sys
 for device in json.load(sys.stdin)["expanded_devices"].values():

@@ -11,8 +11,9 @@ source "$(dirname "$0")/lib.sh"
 
 (($#)) || set -- --agent claude --judge model
 
-inbox=$PA_DATA_ROOT/inbox/assistant_chat
-before=$(find "$inbox" -mindepth 1 -printf '%P %s %T@\n' | sort)
+# inbox_listing lists what's in the VM's inbox directory, with sizes and times.
+inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
+before=$(inbox_listing)
 
 output=$(mktemp)
 trap 'rm -f "$output"' EXIT
@@ -20,15 +21,19 @@ as_assistant "$PA_REPO_DIR" "$@" <<'EOF' | tee "$output"
 set -euo pipefail
 cd "$1"
 shift
+# The run's throwaway data root and rendered projects go in TMPDIR: on the VM's disk, since
+# /tmp in the VM is in memory.
+export TMPDIR=$HOME/.cache/pa-eval
+mkdir -p "$TMPDIR"
 .venv/bin/pa-eval run "$@"
 EOF
 
-after=$(find "$inbox" -mindepth 1 -printf '%P %s %T@\n' | sort)
+after=$(inbox_listing)
 if [[ $before != "$after" ]]; then
   diff <(echo "$before") <(echo "$after") >&2 || true
-  die "the eval run changed $inbox"
+  die "the eval run changed $PA_CHAT_INBOX"
 fi
-log "the eval run left $inbox unchanged"
+log "the eval run left $PA_CHAT_INBOX unchanged"
 
 report=$(sed -n 's/^report: //p' "$output")
 [[ -n $report ]] || die "the run didn't say where its report is"

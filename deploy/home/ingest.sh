@@ -4,7 +4,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-[[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
+require_owner_env
 set -a
 # shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
 source "$PA_OWNER_ENV"

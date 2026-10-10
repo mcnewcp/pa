@@ -44,11 +44,11 @@ Two directories of it are mounted into the VM, and nothing else, the catalog inc
 | On the devbox | In the VM | |
 |---|---|---|
 | `l0/` | `/srv/pa/l0` | Read-only. Enforced on the devbox, so even root in the VM can't write it |
-| `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode or nothing ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
+| `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode, or quarantines it ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
 
 `update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory. Each update deletes the rendered project and renders it again at the same path.
 
-The shares are served by `virtiofsd` running as root on the devbox, with no id mapping, so what the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes: root in the VM can leave root-owned files there, setuid ones and device nodes included. Ingest reads only regular files and never follows a symbolic link (a link is quarantined unread), so it can't be made to copy a devbox file into L0, where the VM could read it. Don't run anything from that directory.
+The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes: root in the VM can leave root-owned files there, setuid ones and device nodes included. Ingest reads only regular files and never follows a symbolic link (a link is quarantined unread), so it can't be made to copy a devbox file into L0, where the VM could read it. Don't run anything from that directory.
 
 To start the data root over: `incus config device remove pa-home pa-l0 pa-chat-inbox`, delete the data root, then run `seed-data-root.sh` and `mount-store.sh` again.
 

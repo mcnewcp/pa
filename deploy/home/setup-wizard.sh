@@ -279,7 +279,7 @@ stage "Seed the instance's data root"
 say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
 say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
 run "$DEPLOY_DIR/seed-data-root.sh"
-ok "$(find "$PA_DATA_ROOT/l0/episodes" -name '*.json' | wc -l) episodes in L0"
+ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────

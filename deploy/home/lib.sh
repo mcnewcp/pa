@@ -16,6 +16,9 @@ PA_REPO_DIR=/home/assistant/pa
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
+# The two parts of it the VM sees.
+PA_L0=$PA_DATA_ROOT/l0
+PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
 
 # Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
 PA_VM_L0=/srv/pa/l0
@@ -46,6 +49,11 @@ as_assistant() {
   local args=""
   (($#)) && args=$(printf ' %q' "$@")
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "bash -s --$args"
+}
+
+# require_owner_env stops unless the data root is seeded, owner.env with it.
+require_owner_env() {
+  [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
 }
 
 # wait_for_agent waits until the VM's Incus agent answers, after a start or a restore.
