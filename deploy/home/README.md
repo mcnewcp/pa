@@ -18,7 +18,8 @@ deploy/home/setup-wizard.sh
 | `seed-data-root.sh` | Creates the instance's data root on the devbox from the frozen synthetic corpus, with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo) |
 | `mount-store.sh` | Mounts L0 into the VM read-only and `inbox/assistant_chat/` writable |
-| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project; the first run installs uv and Claude Code |
+| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
+| `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `rollback.sh [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` |
@@ -62,6 +63,19 @@ sudo systemctl disable --now "$unit"
 rm -rf ~/.local/share/pa-home-synthetic
 deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/mount-store.sh
 ```
+
+## Remote Control
+
+`pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a chat lands in the inbox for `ingest.sh`.
+
+- It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens.
+- It waits until the inbox directory is mounted, so no capture goes to the VM's own disk.
+- It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.
+- `update.sh` stops it before the render and starts it again after. A chat open during an update is cut off.
+- The permission mode isn't pinned: the phone picks each session's mode, and the fences hold in every mode.
+- Before it's enabled, two questions are answered once from a terminal as `assistant`: running `claude` in the project (theme, the "Claude can make mistakes" notice, folder trust), and running `claude remote-control` (`Enable Remote Control? (y/n)`). With no terminal, the service would wait on that question forever. The wizard asks both, checks the answers in the VM's `~/.claude.json` (`hasTrustDialogAccepted`, `remoteDialogSeen`), and only then enables the service.
+
+Don't chat during an eval run: the run fails if the inbox changes while it runs, and a chat changes it.
 
 ## Evals in the VM
 
@@ -125,3 +139,21 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    incus exec pa-home -- rm /srv/pa/inbox/assistant_chat/.fill
    ```
 4. Reboot the devbox: the inbox is mounted before `pa-home` starts, and `check-store.sh` passes.
+
+## Acceptance run (#31)
+
+1. The wizard ends with `pa-remote-control.service` running, and the Claude app on the phone and claude.ai/code list `pa-home → agent`.
+2. From the phone, in one session: a question about the corpus gets an answer with `[ep:…]` citations, and a `WebFetch` goes through without a prompt in auto mode and again in manual mode.
+3. `deploy/home/ingest.sh` lands one `assistant_chat` episode per exchange, all with the session's id as `thread_ref`; run again, it ingests 0.
+4. `incus exec pa-home -- systemctl restart pa-remote-control`, then `incus restart pa-home`: the service comes back on its own each time, connected, with no new login.
+5. A permanent error leaves it stopped. Give it an inference-only token, which Remote Control refuses:
+   ```sh
+   incus exec pa-home -- sh -c 'd=/run/systemd/system/pa-remote-control.service.d && mkdir -p $d &&
+     printf "[Service]\nEnvironment=CLAUDE_CODE_OAUTH_TOKEN=bogus\n" >$d/error.conf && systemctl daemon-reload &&
+     systemctl restart pa-remote-control'
+   # a minute later: failed, NRestarts=4, "Start request repeated too quickly"
+   incus exec pa-home -- systemctl show pa-remote-control -p ActiveState -p NRestarts
+   incus exec pa-home -- sh -c 'rm -r /run/systemd/system/pa-remote-control.service.d && systemctl daemon-reload'
+   deploy/home/install-remote-control.sh
+   ```
+6. `run-evals.sh`, with the service running, leaves the inbox unchanged.
