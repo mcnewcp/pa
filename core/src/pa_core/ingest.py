@@ -58,7 +58,8 @@ def ingest(
 
     A symbolic link in the inbox is quarantined without reading what it points to: a writer
     confined to its inbox directory (the assistant's VM) must not be able to make ingest copy
-    a file from elsewhere into L0.
+    a file from elsewhere into L0. A payload ingest can't read is quarantined without its
+    content, so the rest of the inbox still lands.
     """
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
@@ -76,9 +77,9 @@ def ingest(
 def _read_payload(path: Path) -> bytes:
     """The bytes of the regular file at `path`, never of anything a symbolic link points to.
 
-    Raises MalformedPayloadError for a symbolic link or anything else that isn't a regular file.
-    The link is refused when the file is opened, so one swapped in after the inbox was listed is
-    refused too.
+    Raises MalformedPayloadError for a symbolic link, anything else that isn't a regular file, or
+    a file the user running ingest isn't allowed to read. The link is refused when the file is
+    opened, so one swapped in after the inbox was listed is refused too.
     """
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -86,6 +87,10 @@ def _read_payload(path: Path) -> bytes:
         if error.errno == errno.ELOOP:
             raise MalformedPayloadError(
                 f"{path.name}: is a symbolic link, not a payload; what it points to was not read"
+            ) from error
+        if error.errno in (errno.EACCES, errno.EPERM):
+            raise MalformedPayloadError(
+                f"{path.name}: could not be read ({error.strerror}); its content was not kept"
             ) from error
         raise
     with os.fdopen(descriptor, "rb") as file:
