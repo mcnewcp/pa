@@ -850,3 +850,36 @@ def test_nothing_but_an_exchange_lands_from_the_assistant_chat_directory_or_as_a
     assert item.record["inbox_name"] == name
     assert reason in item.record["reason"]
     assert not (data_root / "l0" / "episodes").exists()
+
+
+def l0_holds(data_root: Path, payload: bytes) -> bool:
+    l0 = data_root / "l0"
+    return any(payload in (l0 / path).read_bytes() for path in files_under(l0))
+
+
+@pytest.mark.parametrize("target_name", ["exchange.json", "a_directory"])
+def test_a_symlink_in_the_inbox_is_quarantined_without_reading_what_it_points_to(
+    data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], target_name: str
+):
+    # The VM can write inbox/assistant_chat/ and read L0, quarantine included: a link it plants
+    # must not copy a host file where it can read it, nor make that file an episode.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "exchange.json").write_bytes(chat())
+    target = outside / target_name
+    if target_name == "a_directory":
+        target.mkdir()
+    link = data_root / "inbox" / "assistant_chat" / "exchange.json"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.record["inbox_name"] == "assistant_chat/exchange.json"
+    assert "symbolic link" in item.record["reason"]
+    assert not l0_holds(data_root, chat())
+    assert not (data_root / "l0" / "episodes").exists()
+    assert not link.is_symlink()
+    assert (outside / "exchange.json").read_bytes() == chat()
+    assert capsys.readouterr().out == "ingested 0, unchanged 0, quarantined 1\n"

@@ -14,4 +14,6 @@ incus stop "$PA_VM" 2>/dev/null || true
 incus snapshot restore "$PA_VM" "$snapshot"
 incus start "$PA_VM"
 wait_for_agent
+# A snapshot from before the store was mounted has no store devices.
+[[ -d $PA_L0 ]] && "$DEPLOY_DIR/mount-store.sh"
 log "$PA_VM is back at $snapshot"

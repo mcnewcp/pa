@@ -185,13 +185,13 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27): the steps only the owner can do, and the deploy
+# Sets up the PA VM on the devbox (#27, #30): the steps only the owner can do, and the deploy
 # scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOTAL_STAGES=10
+TOTAL_STAGES=14
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
 run() {
@@ -202,6 +202,12 @@ ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
 # vm_tagged: the VM is on the tailnet as tag:pa.
 vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep -q '"tag:pa"'; }
+
+# claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
+claude_logged_in() {
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth status' 2>/dev/null |
+    grep -q '"loggedIn": true'
+}
 
 banner "PA VM setup"
 
@@ -269,9 +275,27 @@ ok "$PA_VM is running"
 pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
+stage "Seed the instance's data root"
+say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
+say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
+run "$DEPLOY_DIR/seed-data-root.sh"
+ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
+pause
+
+# ── 7 ─────────────────────────────────────────────────────────────────────
+stage "Mount the store into the VM"
+say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
+say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
+say "way back. Nothing else of the data root goes in."
+run "$DEPLOY_DIR/mount-store.sh"
+ok "the store is mounted"
+pause
+
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
 say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync. The ref must be pushed to GitHub."
+say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
+say "pushed to GitHub."
 upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
 default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
 printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
@@ -279,7 +303,23 @@ read -r ref || true
 run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
 pause
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
+stage "Log the VM in to Claude"
+if claude_logged_in; then
+  ok "Claude Code in $PA_VM is already logged in"
+else
+  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat."
+  step "Claude prints a URL below. Open it and sign in with your Claude account."
+  step "Paste the code it gives you back here."
+  note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
+  printf '\n'
+  run incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth login'
+  claude_logged_in || { printf '  %s✗ Claude Code in %s isn'"'"'t logged in%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
+  ok "Claude Code in $PA_VM is logged in"
+fi
+pause
+
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Tailnet policy"
 say "The VM will join as tag:pa. The policy must let your devices reach it and each other,"
 say "and let tag:pa reach nothing."
@@ -300,7 +340,7 @@ else
   pause "Press Enter once the policy is saved"
 fi
 
-# ── 8 ─────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Join the VM to the tailnet as tag:pa"
 if vm_tagged; then
   ok "$PA_VM is already on the tailnet as tag:pa"
@@ -316,7 +356,7 @@ fi
 note "Tagged devices don't expire; the VM reconnects on its own after reboots."
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
+# ── 12 ────────────────────────────────────────────────────────────────────
 stage "Check your devices"
 say "Your devices still reach each other (from the devbox):"
 while read -r ip host; do
@@ -333,7 +373,7 @@ else
 fi
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 13 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
 say "From inside the VM: the devbox, its Docker services, the LAN and tailnet peers must be"
 say "unreachable, and the internet and Anthropic's API reachable."
@@ -345,8 +385,21 @@ else
 fi
 pause
 
+# ── 14 ────────────────────────────────────────────────────────────────────
+stage "Store check"
+say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
+say "root; inbox/assistant_chat/ is writable; nothing else of the data root is visible."
+printf '\n'
+if "$DEPLOY_DIR/check-store.sh"; then
+  ok "the store's mounts hold"
+else
+  SKIPPED+=("store check failed: fix and re-run deploy/home/check-store.sh")
+fi
+pause
+
 finish
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
+note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 printf '\n'
