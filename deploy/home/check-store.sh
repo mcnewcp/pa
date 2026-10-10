@@ -57,12 +57,12 @@ fi
 rm -f "$PA_CHAT_INBOX/$probe"
 
 echo "On the devbox, the VM's inbox directory is a filesystem of its own:"
-if options=$(findmnt -rn -M "$PA_CHAT_INBOX" -o OPTIONS); then
-  for flag in nosuid nodev noexec; do
-    if [[ ,$options, == *,$flag,* ]]; then
-      pass "$PA_CHAT_INBOX is mounted $flag"
-    else
+if missing=$(chat_inbox_missing_flags); then
+  for flag in "${PA_CHAT_INBOX_FLAGS[@]}"; do
+    if grep -qx "$flag" <<<"$missing"; then
       fail "$PA_CHAT_INBOX is mounted without $flag"
+    else
+      pass "$PA_CHAT_INBOX is mounted $flag"
     fi
   done
   size=$(findmnt -rnb -M "$PA_CHAT_INBOX" -o SIZE)
