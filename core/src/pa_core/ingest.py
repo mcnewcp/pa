@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import errno
+import os
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -52,14 +55,43 @@ def ingest(
     never anything in the payload (ADR-0004). A payload lands as an episode in L0, or in
     quarantine when it cannot become one. Either way it leaves the inbox only after that write
     succeeds, so input is never lost. Each episode is added to `catalog` as it lands.
+
+    A symbolic link in the inbox is quarantined without reading what it points to: a writer
+    confined to its inbox directory (the assistant's VM) must not be able to make ingest copy
+    a file from elsewhere into L0.
     """
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
-        raw = payload_file.read_bytes()
         inbox_name = payload_file.relative_to(inbox).as_posix()
-        summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
+        try:
+            raw = _read_payload(payload_file)
+        except MalformedPayloadError as error:
+            summary.add(_quarantine(store, inbox_name, b"", str(error), now()))
+        else:
+            summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
         payload_file.unlink()
     return summary
+
+
+def _read_payload(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, never of anything a symbolic link points to.
+
+    Raises MalformedPayloadError for a symbolic link or anything else that isn't a regular file.
+    The link is refused when the file is opened, so one swapped in after the inbox was listed is
+    refused too.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise MalformedPayloadError(
+                f"{path.name}: is a symbolic link, not a payload; what it points to was not read"
+            ) from error
+        raise
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise MalformedPayloadError(f"{path.name}: is not a regular file; it was not read")
+        return file.read()
 
 
 def _land(
@@ -163,9 +195,15 @@ def is_hidden(inbox_name: PurePath) -> bool:
 
 
 def _waiting_payloads(inbox: Path) -> list[Path]:
-    """Raw payload files under the inbox, in path order."""
+    """Raw payload files, and symbolic links, under the inbox, in path order.
+
+    Symbolic links are listed so they are quarantined; the walk never follows one.
+    """
+    entries: list[Path] = []
+    for directory, subdirectories, files in inbox.walk():
+        entries += [directory / name for name in (*subdirectories, *files)]
     return sorted(
         path
-        for path in inbox.rglob("*")
-        if path.is_file() and not is_hidden(path.relative_to(inbox))
+        for path in entries
+        if (path.is_symlink() or path.is_file()) and not is_hidden(path.relative_to(inbox))
     )
