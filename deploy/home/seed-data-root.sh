@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Seeds the instance's data root on the devbox from the frozen synthetic corpus, with the
 # corpus's fictional owner as the instance owner, and ingests it with this checkout's code.
-# Leaves a data root that already has an L0 alone; it is disposable, so to start over, take the
-# VM's store devices off (incus config device remove pa-home pa-l0 pa-chat-inbox), delete it,
-# and re-run this and mount-store.sh.
+# Leaves a data root that already has an L0 alone. It is disposable: deploy/home/README.md says
+# how to start it over.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 

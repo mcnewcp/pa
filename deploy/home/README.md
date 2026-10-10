@@ -16,6 +16,7 @@ deploy/home/setup-wizard.sh
 | `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service` |
 | `create-vm.sh` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale) |
 | `seed-data-root.sh` | Creates the instance's data root on the devbox from the frozen synthetic corpus, with its owner as the instance owner |
+| `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo) |
 | `mount-store.sh` | Mounts L0 into the VM read-only and `inbox/assistant_chat/` writable |
 | `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project; the first run installs uv and Claude Code |
 | `rollback.sh [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
@@ -48,9 +49,19 @@ Two directories of it are mounted into the VM, and nothing else, the catalog inc
 
 `update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory. Each update deletes the rendered project and renders it again at the same path.
 
-The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes: root in the VM can leave root-owned files there, setuid ones and device nodes included. Ingest reads only regular files and never follows a symbolic link (a link is quarantined unread), so it can't be made to copy a devbox file into L0, where the VM could read it. Don't run anything from that directory.
+The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes, so root in the VM could leave root-owned files there, setuid programs and device nodes included, or fill the devbox's disk. So that directory is a filesystem of its own (`install-chat-inbox.sh`): a 1 GiB ext4 image, `chat-inbox.img` in the data root, loop-mounted `nosuid,nodev,noexec` by a systemd mount unit. Nothing in it can run, setuid or not, or act as a device, and the VM can't write more than 1 GiB. The unit mounts it at boot before Incus, and Incus requires it: if it can't be mounted, Incus doesn't start and the VM stays down instead of sharing the bare directory.
 
-To start the data root over: `incus config device remove pa-home pa-l0 pa-chat-inbox`, delete the data root, then run `seed-data-root.sh` and `mount-store.sh` again.
+Ingest reads only regular files and never follows a symbolic link (a link is quarantined unread), so it can't be made to copy a devbox file into L0, where the VM could read it. A file it isn't allowed to read is quarantined without its content, and the rest of the inbox still lands.
+
+To start the data root over:
+
+```sh
+incus config device remove pa-home pa-l0 pa-chat-inbox
+unit=$(systemd-escape -p --suffix=mount ~/.local/share/pa-home-synthetic/inbox/assistant_chat)
+sudo systemctl disable --now "$unit"
+rm -rf ~/.local/share/pa-home-synthetic
+deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/mount-store.sh
+```
 
 ## Evals in the VM
 
@@ -95,3 +106,22 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    ```
    Then delete that episode from L0 and rebuild the catalog, so the assistant doesn't see it.
 3. `run-evals.sh` completes and leaves the inbox unchanged; its report is committed under `evals/baselines/`.
+
+## Acceptance run (#33)
+
+1. `install-chat-inbox.sh` runs, and `check-store.sh` passes.
+2. What root in the VM writes there can't run or act as a device on the devbox:
+   ```sh
+   incus exec pa-home -- sh -c 'cd /srv/pa/inbox/assistant_chat &&
+     printf "#!/bin/sh\nid\n" >.setuid && chmod 4755 .setuid && mknod -m 666 .null c 1 3'
+   ~/.local/share/pa-home-synthetic/inbox/assistant_chat/.setuid   # Permission denied
+   : <~/.local/share/pa-home-synthetic/inbox/assistant_chat/.null  # Permission denied
+   incus exec pa-home -- rm /srv/pa/inbox/assistant_chat/.setuid /srv/pa/inbox/assistant_chat/.null
+   ```
+3. The VM can't write more than 1 GiB:
+   ```sh
+   incus exec pa-home -- runuser -u assistant -- dd if=/dev/zero of=/srv/pa/inbox/assistant_chat/.fill bs=1M count=1100
+   # No space left on device, short of 1100 MiB
+   incus exec pa-home -- rm /srv/pa/inbox/assistant_chat/.fill
+   ```
+4. Reboot the devbox: the inbox is mounted before `pa-home` starts, and `check-store.sh` passes.
