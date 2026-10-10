@@ -81,10 +81,15 @@ def _ingest(data_root: DataRoot) -> None:
     store = FilesystemL0(data_root.l0)
     with open_catalog(data_root.catalog, store) as catalog:
         summary = ingest(data_root.inbox, store, catalog, owner)
+    left = f", left {len(summary.left)}" if summary.left else ""
     print(
         f"ingested {summary.ingested}, unchanged {summary.unchanged}, "
-        f"quarantined {summary.quarantined}"
+        f"quarantined {summary.quarantined}{left}"
     )
+    if summary.left:
+        for reason in summary.left:
+            print(f"pa: {reason}", file=sys.stderr)
+        raise PaError(f"left {len(summary.left)} in the inbox: this user can't remove them")
 
 
 def _rebuild_catalog(data_root: DataRoot) -> None:

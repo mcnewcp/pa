@@ -6,7 +6,7 @@ import errno
 import os
 import stat
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePath, PurePosixPath
@@ -30,6 +30,8 @@ class IngestSummary:
     ingested: int = 0
     unchanged: int = 0
     quarantined: int = 0
+    # Each payload left in the inbox because ingest may not remove it, and why.
+    left: list[str] = field(default_factory=list)
 
     def add(self, outcome: Outcome) -> None:
         match outcome:
@@ -59,19 +61,40 @@ def ingest(
     A symbolic link in the inbox is quarantined without reading what it points to: a writer
     confined to its inbox directory (the assistant's VM) must not be able to make ingest copy
     a file from elsewhere into L0. A payload ingest can't read is quarantined without its
-    content, so the rest of the inbox still lands.
+    content, so the rest of the inbox still lands. A payload ingest isn't allowed to remove is
+    left in the inbox, not landed, so it doesn't land again on every run; the summary says why.
     """
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
         inbox_name = payload_file.relative_to(inbox).as_posix()
+        if not _removable(payload_file):
+            summary.left.append(
+                f"{inbox_name}: can't be removed from the inbox, so it was left there unread"
+            )
+            continue
         try:
             raw = _read_payload(payload_file)
         except MalformedPayloadError as error:
             summary.add(_quarantine(store, inbox_name, b"", str(error), now()))
         else:
             summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
-        payload_file.unlink()
+        try:
+            payload_file.unlink()
+        except PermissionError as error:
+            # Its permissions changed while it was landing.
+            summary.left.append(f"{inbox_name}: can't be removed from the inbox ({error.strerror})")
     return summary
+
+
+def _removable(path: Path) -> bool:
+    """Whether the user running ingest may remove `path`, by the kernel's rules for unlink."""
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        return False
+    directory = path.parent.stat()
+    if not directory.st_mode & stat.S_ISVTX:
+        return True
+    # In a sticky directory, only root and the owners of the file or the directory may.
+    return os.geteuid() in (0, directory.st_uid, path.lstat().st_uid)
 
 
 def _read_payload(path: Path) -> bytes:
