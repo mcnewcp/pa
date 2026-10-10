@@ -208,13 +208,13 @@ vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep 
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
-  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth status' 2>/dev/null |
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "$PA_VM_CLAUDE auth status" 2>/dev/null |
     grep '"loggedIn": true' >/dev/null
 }
 
-# claude_config_set KEY [PROJECT]: KEY is true in Claude Code's config in the VM (~/.claude.json),
+# claude_config_true KEY [PROJECT]: KEY is true in Claude Code's config in the VM (~/.claude.json),
 # at its top level or in PROJECT's entry.
-claude_config_set() {
+claude_config_true() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "python3 -$(printf ' %q' "$@")" 2>/dev/null <<'EOF'
 import json, os, sys
 config = json.load(open(os.path.expanduser("~/.claude.json")))
@@ -226,13 +226,10 @@ EOF
 }
 
 # project_trusted: Claude Code in the VM trusts the rendered agent project.
-project_trusted() { claude_config_set hasTrustDialogAccepted "$PA_VM_PROJECT"; }
+project_trusted() { claude_config_true hasTrustDialogAccepted "$PA_VM_PROJECT"; }
 
 # remote_control_consented: Remote Control's one-time question was answered yes in the VM.
-remote_control_consented() { claude_config_set remoteDialogSeen; }
-
-# rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.
-rc_unit() { incus exec "$PA_VM" -- systemctl "$@" "$PA_VM_RC_UNIT"; }
+remote_control_consented() { claude_config_true remoteDialogSeen; }
 
 # in_project CMD: runs CMD in the rendered agent project as the assistant user, on this terminal.
 in_project() {
@@ -352,7 +349,7 @@ else
   step "Paste the code it gives you back here."
   note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
   printf '\n'
-  run incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth login'
+  run incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "$PA_VM_CLAUDE auth login"
   claude_logged_in || { printf '  %s✗ Claude Code in %s isn'"'"'t logged in%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
   ok "Claude Code in $PA_VM is logged in"
 fi
@@ -477,7 +474,7 @@ stage "Start the Remote Control service"
 say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
 say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
 say "it stopped. Every update restarts it."
-if rc_unit is-enabled --quiet && rc_unit is-active --quiet; then
+if rc_unit is-enabled --quiet &>/dev/null && rc_unit is-active --quiet; then
   ok "$PA_VM_RC_UNIT is already running"
 else
   run "$DEPLOY_DIR/install-remote-control.sh" --enable

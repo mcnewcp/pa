@@ -16,8 +16,10 @@ log "snapshot $PA_VM/$snapshot"
 incus snapshot create "$PA_VM" "$snapshot"
 
 # Remote Control runs in the rendered project, which the render deletes, and its sessions' hooks
-# run the repo's code. install-remote-control.sh starts it again.
-incus exec "$PA_VM" -- systemctl stop "$PA_VM_RC_UNIT" 2>/dev/null || true
+# run the repo's code. install-remote-control.sh starts it again. Stopping a unit that isn't
+# installed yet fails, harmlessly.
+rc_unit stop &>/dev/null || true
+trap 'log "the update failed, leaving $PA_VM_RC_UNIT stopped: fix and re-run, or rollback.sh"' ERR
 
 log "deploying $ref"
 as_assistant "$PA_REPO_URL" "$PA_REPO_DIR" "$ref" <<'EOF'

@@ -75,6 +75,9 @@ chat_inbox_missing_flags() {
   done
 }
 
+# rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.
+rc_unit() { incus exec "$PA_VM" -- systemctl "$@" "$PA_VM_RC_UNIT"; }
+
 # wait_for_agent waits until the VM's Incus agent answers, after a start or a restore.
 wait_for_agent() {
   for _ in $(seq 60); do

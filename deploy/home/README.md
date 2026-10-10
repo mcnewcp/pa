@@ -66,16 +66,16 @@ deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/hom
 
 ## Remote Control
 
-`pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a chat lands in the inbox for `ingest.sh`.
+`pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a session lands in the inbox for `ingest.sh`.
 
 - It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens.
 - It waits until the inbox directory is mounted, so no capture goes to the VM's own disk.
 - It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.
-- `update.sh` stops it before the render and starts it again after. A chat open during an update is cut off.
+- `update.sh` stops it before the render and starts it again after. A session open during an update is cut off.
 - The permission mode isn't pinned: the phone picks each session's mode, and the fences hold in every mode.
 - Before it's enabled, two questions are answered once from a terminal as `assistant`: running `claude` in the project (theme, the "Claude can make mistakes" notice, folder trust), and running `claude remote-control` (`Enable Remote Control? (y/n)`). With no terminal, the service would wait on that question forever. The wizard asks both, checks the answers in the VM's `~/.claude.json` (`hasTrustDialogAccepted`, `remoteDialogSeen`), and only then enables the service.
 
-Don't chat during an eval run: the run fails if the inbox changes while it runs, and a chat changes it.
+Don't chat during an eval run: the run fails if the inbox changes while it runs, and every exchange changes it.
 
 ## Evals in the VM
 
