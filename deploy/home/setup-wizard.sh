@@ -200,13 +200,16 @@ run() {
 }
 ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
+# The checks below read the whole output: with pipefail, grep -q quitting at the first match
+# would fail the pipeline on the writer's SIGPIPE.
+
 # vm_tagged: the VM is on the tailnet as tag:pa.
-vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep -q '"tag:pa"'; }
+vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep '"tag:pa"' >/dev/null; }
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth status' 2>/dev/null |
-    grep -q '"loggedIn": true'
+    grep '"loggedIn": true' >/dev/null
 }
 
 # project_trusted: Claude Code in the VM trusts the rendered agent project.
