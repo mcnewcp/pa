@@ -79,8 +79,9 @@ expect_ping_blocked "LAN gateway" "$(ip -4 route show default | awk '{print $3; 
 
 echo "From $PA_VM, tailnet peers are unreachable:"
 if command -v tailscale >/dev/null; then
+  # The probe's incus exec gets /dev/null, or it would swallow the rest of the peer list.
   while read -r ip host; do
-    expect_ping_blocked "tailnet peer $host" "$ip"
+    expect_ping_blocked "tailnet peer $host" "$ip" </dev/null
   done < <(tailscale status | awk -v vm="$PA_VM" '$1 ~ /^100\./ && $2 != vm && !/offline/ {print $1, $2}')
 else
   skip "tailscale isn't installed on the devbox"
