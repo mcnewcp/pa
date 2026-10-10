@@ -33,6 +33,9 @@ PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
 PA_VM_SCRATCH=/home/assistant/scratch
+# Claude Code in the VM, and the unit that runs Remote Control in the agent project.
+PA_VM_CLAUDE=/home/assistant/.local/bin/claude
+PA_VM_RC_UNIT=pa-remote-control.service
 
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
