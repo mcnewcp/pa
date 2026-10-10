@@ -49,17 +49,15 @@ EOF
 incus exec "$PA_VM" -- systemctl daemon-reload
 log "installed $PA_VM_RC_UNIT"
 
-if $enable; then
-  # Clears a start limit tripped before the one-time steps were done. On a unit that has never
-  # run it fails, harmlessly.
-  incus exec "$PA_VM" -- systemctl reset-failed "$PA_VM_RC_UNIT" &>/dev/null || true
-  incus exec "$PA_VM" -- systemctl enable --quiet "$PA_VM_RC_UNIT"
-fi
+$enable && incus exec "$PA_VM" -- systemctl enable --quiet "$PA_VM_RC_UNIT"
 if ! incus exec "$PA_VM" -- systemctl is-enabled --quiet "$PA_VM_RC_UNIT"; then
   log "$PA_VM_RC_UNIT isn't enabled: the setup wizard enables it once Remote Control is set up"
   exit 0
 fi
 
+# A tripped start limit refuses every start until it's cleared, say after the login was fixed.
+# On a unit that has never run, clearing it fails, harmlessly.
+incus exec "$PA_VM" -- systemctl reset-failed "$PA_VM_RC_UNIT" &>/dev/null || true
 # A failed start shows below, with the journal. A rejected login exits within seconds.
 incus exec "$PA_VM" -- systemctl restart "$PA_VM_RC_UNIT" || true
 sleep 5
