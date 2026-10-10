@@ -50,8 +50,9 @@ incus exec "$PA_VM" -- systemctl daemon-reload
 log "installed $PA_VM_RC_UNIT"
 
 if $enable; then
-  # A start limit tripped before the one-time steps were done would keep it from starting.
-  incus exec "$PA_VM" -- systemctl reset-failed "$PA_VM_RC_UNIT" 2>/dev/null || true
+  # Clears a start limit tripped before the one-time steps were done. On a unit that has never
+  # run it fails, harmlessly.
+  incus exec "$PA_VM" -- systemctl reset-failed "$PA_VM_RC_UNIT" &>/dev/null || true
   incus exec "$PA_VM" -- systemctl enable --quiet "$PA_VM_RC_UNIT"
 fi
 if ! incus exec "$PA_VM" -- systemctl is-enabled --quiet "$PA_VM_RC_UNIT"; then
