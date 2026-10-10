@@ -39,7 +39,7 @@ The append-only store of episodes. Its raw payloads are the only source of truth
 _Avoid_: Raw layer, data lake
 
 **Quarantine**:
-Where input that cannot become an episode is kept: malformed payloads, and payloads whose episode id already exists with different content.
+Where input that cannot become an episode is kept: malformed payloads, files in the inbox that aren't payloads or that ingest can't read (kept without their content), and payloads whose episode id already exists with different content.
 _Avoid_: Dead letter, rejects
 
 **Daily note**:

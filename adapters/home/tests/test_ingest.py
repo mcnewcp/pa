@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -883,3 +884,48 @@ def test_a_symlink_in_the_inbox_is_quarantined_without_reading_what_it_points_to
     assert not link.is_symlink()
     assert (outside / "exchange.json").read_bytes() == chat()
     assert capsys.readouterr().out == "ingested 0, unchanged 0, quarantined 1\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+def test_a_payload_ingest_cannot_read_is_quarantined_and_the_rest_still_lands(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    # Root in the VM can leave a file in its inbox directory that the devbox user can't read.
+    drop_in_inbox(data_root, "assistant_chat/locked.json", chat())
+    (data_root / "inbox" / "assistant_chat" / "locked.json").chmod(0)
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
+
+    assert main(["ingest"]) == 0
+
+    [item] = quarantined(data_root)
+    assert item.record["inbox_name"] == "assistant_chat/locked.json"
+    assert "could not be read" in item.record["reason"]
+    assert chat_episodes(data_root) == []
+    assert (data_root / EPISODE_FILE).exists()
+    assert inbox_files(data_root) == []
+    assert capsys.readouterr().out == "ingested 1, unchanged 0, quarantined 1\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root removes any file")
+def test_a_payload_ingest_cannot_remove_is_left_in_the_inbox_and_the_rest_still_lands(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    # Root in the VM can take the devbox user's write permission away from its inbox directory.
+    # Landing a payload that can't then be removed would land it again on every run.
+    drop_in_inbox(data_root, "assistant_chat/exchange.json", chat())
+    drop_in_inbox(data_root, "gmail/hotel.eml", email())
+    chat_inbox = data_root / "inbox" / "assistant_chat"
+    chat_inbox.chmod(0o555)
+    try:
+        for expected in ("ingested 1, unchanged 0", "ingested 0, unchanged 0"):
+            assert main(["ingest"]) == 1
+
+            output = capsys.readouterr()
+            assert output.out == f"{expected}, quarantined 0, left 1\n"
+            assert "assistant_chat/exchange.json: can't be removed" in output.err
+            assert (chat_inbox / "exchange.json").read_bytes() == chat()
+            assert chat_episodes(data_root) == []
+            assert quarantined(data_root) == []
+            assert (data_root / EPISODE_FILE).exists()
+    finally:
+        chat_inbox.chmod(0o755)

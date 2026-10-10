@@ -19,6 +19,10 @@ PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
 # The two parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
+# The inbox directory is a filesystem of its own, loop-mounted from this image
+# (install-chat-inbox.sh).
+PA_CHAT_INBOX_IMAGE=$PA_DATA_ROOT/chat-inbox.img
+PA_CHAT_INBOX_SIZE=1G
 
 # Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
 PA_VM_L0=/srv/pa/l0

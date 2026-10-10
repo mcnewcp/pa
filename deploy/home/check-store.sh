@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the store's mounts from inside the PA VM: L0 is readable where the rendered agent
 # project says it is and unwritable even by root, and the VM's inbox directory is the only part
-# of the data root it can see or write. Exits non-zero if any check fails.
+# of the data root it can see or write; on the devbox, that inbox directory is a filesystem of its
+# own that nothing written into it can run from. Exits non-zero if any check fails.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -54,6 +55,25 @@ else
   fail "$PA_USER's file in $PA_VM_CHAT_INBOX doesn't reach the devbox"
 fi
 rm -f "$PA_CHAT_INBOX/$probe"
+
+echo "On the devbox, the VM's inbox directory is a filesystem of its own:"
+if options=$(findmnt -rn -M "$PA_CHAT_INBOX" -o OPTIONS); then
+  for flag in nosuid nodev noexec; do
+    if [[ ,$options, == *,$flag,* ]]; then
+      pass "$PA_CHAT_INBOX is mounted $flag"
+    else
+      fail "$PA_CHAT_INBOX is mounted without $flag"
+    fi
+  done
+  size=$(findmnt -rnb -M "$PA_CHAT_INBOX" -o SIZE)
+  if ((size <= $(numfmt --from=iec "$PA_CHAT_INBOX_SIZE"))); then
+    pass "$PA_CHAT_INBOX holds at most $PA_CHAT_INBOX_SIZE"
+  else
+    fail "$PA_CHAT_INBOX holds $(numfmt --to=iec "$size"), more than $PA_CHAT_INBOX_SIZE"
+  fi
+else
+  fail "$PA_CHAT_INBOX isn't a mount of its own (run install-chat-inbox.sh)"
+fi
 
 echo "Nothing else of the data root is visible in $PA_VM:"
 expected=$(printf '%s\n' "$PA_CHAT_INBOX" "$PA_L0" | sort)

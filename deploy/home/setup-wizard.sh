@@ -185,13 +185,13 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27, #30): the steps only the owner can do, and the deploy
+# Sets up the PA VM on the devbox (#27, #30, #33): the steps only the owner can do, and the deploy
 # scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOTAL_STAGES=14
+TOTAL_STAGES=15
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
 run() {
@@ -283,6 +283,15 @@ ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
+stage "Give the VM's inbox a filesystem of its own"
+say "The VM writes its inbox directory with its own owners and modes, so root in the VM could"
+say "leave a setuid program or a device node on the devbox, or fill its disk. A $PA_CHAT_INBOX_SIZE"
+say "filesystem of its own, mounted nosuid,nodev,noexec at every boot before Incus, rules those out."
+run "$DEPLOY_DIR/install-chat-inbox.sh"
+ok "$PA_CHAT_INBOX is its own filesystem"
+pause
+
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
 say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
 say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
@@ -291,7 +300,7 @@ run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
 
-# ── 8 ─────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
 say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
 say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
@@ -303,7 +312,7 @@ read -r ref || true
 run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Log the VM in to Claude"
 if claude_logged_in; then
   ok "Claude Code in $PA_VM is already logged in"
@@ -319,7 +328,7 @@ else
 fi
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Tailnet policy"
 say "The VM will join as tag:pa. The policy must let your devices reach it and each other,"
 say "and let tag:pa reach nothing."
@@ -340,7 +349,7 @@ else
   pause "Press Enter once the policy is saved"
 fi
 
-# ── 11 ────────────────────────────────────────────────────────────────────
+# ── 12 ────────────────────────────────────────────────────────────────────
 stage "Join the VM to the tailnet as tag:pa"
 if vm_tagged; then
   ok "$PA_VM is already on the tailnet as tag:pa"
@@ -356,7 +365,7 @@ fi
 note "Tagged devices don't expire; the VM reconnects on its own after reboots."
 pause
 
-# ── 12 ────────────────────────────────────────────────────────────────────
+# ── 13 ────────────────────────────────────────────────────────────────────
 stage "Check your devices"
 say "Your devices still reach each other (from the devbox):"
 while read -r ip host; do
@@ -373,7 +382,7 @@ else
 fi
 pause
 
-# ── 13 ────────────────────────────────────────────────────────────────────
+# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
 say "From inside the VM: the devbox, its Docker services, the LAN and tailnet peers must be"
 say "unreachable, and the internet and Anthropic's API reachable."
@@ -385,10 +394,11 @@ else
 fi
 pause
 
-# ── 14 ────────────────────────────────────────────────────────────────────
+# ── 15 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
-say "root; inbox/assistant_chat/ is writable; nothing else of the data root is visible."
+say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
+say "filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then
   ok "the store's mounts hold"
