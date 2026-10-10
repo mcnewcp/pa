@@ -212,20 +212,24 @@ claude_logged_in() {
     grep '"loggedIn": true' >/dev/null
 }
 
-# project_trusted: Claude Code in the VM trusts the rendered agent project.
-project_trusted() {
-  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "python3 - $(printf %q "$PA_VM_PROJECT")" \
-    2>/dev/null <<'EOF'
+# claude_config_set KEY [PROJECT]: KEY is true in Claude Code's config in the VM (~/.claude.json),
+# at its top level or in PROJECT's entry.
+claude_config_set() {
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "python3 -$(printf ' %q' "$@")" 2>/dev/null <<'EOF'
 import json, os, sys
 config = json.load(open(os.path.expanduser("~/.claude.json")))
-sys.exit(0 if config.get("projects", {}).get(sys.argv[1], {}).get("hasTrustDialogAccepted") else 1)
+key, project = sys.argv[1], sys.argv[2:]
+if project:
+    config = config.get("projects", {}).get(project[0], {})
+sys.exit(0 if config.get(key) is True else 1)
 EOF
 }
 
-# remote_control_consented: Remote Control's one-time question has been answered yes in the VM.
-remote_control_consented() {
-  false # TODO: the key Claude Code stores the answer under
-}
+# project_trusted: Claude Code in the VM trusts the rendered agent project.
+project_trusted() { claude_config_set hasTrustDialogAccepted "$PA_VM_PROJECT"; }
+
+# remote_control_consented: Remote Control's one-time question was answered yes in the VM.
+remote_control_consented() { claude_config_set remoteDialogSeen; }
 
 # rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.
 rc_unit() { incus exec "$PA_VM" -- systemctl "$@" "$PA_VM_RC_UNIT"; }
