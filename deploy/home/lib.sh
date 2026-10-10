@@ -12,7 +12,21 @@ PA_REPO_URL=https://github.com/mcnewcp/pa.git
 PA_USER=assistant
 PA_REPO_DIR=/home/assistant/pa
 
+# The instance's data root on the devbox: v0.11's, seeded from the synthetic corpus and
+# disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
+PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
+PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
+
+# Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
+PA_VM_L0=/srv/pa/l0
+PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
+# The VM's copy of owner.env, and the agent project rendered from it.
+PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
+PA_VM_PROJECT=/home/assistant/agent
+PA_VM_SCRATCH=/home/assistant/scratch
+
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
