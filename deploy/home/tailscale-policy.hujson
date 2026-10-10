@@ -1,0 +1,24 @@
+// The parts of the tailnet policy the PA VM needs. Merge them into the tailnet policy file
+// (admin console → Access controls); don't paste over it.
+//
+// - The owner's devices (user-owned, untagged) reach each other and the VM.
+// - The VM (tag:pa) is the source of no rule, so it reaches nothing.
+// - Any rule with "*" as its source also covers tag:pa and must go, including the default
+//   allow-all rule.
+{
+	"tagOwners": {
+		"tag:pa": ["autogroup:admin"],
+	},
+
+	"grants": [
+		// The owner's devices reach each other. Tagged devices aren't anyone's own.
+		{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
+		// The owner's devices reach the VM.
+		{"src": ["autogroup:member"], "dst": ["tag:pa"], "ip": ["*"]},
+	],
+
+	"ssh": [
+		// Tailscale SSH into the VM as its unprivileged user. Root is `incus exec` on the devbox.
+		{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:pa"], "users": ["assistant"]},
+	],
+}
