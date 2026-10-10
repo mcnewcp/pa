@@ -23,6 +23,8 @@ PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
 # (install-chat-inbox.sh).
 PA_CHAT_INBOX_IMAGE=$PA_DATA_ROOT/chat-inbox.img
 PA_CHAT_INBOX_SIZE=1G
+# What it's mounted with, so nothing the VM writes there runs, runs setuid, or acts as a device.
+PA_CHAT_INBOX_FLAGS=(nosuid nodev noexec)
 
 # Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
 PA_VM_L0=/srv/pa/l0
@@ -58,6 +60,16 @@ as_assistant() {
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
   [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
+}
+
+# chat_inbox_missing_flags prints each of PA_CHAT_INBOX_FLAGS the inbox directory is mounted
+# without, one per line. It fails if the inbox directory isn't a mount of its own.
+chat_inbox_missing_flags() {
+  local options flag
+  options=$(findmnt -rn -M "$PA_CHAT_INBOX" -o OPTIONS) || return 1
+  for flag in "${PA_CHAT_INBOX_FLAGS[@]}"; do
+    [[ ,$options, == *,$flag,* ]] || echo "$flag"
+  done
 }
 
 # wait_for_agent waits until the VM's Incus agent answers, after a start or a restore.
