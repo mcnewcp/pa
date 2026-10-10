@@ -88,7 +88,7 @@ else
 fi
 
 echo "From $PA_VM, IPv6 goes nowhere:"
-if incus exec "$PA_VM" -- curl -6 -sS -o /dev/null -m 5 https://example.com 2>/dev/null; then
+if incus exec "$PA_VM" -- curl -6 -s -o /dev/null -m 5 https://example.com; then
   fail "the VM reaches the internet over IPv6"
 else
   pass "no IPv6 route out"
