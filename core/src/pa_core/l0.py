@@ -18,6 +18,7 @@ class QuarantineRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     inbox_name: str
+    """Where the payload was in the inbox, such as `gmail/hotel.eml`."""
     reason: str
     quarantined_at: AwareDatetime
 
@@ -68,15 +69,15 @@ def episode_ref(envelope: Envelope) -> str:
     return f"episodes/{envelope.source}/{month}/{envelope.episode_id}.json"
 
 
-# Quarantined payloads keep their inbox name behind the UTC time they were quarantined and a
-# digest of record and bytes, so two quarantines share a path only when both files are
-# identical. The record is the same path plus `.json`.
+# Quarantined payloads keep their inbox name (its directories joined by `_`) behind the UTC
+# time they were quarantined and a digest of record and bytes, so two quarantines share a path
+# only when both files are identical. The record is the same path plus `.json`.
 
 
 def quarantine_ref(record: QuarantineRecord, raw: bytes) -> str:
     stamp = record.quarantined_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     digest = hashlib.sha256(record.model_dump_json().encode("utf-8") + b"\0" + raw).hexdigest()[:8]
-    return f"quarantine/{stamp}_{digest}_{record.inbox_name}"
+    return f"quarantine/{stamp}_{digest}_{record.inbox_name.replace('/', '_')}"
 
 
 def quarantine_record_ref(record: QuarantineRecord, raw: bytes) -> str:

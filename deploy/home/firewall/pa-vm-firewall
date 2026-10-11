@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Loads the PA VM's bridge rules, then lets the bridge's traffic past Docker's FORWARD drop
+# policy (the fix the Incus docs give for Docker on the same host). The accepts below don't
+# weaken the fence: pa_vm's drops are final whatever another table accepts.
+set -euo pipefail
+
+nft -f /etc/pa/pa-vm.nft
+
+if iptables -n -L DOCKER-USER >/dev/null 2>&1; then
+  rules=(
+    "-i pabr0 -j ACCEPT"
+    "-o pabr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+  )
+  for rule in "${rules[@]}"; do
+    read -ra args <<<"$rule"
+    iptables -C DOCKER-USER "${args[@]}" 2>/dev/null || iptables -I DOCKER-USER "${args[@]}"
+  done
+fi

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
-from pa_core.ingest import ingest
+from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
 from pa_evals.agent import AgentRequest, AgentRunner
@@ -39,11 +39,12 @@ def run_eval(
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
 
-    Every file under `corpus` (hidden files aside) is a raw payload. The data root is created
-    in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted once the
-    run ends. Questions run `concurrency` at a time, one pass each. A question whose agent or
-    judge raises is recorded as failed and the run goes on. `setup` describes the run (for
-    example which agent runner and judge) and is carried into the results as is.
+    Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
+    one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
+    created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
+    once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
+    agent or judge raises is recorded as failed and the run goes on. `setup` describes the run
+    (for example which agent runner and judge) and is carried into the results as is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
@@ -173,9 +174,8 @@ def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
     inbox.mkdir(parents=True)
     for payload in sorted(corpus.rglob("*")):
         relative = payload.relative_to(corpus)
-        if not payload.is_file() or any(part.startswith(".") for part in relative.parts):
+        if not payload.is_file() or is_hidden(relative):
             continue
-        target = inbox / payload.name
-        if target.exists():
-            raise CorpusCopyError(f"two corpus files share the name {payload.name}")
+        target = inbox / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(payload, target)

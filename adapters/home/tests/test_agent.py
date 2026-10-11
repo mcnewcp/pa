@@ -38,11 +38,17 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
             argv = sys.argv[1:]
             prompt = sys.stdin.read()
             claude_md = Path("CLAUDE.md")
+            settings = Path(".claude/settings.json")
+            settings = json.loads(settings.read_text()) if settings.exists() else None
             Path({str(seen)!r}).write_text(json.dumps({{
                 "argv": argv,
                 "prompt": prompt,
                 "cwd": os.getcwd(),
                 "claude_md": claude_md.read_text() if claude_md.exists() else None,
+                "settings": settings,
+                "scratch_is_a_directory": bool(settings) and Path(
+                    settings["permissions"]["additionalDirectories"][1]
+                ).is_dir(),
             }}))
             reply = "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
             """
@@ -89,19 +95,34 @@ def test_the_agents_answer_is_returned(tmp_path: Path, l0: Path):
     assert answer == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
 
 
-def test_the_agent_can_only_read_grep_and_glob_within_l0(tmp_path: Path, l0: Path):
+def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
 
     agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
-    argv = _seen(tmp_path)["argv"]
+    seen = _seen(tmp_path)
+    argv = seen["argv"]
     assert argv[0] == "-p"
-    assert _flag_values(argv, "--tools") == ["Read,Grep,Glob"]
-    assert _flag_values(argv, "--add-dir") == [str(l0)]
-    # Restricted mode confines the file tools to the working directories and ignores user,
-    # project and local settings; no MCP servers and no skills are loaded.
-    for flag in ("--restricted", "--strict-mcp-config", "--disable-slash-commands"):
-        assert flag in argv
+    # claude -p never trusts a folder, so it would drop a project's allow rules and additional
+    # directories; the same settings file is passed as flag settings, which it doesn't drop.
+    assert _flag_values(argv, "--settings") == [str(Path(seen["cwd"]) / ".claude/settings.json")]
+    assert seen["settings"]["permissions"]["additionalDirectories"][0] == str(l0)
+    assert seen["scratch_is_a_directory"]
+    # The same permission mode as chat, where the Claude app starts sessions in auto.
+    assert _flag_values(argv, "--permission-mode") == ["auto"]
+    # Otherwise permissions come from settings.json alone, as in chat: no command-line
+    # restrictions.
+    for flag in (
+        "--tools",
+        "--allowedTools",
+        "--disallowedTools",
+        "--restricted",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--add-dir",
+        "--dangerously-skip-permissions",
+    ):
+        assert flag not in argv
 
 
 def test_the_agent_runs_in_the_agent_project_told_who_the_owner_is_and_where_l0_is(
@@ -142,6 +163,9 @@ def test_the_agent_runs_outside_the_repository_so_no_other_instructions_are_pick
     repository = Path(__file__).resolve().parents[3]
     assert not cwd.is_relative_to(repository)
     assert not cwd.exists(), "the per-question project copy is cleaned up"
+    scratch = Path(_seen(tmp_path)["settings"]["permissions"]["additionalDirectories"][1])
+    assert not scratch.is_relative_to(repository)
+    assert not scratch.exists(), "the per-question scratch directory is cleaned up"
 
 
 def test_now_is_appended_to_the_system_prompt(tmp_path: Path, l0: Path):
@@ -245,6 +269,48 @@ def test_an_agent_that_runs_too_long_is_stopped_with_a_timeout_error(tmp_path: P
         agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
 
+TWO_EXCHANGES = (
+    Path(__file__).parents[3] / "core/tests/fixtures/claude_code_transcripts/two_exchanges.jsonl"
+)
+INSTALL_REPLY = (
+    "L0 doesn't say when the countertop will be installed. Birchwood's last email only "
+    "confirms the order [ep:gmail_0123456789abcdef]."
+)
+
+
+def test_an_agent_run_captures_no_exchange_even_where_capture_is_on(
+    tmp_path: Path, l0: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Eval runs are never captured, even from a shell where the chat service's settings leak."""
+    inbox = tmp_path / "data" / "inbox" / "assistant_chat"
+    inbox.mkdir(parents=True)
+    monkeypatch.setenv("PA_CAPTURE_EXCHANGES", "1")
+    monkeypatch.setenv("PA_CAPTURE_INBOX", str(inbox))
+    hook_statuses = tmp_path / "hook_statuses.json"
+    # The stand-in stops the way Claude Code does: it fires the project's Stop hooks.
+    claude = _fake_claude(
+        tmp_path,
+        f"""\
+        import subprocess
+        stop = {{"session_id": "3f0c9a7e-5b21-4d8e-a6f3-91c2e7d40b58",
+                 "transcript_path": {str(TWO_EXCHANGES)!r}, "hook_event_name": "Stop",
+                 "stop_hook_active": False, "last_assistant_message": {INSTALL_REPLY!r}}}
+        statuses = [
+            subprocess.run([hook["command"], *hook["args"]], input=json.dumps(stop), text=True,
+                           env={{**os.environ, "CLAUDE_PROJECT_DIR": os.getcwd()}}).returncode
+            for group in settings["hooks"]["Stop"] for hook in group["hooks"]
+        ]
+        Path({str(hook_statuses)!r}).write_text(json.dumps(statuses))
+        """,
+    )
+    agent = ClaudeAgent(executable=str(claude))
+
+    agent.answer("When are they installing the countertop?", owner=OWNER, l0=l0)
+
+    assert json.loads(hook_statuses.read_text()) == [0]
+    assert list(inbox.iterdir()) == []
+
+
 def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(tmp_path / "no-such-claude"))
 
@@ -256,7 +322,10 @@ def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path)
     os.environ.get("PA_SMOKE_CLAUDE") != "1",
     reason="calls the real claude CLI; set PA_SMOKE_CLAUDE=1 to run",
 )
-def test_smoke_the_real_agent_cannot_write_files(tmp_path: Path, l0: Path):
+def test_smoke_the_real_agent_declines_to_change_l0(tmp_path: Path, l0: Path):
+    """Nothing here fences writes: no settings rule does (the VM's read-only L0 mount does, in
+    chat), and `claude -p` runs in auto mode, as chat does, which lets them through. The agent
+    leaves L0 alone because its CLAUDE.md tells it to."""
     episode = l0 / "episodes" / "gmail" / "2026-10" / "gmail_94f6b4cbc55a3b85.json"
     episode.parent.mkdir(parents=True)
     episode.write_text('{"body": "The hotel block closes on Oct 9."}')

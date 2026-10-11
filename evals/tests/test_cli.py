@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -73,7 +74,10 @@ def test_run_writes_a_report_and_results_into_a_timestamped_run_directory(
     assert results["overall"]["correctness"] == 0.6
     assert results["categories"]["cross_channel_synthesis"]["evidence_recall"] == 0.5
     assert results["categories"]["cross_channel_synthesis"]["citation_validity"] == 0.5
-    assert results["setup"] == {"agent": "scripted", "judge": "scripted"}
+    assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
+        "agent": "scripted",
+        "judge": "scripted",
+    }
     assert str(run_dir) in capsys.readouterr().out
 
 
@@ -91,6 +95,23 @@ def test_the_report_shows_scores_answers_and_the_judges_reasoning(tmp_path, scri
     assert "Misses the registration commitment." in report
     assert "> It closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]." in report
     assert "gmail_0000000000000000" in report
+
+
+def test_the_report_shows_paraphrase_questions_as_their_own_category(tmp_path, scripts):
+    data = json.loads(EVAL_SET.read_text())
+    [question] = [q for q in data["questions"] if q["id"] == "hotel-block-deadline"]
+    question["category"] = "paraphrase"
+    eval_set = tmp_path / "eval_set.json"
+    eval_set.write_text(json.dumps(data))
+    runs = tmp_path / "runs"
+
+    args = ["run", "--corpus", str(CORPUS), "--eval-set", str(eval_set), "--runs-dir", str(runs)]
+    assert main([*args, *scripts]) == 0
+
+    [run_dir] = runs.iterdir()
+    report = (run_dir / "report.md").read_text()
+    assert "| paraphrase | 1 | 0 | 1.00 | 1.00 | 1.00 |" in report
+    assert "| hotel-block-deadline | paraphrase | scored |" in report
 
 
 def test_two_runs_over_the_same_inputs_write_identical_outputs(tmp_path, scripts):
@@ -152,6 +173,24 @@ def test_run_outputs_in_the_default_runs_directory_are_ignored_by_git():
     assert ignored.returncode == 0
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_the_report_says_which_commit_the_run_ran_from(tmp_path, scripts):
+    repository = DEFAULT_RUNS_DIR.parent.parent
+    if not (repository / ".git").exists():
+        pytest.skip("not running from a git checkout")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repository, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    runs = tmp_path / "runs"
+
+    pa_eval_run(runs, scripts)
+
+    [run_dir] = runs.iterdir()
+    commit = json.loads((run_dir / "results.json").read_text())["setup"]["commit"]
+    assert re.fullmatch(rf"{head}( \(with uncommitted changes\))?", commit)
+    assert f"- Commit: {commit}\n" in (run_dir / "report.md").read_text()
+
+
 def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
@@ -173,7 +212,7 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     [run_dir] = runs.iterdir()
     results = json.loads((run_dir / "results.json").read_text())
     assert results["ingest"] == {
-        "ingested": len(list(frozen.PAYLOADS.iterdir())),
+        "ingested": len([path for path in frozen.PAYLOADS.rglob("*") if path.is_file()]),
         "unchanged": 0,
         "quarantined": 0,
     }

@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "mcp__*",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude.json)"
+    ],
+    "additionalDirectories": [
+      "${l0}",
+      "${scratch}"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${python}",
+            "args": [
+              "${project}/.claude/hooks/capture_exchange.py"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "enableAllProjectMcpServers": false,
+  "disableClaudeAiConnectors": true
+}

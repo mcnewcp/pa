@@ -60,23 +60,27 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def ingest(data_root: Path, payloads: dict[str, bytes]) -> None:
-    inbox = data_root / "inbox"
-    inbox.mkdir(parents=True, exist_ok=True)
     for name, payload in payloads.items():
-        (inbox / name).write_bytes(payload)
+        target = data_root / "inbox" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
     assert main(["ingest"]) == 0
 
 
 def ingest_a_bit_of_everything(data_root: Path) -> None:
     ingest(
         data_root,
-        {"hotel.eml": email(), "swim.ics": calendar_event(), "2026-10-05.md": daily_note()},
+        {
+            "gmail/hotel.eml": email(),
+            "icloud_calendar/swim.ics": calendar_event(),
+            "obsidian/2026-10-05.md": daily_note(),
+        },
     )
     ingest(
         data_root,
         {
-            "swim.ics": calendar_event(sequence=1, start="20261017T100000"),
-            "2026-10-05.md": daily_note("## Swim lessons\n\nSaturdays.\n"),
+            "icloud_calendar/swim.ics": calendar_event(sequence=1, start="20261017T100000"),
+            "obsidian/2026-10-05.md": daily_note("## Swim lessons\n\nSaturdays.\n"),
         },
     )
 
@@ -127,7 +131,7 @@ def test_raw_payloads_and_quarantine_are_byte_identical_after_renormalize(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     ingest_a_bit_of_everything(data_root)
-    ingest(data_root, {"broken.ics": b"not a calendar"})
+    ingest(data_root, {"icloud_calendar/broken.ics": b"not a calendar"})
     raw_before = snapshot(data_root / "l0" / "raw")
     quarantine_before = snapshot(data_root / "l0" / "quarantine")
     monkeypatch.setattr(email_normalizer, "_body", lambda message: "Rewritten by the new code.")
@@ -192,12 +196,12 @@ def test_a_payload_that_no_longer_normalizes_aborts_and_leaves_the_original_enve
 def test_a_raw_payload_whose_ingest_stopped_before_its_envelope_aborts_until_ingest_finishes_it(
     data_root: Path, capsys: pytest.CaptureFixture[str]
 ):
-    ingest(data_root, {"hotel.eml": email(), "swim.ics": calendar_event()})
+    ingest(data_root, {"gmail/hotel.eml": email(), "icloud_calendar/swim.ics": calendar_event()})
     # As if ingest stopped between writing the raw payload and the envelope: the payload is
     # still in the inbox, since it leaves only once it has landed.
     [swim_envelope] = (data_root / "l0" / "episodes" / "icloud_calendar").rglob("*.json")
     swim_envelope.unlink()
-    (data_root / "inbox" / "swim.ics").write_bytes(calendar_event())
+    (data_root / "inbox" / "icloud_calendar" / "swim.ics").write_bytes(calendar_event())
     l0_before = snapshot(data_root / "l0")
     capsys.readouterr()
 
@@ -213,7 +217,7 @@ def test_a_raw_payload_whose_ingest_stopped_before_its_envelope_aborts_until_ing
 
 
 def test_a_temporary_file_left_by_an_interrupted_write_is_not_a_raw_payload(data_root: Path):
-    ingest(data_root, {"hotel.eml": email()})
+    ingest(data_root, {"gmail/hotel.eml": email()})
     leftover = data_root / "l0" / "raw" / "gmail" / "2026-10" / f".{EMAIL_ID}.eml.k2j4.tmp"
     leftover.write_bytes(b"partial")
 
@@ -264,7 +268,7 @@ def test_the_catalog_matches_the_new_envelopes_afterwards(
 def test_an_envelope_whose_time_moves_to_another_month_still_points_at_its_raw_payload(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    ingest(data_root, {"hotel.eml": email()})
+    ingest(data_root, {"gmail/hotel.eml": email()})
     original_date = email_normalizer._date
     # Say a fix reads the Date header as UTC: 30 Sep 21:30 stays in September.
     monkeypatch.setattr(
@@ -286,7 +290,7 @@ def test_an_envelope_whose_time_moves_to_another_month_still_points_at_its_raw_p
 def test_after_the_owner_changes_name_renormalize_lets_a_recaptured_note_ingest_unchanged(
     data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    ingest(data_root, {"2026-10-05.md": daily_note()})
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note()})
     [before] = envelopes(data_root).values()
     monkeypatch.setenv("PA_OWNER_NAME", "Gus McNevans")
 
@@ -298,14 +302,53 @@ def test_after_the_owner_changes_name_renormalize_lets_a_recaptured_note_ingest_
         {"identifier": "argus@example.com", "name": "Gus McNevans", "role": "author"}
     ]
     capsys.readouterr()
-    ingest(data_root, {"2026-10-05.md": daily_note()})
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note()})
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
+def chat(reply: str = "Saturdays at 9:00 [ep:icloud_calendar_1a2b3c4d5e6f7a8b].") -> bytes:
+    exchange = {
+        "session_id": "5b0f3c2e-8d41-4a7e-9c16-2f7d0a9e4b13",
+        "message_id": "c4e1a7d2-3b9f-4e58-a061-7d2c9b8e1f40",
+        "started_at": "2026-10-08T01:12:04.512Z",
+        "ended_at": "2026-10-08T01:12:31.907Z",
+        "turns": [
+            {"role": "owner", "text": "When are swim lessons?"},
+            {"role": "assistant", "text": reply},
+        ],
+    }
+    return json.dumps(exchange).encode()
+
+
+def test_an_exchange_renormalizes_from_its_raw_payload_to_the_same_id(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    ingest(data_root, {"assistant_chat/exchange.json": chat()})
+    [before] = envelopes(data_root).values()
+    raw_before = snapshot(data_root / "l0" / "raw")
+    monkeypatch.setenv("PA_OWNER_NAME", "Gus McNevans")
+    capsys.readouterr()
+
+    assert main(["renormalize"]) == 0
+
+    [after] = envelopes(data_root).values()
+    assert after["episode_id"] == before["episode_id"]
+    assert after["thread_ref"] == before["thread_ref"]
+    assert after["body"] == before["body"]
+    assert after["participants"] == [
+        {"identifier": "argus@example.com", "name": "Gus McNevans", "role": "author"}
+    ]
+    assert snapshot(data_root / "l0" / "raw") == raw_before
+    assert [entry.episode_id for entry in catalog_entries(data_root)] == [before["episode_id"]]
+    assert capsys.readouterr().out == "renormalized 1 episodes; catalog rebuilt\n"
+    ingest(data_root, {"assistant_chat/exchange.json": chat()})
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
 
 
 def test_renormalize_refuses_to_start_without_the_owner_configured(
     data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
-    ingest(data_root, {"2026-10-05.md": daily_note()})
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note()})
     l0_before = snapshot(data_root / "l0")
     monkeypatch.delenv("PA_OWNER_NAME")
 
@@ -316,7 +359,7 @@ def test_renormalize_refuses_to_start_without_the_owner_configured(
 
 
 def test_a_tree_left_by_an_interrupted_renormalize_is_discarded_by_the_next_one(data_root: Path):
-    ingest(data_root, {"hotel.eml": email()})
+    ingest(data_root, {"gmail/hotel.eml": email()})
     stale = data_root / "l0" / ".episodes.renormalize" / "gmail" / "2026-10" / "gmail_stale.json"
     stale.parent.mkdir(parents=True)
     stale.write_text("{}")
@@ -334,7 +377,7 @@ def test_a_tree_left_by_an_interrupted_renormalize_is_discarded_by_the_next_one(
 
 
 def test_an_old_tree_left_aside_after_the_new_one_went_in_is_discarded(data_root: Path):
-    ingest(data_root, {"hotel.eml": email()})
+    ingest(data_root, {"gmail/hotel.eml": email()})
     old = data_root / "l0" / ".episodes.renormalize.swap" / "gmail" / "2026-10" / "gmail_old.json"
     old.parent.mkdir(parents=True)
     old.write_text("{}")

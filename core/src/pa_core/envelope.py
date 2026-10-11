@@ -20,12 +20,14 @@ class Source(StrEnum):
     GMAIL = "gmail"
     ICLOUD_CALENDAR = "icloud_calendar"
     OBSIDIAN = "obsidian"
+    ASSISTANT_CHAT = "assistant_chat"
 
 
 class Kind(StrEnum):
     EMAIL = "email"
     CALENDAR_EVENT = "calendar_event"
     NOTE = "note"
+    CHAT = "chat"
 
 
 class Role(StrEnum):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +20,19 @@ class ClaudeCliTimeoutError(ClaudeCliError):
 
 
 def run_print(
-    executable: str, args: list[str], *, prompt: str, cwd: Path | str, timeout_seconds: float
+    executable: str,
+    args: list[str],
+    *,
+    prompt: str,
+    cwd: Path | str,
+    timeout_seconds: float,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The result object of `<executable> -p --output-format json <args>`, prompt on stdin.
 
-    Raises ClaudeCliTimeoutError when it runs too long, and ClaudeCliError when it cannot be
-    started, exits with an error, or reports one.
+    It runs in `env` (default: this process's environment). Raises ClaudeCliTimeoutError when
+    it runs too long, and ClaudeCliError when it cannot be started, exits with an error, or
+    reports one.
     """
     command = [executable, "-p", "--output-format", "json", *args]
     try:
@@ -34,6 +42,7 @@ def run_print(
             capture_output=True,
             text=True,
             cwd=cwd,
+            env=env,
             timeout=timeout_seconds,
             check=False,
         )

@@ -81,7 +81,7 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert answers["day-of-week"].startswith("[sonnet] ")
     assert "Saturday, October 10, 2026, 09:00" in answers["day-of-week"]
     assert "Tuesday, October 6, 2026, 20:00" in answers["swim-instructor"]
-    assert results["setup"] == {
+    assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
         "agent": "claude",
         "agent model": "sonnet",
         "as-of method": "system-prompt",

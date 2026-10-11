@@ -1,0 +1,15 @@
+[Unit]
+Description=Firewall fencing the PA VM's bridge
+# After Docker, so its DOCKER-USER chain exists. Before Incus, and required by it: if the rules
+# don't load, Incus doesn't start and the VM stays down.
+After=docker.service
+Before=incus.service incus-startup.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pa-vm-firewall
+
+[Install]
+WantedBy=multi-user.target
+RequiredBy=incus.service

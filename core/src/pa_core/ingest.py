@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import errno
+import os
+import stat
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 
 from pa_core.catalog import Catalog
-from pa_core.envelope import Envelope
-from pa_core.errors import EpisodeConflictError, PaError
+from pa_core.envelope import Envelope, Source
+from pa_core.errors import EpisodeConflictError, MalformedPayloadError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
-from pa_core.normalizers import normalizer_for
+from pa_core.normalizers import Normalizer, normalizer_for, payload_extension
 from pa_core.owner import Owner
 
 
@@ -27,6 +30,8 @@ class IngestSummary:
     ingested: int = 0
     unchanged: int = 0
     quarantined: int = 0
+    # Each payload left in the inbox because ingest may not remove it, and why.
+    left: list[str] = field(default_factory=list)
 
     def add(self, outcome: Outcome) -> None:
         match outcome:
@@ -48,16 +53,73 @@ def ingest(
 ) -> IngestSummary:
     """Ingest every raw payload in `inbox`, deleting each one once it has landed.
 
-    A payload lands as an episode in L0, or in quarantine when it cannot become one. Either
-    way it leaves the inbox only after that write succeeds, so input is never lost. Each
-    episode is added to `catalog` as it lands.
+    The inbox has one directory per source, and a payload's source is the directory it sits in,
+    never anything in the payload (ADR-0004). A payload lands as an episode in L0, or in
+    quarantine when it cannot become one. Either way it leaves the inbox only after that write
+    succeeds, so input is never lost. Each episode is added to `catalog` as it lands.
+
+    A symbolic link in the inbox is quarantined without reading what it points to: a writer
+    confined to its inbox directory (the assistant's VM) must not be able to make ingest copy
+    a file from elsewhere into L0. A payload ingest can't read is quarantined without its
+    content, so the rest of the inbox still lands. A payload ingest isn't allowed to remove is
+    left in the inbox, not landed, so it doesn't land again on every run; the summary says why.
     """
     summary = IngestSummary()
     for payload_file in _waiting_payloads(inbox):
-        raw = payload_file.read_bytes()
-        summary.add(_land(payload_file.name, raw, store, catalog, owner, now()))
-        payload_file.unlink()
+        inbox_name = payload_file.relative_to(inbox).as_posix()
+        if not _removable(payload_file):
+            summary.left.append(
+                f"{inbox_name}: can't be removed from the inbox, so it was left there unread"
+            )
+            continue
+        try:
+            raw = _read_payload(payload_file)
+        except MalformedPayloadError as error:
+            summary.add(_quarantine(store, inbox_name, b"", str(error), now()))
+        else:
+            summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
+        try:
+            payload_file.unlink()
+        except PermissionError as error:
+            # Its permissions changed while it was landing.
+            summary.left.append(f"{inbox_name}: can't be removed from the inbox ({error.strerror})")
     return summary
+
+
+def _removable(path: Path) -> bool:
+    """Whether the user running ingest may remove `path`, by the kernel's rules for unlink."""
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        return False
+    directory = path.parent.stat()
+    if not directory.st_mode & stat.S_ISVTX:
+        return True
+    # In a sticky directory, only root and the owners of the file or the directory may.
+    return os.geteuid() in (0, directory.st_uid, path.lstat().st_uid)
+
+
+def _read_payload(path: Path) -> bytes:
+    """The bytes of the regular file at `path`, never of anything a symbolic link points to.
+
+    Raises MalformedPayloadError for a symbolic link, anything else that isn't a regular file, or
+    a file the user running ingest isn't allowed to read. The link is refused when the file is
+    opened, so one swapped in after the inbox was listed is refused too.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise MalformedPayloadError(
+                f"{path.name}: is a symbolic link, not a payload; what it points to was not read"
+            ) from error
+        if error.errno in (errno.EACCES, errno.EPERM):
+            raise MalformedPayloadError(
+                f"{path.name}: could not be read ({error.strerror}); its content was not kept"
+            ) from error
+        raise
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise MalformedPayloadError(f"{path.name}: is not a regular file; it was not read")
+        return file.read()
 
 
 def _land(
@@ -65,7 +127,7 @@ def _land(
 ) -> Outcome:
     """Write one raw payload to L0 or quarantine, never touching an existing episode."""
     try:
-        envelope = normalizer_for(inbox_name, owner)(raw, captured_at=at)
+        envelope = inbox_normalizer(PurePosixPath(inbox_name), owner)(raw, captured_at=at)
     except Exception as error:
         # A normalizer is a pure function of the payload, so any failure means the payload
         # cannot become an episode; keeping it beats stopping the rest of the inbox.
@@ -106,7 +168,7 @@ def _leftover_episode(
     if raw is None:
         return None
     try:
-        leftover = normalizer_for(envelope.raw_ref, owner)(raw, captured_at=at)
+        leftover = normalizer_for(envelope.source, owner)(raw, captured_at=at)
     except Exception:
         return None
     if (leftover.episode_id, leftover.content_hash) != (envelope.episode_id, envelope.content_hash):
@@ -125,6 +187,51 @@ def _quarantine(store: L0Store, inbox_name: str, raw: bytes, reason: str, at: da
     return Outcome.QUARANTINED
 
 
+def inbox_normalizer(inbox_name: PurePosixPath, owner: Owner) -> Normalizer:
+    """The normalizer for the payload at `inbox_name`, a path within the inbox.
+
+    The payload's directory names its source, and the payload must be in that source's one
+    format. Raises MalformedPayloadError for a payload at the inbox root, in a directory that
+    is not a source, or in a format its directory's source does not produce.
+    """
+    sources = ", ".join(f"{source}/" for source in Source)
+    if len(inbox_name.parts) == 1:
+        raise MalformedPayloadError(
+            f"{inbox_name}: payload is at the inbox root; "
+            f"payloads go in their source's directory ({sources})"
+        )
+    directory = inbox_name.parent.as_posix()
+    if directory not in set(Source):
+        raise MalformedPayloadError(
+            f"{inbox_name}: inbox/{directory}/ is not a source directory ({sources})"
+        )
+    source = Source(directory)
+    expected, found = payload_extension(source), inbox_name.suffix.lower()
+    if found != expected:
+        raise MalformedPayloadError(
+            f"{inbox_name}: inbox/{source}/ takes '{expected}' payloads, not '{found}'"
+        )
+    return normalizer_for(source, owner)
+
+
+def is_hidden(inbox_name: PurePath) -> bool:
+    """Whether `inbox_name`, a path within the inbox, is a hidden file or in a hidden directory.
+
+    Hidden paths are in-progress captures, never raw payloads waiting to be ingested.
+    """
+    return any(part.startswith(".") for part in inbox_name.parts)
+
+
 def _waiting_payloads(inbox: Path) -> list[Path]:
-    """Raw payload files in the inbox, in name order; hidden files are in-progress captures."""
-    return sorted(p for p in inbox.iterdir() if p.is_file() and not p.name.startswith("."))
+    """Raw payload files, and symbolic links, under the inbox, in path order.
+
+    Symbolic links are listed so they are quarantined; the walk never follows one.
+    """
+    entries: list[Path] = []
+    for directory, subdirectories, files in inbox.walk():
+        entries += [directory / name for name in (*subdirectories, *files)]
+    return sorted(
+        path
+        for path in entries
+        if (path.is_symlink() or path.is_file()) and not is_hidden(path.relative_to(inbox))
+    )
