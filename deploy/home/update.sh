@@ -13,7 +13,9 @@ require_owner_env
 
 snapshot="pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
 log "snapshot $PA_VM/$snapshot"
-incus snapshot create "$PA_VM" "$snapshot"
+# With stdin not a terminal, snapshot create reads the snapshot's config from it, and waits
+# forever on one that never closes.
+incus snapshot create "$PA_VM" "$snapshot" </dev/null
 
 # Remote Control runs in the rendered project, which the render deletes, and its sessions' hooks
 # run the repo's code. install-remote-control.sh starts it again. Stopping a unit that isn't
