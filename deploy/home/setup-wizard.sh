@@ -185,13 +185,13 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27, #30, #33): the steps only the owner can do, and the deploy
+# Sets up the PA VM on the devbox (#27, #30, #31, #33): the steps only the owner can do, and the deploy
 # scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOTAL_STAGES=15
+TOTAL_STAGES=19
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
 run() {
@@ -200,13 +200,40 @@ run() {
 }
 ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
+# The checks below read the whole output: with pipefail, grep -q quitting at the first match
+# would fail the pipeline on the writer's SIGPIPE.
+
 # vm_tagged: the VM is on the tailnet as tag:pa.
-vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep -q '"tag:pa"'; }
+vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep '"tag:pa"' >/dev/null; }
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
-  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth status' 2>/dev/null |
-    grep -q '"loggedIn": true'
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "$PA_VM_CLAUDE auth status" 2>/dev/null |
+    grep '"loggedIn": true' >/dev/null
+}
+
+# claude_config_true KEY [PROJECT]: KEY is true in Claude Code's config in the VM (~/.claude.json),
+# at its top level or in PROJECT's entry.
+claude_config_true() {
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "python3 -$(printf ' %q' "$@")" 2>/dev/null <<'EOF'
+import json, os, sys
+config = json.load(open(os.path.expanduser("~/.claude.json")))
+key, project = sys.argv[1], sys.argv[2:]
+if project:
+    config = config.get("projects", {}).get(project[0], {})
+sys.exit(0 if config.get(key) is True else 1)
+EOF
+}
+
+# project_trusted: Claude Code in the VM trusts the rendered agent project.
+project_trusted() { claude_config_true hasTrustDialogAccepted "$PA_VM_PROJECT"; }
+
+# remote_control_consented: Remote Control's one-time question was answered yes in the VM.
+remote_control_consented() { claude_config_true remoteDialogSeen; }
+
+# in_project CMD: runs CMD in the rendered agent project as the assistant user, on this terminal.
+in_project() {
+  incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_PROJECT") && $1"
 }
 
 banner "PA VM setup"
@@ -322,7 +349,7 @@ else
   step "Paste the code it gives you back here."
   note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
   printf '\n'
-  run incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c '.local/bin/claude auth login'
+  run incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "$PA_VM_CLAUDE auth login"
   claude_logged_in || { printf '  %s✗ Claude Code in %s isn'"'"'t logged in%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
   ok "Claude Code in $PA_VM is logged in"
 fi
@@ -407,9 +434,71 @@ else
 fi
 pause
 
+# ── 16 ────────────────────────────────────────────────────────────────────
+stage "Trust the agent project"
+if project_trusted; then
+  ok "Claude Code in $PA_VM already trusts $PA_VM_PROJECT"
+else
+  say "The Remote Control service runs Claude Code in the agent project with no terminal, so"
+  say "the questions Claude Code asks the first time are answered here, once."
+  step "Claude Code opens below, in $PA_VM_PROJECT."
+  step "Pick a theme, accept the notice that Claude can make mistakes, and trust the folder."
+  step "At the prompt, type /exit without asking anything."
+  printf '\n'
+  pause "Press Enter to open Claude Code"
+  in_project "$PA_VM_CLAUDE" || true
+  project_trusted || { printf '  %s✗ %s isn'"'"'t trusted yet; re-run the wizard%s\n' "$RED" "$PA_VM_PROJECT" "$RESET"; exit 1; }
+  ok "$PA_VM_PROJECT is trusted"
+fi
+pause
+
+# ── 17 ────────────────────────────────────────────────────────────────────
+stage "Turn on Remote Control"
+if remote_control_consented; then
+  ok "Remote Control is already turned on in $PA_VM"
+else
+  say "Remote Control asks once whether to turn it on. With no terminal, the service would wait"
+  say "on that question forever, so it's answered here."
+  step "Answer y to Enable Remote Control? (y/n)."
+  step "Once it shows it's connected, press Ctrl-C to stop it; the service runs it from now on."
+  printf '\n'
+  pause "Press Enter to start Remote Control"
+  in_project "$PA_VM_CLAUDE remote-control" || true
+  remote_control_consented || { printf '  %s✗ Remote Control isn'"'"'t turned on yet; re-run the wizard%s\n' "$RED" "$RESET"; exit 1; }
+  ok "Remote Control is turned on"
+fi
+pause
+
+# ── 18 ────────────────────────────────────────────────────────────────────
+stage "Start the Remote Control service"
+say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
+say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
+say "it stopped. Every update restarts it."
+if rc_unit is-enabled --quiet &>/dev/null && rc_unit is-active --quiet; then
+  ok "$PA_VM_RC_UNIT is already running"
+else
+  run "$DEPLOY_DIR/install-remote-control.sh" --enable
+  ok "$PA_VM_RC_UNIT is running, and starts at every boot"
+fi
+pause
+
+# ── 19 ────────────────────────────────────────────────────────────────────
+stage "Find the assistant on your phone"
+say "The Claude app and claude.ai/code list the VM under its hostname and the project folder."
+open_url "https://claude.ai/code"
+step "In the Claude app on your phone, open Code and the list of environments."
+step "Look for $PA_VM → $(basename "$PA_VM_PROJECT"), here and in the browser."
+if confirm "Is it listed in both?"; then
+  ok "the assistant is reachable from your phone"
+else
+  SKIPPED+=("Remote Control isn't listed: check incus exec $PA_VM -- journalctl -u $PA_VM_RC_UNIT")
+fi
+pause
+
 finish
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
+note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
 printf '\n'
