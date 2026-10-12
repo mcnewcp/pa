@@ -118,8 +118,8 @@ class GuardedWorker:
                     return reply
                 self._stop()
                 raise QueryStopped(
-                    "The database engine crashed running this query, and was restarted; "
-                    "the next call will work. Don't retry this query as it is."
+                    "The database engine crashed running this query. The next call starts a "
+                    "fresh one, so other queries still work; don't retry this one as it is."
                 )
             if _resident_bytes(process.pid) > self._limits.memory_bytes:
                 self._stop()
