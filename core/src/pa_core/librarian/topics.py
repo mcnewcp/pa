@@ -213,19 +213,19 @@ class TopicResolver:
         return result
 
     def _candidates(self, names: Sequence[str], thread_ref: str | None) -> list[_Topic]:
-        """The topics the thread is already about, then those sharing the most words with a
-        name, in the order the topics were made."""
-        chosen: dict[str, _Topic] = {}
-        for topic in self._by_thread.get(thread_ref or "", []):
-            chosen.setdefault(topic.id, topic)
+        """The topics the thread is already about, and up to `_MAX_CANDIDATES` sharing the
+        most words with a name, in the order the topics were made."""
+        by_words: dict[int, int] = {}  # topic index -> its best score for any name
         for name in names:
             wanted = _words(name)
             scored = [(_overlap(wanted, topic), index) for index, topic in enumerate(self._topics)]
             best = sorted((s for s in scored if s[0] > 0), key=lambda s: (-s[0], s[1]))
-            for _, index in best[:_PER_NAME]:
-                chosen.setdefault(self._topics[index].id, self._topics[index])
-        order = {topic.id: index for index, topic in enumerate(self._topics)}
-        return sorted(chosen.values(), key=lambda t: order[t.id])[:_MAX_CANDIDATES]
+            for score, index in best[:_PER_NAME]:
+                by_words[index] = max(score, by_words.get(index, 0))
+        ranked = sorted(by_words, key=lambda index: (-by_words[index], index))
+        chosen = {self._topics[index] for index in ranked[:_MAX_CANDIDATES]}
+        chosen.update(self._by_thread.get(thread_ref or "", []))
+        return [topic for topic in self._topics if topic in chosen]
 
     def _new(self, episode_id: str, name: str, description: str) -> _Topic:
         existing = self._by_name.get(_key(name))
