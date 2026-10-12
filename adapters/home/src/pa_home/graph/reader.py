@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,6 +32,22 @@ class NoBuildError(PaError):
 class CypherRunner(Protocol):
     def run(self, cypher: str, parameters: Mapping[str, Any] | None = None) -> list[Row]:
         """The query's rows, each a dict by column name, from the current build."""
+        ...
+
+
+@dataclass(frozen=True)
+class Fetched:
+    columns: list[str]
+    rows: list[Row]
+    truncated: bool
+    """True when the query had more rows than were fetched."""
+
+
+class RowCappedRunner(CypherRunner, Protocol):
+    def fetch(
+        self, cypher: str, parameters: Mapping[str, Any] | None = None, *, max_rows: int
+    ) -> Fetched:
+        """At most `max_rows` of the query's rows, and whether there were more."""
         ...
 
 
@@ -77,6 +94,16 @@ class CurrentBuild:
         self._open: _Open | None = None
 
     def run(self, cypher: str, parameters: Mapping[str, Any] | None = None) -> list[Row]:
+        return self.fetch(cypher, parameters).rows
+
+    def fetch(
+        self,
+        cypher: str,
+        parameters: Mapping[str, Any] | None = None,
+        *,
+        max_rows: int | None = None,
+    ) -> Fetched:
+        """The query's rows, or only the first `max_rows`; the rest are never read."""
         opened = self._acquire()
         try:
             connection = lb.Connection(opened.database)
@@ -86,7 +113,12 @@ class CurrentBuild:
                 if isinstance(result, list):
                     raise PaError("one statement per query")
                 columns = result.get_column_names()
-                return [dict(zip(columns, row, strict=True)) for row in result.get_all()]
+                rows: list[Row] = []
+                while result.has_next():
+                    if max_rows is not None and len(rows) == max_rows:
+                        return Fetched(columns, rows, truncated=True)
+                    rows.append(dict(zip(columns, result.get_next(), strict=True)))
+                return Fetched(columns, rows, truncated=False)
             finally:
                 connection.close()
         finally:

@@ -541,12 +541,99 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
         # The initialize handshake, as Claude Code connects.
         async with Client(server, mode="legacy") as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"find", "statements"}
+            assert {tool.name for tool in tools.tools} == {"find", "statements", "query"}
             return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
 
     found = anyio.run(go)
 
     assert found is not None and found["message"] == "1 match for 'dkim@example.net'."
+
+
+def test_query_answers_a_read_with_rows_whose_nodes_and_edges_are_in_the_graph(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    result = librarian.call(
+        "query",
+        cypher="MATCH (p:Person)-[said:SAID]->(s:Statement) WHERE p.name = $name "
+        "RETURN p, said, s, s.quote AS quote",
+        params={"name": "David Lee"},
+    )
+
+    (row,) = result["rows"]
+    assert result["columns"] == ["p", "said", "s", "quote"]
+    assert row["quote"] == "Our pipes froze again."
+    assert librarian_name(result, row["p"]) == "David Lee"
+    (said,) = result["edges"]
+    assert (said["id"], said["source"], said["target"]) == (row["said"], row["p"], row["s"])
+    assert result["truncated"] is False
+    assert result["message"] == "1 row."
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        "CREATE (:Person {id: 'p1', name: 'Mallory'})",
+        "MATCH (p:Person) SET p.name = 'Mallory'",
+        "MATCH (p:Person) DETACH DELETE p",
+        "MERGE (:Person {id: 'p1'})",
+        "MATCH (p:Person) REMOVE p.name",
+        "DROP TABLE Person",
+        "COPY (MATCH (p:Person) RETURN p.name) TO '/tmp/people.csv'",
+        "COPY Person FROM '/tmp/people.csv'",
+        "LOAD FROM '/tmp/people.csv' RETURN *",
+        "LOAD EXTENSION '/tmp/libevil.lbug_extension'",
+        "INSTALL httpfs",
+        "UNINSTALL fts",
+        "UPDATE fts",
+        "ATTACH '/tmp/other.lbdb' AS other (dbtype lbug)",
+        "EXPORT DATABASE '/tmp/dump'",
+        "IMPORT DATABASE '/tmp/dump'",
+        "CHECKPOINT",
+        "CALL timeout=0",
+        "CALL timeout=0; MATCH (p:Person) RETURN p",
+        "MATCH (p:Person) RETURN p; MATCH (s:Statement) RETURN s",
+        "match (p:Person) /* a comment */ set p.name = 'x'",
+        "CALL CREATE_FTS_INDEX('Person', 'evil', ['name'])",
+    ],
+)
+def test_query_rejects_anything_but_one_read_statement_before_it_reaches_the_database(
+    librarian: Librarian, cypher: str
+):
+    # No build is published yet, so a statement that reached the database would fail with
+    # "No claims graph has been published" instead.
+    message = librarian.call_failing("query", cypher=cypher)
+
+    assert "Rejected" in message
+    assert "published" not in message
+
+
+def test_query_never_writes_a_file(librarian: Librarian, tmp_path: Path):
+    two_davids(librarian)
+    target = tmp_path / "people.csv"
+
+    message = librarian.call_failing(
+        "query", cypher=f"COPY (MATCH (p:Person) RETURN p.name) TO '{target}'"
+    )
+
+    assert "Rejected" in message and "COPY" in message
+    assert not target.exists()
+
+
+def test_query_accepts_reads_that_mention_write_words_in_strings_comments_and_properties(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    result = librarian.call(
+        "query",
+        cypher="// set, create, or delete nothing\n"
+        "MATCH (p:Person) WHERE p.name <> 'Create; Set; Delete' "
+        "RETURN count(*) AS `delete people`;",
+    )
+
+    assert result["rows"] == [{"delete people": 3}]
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:

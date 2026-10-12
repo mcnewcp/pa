@@ -10,6 +10,7 @@ adapter, and add a tool for it in `ClaimsTools` and `create_server`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
@@ -57,6 +58,18 @@ class Found(BaseModel):
     graph: Graph = Graph()
 
 
+class Rows(BaseModel):
+    """What `query` returns from an adapter: its rows, and every node and edge in them."""
+
+    columns: list[str]
+    rows: list[dict[str, Any]] = Field(
+        description="One object per row, by column. A node or edge appears as its id; it is in "
+        "`nodes` or `edges`. A path appears as {nodes: [ids], edges: [ids]}."
+    )
+    truncated: bool = Field(description="True when there were more rows than the row cap.")
+    graph: Graph = Graph()
+
+
 class ClaimsGraph(Protocol):
     """The domain queries over the current build. Times are aware datetimes."""
 
@@ -68,4 +81,9 @@ class ClaimsGraph(Protocol):
     def statements(self, who: str | None, since: datetime | None, until: datetime | None) -> Graph:
         """Statements said by the node with id `who` (anyone's when None), from `since`
         (inclusive) up to `until` (exclusive), in time order, with their speakers and episodes."""
+        ...
+
+    def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
+        """One read-only statement in the engine's query language, run under the query
+        limits. Raises a `PaError` saying why when it is rejected or stopped."""
         ...

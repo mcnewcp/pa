@@ -11,12 +11,14 @@ both endpoints in the same row, so `shape` can give every edge its endpoints' st
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match
-from pa_home.graph.reader import CypherRunner, Row
+from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match, Rows
+from pa_home.graph.guard import check_read_only
+from pa_home.graph.reader import CypherRunner, Row, RowCappedRunner
 from pa_home.graph.store import SEARCH_TEXT
 
 
@@ -87,10 +89,15 @@ DOMAIN_QUERIES: tuple[DomainQuery, ...] = (FIND_EXACT, FIND_FULL_TEXT, STATEMENT
 
 
 class LadybugClaimsGraph:
-    """`ClaimsGraph` over LadybugDB, running every query through a `CypherRunner`."""
+    """`ClaimsGraph` over LadybugDB: the domain queries run through `runner`, and the `query`
+    tool's open-ended queries through `query_runner`, at most `max_rows` rows each."""
 
-    def __init__(self, runner: CypherRunner) -> None:
+    def __init__(
+        self, runner: CypherRunner, *, query_runner: RowCappedRunner, max_rows: int
+    ) -> None:
         self._runner = runner
+        self._query_runner = query_runner
+        self._max_rows = max_rows
 
     def find(self, name: str) -> Found:
         key = " ".join(name.split()).lower()
@@ -117,6 +124,17 @@ class LadybugClaimsGraph:
             {"who": who, "since": _engine_time(since), "until": _engine_time(until)},
         )
         return shape(rows).graph.as_graph()
+
+    def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
+        check_read_only(text)
+        fetched = self._query_runner.fetch(text, parameters, max_rows=self._max_rows)
+        shaped = shape(fetched.rows)
+        return Rows(
+            columns=fetched.columns,
+            rows=shaped.rows,
+            truncated=fetched.truncated,
+            graph=shaped.graph.as_graph(),
+        )
 
 
 @dataclass

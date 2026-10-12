@@ -20,4 +20,4 @@ def graph_server(graph_dir: Path, *, extensions_root: Path | None = None) -> MCP
     """
     fts = extensions.verified(extensions_root or extensions.extensions_dir(), extensions.FTS)
     runner = CurrentBuild(GraphDirectory(graph_dir), fts_extension=fts)
-    return create_server(LadybugClaimsGraph(runner))
+    return create_server(LadybugClaimsGraph(runner, query_runner=runner, max_rows=200))
