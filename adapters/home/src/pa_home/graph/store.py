@@ -39,6 +39,7 @@ class FullTextIndex:
 
 FULL_TEXT_INDEXES = (
     FullTextIndex("Person", "person_fts", ("name", "aliases", "addresses")),
+    FullTextIndex("Organization", "organization_fts", ("name", "aliases", "domains", "addresses")),
     FullTextIndex("Topic", "topic_fts", ("name", "aliases", "description")),
     FullTextIndex("Statement", "statement_fts", ("summary", "quote")),
 )

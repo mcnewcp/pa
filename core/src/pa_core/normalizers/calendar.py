@@ -60,17 +60,71 @@ def _address(value: str) -> str:
     return value.strip()
 
 
+_LABELS = ("Status", "Location", "Repeats")
+
+
 def _body(event: _Component) -> str:
     """The event's status, location and repeat rule as labelled lines, then its description."""
     status = event.text("STATUS")
-    fields = [
-        ("Status", status.lower() if status else None),
-        ("Location", event.text("LOCATION")),
-        ("Repeats", event.text("RRULE")),
-    ]
-    header = "\n".join(f"{label}: {value}" for label, value in fields if value)
+    values = (status.lower() if status else None, event.text("LOCATION"), event.text("RRULE"))
+    labelled = zip(_LABELS, values, strict=True)
+    header = "\n".join(f"{label}: {value}" for label, value in labelled if value)
     description = (event.text("DESCRIPTION") or "").replace("\r\n", "\n")
     return "\n\n".join(part for part in (header, description) if part)
+
+
+@dataclass(frozen=True)
+class EventBody:
+    """A calendar episode's body read back into its parts."""
+
+    status: str | None
+    """As the source gave it, in lower case: `confirmed`, `tentative`, or `cancelled`."""
+    location: str | None
+    repeats: str | None
+    description: str
+
+
+def read_body(body: str) -> EventBody:
+    """The parts of a body this normalizer wrote: its labelled lines, then its description.
+
+    The first paragraph is the labelled lines only if every line in it is one, in order.
+    """
+    header, _, rest = body.partition("\n\n")
+    found: dict[str, str] = {}
+    remaining = list(_LABELS)
+    for line in header.split("\n"):
+        label, separator, value = line.partition(": ")
+        if not separator or label not in remaining:
+            return EventBody(status=None, location=None, repeats=None, description=body)
+        remaining = remaining[remaining.index(label) + 1 :]
+        found[label] = value
+    return EventBody(
+        status=found.get("Status"),
+        location=found.get("Location"),
+        repeats=found.get("Repeats"),
+        description=rest,
+    )
+
+
+@dataclass(frozen=True)
+class Revision:
+    """Which version of its event a payload is, as the episode id hashes it."""
+
+    sequence: int
+    modified_at: datetime | None
+    """When this version was made: LAST-MODIFIED, else DTSTAMP."""
+
+
+def revision(raw: bytes) -> Revision:
+    """The SEQUENCE and modification time of the one event in `raw`."""
+    calendar = _parse(raw)
+    event = _only_event(calendar)
+    sequence = event.text("SEQUENCE") or "0"
+    if not sequence.isdigit():
+        raise MalformedPayloadError(f"calendar event has an unreadable SEQUENCE ({sequence!r})")
+    zone = calendar.text("X-WR-TIMEZONE")
+    modified = _moment(event, "LAST-MODIFIED", zone) or _moment(event, "DTSTAMP", zone)
+    return Revision(sequence=int(sequence), modified_at=modified)
 
 
 def _version(event: _Component) -> str:
