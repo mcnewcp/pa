@@ -12,6 +12,7 @@ import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -185,12 +186,14 @@ def test_given_the_graph_the_agent_gets_the_pa_server_over_it_less_the_hidden_to
         "When does the hotel block close?",
         owner=OWNER,
         l0=l0,
-        graph=GraphAccess(graph, hidden_tools=frozenset({"timeline"})),
+        graph=GraphAccess(
+            graph, time_zone=ZoneInfo("America/Chicago"), hidden_tools=frozenset({"timeline"})
+        ),
     )
 
     seen = _seen(tmp_path)
     [pa] = seen["mcp"]["mcpServers"].values()
-    assert pa["args"][-2:] == ["--graph", str(graph)]
+    assert pa["args"][-4:] == ["--graph", str(graph), "--time-zone", "America/Chicago"]
     assert "mcp__pa__timeline" in seen["settings"]["permissions"]["deny"]
     # The role says to look the answer up, not where: CLAUDE.md sends it to the graph first.
     [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")

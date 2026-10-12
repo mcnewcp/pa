@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -164,6 +165,8 @@ def test_the_graph_plus_files_configuration_offers_every_tool_of_the_pa_server(e
     assert results.configuration == "graph-plus-files"
     [request] = evals.agent.requests
     assert request.graph is not None
+    # The server reads dates without an offset in the owner's time zone, as the set gives it.
+    assert request.graph.time_zone == ZoneInfo("America/Chicago")
     assert evals.agent.offered[QUESTION] >= {
         "mcp__pa__find",
         "mcp__pa__statements",

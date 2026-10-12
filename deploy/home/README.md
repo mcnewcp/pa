@@ -41,7 +41,7 @@ The firewall loads at boot from `pa-vm-firewall.service`, after Docker and befor
 
 ## The store
 
-The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
+The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it, with the owner's time zone, `PA_TIME_ZONE`), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
 
 Three directories of it are mounted into the VM, and nothing else, the catalog and the librarian's cache included:
 
@@ -71,7 +71,7 @@ deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/hom
 
 The assistant reads the claims graph through the PA MCP server, which runs in the VM over stdio and reads whichever build `/srv/pa/graph/current` points at when each call starts. Run `pa librarian rebuild` on the devbox, and the next call in a running session reads the new build, with nothing restarted.
 
-- **Declared by the agent project.** The rendered `.mcp.json` starts the server as `<repo venv>/bin/python -m pa_home mcp serve --graph /srv/pa/graph`. Claude Code starts one server per session (and one per `claude mcp list`).
+- **Declared by the agent project.** The rendered `.mcp.json` starts the server as `<repo venv>/bin/python -m pa_home mcp serve --graph /srv/pa/graph --time-zone <PA_TIME_ZONE>`. The server has no clock; a date the assistant gives without an offset is read in that time zone, so `until=2026-10-08` covers that whole local day. A data root seeded before v0.12 needs `PA_TIME_ZONE=America/Chicago` added to its `owner.env`. Claude Code starts one server per session (and one per `claude mcp list`).
 - **The only MCP server.** The rendered `settings.json` lets only a server named `pa` start (`allowedMcpServers`, which also blocks claude.ai connectors and any server in `~/.claude.json`), pre-approves it (`enabledMcpjsonServers`, since Remote Control has nobody to ask), allows its tools (`mcp__pa`), and keeps claude.ai connectors off (`disableClaudeAiConnectors`). There's no deny rule on MCP tools: a deny wins over every allow, so it would deny the PA server's tools too.
 - **Remote Control and `claude -p` load the same configuration.** Remote Control runs in the rendered project, a trusted folder, so it reads `.mcp.json` and the project's `settings.json`. `claude -p` reads `.mcp.json` from its working directory without asking, and the evals pass the project's `settings.json` with `--settings`, since `-p` never trusts a folder.
 - **The full-text extension.** The server loads LadybugDB's full-text extension from `~/.local/share/pa/lbug-extensions` and never downloads it, so `update.sh` fetches it there with `pa librarian extensions`, which checks its SHA-256.

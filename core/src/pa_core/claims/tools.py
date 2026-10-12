@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 
 from pydantic import Field
@@ -41,8 +41,12 @@ class QueryResult(Graph):
 
 
 class ClaimsTools:
-    def __init__(self, graph: ClaimsGraph) -> None:
+    """The tools over `graph`. A date or time without a UTC offset is read in `time_zone`, the
+    instance's (the owner's) time zone, so a date alone is that whole local day."""
+
+    def __init__(self, graph: ClaimsGraph, time_zone: tzinfo) -> None:
         self._graph = graph
+        self._zone = time_zone
 
     def find(self, name: str) -> ToolResult:
         found = self._graph.find(name.strip())
@@ -55,8 +59,8 @@ class ClaimsTools:
         since: str | None = None,
         until: str | None = None,
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
+        since_at = _parse_moment(since, "since", self._zone, end_of_day=False)
+        until_at = _parse_moment(until, "until", self._zone, end_of_day=True)
         speaker = self._resolve(who, "who", SPEAKER_TYPES)
         if isinstance(speaker, ToolResult):
             return speaker
@@ -78,8 +82,8 @@ class ClaimsTools:
     def timeline(
         self, topic: str, since: str | None = None, until: str | None = None
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
+        since_at = _parse_moment(since, "since", self._zone, end_of_day=False)
+        until_at = _parse_moment(until, "until", self._zone, end_of_day=True)
         about = self._resolve(topic, "topic", TOPIC_TYPES)
         if isinstance(about, ToolResult):
             return about
@@ -113,8 +117,8 @@ class ClaimsTools:
         since: str | None = None,
         until: str | None = None,
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
+        since_at = _parse_moment(since, "since", self._zone, end_of_day=False)
+        until_at = _parse_moment(until, "until", self._zone, end_of_day=True)
         attendee = self._resolve(who, "who", SPEAKER_TYPES)
         if isinstance(attendee, ToolResult):
             return attendee
@@ -280,11 +284,13 @@ def _span(since: str | None, until: str | None) -> str:
     return "".join(parts)
 
 
-def _parse_moment(value: str | None, name: str, *, end_of_day: bool) -> datetime | None:
-    """An ISO 8601 date or datetime as an aware datetime; a datetime without an offset is UTC.
+def _parse_moment(
+    value: str | None, name: str, zone: tzinfo, *, end_of_day: bool
+) -> datetime | None:
+    """An ISO 8601 date or datetime as an aware datetime; one without an offset is in `zone`.
 
-    A date alone is the start of that day in UTC; for an end (`until`), the start of the next
-    day, so the date's whole day is included.
+    A date alone is the start of that day in `zone`; for an end (`until`), the start of the
+    next day, so the date's whole local day is included.
     """
     if value is None or not value.strip():
         return None
@@ -294,11 +300,11 @@ def _parse_moment(value: str | None, name: str, *, end_of_day: bool) -> datetime
             day = date.fromisoformat(text)
             if end_of_day:
                 day += timedelta(days=1)
-            return datetime.combine(day, time(), tzinfo=UTC)
+            return datetime.combine(day, time(), tzinfo=zone)
         moment = datetime.fromisoformat(text)
     except ValueError as error:
         raise ToolInputError(
             f"{name} must be an ISO 8601 date (2026-10-01) or datetime "
             f"(2026-10-01T09:00:00-05:00); got {value!r}"
         ) from error
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=zone)

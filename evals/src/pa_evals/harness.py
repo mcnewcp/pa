@@ -91,7 +91,11 @@ def run_eval(
                 data_root.graph, eval_set.adversarial, extensions_root=librarian.extensions_root
             )
             checks = InjectionChecks(adversarial_episodes=eval_set.adversarial, checks=checked)
-            graph = GraphAccess(data_root.graph, configuration.hidden_tools())
+            graph = GraphAccess(
+                data_root.graph,
+                time_zone=eval_set.zone,
+                hidden_tools=configuration.hidden_tools(),
+            )
 
         def ask(question: EvalQuestion) -> QuestionResult:
             return _ask(question, eval_set, data_root, graph, owner, store, known, agent, judge)

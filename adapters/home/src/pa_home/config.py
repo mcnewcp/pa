@@ -6,6 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
 from pa_core.librarian.ports import DEFAULT_MODEL, LibrarianModels, ModelChoice
@@ -15,6 +16,8 @@ DATA_DIR_VAR = "PA_DATA_DIR"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
+# The owner's time zone, an IANA name: dates given without an offset are read in it.
+TIME_ZONE_VAR = "PA_TIME_ZONE"
 # The librarian's model and effort for every stage, and extraction's apart from the rest.
 LIBRARIAN_MODEL_VAR = "PA_LIBRARIAN_MODEL"
 LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
@@ -107,6 +110,27 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
         email_addresses=email_addresses,
         other_names=_comma_separated(environ, OWNER_OTHER_NAMES_VAR),
     )
+
+
+def load_time_zone(environ: Mapping[str, str] = os.environ) -> ZoneInfo:
+    """The instance's time zone; refuses to go on without a known IANA name."""
+    name = environ.get(TIME_ZONE_VAR, "").strip()
+    if not name:
+        raise ConfigError(
+            f"The instance's time zone is missing: set {TIME_ZONE_VAR} to the owner's IANA "
+            "time zone, such as America/Chicago."
+        )
+    return time_zone(name, TIME_ZONE_VAR)
+
+
+def time_zone(name: str, source: str) -> ZoneInfo:
+    """The IANA time zone `name`, given by `source` (for the error)."""
+    try:
+        return ZoneInfo(name.strip())
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ConfigError(
+            f"{source} is not a known IANA time zone, such as America/Chicago: {name!r}"
+        ) from error
 
 
 def load_librarian_models(environ: Mapping[str, str] = os.environ) -> LibrarianModels:

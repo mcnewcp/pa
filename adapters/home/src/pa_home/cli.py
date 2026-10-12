@@ -6,6 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
@@ -20,8 +21,10 @@ from pa_home.config import (
     load_data_root,
     load_librarian_models,
     load_owner,
+    load_time_zone,
     require_backup_config,
     require_outside_repository,
+    time_zone,
 )
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.graph import extensions
@@ -62,6 +65,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help="The graph directory holding `current` (default: the data root's).",
     )
+    serve.add_argument(
+        "--time-zone",
+        help="The instance's IANA time zone, which dates without an offset are read in "
+        "(default: PA_TIME_ZONE).",
+    )
     agent_project = commands.add_parser(
         "agent-project", help="Manage the agent project the assistant runs in."
     )
@@ -95,7 +103,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _render_agent_project(args.target, l0=args.l0, scratch=args.scratch, graph=args.graph)
             return 0
         if args.command == "mcp":
-            _serve(args.graph or load_data_root().graph)
+            zone = time_zone(args.time_zone, "--time-zone") if args.time_zone else load_time_zone()
+            _serve(args.graph or load_data_root().graph, zone)
             return 0
         if args.command == "librarian" and args.librarian_command == "extensions":
             _fetch_extensions()
@@ -168,13 +177,14 @@ def _fetch_extensions() -> None:
     print(f"LadybugDB {extensions.FTS.name} extension: {path}")
 
 
-def _serve(graph: Path) -> None:
+def _serve(graph: Path, zone: ZoneInfo) -> None:
     # stdout is the protocol channel; nothing else may print to it.
-    graph_server(graph.expanduser().resolve()).run("stdio")
+    graph_server(graph.expanduser().resolve(), time_zone=zone).run("stdio")
 
 
 def _render_agent_project(target: Path, *, l0: Path, scratch: Path, graph: Path | None) -> None:
     owner = load_owner()
+    zone = load_time_zone() if graph else None
     target = target.expanduser().resolve()
     require_outside_repository(
         target,
@@ -187,5 +197,6 @@ def _render_agent_project(target: Path, *, l0: Path, scratch: Path, graph: Path 
         l0=l0.expanduser().resolve(),
         scratch=scratch.expanduser().resolve(),
         graph=graph.expanduser().resolve() if graph else None,
+        time_zone=zone,
     )
     print(f"rendered the agent project into {target}")

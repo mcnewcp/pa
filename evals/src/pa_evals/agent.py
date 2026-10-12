@@ -103,7 +103,7 @@ class ScriptedAgent:
 def _offered(graph: GraphAccess | None) -> frozenset[str]:
     if graph is None:
         return frozenset()
-    listed = asyncio.run(graph_server(graph.graph).list_tools())
+    listed = asyncio.run(graph_server(graph.graph, time_zone=graph.time_zone).list_tools())
     return frozenset(
         f"mcp__{PA_SERVER}__{tool.name}" for tool in listed if tool.name not in graph.hidden_tools
     )

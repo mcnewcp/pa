@@ -77,6 +77,7 @@ def build_eval_set(questions_path: Path, spec: StorylineSpec, corpus_dir: Path) 
     data = {
         "as_of": questions.as_of,
         "owner": EvalOwner.from_owner(spec.owner_identity),
+        "time_zone": spec.timezone,
         "questions": [
             {**question.model_dump(), "evidence": [ids[event] for event in question.evidence]}
             for question in questions.questions

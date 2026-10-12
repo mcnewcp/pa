@@ -389,7 +389,9 @@ class Librarian:
         self.models = LibrarianModels()
         self.extensions_root = extensions_root
         self.backends: list[ModelChoice] = []
-        self.server = graph_server(self.data_root.graph, extensions_root=extensions_root)
+        self.server = graph_server(
+            self.data_root.graph, time_zone=CHICAGO, extensions_root=extensions_root
+        )
 
     def rebuild(self) -> BuildReport:
         def backend_for(choice: ModelChoice) -> FakeModelBackend:
@@ -821,7 +823,7 @@ def test_pa_librarian_extensions_puts_the_pinned_extension_where_the_server_load
     assert cli.main(["librarian", "extensions"]) == 0
 
     assert str(path) in capsys.readouterr().out
-    graph_server(tmp_path / "graph")  # finds it there
+    graph_server(tmp_path / "graph", time_zone=CHICAGO)  # finds it there
 
 
 def test_pa_librarian_extensions_refuses_a_file_that_isnt_the_pinned_one(
@@ -848,6 +850,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
             **os.environ,
             "PA_DATA_DIR": str(librarian.data_root.path),
             "PA_LBUG_EXTENSIONS_DIR": str(extensions_root),
+            "PA_TIME_ZONE": "America/Chicago",
         },
     )
 
@@ -1228,6 +1231,7 @@ def test_a_query_worker_over_its_memory_cap_is_killed_and_replaced(librarian: Li
     # A buffer pool too big to fill and a long timeout leave only the memory cap to stop it.
     librarian.server = graph_server(
         librarian.data_root.graph,
+        time_zone=CHICAGO,
         extensions_root=librarian.extensions_root,
         query_limits=Limits(
             timeout_seconds=60, memory_bytes=200 << 20, buffer_pool_bytes=4 << 30, max_rows=10
@@ -2254,6 +2258,20 @@ def test_events_can_be_limited_by_who_takes_part_by_topic_and_by_time(librarian:
     assert nothing["nodes"] == []
     assert nothing["message"].startswith("No calendar events with Rick Alvarez (")
     assert " about Annual physical (" in nothing["message"]
+
+
+def test_a_date_alone_is_the_whole_of_that_day_in_the_instances_time_zone(librarian: Librarian):
+    # 20:00 in Chicago on Oct 8 is already Oct 9 in UTC.
+    librarian.mail.event(
+        "Late shift", uid="late-shift", starts="2026-10-08T20:00", ends="2026-10-08T23:00"
+    )
+
+    librarian.rebuild()
+
+    assert event_titles(librarian.call("events", until="2026-10-08")) == ["Late shift"]
+    assert event_titles(librarian.call("events", since="2026-10-08")) == ["Late shift"]
+    assert event_titles(librarian.call("events", since="2026-10-09")) == []
+    assert event_titles(librarian.call("events", until="2026-10-07")) == []
 
 
 def test_a_topics_timeline_includes_its_calendar_events_at_their_time(librarian: Librarian):
