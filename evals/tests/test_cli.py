@@ -268,3 +268,68 @@ def test_the_report_shows_each_answers_cost_turns_and_duration_and_sums_them_up_
     # Overall: the medians of the two measured answers, and their sum.
     assert "| Overall | $0.026 | 3.5 | 11.1 s | $0.053 |" in report
     assert "- Cost: $0.042, 6 turns, 18.2 s" in report
+
+
+def repeated_scripts(tmp_path: Path, name: str, deadline: list[bool], canary: list[bool]):
+    """Scripts for `--runs len(deadline)`: per run, whether each of two questions is right."""
+
+    def verdict(right: bool) -> dict:
+        return {"correct": right, "reasoning": "ok" if right else "no", "relevant_citations": []}
+
+    answers = tmp_path / f"{name}-answers.json"
+    answers.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": [
+                    {"answer": "Oct 9.", "cost_usd": 0.1, "turns": 4, "duration_ms": 10000},
+                    {"answer": "Oct 8.", "cost_usd": 0.2, "turns": 8, "duration_ms": 30000},
+                    {"answer": "Oct 9.", "cost_usd": 0.3, "turns": 12, "duration_ms": 50000},
+                ][: len(deadline)],
+                "day-of-week": "It's Saturday.",
+            }
+        )
+    )
+    verdicts = tmp_path / f"{name}-verdicts.json"
+    verdicts.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": [verdict(right) for right in deadline],
+                "day-of-week": [verdict(right) for right in canary],
+            }
+        )
+    )
+    only = ["--only", "hotel-block-deadline", "--only", "day-of-week"]
+    return [
+        *("--agent", "scripted", "--answers", str(answers)),
+        *("--judge", "scripted", "--verdicts", str(verdicts)),
+        *only,
+    ]
+
+
+def test_a_run_of_n_repeats_writes_each_run_and_a_comparison_of_them(tmp_path, capsys):
+    runs = tmp_path / "runs"
+    scripts = repeated_scripts(tmp_path, "a", [True, False, True], [True, True, True])
+
+    assert pa_eval_run(runs, scripts, "--runs", "3") == 0
+
+    [run_dir] = runs.iterdir()
+    assert sorted(p.name for p in run_dir.iterdir()) == [
+        "comparison.md",
+        "run-1",
+        "run-2",
+        "run-3",
+    ]
+    second = json.loads((run_dir / "run-2" / "results.json").read_text())
+    assert second["configuration"] == "files-alone"
+    assert second["questions"][0]["answer"] == "Oct 8."
+    assert second["questions"][0]["correct"] is False
+    assert (run_dir / "run-2" / "report.md").exists()
+    comparison = (run_dir / "comparison.md").read_text()
+    assert "| Category | files-alone |" in comparison
+    assert "| single_fact_recall | 0.67 (0.00 to 1.00) |" in comparison
+    assert "| canary | 1.00 (1.00 to 1.00) |" in comparison
+    assert "| Overall | 0.83 (0.50 to 1.00) |" in comparison
+    # Medians over every answer in every run that reports them.
+    assert "| single_fact_recall | $0.200, 8 turns, 30.0 s |" in comparison
+    assert "| canary | n/a |" in comparison
+    assert f"comparison: {run_dir / 'comparison.md'}" in capsys.readouterr().out

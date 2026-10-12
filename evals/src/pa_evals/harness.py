@@ -35,6 +35,7 @@ def run_eval(
     judge: Judge,
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
+    configuration: str | None = None,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
@@ -43,8 +44,9 @@ def run_eval(
     one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
-    agent or judge raises is recorded as failed and the run goes on. `setup` describes the run
-    (for example which agent runner and judge) and is carried into the results as is.
+    agent or judge raises is recorded as failed and the run goes on. `configuration` names the
+    configuration asked, and `setup` describes the run (for example which agent runner and
+    judge); both are carried into the results as they are.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
@@ -68,6 +70,7 @@ def run_eval(
     for result in questions:
         categories.setdefault(result.category, []).append(result)
     return RunResults(
+        configuration=configuration,
         setup=dict(setup or {}),
         as_of=eval_set.as_of,
         ingest=IngestCounts(

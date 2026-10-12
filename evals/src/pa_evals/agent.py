@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Protocol
 
 from pa_core.owner import Owner
+from pa_evals.script import Script
 from pa_home.agent import AgentAnswer, AgentError, AgentTimeoutError, ClaudeAgent
 from pa_home.config import DataRoot
 
@@ -65,18 +66,19 @@ type ScriptedAnswer = str | AgentAnswer | Exception
 class ScriptedAgent:
     """A fake agent that answers each question id with a scripted answer, or raises its error.
 
-    An answer scripted as text has no cost, turns, or duration.
+    A question id may have a list of answers instead, one per run, played in order. An answer
+    scripted as text has no cost, turns, or duration.
 
     Every request it receives is recorded in `requests`.
     """
 
-    def __init__(self, answers: Mapping[str, ScriptedAnswer]) -> None:
-        self._answers = dict(answers)
+    def __init__(self, answers: Mapping[str, ScriptedAnswer | list[ScriptedAnswer]]) -> None:
+        self._answers = Script(answers)
         self.requests: list[AgentRequest] = []
 
     def answer(self, request: AgentRequest) -> AgentAnswer:
         self.requests.append(request)
-        scripted = self._answers.get(request.question_id)
+        scripted = self._answers.next(request.question_id)
         if scripted is None:
             raise AgentError(f"no scripted answer for question {request.question_id}")
         if isinstance(scripted, Exception):

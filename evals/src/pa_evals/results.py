@@ -91,6 +91,9 @@ class IngestCounts(BaseModel):
 
 
 class RunResults(BaseModel):
+    configuration: str | None = None
+    """The configuration the run asked, which keys its results in a comparison. None in results
+    written before configurations were named."""
     setup: dict[str, str] = {}
     """How the run was set up (for example which agent runner and judge), for the report."""
     as_of: datetime

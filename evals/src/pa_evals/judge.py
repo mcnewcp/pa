@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from pa_core.envelope import Envelope
 from pa_core.errors import PaError
 from pa_core.model_client import ModelClient
+from pa_evals.script import Script
 
 
 class JudgeError(PaError):
@@ -117,16 +118,18 @@ def _render_episode(envelope: Envelope) -> str:
 class ScriptedJudge:
     """A fake judge that returns a scripted verdict per question id.
 
+    A question id may have a list of verdicts instead, one per run, played in order.
+
     Every request it receives is recorded in `requests`.
     """
 
-    def __init__(self, verdicts: Mapping[str, Verdict]) -> None:
-        self._verdicts = dict(verdicts)
+    def __init__(self, verdicts: Mapping[str, Verdict | list[Verdict]]) -> None:
+        self._verdicts = Script(verdicts)
         self.requests: list[JudgeRequest] = []
 
     def judge(self, request: JudgeRequest) -> Verdict:
         self.requests.append(request)
-        verdict = self._verdicts.get(request.question_id)
+        verdict = self._verdicts.next(request.question_id)
         if verdict is None:
             raise JudgeError(f"no scripted verdict for question {request.question_id}")
         return verdict

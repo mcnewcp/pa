@@ -1,4 +1,8 @@
-"""Writing an eval run to disk: `report.md` and `results.json` in a timestamped run directory."""
+"""Writing an eval run to disk: `report.md` and `results.json` in a timestamped run directory.
+
+Repeated runs are written by `pa_evals.comparison.write_runs`, one directory per run beside a
+comparison of them.
+"""
 
 from __future__ import annotations
 
@@ -22,13 +26,23 @@ def write_run(
     The files hold no wall-clock time, so the same results always write the same bytes.
     Returns the run directory.
     """
-    run_dir = _new_run_dir(runs_dir, now().astimezone(UTC).strftime("%Y-%m-%dT%H%M%SZ"))
-    (run_dir / "results.json").write_text(results.model_dump_json(indent=2) + "\n")
-    (run_dir / "report.md").write_text(render_report(results))
+    run_dir = new_run_dir(runs_dir, now)
+    write_results(results, run_dir)
     return run_dir
 
 
-def _new_run_dir(runs_dir: Path, name: str) -> Path:
+def write_results(results: RunResults, run_dir: Path) -> None:
+    """Write `results.json` and `report.md` for `results` into `run_dir`, which exists."""
+    (run_dir / "results.json").write_text(results.model_dump_json(indent=2) + "\n")
+    (run_dir / "report.md").write_text(render_report(results))
+
+
+def new_run_dir(runs_dir: Path, now: Callable[[], datetime]) -> Path:
+    """A new directory under `runs_dir`, named by the UTC time (suffixed if that's taken)."""
+    return _new_dir(runs_dir, now().astimezone(UTC).strftime("%Y-%m-%dT%H%M%SZ"))
+
+
+def _new_dir(runs_dir: Path, name: str) -> Path:
     runs_dir.mkdir(parents=True, exist_ok=True)
     candidate, attempt = runs_dir / name, 1
     while True:
@@ -44,6 +58,8 @@ def render_report(results: RunResults) -> str:
     overall = results.overall
     ingest = results.ingest
     lines = ["# Eval run", ""]
+    if results.configuration is not None:
+        lines.append(f"- Configuration: {results.configuration}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
