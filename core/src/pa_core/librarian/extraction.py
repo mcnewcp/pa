@@ -296,14 +296,25 @@ def thread_context(earlier: Sequence[Envelope]) -> list[Envelope]:
     return list(reversed(kept))
 
 
-def cache_key(envelope: Envelope, context: Sequence[Envelope], version: str) -> str:
-    parts = [version, envelope.content_hash, *(earlier.content_hash for earlier in context)]
+def cache_key(envelope: Envelope, context: Sequence[Envelope], version: str, owner: Owner) -> str:
+    """Keyed on the episode, its context, and the owner as the prompt names them, so a changed
+    owner configuration re-extracts."""
+    parts = [
+        version,
+        owner_identity(owner),
+        envelope.content_hash,
+        *(earlier.content_hash for earlier in context),
+    ]
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def owner_identity(owner: Owner) -> str:
+    """The owner as the librarian's prompts name them: their name and addresses."""
+    return f"{owner.name} <{', '.join(owner.email_addresses)}>"
 
 
 def extraction_prompt(envelope: Envelope, context: Sequence[Envelope], owner: Owner) -> str:
     source = SOURCE_RULES[envelope.kind]
-    owner_text = f"{owner.name} <{', '.join(owner.email_addresses)}>"
     context_text = (
         _CONTEXT.format(
             earlier=source.earlier,
@@ -313,7 +324,7 @@ def extraction_prompt(envelope: Envelope, context: Sequence[Envelope], owner: Ow
         else ""
     )
     return PROMPT.format(
-        owner=owner_text,
+        owner=owner_identity(owner),
         owner_name=owner.name,
         rules=source.rules,
         speaker=source.speaker,

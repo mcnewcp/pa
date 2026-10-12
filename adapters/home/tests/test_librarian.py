@@ -393,14 +393,14 @@ class Librarian:
             self.data_root.graph, time_zone=CHICAGO, extensions_root=extensions_root
         )
 
-    def rebuild(self) -> BuildReport:
+    def rebuild(self, owner: Owner = OWNER) -> BuildReport:
         def backend_for(choice: ModelChoice) -> FakeModelBackend:
             self.backends.append(choice)
             return self.model.backend
 
         return rebuild_graph(
             self.data_root,
-            OWNER,
+            owner,
             models=self.models,
             backend_for=backend_for,
             extensions_root=self.extensions_root,
@@ -538,6 +538,24 @@ def test_a_changed_prompt_re_extracts_every_episode(
 
     assert librarian.model.calls - calls == 4
     assert second.extractor_version != first.extractor_version
+
+
+def test_a_changed_owner_re_runs_triage_and_extraction(librarian: Librarian):
+    # The owner's name and addresses are in both prompts.
+    librarian.mail.receive("Your order shipped.", labels="Inbox,Category Updates")
+    librarian.model.judges("Your order shipped", relevant=True)
+    a_thread_of_three(librarian)
+    librarian.rebuild()
+
+    moved = Owner(
+        name="Argus McNevans",
+        email_addresses=("argus@example.com", "argus@work.example"),
+        other_names=("Gus",),
+    )
+    report = librarian.rebuild(moved)
+
+    assert (report.cache["triage"].hits, report.cache["triage"].misses) == (0, 1)
+    assert (report.cache["extraction"].hits, report.cache["extraction"].misses) == (0, 5)
 
 
 def test_a_changed_episode_re_extracts_only_itself_and_the_later_episodes_in_its_thread(
