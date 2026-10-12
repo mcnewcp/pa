@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import Field
 
-from pa_core.claims.queries import ClaimsGraph, Found, Graph, Match, Rows, Schema
+from pa_core.claims.queries import ClaimsGraph, Direction, Found, Graph, Match, Rows, Schema
 from pa_core.errors import PaError
 
 
@@ -91,6 +91,8 @@ class ClaimsTools:
             for count, noun in (
                 (_count(graph, "Statement"), "statement"),
                 (_count(graph, "CalendarEvent"), "calendar event"),
+                (_count(graph, "Request"), "request"),
+                (_count(graph, "Commitment"), "commitment"),
             )
             if count
         ]
@@ -98,7 +100,10 @@ class ClaimsTools:
         if not counted:
             message = f"Nothing recorded{span}."
         else:
-            message = f"{' and '.join(counted)}{span}, oldest first."
+            listed = " and ".join(
+                [", ".join(counted[:-1]), counted[-1]] if counted[1:] else counted
+            )
+            message = f"{listed}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
 
     def events(
@@ -129,6 +134,39 @@ class ClaimsTools:
             cancelled = sum(1 for node in events if node.properties.get("status") == "cancelled")
             if cancelled:
                 message += f" {cancelled} of them cancelled."
+        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+
+    def open_loops(self, who: str | None = None, direction: str | None = None) -> ToolResult:
+        if direction is not None and direction not in _DIRECTIONS:
+            raise ToolInputError(
+                f"direction must be 'owed_by' (what `who` owes) or 'owed_to' (what is owed to "
+                f"`who`), or left out for both; got {direction!r}"
+            )
+        party = self._resolve(who, "who", SPEAKER_TYPES)
+        if isinstance(party, ToolResult):
+            return party
+        graph = self._graph.open_loops(party.id if party else None, _DIRECTIONS.get(direction))
+        # The graph also holds the closed requests and promises open ones came from.
+        requests, commitments = (
+            sum(1 for n in graph.nodes if n.type == t and n.properties.get("status") == "open")
+            for t in ("Request", "Commitment")
+        )
+        if party is None:
+            whose = ""
+        elif direction == "owed_by":
+            whose = f" owed by {party.name}"
+        elif direction == "owed_to":
+            whose = f" owed to {party.name}"
+        else:
+            whose = f" owed by or to {party.name}"
+        if requests + commitments == 0:
+            message = f"No open requests or commitments{whose}."
+        else:
+            message = (
+                f"{_plural(requests, 'open request')} and "
+                f"{_plural(commitments, 'open commitment')}{whose}, oldest first. Nothing is "
+                "marked overdue: compare each due date with now."
+            )
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
 
     def schema(self) -> Schema:
@@ -172,6 +210,7 @@ SPEAKER_TYPES = frozenset({"Person", "Organization"})
 """What a `who` argument may name."""
 TOPIC_TYPES = frozenset({"Topic"})
 """What a `topic` argument may name."""
+_DIRECTIONS: dict[str | None, Direction] = {"owed_by": "owed_by", "owed_to": "owed_to"}
 
 
 @dataclass(frozen=True)

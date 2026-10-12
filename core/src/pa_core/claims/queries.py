@@ -41,6 +41,9 @@ class Graph(BaseModel):
         return next((node for node in self.nodes if node.id == node_id), None)
 
 
+type Direction = Literal["owed_by", "owed_to"]
+"""For open loops: those someone owes, or those owed to them."""
+
 type MatchedOn = Literal["id", "address", "domain", "name", "alias", "full_text"]
 
 
@@ -163,6 +166,14 @@ class ClaimsGraph(Protocol):
         (inclusive) up to `until` (exclusive), by start time: each in its current version, with
         every version (VERSION_OF, from its episode), each version's participants, and its
         topics."""
+        ...
+
+    def open_loops(self, who: str | None, direction: Direction | None) -> Graph:
+        """The requests and commitments still open that the person or organization with id
+        `who` owes (`owed_by`), is owed (`owed_to`), or either (None); everyone's when `who`
+        is None. Oldest first, each with who owes it (OWES), whom it is owed to (OWED_TO), the
+        statement that opened it (OPENS) and that statement's episode, and the request it
+        was accepted from or the promise it superseded."""
         ...
 
     def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
