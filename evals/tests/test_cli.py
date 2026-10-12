@@ -9,9 +9,12 @@ import pytest
 from pa_evals import frozen
 from pa_evals.cli import main
 from pa_evals.eval_set import load_eval_set
+from pa_evals.report import render_report
+from pa_evals.results import RunResults
 from pa_evals.run_cli import DEFAULT_RUNS_DIR
 
 FIXTURES = Path(__file__).parent / "fixtures"
+BASELINES = Path(__file__).parents[1] / "baselines"
 CORPUS = FIXTURES / "corpus"
 EVAL_SET = FIXTURES / "eval_set.json"
 
@@ -333,3 +336,67 @@ def test_a_run_of_n_repeats_writes_each_run_and_a_comparison_of_them(tmp_path, c
     assert "| single_fact_recall | $0.200, 8 turns, 30.0 s |" in comparison
     assert "| canary | n/a |" in comparison
     assert f"comparison: {run_dir / 'comparison.md'}" in capsys.readouterr().out
+
+
+def test_compare_marks_only_the_differences_larger_than_the_spread(tmp_path, capsys):
+    pa_eval_run(
+        tmp_path / "a",
+        repeated_scripts(tmp_path, "a", [True, False, True], [True, True, True]),
+        *("--runs", "3"),
+    )
+    pa_eval_run(
+        tmp_path / "b",
+        repeated_scripts(tmp_path, "b", [True, True, True], [False, False, False]),
+        *("--runs", "3"),
+    )
+    [first] = (tmp_path / "a").iterdir()
+    [second] = (tmp_path / "b").iterdir()
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert f"| Category | {first} | {second} | {second} vs {first} |" in comparison
+    # Better by 0.33, but the first's runs spread from 0 to 1: it doesn't count.
+    assert "| single_fact_recall | 0.67 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | +0.33 |" in (
+        comparison
+    )
+    # Worse by 1.00 with no spread on either side: it counts.
+    assert "| canary | 1.00 (1.00 to 1.00) | 0.00 (0.00 to 0.00) | -1.00 (counts) |" in (comparison)
+    assert "| Overall | 0.83 (0.50 to 1.00) | 0.50 (0.50 to 0.50) | -0.33 |" in comparison
+    assert f"- {first}: 3 runs (configuration files-alone)" in comparison
+
+
+def test_the_committed_baselines_load_in_a_comparison_without_efficiency_figures(capsys):
+    v010 = BASELINES / "v0.10"
+    v011 = BASELINES / "v0.11"
+
+    assert main(["compare", str(v010), str(v011)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert f"- {v010}: 1 run\n" in comparison
+    # A single run has no spread, so no difference counts, however large.
+    assert "| Overall | 0.90 (0.90 to 0.90) | 0.96 (0.96 to 0.96) | +0.06 |" in comparison
+    assert "| entity_resolution | 0.50 (0.50 to 0.50) | 0.50 (0.50 to 0.50) | +0.00 |" in (
+        comparison
+    )
+    # v0.10 asked no paraphrase questions.
+    assert "| paraphrase | n/a | 1.00 (1.00 to 1.00) | n/a |" in comparison
+    assert "| Overall | n/a | n/a |" in comparison
+
+
+@pytest.mark.parametrize("baseline", ["v0.10", "v0.10/extended", "v0.11"])
+def test_each_committed_baseline_still_renders_as_a_report(baseline):
+    results = RunResults.model_validate_json((BASELINES / baseline / "results.json").read_text())
+
+    report = render_report(results)
+
+    assert results.configuration is None
+    assert results.questions[0].cost_usd is None
+    assert "| Overall | n/a | n/a | n/a | n/a |" in report
+
+
+def test_compare_says_when_a_directory_holds_no_runs(tmp_path, capsys):
+    assert main(["compare", str(tmp_path)]) == 1
+
+    assert f"no eval results in {tmp_path}" in capsys.readouterr().err

@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from pa_core.errors import PaError
 from pa_evals.report import (
     format_cost,
     format_duration,
@@ -47,6 +50,35 @@ def write_runs(
         write_results(results, run_dir / f"run-{number}")
     (run_dir / COMPARISON).write_text(render_comparison(by_configuration(runs)))
     return run_dir
+
+
+def load_runs(run_dir: Path) -> list[RunResults]:
+    """The runs in a run directory: its own `results.json`, or each `run-<n>/` in order.
+
+    Results written before efficiency figures or configuration names were recorded load with
+    them as None.
+    """
+    single = run_dir / "results.json"
+    if single.is_file():
+        return [_load(single)]
+    numbered = sorted(
+        (path for path in run_dir.glob("run-*/results.json") if path.parent.name[4:].isdigit()),
+        key=lambda path: int(path.parent.name[4:]),
+    )
+    if not numbered:
+        raise ComparisonError(f"no eval results in {run_dir}")
+    return [_load(path) for path in numbered]
+
+
+def _load(path: Path) -> RunResults:
+    try:
+        return RunResults.model_validate_json(path.read_text())
+    except ValidationError as error:
+        raise ComparisonError(f"{path} is not eval results: {error}") from error
+
+
+class ComparisonError(PaError):
+    """Run directories that can't be compared."""
 
 
 def by_configuration(runs: Sequence[RunResults]) -> dict[str, list[RunResults]]:
