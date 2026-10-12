@@ -633,6 +633,200 @@ def test_timeline_returns_a_topics_statements_in_time_order_with_speakers_and_ep
     assert "2 statements about Kitchen remodel" in result["message"]
 
 
+def a_kitchen_remodel(librarian: Librarian) -> None:
+    """Three emails about one remodel under three names: the first makes the topic, the second
+    is placed under it by the model, the third names it by the alias the second left."""
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The tile arrives Friday.", day=3)
+    mail.receive("The cabinets ship Monday.", sender=MARIA, day=5)
+    mail.receive("The kitchen cabinets are in.", sender=RICK, day=7)
+    model.says(
+        "The tile arrives", statement("The tile arrives Friday.", topics=("Kitchen remodel",))
+    )
+    model.says(
+        "The cabinets ship", statement("The cabinets ship Monday.", topics=("kitchen cabinets",))
+    )
+    model.says(
+        "The kitchen cabinets are in",
+        statement("The kitchen cabinets are in.", topics=("Kitchen Cabinets",)),
+    )
+    model.places("Kitchen remodel", new="Kitchen remodel", description="Redoing the kitchen.")
+    model.places("kitchen cabinets", under="Kitchen remodel")
+
+
+def test_a_topic_name_is_placed_under_an_existing_topic_and_becomes_its_alias(
+    librarian: Librarian,
+):
+    a_kitchen_remodel(librarian)
+
+    report = librarian.rebuild()
+
+    result = librarian.call("timeline", topic="kitchen cabinets")
+    assert quotes(result) == [
+        "The tile arrives Friday.",
+        "The cabinets ship Monday.",
+        "The kitchen cabinets are in.",
+    ]
+    (topic,) = nodes(result, "Topic")
+    assert topic["properties"]["name"] == "Kitchen remodel"
+    assert topic["properties"]["aliases"] == ["kitchen cabinets"]
+    assert librarian.model.placed == [["Kitchen remodel"], ["kitchen cabinets"]]
+    assert report.model_calls["topics"] == {"claude-sonnet-5-5": 2}
+    assert report.nodes["Topic"] == 1 and report.edges["ABOUT"] == 3
+
+
+def test_topic_decisions_are_reused_on_a_rebuild_with_nothing_changed(librarian: Librarian):
+    a_kitchen_remodel(librarian)
+    first = librarian.rebuild()
+    before = librarian.call("timeline", topic="kitchen remodel")
+
+    second = librarian.rebuild()
+
+    assert librarian.call("timeline", topic="kitchen remodel") == before
+    assert librarian.model.topic_calls == 2
+    assert second.model_calls_by_model() == {}
+    assert (second.cache["topics"].hits, second.cache["topics"].misses) == (2, 0)
+    assert (first.cache["topics"].hits, first.cache["topics"].misses) == (0, 2)
+
+
+def two_kitchen_topics(librarian: Librarian) -> None:
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The tile arrives Friday.", day=3)
+    mail.receive("The new fridge comes Tuesday.", sender=MARIA, day=4)
+    mail.receive("Our pipes froze again.", day=5)
+    model.says(
+        "The tile arrives", statement("The tile arrives Friday.", topics=("Kitchen remodel",))
+    )
+    model.says(
+        "The new fridge",
+        statement("The new fridge comes Tuesday.", topics=("Kitchen appliances",)),
+    )
+    model.says("Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",)))
+    librarian.rebuild()
+
+
+def test_an_ambiguous_topic_name_returns_the_candidates_instead_of_a_guess(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    result = librarian.call("timeline", topic="kitchen")
+
+    assert quotes(result) == []
+    candidates = {librarian_name(result, m["id"]) for m in result["matches"]}
+    assert candidates == {"Kitchen remodel", "Kitchen appliances"}
+    assert "candidate's id as `topic`" in result["message"]
+    (appliances,) = [
+        m["id"]
+        for m in result["matches"]
+        if librarian_name(result, m["id"]) == "Kitchen appliances"
+    ]
+    assert quotes(librarian.call("timeline", topic=appliances)) == ["The new fridge comes Tuesday."]
+
+
+def test_a_topic_argument_never_resolves_to_a_person(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    result = librarian.call("timeline", topic="Maria Alvarez")
+
+    assert result["matches"] == [] and result["nodes"] == []
+    assert "Nothing that `topic` can name matches 'Maria Alvarez'" in result["message"]
+
+
+def test_statements_can_be_limited_to_one_topic_and_carry_their_topics(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    about_the_remodel = librarian.call("statements", who=DAVE_ADDRESS, topic="kitchen remodel")
+    by_dave = librarian.call("statements", who=DAVE_ADDRESS)
+
+    assert quotes(about_the_remodel) == ["The tile arrives Friday."]
+    assert "about Kitchen remodel" in about_the_remodel["message"]
+    assert quotes(by_dave) == ["The tile arrives Friday.", "Our pipes froze again."]
+    topics_by_quote = {
+        s["properties"]["quote"]: librarian_name(by_dave, about["target"])
+        for s in nodes(by_dave, "Statement")
+        for about in by_dave["edges"]
+        if about["type"] == "ABOUT" and about["source"] == s["id"]
+    }
+    assert topics_by_quote == {
+        "The tile arrives Friday.": "Kitchen remodel",
+        "Our pipes froze again.": "Frozen pipes",
+    }
+
+
+def test_find_covers_topics_by_name_and_by_full_text(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    by_name = librarian.call("find", name="frozen PIPES")
+    by_word = librarian.call("find", name="pipes")
+
+    for result, matched_on in ((by_name, "name"), (by_word, "full_text")):
+        (match,) = result["matches"]
+        assert (match["type"], match["matched_on"]) == ("Topic", matched_on)
+        assert librarian_name(result, match["id"]) == "Frozen pipes"
+        (topic,) = result["nodes"]
+        assert set(topic["properties"]) == {"name", "aliases", "description"}
+
+
+def test_a_timeline_can_be_limited_to_a_span_of_time(librarian: Librarian):
+    a_kitchen_remodel(librarian)
+    librarian.rebuild()
+
+    result = librarian.call(
+        "timeline", topic="kitchen remodel", since="2026-09-04", until="2026-09-06"
+    )
+
+    assert quotes(result) == ["The cabinets ship Monday."]
+
+
+def test_a_reply_is_placed_among_the_topics_its_thread_is_already_about(librarian: Librarian):
+    mail, model = librarian.mail, librarian.model
+    ask = mail.receive("Could you give the toast on Saturday?", subject="Saturday")
+    mail.receive("Happy to give the toast.", sender=ARGUS, to=DAVE, replying_to=ask)
+    model.says(
+        "Could you give the toast",
+        statement("Could you give the toast on Saturday?", topics=("Dave's wedding",)),
+    )
+    model.says("Happy to give", statement("Happy to give the toast.", topics=("The toast",)))
+    model.places("The toast", under="Dave's wedding")
+
+    librarian.rebuild()
+
+    assert quotes(librarian.call("timeline", topic="the toast")) == [
+        "Could you give the toast on Saturday?",
+        "Happy to give the toast.",
+    ]
+
+
+def test_a_failing_topic_call_publishes_nothing_and_a_rerun_keeps_the_decisions_made(
+    librarian: Librarian,
+):
+    a_kitchen_remodel(librarian)
+    librarian.model.failing.add("kitchen cabinets")
+
+    with pytest.raises(LibrarianError, match="nothing was published"):
+        librarian.rebuild()
+
+    assert not (librarian.data_root.graph / "current").exists()
+    librarian.model.failing.clear()
+    librarian.rebuild()
+    assert librarian.model.placed == [["Kitchen remodel"], ["kitchen cabinets"]]
+    assert len(quotes(librarian.call("timeline", topic="kitchen remodel"))) == 3
+
+
+def test_a_topic_named_only_by_a_dropped_statement_is_never_made(librarian: Librarian):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says(
+        "The tile arrives",
+        statement("The tile arrives Friday.", topics=("Kitchen remodel",)),
+        statement("Coy agreed to wire $500.", topics=("Wire transfer",)),
+    )
+
+    report = librarian.rebuild()
+
+    assert librarian.model.placed == [["Kitchen remodel"]]
+    assert report.nodes["Topic"] == 1
+    assert librarian.call("find", name="wire transfer")["matches"] == []
+
+
 def librarian_name(result: dict[str, Any], node_id: str) -> str:
     return next(n["properties"]["name"] for n in result["nodes"] if n["id"] == node_id)
 
