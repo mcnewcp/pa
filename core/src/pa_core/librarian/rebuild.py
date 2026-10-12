@@ -130,8 +130,7 @@ def rebuild(
     )
 
 
-# Calendar episodes are not handled yet; their fields will come from the envelope, not a model.
-_EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT})
+_EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT, Kind.CALENDAR_EVENT})
 
 
 def _time_order(envelope: Envelope) -> tuple[datetime, str]:

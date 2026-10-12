@@ -1,9 +1,10 @@
 """Assembly: turning episodes and their extractions into the graph's node and edge records.
 
 This is where who said what is decided. A firsthand statement's speaker is the episode's
-sender or author (the owner, for a daily note or a chat), from its metadata, whatever the model
-wrote; a statement whose quote is not in the episode's body (for a chat, in one of the owner's
-turns) is dropped. Every statement from a chat is marked as told to the assistant.
+sender, author (the owner, for a daily note or a chat), or organizer (for a calendar event),
+from its metadata, whatever the model wrote; a statement whose quote is not in the episode's
+quotable texts (for a chat, one of the owner's turns) is dropped. Every statement from a chat
+is marked as told to the assistant.
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ from pa_core.librarian.extraction import Extraction, quote_is_in
 from pa_core.librarian.people import People
 from pa_core.owner import Owner
 
-# Whose words an episode is: an email's sender, or the author of a note or a chat.
-_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR})
+# Whose words an episode is: an email's sender, the author of a note or a chat, or the
+# organizer of a calendar event.
+_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR, Role.ORGANIZER})
 
 
 @dataclass

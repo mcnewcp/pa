@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import anyio
 import pytest
@@ -29,6 +30,7 @@ from pa_core.normalizers.assistant_chat import (
     encode_exchange,
     normalize_assistant_chat,
 )
+from pa_core.normalizers.calendar import normalize_calendar_event
 from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
@@ -45,6 +47,8 @@ DAVE = "David Kim <dkim@example.net>"
 DAVE_ADDRESS = "dkim@example.net"
 MARIA = "Maria Alvarez <maria@alvarezkb.example>"
 RICK = "Rick Alvarez <rick@alvarezkb.example>"
+MARA = "Mara McNevans <mara@example.com>"
+CHICAGO = ZoneInfo("America/Chicago")
 
 
 class Mailbox:
@@ -114,6 +118,58 @@ class Mailbox:
         envelope = normalize_assistant_chat(
             raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
         )
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def event(
+        self,
+        title: str,
+        *,
+        uid: str = "appointment",
+        starts: str = "2026-10-08T07:30",
+        ends: str = "2026-10-08T08:00",
+        changed: str = "2026-09-16T10:00",
+        sequence: int = 0,
+        organizer: str = ARGUS,
+        attendees: tuple[str, ...] = (),
+        location: str | None = None,
+        status: str = "CONFIRMED",
+        description: str = "",
+    ) -> str:
+        """Store one version of a calendar event, as iCloud exports it, and return its episode
+        id. Times are in America/Chicago; `changed` is when this version was made."""
+
+        def stamp(moment: str) -> str:
+            return moment.replace("-", "").replace(":", "") + "00"
+
+        def who(mailbox: str) -> str:
+            name, address = mailbox.rstrip(">").split(" <")
+            return f"CN={name}:mailto:{address}"
+
+        changed_utc = datetime.fromisoformat(changed).replace(tzinfo=CHICAGO).astimezone(UTC)
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "X-WR-CALNAME:Personal",
+            "X-WR-TIMEZONE:America/Chicago",
+            "BEGIN:VEVENT",
+            f"UID:{uid}@example.test",
+            f"SEQUENCE:{sequence}",
+            f"DTSTAMP:{changed_utc:%Y%m%dT%H%M%SZ}",
+            f"LAST-MODIFIED:{changed_utc:%Y%m%dT%H%M%SZ}",
+            f"DTSTART;TZID=America/Chicago:{stamp(starts)}",
+            f"DTEND;TZID=America/Chicago:{stamp(ends)}",
+            f"SUMMARY:{title}",
+            *([f"LOCATION:{location}"] if location else []),
+            *([f"DESCRIPTION:{description}"] if description else []),
+            f"ORGANIZER;{who(organizer)}",
+            *(f"ATTENDEE;{who(attendee)}" for attendee in attendees),
+            f"STATUS:{status}",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        raw = ("\r\n".join(lines) + "\r\n").encode()
+        envelope = normalize_calendar_event(raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC))
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
@@ -1076,3 +1132,38 @@ def test_an_assistant_turn_that_reads_like_an_owner_turn_yields_nothing(libraria
 
     assert quotes(librarian.call("statements")) == []
     assert report.statements.dropped_quote_not_found == 1
+
+
+# Calendar events: their fields from the episodes, their versions kept.
+
+
+def test_a_calendar_events_title_and_description_yield_its_organizers_statements(
+    librarian: Librarian,
+):
+    librarian.mail.event(
+        "Fasting blood draw",
+        organizer=MARA,
+        attendees=(ARGUS,),
+        location="Lakeside Family Medicine lab",
+        description="Fasting: nothing but water after midnight.",
+    )
+    librarian.model.says(
+        "Fasting: nothing but water",
+        statement("Fasting blood draw", kind="decided", speaker="Argus"),
+        statement("Fasting: nothing but water after midnight.", kind="mentioned"),
+        statement("Location: Lakeside Family Medicine lab", kind="mentioned"),
+    )
+
+    report = librarian.rebuild()
+
+    by_mara = librarian.call("statements", who="mara@example.com")
+    assert sorted(quotes(by_mara)) == [
+        "Fasting blood draw",
+        "Fasting: nothing but water after midnight.",
+    ]
+    (episode,) = nodes(by_mara, "Episode")
+    assert episode["properties"]["kind"] == "calendar_event"
+    assert report.statements.dropped_quote_not_found == 1
+    assert report.episodes.extracted == 1
+    (prompt,) = librarian.model.prompts
+    assert "Lakeside" not in prompt
