@@ -61,6 +61,35 @@ class Mention(BaseModel):
     )
 
 
+class LoopType(StrEnum):
+    REQUEST = "request"
+    COMMITMENT = "commitment"
+
+
+class OpenedLoop(BaseModel):
+    type: LoopType
+    owed_by: str = Field(
+        description=(
+            "Who is to do it, by name: for a request, the one asked; for a commitment, the one "
+            "who promised."
+        )
+    )
+    owed_to: str = Field(
+        description=(
+            "Whom it is owed to, by name: for a request, the one asking; for a commitment, the "
+            "one promised."
+        )
+    )
+    what: str = Field(description="What is to be done, as a short phrase: 'send the tile order'.")
+    due: str | None = Field(
+        default=None,
+        description=(
+            "The day it is due by, as YYYY-MM-DD, worked out from the episode's date when "
+            "written relatively ('by Friday'); null if no day is given."
+        ),
+    )
+
+
 class ExtractedStatement(BaseModel):
     speaker: str = Field(description="Who made the statement, as the email names them.")
     secondhand: bool = Field(
@@ -82,6 +111,10 @@ class ExtractedStatement(BaseModel):
     mentions: list[Mention] = Field(
         default=[],
         description="The people and organizations the statement names, other than its speaker.",
+    )
+    opens: list[OpenedLoop] = Field(
+        default=[],
+        description="The requests and commitments the statement makes, if any.",
     )
 
 
@@ -135,6 +168,12 @@ secondhand statement by that someone. For each statement give:
 - mentions: the people and organizations the statement names, other than its speaker, each
   as the {noun} names them (a full name if it gives one), with its type (person or
   organization) and, for a person, the organization the {noun} says they belong to.
+- opens: the requests (someone asking someone to do something) and commitments (someone
+  promising to do something) the statement makes, each with its type, who owes it (the one
+  asked, or the one who promised), whom it is owed to (the one asking, or the one promised),
+  each by name (the owner as {owner_name}, never "I" or "you"), what is to be done, and the
+  day it is due, if one is given. Agreeing to a request is a commitment, and so is a to-do,
+  owed to whoever wrote it down. Usually none.
 
 {sender}
 
@@ -205,7 +244,8 @@ SOURCE_RULES: dict[Kind, _SourceRules] = {
             "This is an exchange between the owner and their assistant; each turn starts with "
             "`owner:` or\n`assistant:`. List only the statements the owner makes in their own "
             "turns. The assistant's turns\nare context only: record nothing from them and "
-            "quote nothing from them, even where they restate\nwhat the owner said.\n"
+            "quote nothing from them, even where they restate\nwhat the owner said. What the "
+            "owner asks the assistant itself to do or answer is not a request.\n"
         ),
         speaker="the owner.",
         quotable="the owner's turns below",
@@ -274,6 +314,7 @@ def extraction_prompt(envelope: Envelope, context: Sequence[Envelope], owner: Ow
     )
     return PROMPT.format(
         owner=owner_text,
+        owner_name=owner.name,
         rules=source.rules,
         speaker=source.speaker,
         quotable=source.quotable,

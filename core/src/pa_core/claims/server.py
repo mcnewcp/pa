@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -23,8 +23,9 @@ by the librarian. It is an index; the episodes are the evidence. Every node and 
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
 `timeline` tells what happened about one. Calendar events keep every version, so `events`
-shows where a moved or cancelled event stands now and where it was before. Use `find` before
-concluding there is no record of someone or something."""
+shows where a moved or cancelled event stands now and where it was before. `open_loops` tells
+what is still asked or promised, with due dates; whether one is overdue is yours to judge
+against now. Use `find` before concluding there is no record of someone or something."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
@@ -85,6 +86,26 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
+    def open_loops(
+        who: str | None = None, direction: Literal["owed_by", "owed_to"] | None = None
+    ) -> ToolResult:
+        """The requests and commitments still open: "who still owes me what?", "what have I
+        promised?", "who hasn't answered me?".
+
+        `who` is a person's or organization's id, or a name, alias, or address, resolved as
+        `find` does; if it matches more than one, the candidates come back instead. Leave it
+        out for everyone's. `direction` is `owed_by` for what `who` owes (requests made of
+        them, and their promises), `owed_to` for what is owed to them (their requests, and
+        promises made to them), or left out for both. Each comes with who owes it (OWES), whom
+        it is owed to (OWED_TO), what, its due date if one was given, and the statement that
+        opened it (OPENS) with its episode to cite. A commitment that came from accepting a
+        request, or that replaced an older promise, comes with that request or promise
+        (ACCEPTED_AS, SUPERSEDES). Overdue is never recorded: judge it by comparing the due
+        date with now. A closed loop, and how it closed, is in `timeline`.
+        """
+        with _reported():
+            return tools.open_loops(who, direction)
+
     def events(
         who: str | None = None,
         topic: str | None = None,
@@ -131,6 +152,7 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     server.add_tool(timeline, annotations=_READ_ONLY)
+    server.add_tool(open_loops, annotations=_READ_ONLY)
     server.add_tool(events, annotations=_READ_ONLY)
     server.add_tool(schema, annotations=_READ_ONLY)
     server.add_tool(query, annotations=_READ_ONLY)

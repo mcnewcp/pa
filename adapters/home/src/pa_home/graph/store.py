@@ -49,6 +49,7 @@ _TYPES = {
     PropertyType.STRINGS: "STRING[]",
     PropertyType.BOOL: "BOOLEAN",
     PropertyType.TIMESTAMP: "TIMESTAMP",
+    PropertyType.DATE: "DATE",
 }
 _CHUNK = 2000
 
