@@ -11,15 +11,22 @@ id (meaning their first email address) or by one of their email addresses.
 from __future__ import annotations
 
 import datetime as dt
+from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import Field, ValidationError, model_validator
+from pydantic import (
+    Field,
+    PrivateAttr,
+    ValidationError,
+    ValidationInfo,
+    model_validator,
+)
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
@@ -43,6 +50,14 @@ class Person(FrozenModel):
     name: str
     aliases: list[str] = []
     emails: Annotated[list[str], Field(min_length=1)]
+
+
+class CastAddition(FrozenModel):
+    """More names and email addresses for someone already in the cast, as an extension adds."""
+
+    id: Id
+    aliases: list[str] = []
+    emails: list[str] = []
 
 
 class Calendar(FrozenModel):
@@ -150,8 +165,12 @@ class StorylineSpec(FrozenModel):
     # The vault folder daily notes live in.
     vault_folder: str = "Daily"
     cast: list[Person]
+    # Added after a person's own, so a cast id still means their first address.
+    cast_additions: list[CastAddition] = []
     calendars: list[Calendar] = []
     storylines: list[Storyline]
+    # Set when the spec is a base spec with extensions (see `load_spec`).
+    _base: BaseSpec | None = PrivateAttr(default=None)
 
     @cached_property
     def zone(self) -> ZoneInfo:
@@ -170,6 +189,20 @@ class StorylineSpec(FrozenModel):
 
     def storyline_of(self, event_id: str) -> Storyline:
         return self._storyline_by_event[event_id]
+
+    @property
+    def base(self) -> BaseSpec | None:
+        """The base spec this spec's extensions extend; None for a spec with no extensions."""
+        return self._base
+
+    def in_base(self, event_id: str) -> bool:
+        """Whether the event is the base spec's, not an extension's (False if not extended)."""
+        storyline = self._storyline_by_event.get(event_id)
+        return (
+            self._base is not None
+            and storyline is not None
+            and storyline.id in self._base.storylines
+        )
 
     def calendar(self, calendar_id: str) -> Calendar:
         return self._calendars_by_id[calendar_id]
@@ -218,41 +251,116 @@ class StorylineSpec(FrozenModel):
         return {event.id: storyline for storyline in self.storylines for event in storyline.events}
 
     @cached_property
+    def people(self) -> list[Person]:
+        """The cast, each person with any names and addresses added to them."""
+        additions: dict[str, list[CastAddition]] = defaultdict(list)
+        for addition in self.cast_additions:
+            additions[addition.id].append(addition)
+        return [
+            person.model_copy(
+                update={
+                    "aliases": [*person.aliases, *(a for x in more for a in x.aliases)],
+                    "emails": [*person.emails, *(e for x in more for e in x.emails)],
+                }
+            )
+            if (more := additions.get(person.id))
+            else person
+            for person in self.cast
+        ]
+
+    @cached_property
     def _people_by_ref(self) -> dict[str, Person]:
         refs: dict[str, Person] = {}
-        for person in self.cast:
+        for person in self.people:
             refs[person.id] = person
             for email in person.emails:
                 refs[email.lower()] = person
         return refs
 
     @model_validator(mode="after")
-    def _check(self) -> StorylineSpec:
+    def _check(self, info: ValidationInfo) -> StorylineSpec:
+        self._base = (info.context or {}).get("base")
         problems = list(_problems(self))
         if problems:
             raise ValueError("; ".join(problems))
         return self
 
 
-def load_spec(path: Path) -> StorylineSpec:
-    """Read and check a storyline spec; raises SpecError saying what is wrong."""
+@dataclass(frozen=True)
+class BaseSpec:
+    """The base spec of an extended spec: its file's name, and the storylines it holds."""
+
+    name: str
+    storylines: frozenset[str]
+
+
+class SpecExtension(FrozenModel):
+    """A storyline spec file that extends a base spec, adding to its lists.
+
+    The base spec sets the owner, time zone, and vault folder; an extension only adds.
+    """
+
+    cast: list[Person] = []
+    cast_additions: list[CastAddition] = []
+    calendars: list[Calendar] = []
+    storylines: list[Storyline] = []
+
+
+def load_spec(path: Path, *extensions: Path) -> StorylineSpec:
+    """Read and check a storyline spec; raises SpecError saying what is wrong.
+
+    The spec is the base spec at `path` plus any `extensions`, files beside it that each add
+    cast, calendars, and storylines to it. They are checked together, so an id may be used in
+    only one of them, and any of them may refer to what another one defines.
+
+    The base spec's payloads are frozen, so an extension may not change them or their episode
+    ids: it adds no events to the base spec's threads (replies to its emails, updates of its
+    calendar events, corrections of its notes), and no sections to a day the base spec has a
+    daily note for.
+    """
+    data = _read(path)
+    base = _validate(StorylineSpec, data, str(path))
+    if not extensions:
+        return base
+    merged = dict(data)
+    for extension in extensions:
+        more = _read(extension)
+        _validate(SpecExtension, more, str(extension))
+        for key in SpecExtension.model_fields:
+            merged[key] = [*merged.get(key, []), *more.get(key, [])]
+    where = f"{path} with {', '.join(str(extension) for extension in extensions)}"
+    base_spec = BaseSpec(path.name, frozenset(storyline.id for storyline in base.storylines))
+    return _validate(StorylineSpec, merged, where, context={"base": base_spec})
+
+
+def _read(path: Path) -> Any:
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise SpecError(f"cannot read storyline spec {path}: {error}") from None
+
+
+def _validate[T: FrozenModel](
+    model: type[T], data: Any, where: str, context: dict[str, Any] | None = None
+) -> T:
     try:
-        return StorylineSpec.model_validate(data)
+        return model.model_validate(data, context=context)
     except ValidationError as error:
-        raise SpecError(f"storyline spec {path} is invalid:\n{error}") from None
+        raise SpecError(f"storyline spec {where} is invalid:\n{error}") from None
 
 
 def _problems(spec: StorylineSpec) -> Iterator[str]:
     """Everything inconsistent in a spec whose fields each parsed."""
     yield from _duplicates("cast id", [person.id for person in spec.cast])
     yield from _duplicates(
-        "email address", [email.lower() for person in spec.cast for email in person.emails]
+        "email address", [email.lower() for person in spec.people for email in person.emails]
     )
+    cast_ids = {person.id for person in spec.cast}
+    for addition in spec.cast_additions:
+        if addition.id not in cast_ids:
+            yield f"cast_additions: {addition.id!r} is not in the cast"
     yield from _duplicates("calendar id", [calendar.id for calendar in spec.calendars])
+    yield from _duplicates("storyline id", [storyline.id for storyline in spec.storylines])
     yield from _duplicates("event id", [event.id for event in spec.events])
     for zone in [spec.timezone, *(c.timezone for c in spec.calendars if c.timezone)]:
         try:
@@ -315,6 +423,43 @@ def _problems(spec: StorylineSpec) -> Iterator[str]:
             except ValueError:
                 continue  # a broken or circular chain is reported above
             yield from _span_problems(event.id, version.start, version.end)
+    yield from _extension_problems(spec)
+
+
+def _extension_problems(spec: StorylineSpec) -> Iterator[str]:
+    """How the extensions of a spec would change its base spec's frozen payloads, if they would."""
+    base = spec.base
+    if base is None:
+        return
+    note_days = {
+        event.date
+        for event in spec.events
+        if isinstance(event, NoteSection) and spec.in_base(event.id)
+    }
+    for event in spec.events:
+        if spec.in_base(event.id):
+            continue
+        match event:
+            case EmailEvent(reply_to=str() as earlier):
+                verb = "replies to"
+            case CalendarUpdate(updates=earlier):
+                verb = "updates"
+            case NoteCorrection(corrects=earlier):
+                verb = "corrects"
+            case NoteSection() if event.date in note_days:
+                yield (
+                    f"event {event.id}: {base.name} already has a daily note for {event.date}; "
+                    "an extension adds no sections to it, since that would change the note's "
+                    "episode id"
+                )
+                continue
+            case _:
+                continue
+        if spec.in_base(earlier):
+            yield (
+                f"event {event.id}: it {verb} {earlier}, from {base.name}; "
+                "an extension adds no events to that file's threads"
+            )
 
 
 @dataclass(frozen=True)

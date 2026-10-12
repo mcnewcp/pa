@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from pa_core.owner import Owner
-from pa_evals.storyline import SpecError, load_spec
+from pa_evals.storyline import SpecError, StorylineSpec, load_spec
 
 SAMPLE_SPEC = Path(__file__).parent / "fixtures" / "sample_spec.yaml"
 
@@ -137,3 +137,187 @@ def test_an_unreadable_spec_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(SpecError, match="cannot read storyline spec"):
         load_spec(path)
+
+
+# An extension: storyline spec files loaded together with a base spec.
+
+SAMPLE_EXTENSION = Path(__file__).parent / "fixtures" / "sample_extension"
+EXTENSION_FILES = ("garden.yaml", "nursery.yaml")
+
+
+def extension() -> dict[str, Spec]:
+    return {name: yaml.safe_load((SAMPLE_EXTENSION / name).read_text()) for name in EXTENSION_FILES}
+
+
+def load_extended(tmp_path: Path, base: Spec, files: dict[str, Spec]) -> StorylineSpec:
+    paths: list[Path] = []
+    for name, data in {"base.yaml": base, **files}.items():
+        path = tmp_path / name
+        path.write_text(yaml.safe_dump(data))
+        paths.append(path)
+    return load_spec(*paths)
+
+
+def test_an_extension_spread_over_several_files_loads_with_its_base() -> None:
+    spec = load_spec(SAMPLE_SPEC, *(SAMPLE_EXTENSION / name for name in EXTENSION_FILES))
+
+    ids = {event.id for event in spec.events}
+    assert {"swim-registration-opens", "garden-quote", "nursery-order"} <= ids
+    assert len(ids) == 11 + 4 + 2
+    # Each file's events may name people and calendars from any of the files.
+    assert spec.person("yuki").name == "Yuki Tanaka"
+    assert spec.calendar("garden").name == "Garden"
+    assert spec.owner_identity == load_spec(SAMPLE_SPEC).owner_identity
+
+
+def test_an_extension_can_give_someone_in_the_base_cast_more_names_and_addresses() -> None:
+    spec = load_spec(SAMPLE_SPEC, *(SAMPLE_EXTENSION / name for name in EXTENSION_FILES))
+
+    dave = spec.person("dave@runclub.example")
+    assert dave.id == "dave"
+    assert dave.aliases == ["Dave", "Davey"]
+    assert dave.emails == ["dkim@example.net", "david.kim@kimlaw.example", "dave@runclub.example"]
+    # A cast id still means the person's first address, as in the base spec.
+    assert spec.address("dave").email == "dkim@example.net"
+
+
+def first_event(data: Spec) -> dict[str, Any]:
+    return data["storylines"][0]["events"][0]
+
+
+def cast_id_in_two_files(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["nursery.yaml"]["cast"][0]["id"] = "yuki"
+
+
+def cast_id_of_the_base(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["cast"][0]["id"] = "dave"
+
+
+def email_address_of_the_base(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["cast"][0]["emails"] = ["dkim@example.net"]
+
+
+def event_id_in_two_files(base: Spec, ext: dict[str, Spec]) -> None:
+    first_event(ext["nursery.yaml"])["id"] = "garden-quote"
+
+
+def event_id_of_the_base(base: Spec, ext: dict[str, Spec]) -> None:
+    first_event(ext["nursery.yaml"])["id"] = "wedding-day"
+
+
+def storyline_id_of_the_base(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["nursery.yaml"]["storylines"][0]["id"] = "wedding"
+
+
+def calendar_id_of_the_base(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["calendars"][0]["id"] = "family"
+
+
+def extension_sets_the_owner(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["owner"] = "yuki"
+
+
+def addition_for_someone_not_in_the_cast(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["cast_additions"][0]["id"] = "priya"
+
+
+def address_added_twice(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["cast_additions"][0]["emails"] = ["yuki@greenthumb.example"]
+
+
+@pytest.mark.parametrize(
+    ("break_spec", "message"),
+    [
+        (cast_id_in_two_files, "cast id 'yuki' appears more than once"),
+        (cast_id_of_the_base, "cast id 'dave' appears more than once"),
+        (email_address_of_the_base, "email address 'dkim@example.net' appears more than once"),
+        (event_id_in_two_files, "event id 'garden-quote' appears more than once"),
+        (event_id_of_the_base, "event id 'wedding-day' appears more than once"),
+        (storyline_id_of_the_base, "storyline id 'wedding' appears more than once"),
+        (calendar_id_of_the_base, "calendar id 'family' appears more than once"),
+        (extension_sets_the_owner, "owner"),
+        (addition_for_someone_not_in_the_cast, "cast_additions: 'priya' is not in the cast"),
+        (address_added_twice, "email address 'yuki@greenthumb.example' appears more than once"),
+    ],
+)
+def test_an_id_used_in_more_than_one_file_is_refused(
+    tmp_path: Path, break_spec: Callable[[Spec, dict[str, Spec]], None], message: str
+) -> None:
+    base, ext = sample(), extension()
+    break_spec(base, ext)
+
+    with pytest.raises(SpecError, match="invalid") as raised:
+        load_extended(tmp_path, base, ext)
+    assert message in str(raised.value)
+
+
+def reply_in_a_base_thread(base: Spec, ext: dict[str, Spec]) -> None:
+    del first_event(ext["garden.yaml"])["subject"]
+    first_event(ext["garden.yaml"]).update(
+        at="2026-10-02T08:00:00", reply_to="swim-registration-opens"
+    )
+
+
+def update_of_a_base_calendar_event(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["storylines"][0]["events"].append(
+        {
+            "id": "shift-moved-again",
+            "channel": "calendar_update",
+            "at": "2026-10-04T09:00:00",
+            "updates": "shift-oct-5-cancelled",
+            "status": "confirmed",
+            "what": "The shift is back on.",
+        }
+    )
+
+
+def correction_of_a_base_note(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["garden.yaml"]["storylines"][0]["events"].append(
+        {
+            "id": "swim-note-fixed-again",
+            "channel": "note_correction",
+            "at": "2026-10-05T09:00:00",
+            "corrects": "swim-note-weekdays",
+            "what": "Weekday sessions are on Tuesdays.",
+        }
+    )
+
+
+def note_section_on_a_base_note_day(base: Spec, ext: dict[str, Spec]) -> None:
+    ext["nursery.yaml"]["storylines"][0]["events"][1]["date"] = "2026-10-03"
+
+
+@pytest.mark.parametrize(
+    ("break_spec", "message"),
+    [
+        (
+            reply_in_a_base_thread,
+            "event garden-quote: it replies to swim-registration-opens, from base.yaml; "
+            "an extension adds no events to that file's threads",
+        ),
+        (
+            update_of_a_base_calendar_event,
+            "event shift-moved-again: it updates shift-oct-5-cancelled, from base.yaml; "
+            "an extension adds no events to that file's threads",
+        ),
+        (
+            correction_of_a_base_note,
+            "event swim-note-fixed-again: it corrects swim-note-weekdays, from base.yaml; "
+            "an extension adds no events to that file's threads",
+        ),
+        (
+            note_section_on_a_base_note_day,
+            "event nursery-note: base.yaml already has a daily note for 2026-10-03; an extension "
+            "adds no sections to it, since that would change the note's episode id",
+        ),
+    ],
+)
+def test_an_extension_cannot_change_the_base_specs_episodes(
+    tmp_path: Path, break_spec: Callable[[Spec, dict[str, Spec]], None], message: str
+) -> None:
+    base, ext = sample(), extension()
+    break_spec(base, ext)
+
+    with pytest.raises(SpecError, match="invalid") as raised:
+        load_extended(tmp_path, base, ext)
+    assert message in str(raised.value)

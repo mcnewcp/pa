@@ -1,0 +1,51 @@
+# An extension of sample_spec.yaml, spread over this file and nursery.yaml. Not the real one.
+cast:
+  - id: yuki
+    name: Yuki Tanaka
+    emails: [yuki@greenthumb.example]
+
+# Dave, from the base spec, also writes from his running club address.
+cast_additions:
+  - id: dave
+    aliases: [Davey]
+    emails: [dave@runclub.example]
+
+calendars:
+  - id: garden
+    name: Garden
+
+storylines:
+  - id: garden
+    title: The vegetable garden
+    summary: Argus hires Yuki to build raised beds, and Dave brings tomato starts.
+    events:
+      - id: garden-quote
+        channel: email
+        at: 2026-05-04T10:00:00
+        from: yuki
+        to: [argus]
+        subject: Raised beds quote
+        what: Yuki quotes $1,200 for three cedar raised beds.
+      - id: garden-yes
+        channel: email
+        at: 2026-05-04T19:30:00
+        from: argus
+        to: [yuki]
+        reply_to: garden-quote
+        what: Argus accepts the quote and asks her to start on May 18.
+      - id: garden-build
+        channel: calendar
+        at: 2026-05-05T08:00:00
+        calendar: garden
+        title: Raised beds build
+        start: 2026-05-18T09:00:00
+        end: 2026-05-18T15:00:00
+        organizer: argus
+        attendees: [yuki]
+        what: Yuki builds the beds on Monday May 18.
+      - id: garden-note
+        channel: note
+        date: 2026-05-18
+        heading: Garden
+        participants: [yuki, dave]
+        what: Yuki built the beds; Dave dropped off tomato starts.
