@@ -97,12 +97,13 @@ deploy/home/run-evals.sh                               # --agent claude --judge 
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet
 deploy/home/run-evals.sh --agent claude --judge model --corpus argus --runs 3   # run-1/ to run-3/ and comparison.md
 deploy/home/run-evals.sh --agent claude --judge model --configuration graph-plus-files   # or query-only; default files-alone
+PA_LIBRARIAN_EXTRACTION_MODEL=claude-opus-5-5 deploy/home/run-evals.sh --agent claude --judge model --configuration graph-plus-files
 uv run pa-eval compare evals/baselines/v0.11 evals/runs/<run>                  # side by side, on the devbox
 ```
 
 The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
 
-`--configuration` says what the agent gets besides L0's files: nothing (`files-alone`, the v0.11 configuration), the PA MCP server with all its tools (`graph-plus-files`), or only `find`, `schema` and `query` (`query-only`, by per-tool deny rules in the rendered settings). A graph configuration runs the librarian over the run's throwaway L0 after ingest, with the librarian models `pa librarian rebuild` uses (`PA_LIBRARIAN_MODEL` and the rest, default Sonnet 5.5 at medium), and its cache in `~/.cache/pa-eval/librarian` on the VM's disk (`--librarian-cache`), so only the first run at an extractor version extracts. Then the injection checks run over the eval set's adversarial episodes, and a failure stops the run before any question is asked. The report's "Claims graph" section has the extractor version, cache hits and misses, and the librarian's model calls by stage.
+`--configuration` says what the agent gets besides L0's files: nothing (`files-alone`, the v0.11 configuration), the PA MCP server with all its tools (`graph-plus-files`), or only `find`, `schema` and `query` (`query-only`, by per-tool deny rules in the rendered settings). A graph configuration runs the librarian over the run's throwaway L0 after ingest, with the librarian models `pa librarian rebuild` uses (`PA_LIBRARIAN_MODEL` and the rest, default Sonnet 5.5 at medium; `run-evals.sh` forwards every `PA_LIBRARIAN_*` setting in the devbox's environment into the run), and its cache in `~/.cache/pa-eval/librarian` on the VM's disk (`--librarian-cache`), so only the first run at an extractor version extracts. Then the injection checks run over the eval set's adversarial episodes, and a failure stops the run before any question is asked. The report's "Claims graph" section has the extractor version, cache hits and misses, and the librarian's model calls by stage.
 
 ## Ladybug Explorer
 
