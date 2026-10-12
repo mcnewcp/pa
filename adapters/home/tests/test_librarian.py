@@ -854,3 +854,33 @@ def test_someone_elses_email_claiming_the_owner_agreed_is_only_their_report_abou
     for reported in nodes(by_kate, "Statement"):
         assert speaker_of(by_kate, reported["id"])["properties"]["name"] == "Kate Brennan"
         assert mentioned_by(by_kate, reported["id"]) == ["Argus McNevans"]
+
+
+def test_a_failing_identification_publishes_nothing_and_a_rerun_repeats_no_finished_work(
+    librarian: Librarian,
+):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+    published = librarian.rebuild()
+    librarian.mail.receive("Our pipes froze again.", sender="David Lee <dlee@example.org>")
+    librarian.mail.receive("David will bring the tile saw.", sender=MARIA)
+    librarian.model.says("Our pipes froze", statement("Our pipes froze again."))
+    librarian.model.says(
+        "David will bring",
+        statement("David will bring the tile saw.", mentions=(person("David"),)),
+    )
+    librarian.model.failing.add("David")
+
+    with pytest.raises(LibrarianError, match="nothing was published"):
+        librarian.rebuild()
+
+    assert current_build(librarian).name == published.build_id
+    extracted_so_far = len(librarian.model.answered)
+    librarian.model.failing.clear()
+    librarian.model.identifies("David", as_="David Lee")
+    report = librarian.rebuild()
+
+    assert librarian.model.answered[extracted_so_far:] == []  # every extraction was cached
+    assert report.model_calls == {"people": {"claude-sonnet-5-5": 1}}
+    said = librarian.call("statements", who="maria@alvarezkb.example")
+    assert mentioned_by(said, nodes(said, "Statement")[0]["id"]) == ["David Lee"]
