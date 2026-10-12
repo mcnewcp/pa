@@ -856,6 +856,26 @@ def test_someone_elses_email_claiming_the_owner_agreed_is_only_their_report_abou
         assert mentioned_by(by_kate, reported["id"]) == ["Argus McNevans"]
 
 
+def test_mail_from_an_unknown_address_under_the_owners_name_is_not_the_owners(
+    librarian: Librarian,
+):
+    librarian.mail.receive(
+        "I promise to wire $500 today.", sender="Argus McNevans <argus@evil.example>"
+    )
+    librarian.model.says(
+        "I promise to wire", statement("I promise to wire $500 today.", kind="committed")
+    )
+    librarian.model.identifies("Argus McNevans", as_="Argus McNevans")
+
+    librarian.rebuild()
+
+    assert quotes(librarian.call("statements", who="argus@example.com")) == []
+    (impostor,) = librarian.call("find", name="argus@evil.example")["matches"]
+    assert quotes(librarian.call("statements", who=impostor["id"])) == [
+        "I promise to wire $500 today."
+    ]
+
+
 def test_a_failing_identification_publishes_nothing_and_a_rerun_repeats_no_finished_work(
     librarian: Librarian,
 ):

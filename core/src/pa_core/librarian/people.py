@@ -153,7 +153,7 @@ class People:
         party = self._by_address.get(address)
         if party is None:
             if as_organization:
-                party = self._organization_at(domain, address, organization or name, context)
+                party = self._organization_at(domain, address, organization or name)
             else:
                 party = self._resolve(_clean(name), "person", context, episode_id, address)
             party.addresses.append(address)
@@ -163,7 +163,7 @@ class People:
             party.add_name(organization)
         party.seen_in(episode_id)
         if party.kind == "person" and domain is not None:
-            org = self._organization_at(domain, None, organization, context)
+            org = self._organization_at(domain, None, organization)
             org.add_name(organization)
             self._join(party, org, episode_id)
         elif party.kind == "person" and _clean(organization):
@@ -219,11 +219,19 @@ class People:
         address: str | None = None,
     ) -> _Party:
         """Who `name` is: the one with that exact name or alias, the candidate the model
-        chooses, or someone new. A new address with no name is matched by its local part."""
-        exact = self._exact(name, kind)
+        chooses, or someone new. A new address with no name is matched by its local part.
+
+        A new address is never the owner's, whatever its name: the owner's addresses come
+        from the instance's configuration, so no one can write as the owner from elsewhere.
+        """
+
+        def eligible(parties: list[_Party]) -> list[_Party]:
+            return [party for party in parties if address is None or not party.is_owner]
+
+        exact = eligible(self._exact(name, kind))
         if len(exact) == 1:
             return exact[0]
-        candidates = exact or self._resembling(name or _local_words(address or ""), kind)
+        candidates = exact or eligible(self._resembling(name or _local_words(address or ""), kind))
         if candidates:
             question = Question(
                 name=name or address or "",
@@ -244,9 +252,7 @@ class People:
         party.add_name(name)
         return party
 
-    def _organization_at(
-        self, domain: str | None, address: str | None, name: str | None, context: str
-    ) -> _Party:
+    def _organization_at(self, domain: str | None, address: str | None, name: str | None) -> _Party:
         """The organization of a mail domain, or of its own address at a personal domain."""
         if domain is not None and domain in self._by_domain:
             return self._by_domain[domain]
