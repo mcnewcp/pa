@@ -225,7 +225,50 @@ ORDER BY s.at, s.id""",
     ),
 )
 
-TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS, TIMELINE_LOOPS)
+EVENTS = DomainQuery(
+    name="events",
+    cypher="""\
+MATCH (e:Episode)-[v:VERSION_OF]->(c:CalendarEvent)
+WHERE (CAST($who AS STRING) IS NULL
+    OR EXISTS { MATCH (attendee)-[:PARTICIPATED_IN]->(:Episode)-[:VERSION_OF]->(c)
+      WHERE attendee.id = $who })
+  AND (CAST($topic AS STRING) IS NULL
+    OR EXISTS { MATCH (c)-[:ABOUT]->(about_topic:Topic) WHERE about_topic.id = $topic })
+  AND (CAST($since AS TIMESTAMP) IS NULL OR c.starts_at >= CAST($since AS TIMESTAMP))
+  AND (CAST($until AS TIMESTAMP) IS NULL OR c.starts_at < CAST($until AS TIMESTAMP))
+OPTIONAL MATCH (p)-[part:PARTICIPATED_IN]->(e)
+OPTIONAL MATCH (c)-[about:ABOUT]->(t:Topic)
+RETURN c, v, e, p, part, about, t
+ORDER BY c.starts_at, c.id, v.changed_at, e.id""",
+    rules=(
+        "Calendar events that $who takes part in (as organizer or attendee of any version; "
+        "anyone's when null), about the topic $topic (any when null), whose current start is "
+        "from $since (inclusive) to $until (exclusive), in UTC, by start time. Cancelled "
+        "events are included, with status 'cancelled'. A CalendarEvent holds its current "
+        "version; every version comes as a VERSION_OF edge from its episode, carrying that "
+        "version's fields and when it was made (changed_at), with the version's participants "
+        "(PARTICIPATED_IN, with their role) and the event's topics (ABOUT)."
+    ),
+)
+
+TIMELINE_EVENTS = DomainQuery(
+    name="timeline_events",
+    cypher="""\
+MATCH (t:Topic)<-[about:ABOUT]-(c:CalendarEvent)<-[v:VERSION_OF]-(e:Episode)
+WHERE t.id = $topic
+  AND (CAST($since AS TIMESTAMP) IS NULL OR c.starts_at >= CAST($since AS TIMESTAMP))
+  AND (CAST($until AS TIMESTAMP) IS NULL OR c.starts_at < CAST($until AS TIMESTAMP))
+RETURN c.starts_at AS at, t, about, c, v, e
+ORDER BY c.starts_at, c.id, v.changed_at, e.id""",
+    rules=(
+        "The timeline's calendar events: each event about the topic $topic (ABOUT) whose "
+        "current start is from $since (inclusive) to $until (exclusive), in UTC, placed at "
+        "that start, with every version (VERSION_OF, from its episode). Use events for who "
+        "takes part."
+    ),
+)
+
+TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS, TIMELINE_EVENTS, TIMELINE_LOOPS)
 """The parts of `timeline`. Each returns an `at` column, and their rows are merged in `at`
 order, so calendar events and loop openings and closings join it as parts of their own."""
 
@@ -236,6 +279,7 @@ DOMAIN_QUERIES: tuple[DomainQuery, ...] = (
     STATEMENTS,
     *TIMELINE,
     OPEN_LOOPS,
+    EVENTS,
 )
 
 
@@ -293,6 +337,16 @@ class LadybugClaimsGraph:
 
     def open_loops(self, who: str | None, direction: Direction | None) -> Graph:
         rows = self._runner.run(OPEN_LOOPS.cypher, {"who": who, "direction": direction})
+        return shape(rows).graph.as_graph()
+
+    def events(
+        self,
+        who: str | None,
+        topic: str | None,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> Graph:
+        rows = self._runner.run(EVENTS.cypher, {"who": who, "topic": topic, **_span(since, until)})
         return shape(rows).graph.as_graph()
 
     def schema(self) -> Schema:

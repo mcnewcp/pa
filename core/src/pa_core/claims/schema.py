@@ -77,6 +77,9 @@ STATEMENT = NodeType(
     },
 )
 TOPIC = NodeType("Topic", {"name": _S, "aliases": _SS, "description": _S})
+_EVENT_FIELDS = {"title": _S, "starts_at": _T, "ends_at": _T, "location": _S, "status": _S}
+CALENDAR_EVENT = NodeType("CalendarEvent", _EVENT_FIELDS)
+"""In its current version. `status` is `scheduled` or `cancelled`."""
 
 _LOOP = {"what": _S, "due": _D, "status": _S, "opened_at": _T}
 REQUEST = NodeType("Request", _LOOP)
@@ -94,7 +97,7 @@ RECORDED_IN = EdgeType("RECORDED_IN", (("Statement", "Episode"),), {})
 PARTICIPATED_IN = EdgeType(
     "PARTICIPATED_IN", (("Person", "Episode"), ("Organization", "Episode")), {"role": _S}
 )
-ABOUT = EdgeType("ABOUT", (("Statement", "Topic"),), {})
+ABOUT = EdgeType("ABOUT", (("Statement", "Topic"), ("CalendarEvent", "Topic")), {})
 MENTIONS = EdgeType("MENTIONS", (("Statement", "Person"), ("Statement", "Organization")), {})
 MEMBER_OF = EdgeType("MEMBER_OF", (("Person", "Organization"),), {})
 OPENS = EdgeType("OPENS", tuple(("Statement", loop) for loop in _LOOPS), {})
@@ -107,6 +110,10 @@ OWED_TO = EdgeType("OWED_TO", tuple((loop, party) for loop in _LOOPS for party i
 ACCEPTED_AS = EdgeType("ACCEPTED_AS", (("Request", "Commitment"),), {})
 SUPERSEDES = EdgeType("SUPERSEDES", (("Commitment", "Commitment"),), {})
 """From the newer promise to the one it replaced."""
+VERSION_OF = EdgeType(
+    "VERSION_OF", (("Episode", "CalendarEvent"),), {**_EVENT_FIELDS, "changed_at": _T}
+)
+"""A version of a calendar event: its fields in that version, and when it was made."""
 
 NODE_TYPES: tuple[NodeType, ...] = (
     PERSON,
@@ -116,6 +123,7 @@ NODE_TYPES: tuple[NodeType, ...] = (
     TOPIC,
     REQUEST,
     COMMITMENT,
+    CALENDAR_EVENT,
 )
 EDGE_TYPES: tuple[EdgeType, ...] = (
     SAID,
@@ -130,4 +138,5 @@ EDGE_TYPES: tuple[EdgeType, ...] = (
     OWED_TO,
     ACCEPTED_AS,
     SUPERSEDES,
+    VERSION_OF,
 )

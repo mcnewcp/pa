@@ -3,8 +3,7 @@
 The stages:
 
 1. Triage: mail is kept or skipped by its Gmail category, with a cached relevance call for
-   Updates and Forums (see `triage`). Daily notes and chats are always kept; calendar episodes
-   are not extracted yet.
+   Updates and Forums (see `triage`). Daily notes, chats, and calendar events are always kept.
 2. Extraction: one model call per kept episode, with the earlier episodes of its thread
    as context, cached, on a small worker pool.
 3. Assembly, in time order: people and organizations resolved (a model call, cached, only
@@ -12,7 +11,11 @@ The stages:
 4. Topics: the kept statements' topic names placed under topics, in time order (`topics.py`).
 5. Loops: the requests and commitments statements open, and how each closes, in time order
    (`loops.py`).
-6. Build and publish, through the `GraphBuilder`.
+6. Calendar events: each event and its versions, from its episodes alone (`calendar.py`).
+7. Build and publish, through the `GraphBuilder`.
+
+Episodes are taken in time order: when they happened, or for a version of a calendar event,
+when that version was made (an event's own time may be months later, or moved earlier).
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
 is built, and every triage answer, extraction, identification, topic, and loop decision
@@ -25,7 +28,7 @@ import functools
 import threading
 import time
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from functools import partial
@@ -35,7 +38,7 @@ from pa_core.claims.schema import ABOUT, ORGANIZATION, PERSON
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction, identify, loops, topics, triage
+from pa_core.librarian import calendar, extraction, identify, loops, topics, triage
 from pa_core.librarian.assemble import Assembled, assemble, statement_id
 from pa_core.librarian.extraction import Extraction
 from pa_core.librarian.identify import Identifier
@@ -77,7 +80,10 @@ def rebuild(
     started_at, started = clock(), time.monotonic()
     calls = _CallLog()
     backend_for = functools.cache(backend_for)  # one backend per model choice, shared by stages
-    envelopes = sorted(l0.envelopes(), key=_time_order)
+    loaded = list(l0.envelopes())
+    versions = calendar.read_versions(loaded, l0)
+    known_at = {eid: version.changed_at for eid, version in versions.items()}
+    envelopes = sorted(loaded, key=lambda e: _time_order(e, known_at))
     handled = [envelope for envelope in envelopes if envelope.kind in _EXTRACTED_KINDS]
 
     triager = _Triager(models.default, backend_for, calls, cache, owner)
@@ -95,7 +101,7 @@ def rebuild(
         owner,
     )
     try:
-        assembled = assemble(selected, extractions, owner, quotable, identifier)
+        assembled = assemble(selected, extractions, owner, quotable, identifier, said_at=known_at)
     except PaError as error:
         raise LibrarianError(
             f"resolution failed, so nothing was published; every extraction and decision "
@@ -131,6 +137,12 @@ def rebuild(
         ) from error
     assembled.records.nodes.extend(closed.nodes)
     assembled.records.edges.extend(closed.edges)
+    events, event_edges = calendar.event_records(
+        (versions[e.episode_id] for e in selected if e.episode_id in versions),
+        _topics_by_episode(resolved.edges),
+    )
+    assembled.records.nodes.extend(events)
+    assembled.records.edges.extend(event_edges)
     assembled.records.validate()
     published = builder.build(assembled.records)
 
@@ -166,12 +178,24 @@ def rebuild(
     )
 
 
-# Calendar episodes are not handled yet; their fields will come from the envelope, not a model.
-_EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT})
+_EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT, Kind.CALENDAR_EVENT})
 
 
-def _time_order(envelope: Envelope) -> tuple[datetime, str]:
-    return (envelope.occurred_at.start, envelope.episode_id)
+def _time_order(envelope: Envelope, known_at: Mapping[str, datetime]) -> tuple[datetime, str]:
+    eid = envelope.episode_id
+    return (known_at.get(eid, envelope.occurred_at.start), eid)
+
+
+def _topics_by_episode(edges: Iterable[EdgeRecord]) -> dict[str, list[str]]:
+    """The topics each episode's statements are about, from the statements' ABOUT edges."""
+    by_episode: defaultdict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        if edge.label != ABOUT.label:
+            continue
+        for episode in edge.episode_ids:
+            if edge.target not in by_episode[episode]:
+                by_episode[episode].append(edge.target)
+    return dict(by_episode)
 
 
 def _triage_counts(outcomes: Iterable[triage.Outcome]) -> TriageCounts:

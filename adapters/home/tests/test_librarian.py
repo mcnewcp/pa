@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import anyio
 import pytest
@@ -31,6 +32,7 @@ from pa_core.normalizers.assistant_chat import (
     encode_exchange,
     normalize_assistant_chat,
 )
+from pa_core.normalizers.calendar import normalize_calendar_event
 from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
@@ -50,6 +52,8 @@ DAVE_ADDRESS = "dkim@example.net"
 MARIA = "Maria Alvarez <maria@alvarezkb.example>"
 RICK = "Rick Alvarez <rick@alvarezkb.example>"
 DAVID_LEE = "David Lee <dlee@example.org>"
+MARA = "Mara McNevans <mara@example.com>"
+CHICAGO = ZoneInfo("America/Chicago")
 
 
 class Mailbox:
@@ -119,6 +123,58 @@ class Mailbox:
         envelope = normalize_assistant_chat(
             raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
         )
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def event(
+        self,
+        title: str,
+        *,
+        uid: str = "appointment",
+        starts: str = "2026-10-08T07:30",
+        ends: str = "2026-10-08T08:00",
+        changed: str = "2026-09-16T10:00",
+        sequence: int = 0,
+        organizer: str = ARGUS,
+        attendees: tuple[str, ...] = (),
+        location: str | None = None,
+        status: str = "CONFIRMED",
+        description: str = "",
+    ) -> str:
+        """Store one version of a calendar event, as iCloud exports it, and return its episode
+        id. Times are in America/Chicago; `changed` is when this version was made."""
+
+        def stamp(moment: str) -> str:
+            return moment.replace("-", "").replace(":", "") + "00"
+
+        def who(mailbox: str) -> str:
+            name, address = mailbox.rstrip(">").split(" <")
+            return f"CN={name}:mailto:{address}"
+
+        changed_utc = datetime.fromisoformat(changed).replace(tzinfo=CHICAGO).astimezone(UTC)
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "X-WR-CALNAME:Personal",
+            "X-WR-TIMEZONE:America/Chicago",
+            "BEGIN:VEVENT",
+            f"UID:{uid}@example.test",
+            f"SEQUENCE:{sequence}",
+            f"DTSTAMP:{changed_utc:%Y%m%dT%H%M%SZ}",
+            f"LAST-MODIFIED:{changed_utc:%Y%m%dT%H%M%SZ}",
+            f"DTSTART;TZID=America/Chicago:{stamp(starts)}",
+            f"DTEND;TZID=America/Chicago:{stamp(ends)}",
+            f"SUMMARY:{title}",
+            *([f"LOCATION:{location}"] if location else []),
+            *([f"DESCRIPTION:{description}"] if description else []),
+            f"ORGANIZER;{who(organizer)}",
+            *(f"ATTENDEE;{who(attendee)}" for attendee in attendees),
+            f"STATUS:{status}",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        raw = ("\r\n".join(lines) + "\r\n").encode()
+        envelope = normalize_calendar_event(raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC))
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
@@ -588,6 +644,7 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
         "Topic": 0,
         "Request": 0,
         "Commitment": 0,
+        "CalendarEvent": 0,
     }
     assert report.edges == {
         "SAID": 4,
@@ -602,6 +659,7 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
         "OWED_TO": 0,
         "ACCEPTED_AS": 0,
         "SUPERSEDES": 0,
+        "VERSION_OF": 0,
     }
 
 
@@ -766,6 +824,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
                 "statements",
                 "timeline",
                 "open_loops",
+                "events",
                 "schema",
                 "query",
             }
@@ -1179,13 +1238,18 @@ def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
 
 
 EXAMPLE_PARAMETERS: dict[str, Any] = {"key": "david kim", "text": "david pipes alvarez"}
-"""Values to run the domain queries with on `two_davids` plus two organizations and a request
-about the pipes, plus `topic`, the id of its one topic (Frozen pipes), and `ids`, Rick's, found
-at run time; any other parameter is null. The `text` has a word for each full-text index:
-people's, organizations', and topics'."""
+"""Values to run the domain queries with on `two_davids` plus two organizations, a plumber's
+visit, and a request about the pipes, plus `topic`, the id of their one topic (Frozen pipes),
+and `ids`, Rick's, found at run time; any other parameter is null. The `text` has a word for
+each full-text index: people's, organizations', and topics'."""
 
 
 def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: Librarian):
+    librarian.mail.event("Plumber visit", description="Thaw the frozen pipes.")
+    librarian.model.says(
+        "Thaw the frozen pipes",
+        statement("Thaw the frozen pipes.", topics=("Frozen pipes",)),
+    )
     librarian.mail.receive("The cabinets ship Tuesday.", sender=RICK)
     librarian.mail.receive("Your physical is confirmed.", sender=LAKESIDE)
     librarian.model.says(
@@ -1223,6 +1287,8 @@ def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: 
         "timeline_statements",
         "timeline_loops",
         "open_loops",
+        "timeline_events",
+        "events",
     } <= set(listed)
     for listed_query in schema["domain_queries"]:
         params = {name: examples.get(name) for name in listed_query["parameters"]}
@@ -1960,3 +2026,202 @@ def test_a_commitment_fulfilled_by_a_third_party_in_another_thread_closes_record
     ]
     assert owes_and_owed(timeline, promise["id"]) == ("David Kim", "Argus McNevans")
     assert len(promise["episode_ids"]) == 2
+
+
+# Calendar events: their fields from the episodes, their versions kept.
+
+
+def test_a_calendar_events_title_and_description_yield_its_organizers_statements(
+    librarian: Librarian,
+):
+    librarian.mail.event(
+        "Fasting blood draw",
+        organizer=MARA,
+        attendees=(ARGUS,),
+        location="Lakeside Family Medicine lab",
+        description="Fasting: nothing but water after midnight.",
+    )
+    librarian.model.says(
+        "Fasting: nothing but water",
+        statement("Fasting blood draw", kind="decided", speaker="Argus"),
+        statement("Fasting: nothing but water after midnight.", kind="mentioned"),
+        statement("Location: Lakeside Family Medicine lab", kind="mentioned"),
+    )
+
+    report = librarian.rebuild()
+
+    by_mara = librarian.call("statements", who="mara@example.com")
+    assert sorted(quotes(by_mara)) == [
+        "Fasting blood draw",
+        "Fasting: nothing but water after midnight.",
+    ]
+    (episode,) = nodes(by_mara, "Episode")
+    assert episode["properties"]["kind"] == "calendar_event"
+    assert report.statements.dropped_quote_not_found == 1
+    assert report.episodes.extracted == 1
+    (prompt,) = librarian.model.prompts
+    assert "Lakeside" not in prompt
+
+
+def test_a_moved_event_shows_its_current_time_and_its_earlier_versions(librarian: Librarian):
+    booked = librarian.mail.event(
+        "Fasting blood draw",
+        uid="blood-draw",
+        starts="2026-10-13T07:30",
+        ends="2026-10-13T07:50",
+        changed="2026-09-16T10:15",
+        location="Lakeside Family Medicine lab",
+    )
+    moved = librarian.mail.event(
+        "Fasting blood draw",
+        uid="blood-draw",
+        starts="2026-10-06T07:30",
+        ends="2026-10-06T07:50",
+        changed="2026-10-02T09:45",
+        sequence=1,
+        location="Lakeside Family Medicine lab",
+    )
+
+    report = librarian.rebuild()
+
+    result = librarian.call("events")
+    (event,) = nodes(result, "CalendarEvent")
+    assert event["properties"] == {
+        "title": "Fasting blood draw",
+        "starts_at": "2026-10-06T12:30:00+00:00",
+        "ends_at": "2026-10-06T12:50:00+00:00",
+        "location": "Lakeside Family Medicine lab",
+        "status": "scheduled",
+    }
+    assert sorted(event["episode_ids"]) == sorted([booked, moved])
+    versions = {
+        edge["source"]: edge["properties"]
+        for edge in result["edges"]
+        if edge["type"] == "VERSION_OF" and edge["target"] == event["id"]
+    }
+    assert versions[booked]["starts_at"] == "2026-10-13T12:30:00+00:00"
+    assert versions[booked]["changed_at"] == "2026-09-16T15:15:00+00:00"
+    assert versions[moved]["starts_at"] == "2026-10-06T12:30:00+00:00"
+    assert {node["id"] for node in nodes(result, "Episode")} == {booked, moved}
+    assert result["message"] == "1 calendar event, by start time."
+    assert report.model_calls_by_model() == {"claude-sonnet-5-5": 2}
+
+
+def test_a_cancelled_event_shows_as_cancelled_with_its_earlier_versions(librarian: Librarian):
+    scheduled = librarian.mail.event("Soccer practice", uid="soccer", changed="2026-09-07T19:00")
+    cancelled = librarian.mail.event(
+        "Soccer practice",
+        uid="soccer",
+        changed="2026-10-07T08:00",
+        sequence=1,
+        status="CANCELLED",
+    )
+
+    librarian.rebuild()
+
+    result = librarian.call("events")
+    (event,) = nodes(result, "CalendarEvent")
+    assert event["properties"]["status"] == "cancelled"
+    statuses = {
+        edge["source"]: edge["properties"]["status"]
+        for edge in result["edges"]
+        if edge["type"] == "VERSION_OF"
+    }
+    assert statuses == {scheduled: "scheduled", cancelled: "cancelled"}
+    assert result["message"] == "1 calendar event, by start time. 1 of them cancelled."
+
+
+def a_blood_draw_and_a_kitchen_walkthrough(librarian: Librarian) -> tuple[str, str]:
+    """Two events of the owner's: a blood draw on Oct 13 about the annual physical, and a
+    walkthrough with Rick on Oct 20 about the kitchen remodel."""
+    mail, model = librarian.mail, librarian.model
+    draw = mail.event(
+        "Fasting blood draw",
+        uid="blood-draw",
+        starts="2026-10-13T07:30",
+        ends="2026-10-13T07:50",
+        description="Fasting: nothing but water after midnight.",
+    )
+    walkthrough = mail.event(
+        "Kitchen walkthrough",
+        uid="walkthrough",
+        starts="2026-10-20T16:00",
+        ends="2026-10-20T17:00",
+        attendees=(RICK,),
+        location="Home",
+        description="Walk through the cabinet layout with Rick.",
+    )
+    model.says(
+        "Fasting: nothing but water",
+        statement("Fasting: nothing but water after midnight.", topics=("Annual physical",)),
+    )
+    model.says(
+        "Walk through the cabinet layout",
+        statement("Walk through the cabinet layout with Rick.", topics=("Kitchen remodel",)),
+    )
+    return draw, walkthrough
+
+
+def event_titles(result: dict[str, Any]) -> list[str]:
+    return [node["properties"]["title"] for node in nodes(result, "CalendarEvent")]
+
+
+def test_events_can_be_limited_by_who_takes_part_by_topic_and_by_time(librarian: Librarian):
+    _, walkthrough = a_blood_draw_and_a_kitchen_walkthrough(librarian)
+
+    librarian.rebuild()
+
+    with_rick = librarian.call("events", who="rick@alvarezkb.example")
+    assert event_titles(with_rick) == ["Kitchen walkthrough"]
+    roles = {
+        (librarian_name(with_rick, edge["source"]), edge["properties"]["role"])
+        for edge in with_rick["edges"]
+        if edge["type"] == "PARTICIPATED_IN" and edge["target"] == walkthrough
+    }
+    assert roles == {("Argus McNevans", "organizer"), ("Rick Alvarez", "attendee")}
+    assert event_titles(librarian.call("events", topic="kitchen remodel")) == [
+        "Kitchen walkthrough"
+    ]
+    assert event_titles(librarian.call("events", since="2026-10-14")) == ["Kitchen walkthrough"]
+    assert event_titles(librarian.call("events", until="2026-10-13")) == ["Fasting blood draw"]
+    assert event_titles(librarian.call("events", who="argus@example.com")) == [
+        "Fasting blood draw",
+        "Kitchen walkthrough",
+    ]
+    nothing = librarian.call("events", who="Rick Alvarez", topic="Annual physical")
+    assert nothing["nodes"] == []
+    assert nothing["message"].startswith("No calendar events with Rick Alvarez (")
+    assert " about Annual physical (" in nothing["message"]
+
+
+def test_a_topics_timeline_includes_its_calendar_events_at_their_time(librarian: Librarian):
+    draw, _ = a_blood_draw_and_a_kitchen_walkthrough(librarian)
+    librarian.mail.receive(
+        "Your lab work is booked for October 13.",
+        sender="Lakeside Family Medicine <frontdesk@lakeside.example>",
+        day=20,
+    )
+    librarian.model.says(
+        "Your lab work is booked",
+        statement("Your lab work is booked for October 13.", topics=("Annual physical",)),
+    )
+
+    librarian.rebuild()
+
+    result = librarian.call("timeline", topic="Annual physical")
+    in_order = [
+        node["properties"].get("quote") or node["properties"]["title"]
+        for node in result["nodes"]
+        if node["type"] in ("Statement", "CalendarEvent")
+    ]
+    assert in_order == [
+        "Fasting: nothing but water after midnight.",  # booked on Sep 16
+        "Your lab work is booked for October 13.",  # Sep 20
+        "Fasting blood draw",  # Oct 13
+    ]
+    (version,) = [edge for edge in result["edges"] if edge["type"] == "VERSION_OF"]
+    assert version["source"] == draw
+    assert "2 statements and 1 calendar event about Annual physical" in result["message"]
+    before = librarian.call("timeline", topic="Annual physical", until="2026-10-01")
+    assert nodes(before, "CalendarEvent") == []
+    assert "2 statements about Annual physical" in before["message"]
