@@ -4,6 +4,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 from __future__ import annotations
 
 import os
+import re
 import stat
 import sys
 from dataclasses import dataclass, field
@@ -88,29 +89,60 @@ class Mailbox:
         self.l0.replace_envelopes(changed)
 
 
-def statement(quote: str, kind: str = "mentioned", speaker: str = "", summary: str = "") -> dict:
+def statement(
+    quote: str,
+    kind: str = "mentioned",
+    speaker: str = "",
+    summary: str = "",
+    *,
+    secondhand: bool = False,
+    mentions: tuple[dict, ...] = (),
+) -> dict:
     return {
         "speaker": speaker or "the sender",
+        "secondhand": secondhand,
         "kind": kind,
         "summary": summary or f"Said: {quote}",
         "quote": quote,
+        "mentions": list(mentions),
     }
+
+
+def person(name: str, organization: str | None = None) -> dict:
+    """A person a statement mentions, as written, and the organization the email puts them in."""
+    return {"name": name, "type": "person", "organization": organization}
+
+
+def organization(name: str) -> dict:
+    return {"name": name, "type": "organization", "organization": None}
 
 
 @dataclass
 class ScriptedModel:
     """Replies to an extraction prompt by the scripted phrase found last in it: the episode
-    comes after its thread's earlier messages, so its own phrase is the last one."""
+    comes after its thread's earlier messages, so its own phrase is the last one.
 
-    replies: dict[str, list[dict]] = field(default_factory=dict)
+    Replies to an identification prompt (who a name or address is) by the candidate scripted
+    for the name in question, or with no candidate (someone new) when none is scripted.
+    """
+
+    replies: dict[str, dict] = field(default_factory=dict)
+    identities: dict[str, str | None] = field(default_factory=dict)
     failing: set[str] = field(default_factory=set)
     answered: list[str] = field(default_factory=list)
+    identified: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.backend = FakeModelBackend.replying(self._reply)
 
-    def says(self, phrase: str, *statements: dict) -> None:
-        self.replies[phrase] = list(statements)
+    def says(self, phrase: str, *statements: dict, **fields: Any) -> None:
+        """Script the extraction of the episode containing `phrase`; `fields` are the
+        extraction's other fields, such as `sender_organization`."""
+        self.replies[phrase] = {"statements": list(statements), **fields}
+
+    def identifies(self, name: str, as_: str | None) -> None:
+        """Script who `name` (as written) is: the candidate named `as_`, or someone new."""
+        self.identities[name] = as_
 
     @property
     def calls(self) -> int:
@@ -121,6 +153,8 @@ class ScriptedModel:
         return [request.prompt for request in self.backend.requests]
 
     def _reply(self, request: ModelRequest) -> dict[str, Any]:
+        if request.schema.get("title") == "Identification":
+            return self._identify(request.prompt)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
         if not present:
             return {"statements": []}
@@ -128,7 +162,21 @@ class ScriptedModel:
         if phrase in self.failing:
             raise ModelBackendError(f"scripted failure for {phrase!r}")
         self.answered.append(phrase)
-        return {"statements": self.replies[phrase]}
+        return self.replies[phrase]
+
+    def _identify(self, prompt: str) -> dict[str, Any]:
+        asked = re.search(r"<name>(.*?)</name>", prompt, re.DOTALL)
+        assert asked, prompt
+        name = asked.group(1)
+        if name in self.failing:
+            raise ModelBackendError(f"scripted failure for {name!r}")
+        self.identified.append(name)
+        chosen = self.identities.get(name)
+        if chosen is None:
+            return {"candidate": None}
+        listed = re.search(rf"^\[(\d+)\] {re.escape(chosen)}(?= \||$)", prompt, re.MULTILINE)
+        assert listed, f"{chosen!r} is not a candidate for {name!r}:\n{prompt}"
+        return {"candidate": int(listed.group(1))}
 
 
 class Librarian:
@@ -383,8 +431,15 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
     assert is_read_only(build) and is_read_only(build / "graph.lbdb")
     beside = build.parent / f"{report.build_id}.report.json"
     assert BuildReport.model_validate_json(beside.read_text()) == report
-    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4}
-    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8}
+    # Maria writes from alvarezkb.example, which makes an organization she belongs to.
+    assert report.nodes == {"Person": 3, "Organization": 1, "Episode": 4, "Statement": 4}
+    assert report.edges == {
+        "SAID": 4,
+        "RECORDED_IN": 4,
+        "PARTICIPATED_IN": 8,
+        "MENTIONS": 0,
+        "MEMBER_OF": 1,
+    }
 
 
 def test_only_the_last_few_builds_are_kept(librarian: Librarian):
@@ -559,3 +614,32 @@ def current_build(librarian: Librarian) -> Path:
 
 def is_read_only(path: Path) -> bool:
     return stat.S_IMODE(path.stat().st_mode) & 0o222 == 0
+
+
+# People and organizations
+
+
+def test_a_person_writing_from_two_addresses_under_a_nickname_is_one_person(
+    librarian: Librarian,
+):
+    librarian.mail.receive("The toast is yours if you want it.", sender=DAVE)
+    librarian.mail.receive("Lunch on Friday?", sender="Dave <david.kim@kimlaw.example>")
+    librarian.model.says("The toast is yours", statement("The toast is yours if you want it."))
+    librarian.model.says("Lunch on Friday", statement("Lunch on Friday?"))
+    librarian.model.identifies("Dave", as_="David Kim")
+
+    report = librarian.rebuild()
+
+    found = librarian.call("find", name="Dave")
+    (dave,) = found["matches"]
+    for name in ("David Kim", "dkim@example.net", "david.kim@kimlaw.example"):
+        assert [m["id"] for m in librarian.call("find", name=name)["matches"]] == [dave["id"]]
+    (node,) = nodes(found, "Person")
+    assert node["properties"]["addresses"] == ["dkim@example.net", "david.kim@kimlaw.example"]
+    assert node["properties"]["aliases"] == ["Dave"]
+    said = librarian.call("statements", who="Dave")
+    assert quotes(said) == ["The toast is yours if you want it.", "Lunch on Friday?"]
+    assert {speaker_of(said, s["id"])["id"] for s in nodes(said, "Statement")} == {dave["id"]}
+    assert report.nodes["Person"] == 2  # Dave and the owner
+    assert "SAME_AS" not in report.edges
+    assert librarian.model.identified == ["Dave"]

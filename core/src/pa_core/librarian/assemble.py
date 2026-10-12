@@ -1,8 +1,16 @@
 """Assembly: turning episodes and their extractions into the graph's node and edge records.
 
-This is where who said what is decided. A firsthand statement's speaker is the episode's
-sender, from its metadata, whatever the model wrote; a statement whose quote is not in the
-episode's body is dropped.
+This is where who said what is decided:
+
+- A firsthand statement's speaker is the episode's sender, from its metadata, whatever the
+  model wrote. A secondhand statement's speaker is the person or organization the model named,
+  resolved; the statement is secondhand only if that is someone other than the sender.
+- A statement is the owner's only if the episode is the owner's own (their sent mail). In
+  anyone else's episode, a statement that resolves to the owner is recorded as the sender's
+  report (kind: reported status) mentioning the owner, so no one can speak for the owner.
+- A statement whose quote is not in the episode's body is dropped.
+
+People and organizations are resolved in the order episodes are offered (time order).
 """
 
 from __future__ import annotations
@@ -11,11 +19,25 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pa_core.claims.records import EdgeRecord, GraphRecords, NodeRecord, stable_id
-from pa_core.claims.schema import EPISODE, PARTICIPATED_IN, RECORDED_IN, SAID, STATEMENT
+from pa_core.claims.schema import (
+    EPISODE,
+    MENTIONS,
+    PARTICIPATED_IN,
+    RECORDED_IN,
+    SAID,
+    STATEMENT,
+)
 from pa_core.envelope import Envelope, Role
 from pa_core.l0 import episode_ref
-from pa_core.librarian.extraction import Extraction, quote_is_in
-from pa_core.librarian.people import People
+from pa_core.librarian.extraction import (
+    ExtractedStatement,
+    Extraction,
+    MentionType,
+    StatementKind,
+    quote_is_in,
+    render_header,
+)
+from pa_core.librarian.people import Identify, People
 from pa_core.owner import Owner
 
 
@@ -33,10 +55,16 @@ class Assembled:
 
 
 def assemble(
-    episodes: Sequence[Envelope], extractions: Mapping[str, Extraction], owner: Owner
+    episodes: Sequence[Envelope],
+    extractions: Mapping[str, Extraction],
+    owner: Owner,
+    identify: Identify,
 ) -> Assembled:
-    """Records for `episodes` (in time order) and the statements extracted from each."""
-    people = People(owner)
+    """Records for `episodes` (in time order) and the statements extracted from each.
+
+    `identify` is asked who a name is when the records can't decide.
+    """
+    people = People(owner, identify)
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
     tally = StatementTally()
@@ -44,13 +72,26 @@ def assemble(
     for envelope in episodes:
         eid = envelope.episode_id
         l0_path = episode_ref(envelope)
+        header = render_header(envelope)
+        extraction = extractions.get(eid)
         nodes.append(_episode(envelope, l0_path))
         sender: str | None = None
         for participant in envelope.participants:
-            person = people.by_address(participant.identifier, participant.name, eid)
-            if participant.role == Role.SENDER and sender is None:
-                sender = person
-            edge_id = stable_id("participated_in", person, eid, participant.role)
+            is_sender = participant.role == Role.SENDER and sender is None
+            party = people.participant(
+                participant.identifier,
+                participant.name,
+                eid,
+                f"{header}\n\nIt appears as the episode's {participant.role}, "
+                f"at {participant.identifier}.",
+                as_organization=bool(
+                    is_sender and extraction and extraction.sender_is_organization
+                ),
+                organization=extraction.sender_organization if is_sender and extraction else None,
+            )
+            if is_sender:
+                sender = party
+            edge_id = stable_id("participated_in", party, eid, participant.role)
             if edge_id in participations:  # the same address twice in one header
                 continue
             participations.add(edge_id)
@@ -58,13 +99,12 @@ def assemble(
                 EdgeRecord(
                     label=PARTICIPATED_IN.label,
                     id=edge_id,
-                    source=person,
+                    source=party,
                     target=eid,
                     properties={"role": str(participant.role)},
                     episode_ids=(eid,),
                 )
             )
-        extraction = extractions.get(eid)
         if extraction is None:
             continue
         for position, statement in enumerate(extraction.statements):
@@ -75,17 +115,19 @@ def assemble(
                 tally.dropped_quote_not_found += 1
                 continue
             tally.kept += 1
+            context = f"{header}\n\nIt is named in this statement: {statement.summary}"
+            speaker, kind, mentioned = _attribute(statement, sender, people, eid, context)
             sid = stable_id("statement", eid, str(position))
             nodes.append(
                 NodeRecord(
                     label=STATEMENT.label,
                     id=sid,
                     properties={
-                        "kind": str(statement.kind),
+                        "kind": str(kind),
                         "summary": statement.summary,
                         "quote": statement.quote,
                         "at": envelope.occurred_at.start,
-                        "secondhand": False,
+                        "secondhand": speaker != sender,
                         "told_to_assistant": False,
                         "episode_id": eid,
                         "l0_path": l0_path,
@@ -93,10 +135,36 @@ def assemble(
                     episode_ids=(eid,),
                 )
             )
-            edges.append(_edge(SAID.label, sender, sid, eid))
+            edges.append(_edge(SAID.label, speaker, sid, eid))
             edges.append(_edge(RECORDED_IN.label, sid, eid, eid))
-    records = GraphRecords(nodes=[*people.records(), *nodes], edges=edges)
+            edges.extend(_edge(MENTIONS.label, sid, party, eid) for party in mentioned)
+    party_nodes, memberships = people.records()
+    records = GraphRecords(nodes=[*party_nodes, *nodes], edges=[*edges, *memberships])
     return Assembled(records=records, statements=tally)
+
+
+def _attribute(
+    statement: ExtractedStatement, sender: str, people: People, episode_id: str, context: str
+) -> tuple[str, StatementKind, list[str]]:
+    """The statement's speaker, its kind, and who it mentions (each once, never the speaker)."""
+    speaker = sender
+    if statement.secondhand:
+        speaker = people.speaker(statement.speaker, episode_id, context) or sender
+    mentioned: list[str] = []
+    for mention in statement.mentions:
+        party_kind = "organization" if mention.type == MentionType.ORGANIZATION else "person"
+        party = people.mention(mention.name, party_kind, episode_id, context)
+        if party is None:
+            continue
+        mentioned.append(party)
+        if mention.organization:
+            people.join(party, mention.organization, episode_id, context)
+    kind: StatementKind = statement.kind
+    if speaker == people.owner_id and sender != people.owner_id:
+        # Only the owner's own episodes speak for the owner.
+        speaker, kind = sender, StatementKind.REPORTED_STATUS
+        mentioned.append(people.owner_id)
+    return speaker, kind, [party for party in dict.fromkeys(mentioned) if party != speaker]
 
 
 def _episode(envelope: Envelope, l0_path: str) -> NodeRecord:

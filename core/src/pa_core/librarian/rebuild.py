@@ -5,7 +5,8 @@ The stages:
 1. Selection: for now every email is extracted, and nothing else.
 2. Extraction: one model call per selected episode, with the earlier episodes of its thread
    as context, cached, on a small worker pool.
-3. Assembly: people resolved by address, firsthand speakers from metadata, quotes checked.
+3. Assembly, in time order: people and organizations resolved (a model call, cached, only
+   for a name the records can't decide), speakers attributed, quotes checked.
 4. Build and publish, through the `GraphBuilder`.
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
@@ -24,9 +25,10 @@ from datetime import UTC, datetime
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction
+from pa_core.librarian import extraction, identify
 from pa_core.librarian.assemble import assemble
 from pa_core.librarian.extraction import Extraction
+from pa_core.librarian.identify import Identifier
 from pa_core.librarian.ports import (
     BackendFor,
     GraphBuilder,
@@ -69,7 +71,19 @@ def rebuild(
     extractor = _Extractor(models.extraction, backend_for, calls, cache, owner)
     extractions = extractor.extract_all(selected, workers)
 
-    assembled = assemble(selected, extractions, owner)
+    identifier = Identifier(
+        models.default,
+        _lazy_client(calls, identify.STAGE, models.default, backend_for),
+        cache,
+        owner,
+    )
+    try:
+        assembled = assemble(selected, extractions, owner, identifier)
+    except PaError as error:
+        raise LibrarianError(
+            f"resolution failed, so nothing was published; every extraction and decision "
+            f"made so far is cached for the next run: {error}"
+        ) from error
     assembled.records.validate()
     published = builder.build(assembled.records)
 
@@ -85,7 +99,7 @@ def rebuild(
             extracted=len(extractions),
             not_extracted=len(envelopes) - len(selected),
         ),
-        cache={extraction.STAGE: extractor.cache_counts},
+        cache={extraction.STAGE: extractor.cache_counts, identify.STAGE: identifier.cache_counts},
         model_calls=calls.by_stage(),
         statements=StatementCounts(
             extracted=tally.extracted,
@@ -170,6 +184,21 @@ class _Extractor:
         result = self._client.generate(prompt, Extraction)
         self._cache.put(extraction.STAGE, key, result.model_dump_json())
         return result
+
+
+def _lazy_client(
+    calls: _CallLog, stage: str, choice: ModelChoice, backend_for: BackendFor
+) -> Callable[[], ModelClient]:
+    """A stage's model client, made on its first call, so a stage that never calls the model
+    never makes a backend."""
+    made: list[ModelClient] = []
+
+    def client() -> ModelClient:
+        if not made:
+            made.append(ModelClient(calls.counting(stage, choice, backend_for(choice))))
+        return made[0]
+
+    return client
 
 
 class _CallLog:
