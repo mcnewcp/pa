@@ -69,17 +69,21 @@ LIMIT 10""",
 STATEMENTS = DomainQuery(
     name="statements",
     cypher="""\
-MATCH (p:Person)-[said:SAID]->(s:Statement)-[rec:RECORDED_IN]->(e:Episode)
+MATCH (p)-[said:SAID]->(s:Statement)-[rec:RECORDED_IN]->(e:Episode)
 WHERE (CAST($who AS STRING) IS NULL OR p.id = $who)
   AND (CAST($since AS TIMESTAMP) IS NULL OR s.at >= CAST($since AS TIMESTAMP))
   AND (CAST($until AS TIMESTAMP) IS NULL OR s.at < CAST($until AS TIMESTAMP))
-RETURN p, said, s, rec, e
+OPTIONAL MATCH (s)-[m:MENTIONS]->(x)
+RETURN p, said, s, rec, e, m, x
 ORDER BY s.at, s.id""",
     rules=(
-        "Statements said by the person $who (everyone's when null), from $since (inclusive) "
-        "to $until (exclusive), in UTC, oldest first. Each comes with its speaker (SAID) and "
-        "the episode it is recorded in (RECORDED_IN). Statements are events and are never "
-        "invalidated, so a later one may contradict an earlier one: read them in order."
+        "Statements said by the person or organization $who (everyone's when null), from "
+        "$since (inclusive) to $until (exclusive), in UTC, oldest first. Each comes with its "
+        "speaker (SAID), the episode it is recorded in (RECORDED_IN), and the people and "
+        "organizations it mentions (MENTIONS). A secondhand statement is one the episode's "
+        "sender recounts, so its speaker didn't write that episode. Statements are events and "
+        "are never invalidated, so a later one may contradict an earlier one: read them in "
+        "order."
     ),
 )
 

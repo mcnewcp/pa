@@ -643,3 +643,36 @@ def test_a_person_writing_from_two_addresses_under_a_nickname_is_one_person(
     assert report.nodes["Person"] == 2  # Dave and the owner
     assert "SAME_AS" not in report.edges
     assert librarian.model.identified == ["Dave"]
+
+
+def mentioned_by(result: dict[str, Any], statement_id: str) -> list[str]:
+    """The names of those the statement mentions."""
+    targets = [
+        e["target"]
+        for e in result["edges"]
+        if e["type"] == "MENTIONS" and e["source"] == statement_id
+    ]
+    return sorted(librarian_name(result, target) for target in targets)
+
+
+def test_an_ambiguous_mention_is_one_model_call_whose_decision_a_rebuild_reuses(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+    librarian.mail.receive("David will bring the tile saw Monday.", sender=MARIA)
+    librarian.model.says(
+        "David will bring the tile saw",
+        statement("David will bring the tile saw Monday.", mentions=(person("David"),)),
+    )
+    librarian.model.identifies("David", as_="David Kim")
+
+    first = librarian.rebuild()
+    second = librarian.rebuild()
+
+    said = librarian.call("statements", who="maria@alvarezkb.example")
+    (saw,) = nodes(said, "Statement")
+    assert mentioned_by(said, saw["id"]) == ["David Kim"]
+    assert librarian.model.identified == ["David"]
+    assert first.model_calls["people"] == {"claude-sonnet-5-5": 1}
+    assert "people" not in second.model_calls
+    assert (second.cache["people"].hits, second.cache["people"].misses) == (1, 0)
