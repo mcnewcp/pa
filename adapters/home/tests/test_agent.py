@@ -57,7 +57,8 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
         + textwrap.dedent(
             """\
             print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": reply}))
+                              "result": reply, "total_cost_usd": 0.0421, "num_turns": 6,
+                              "duration_ms": 18250}))
             """
         )
     )
@@ -92,7 +93,29 @@ def test_the_agents_answer_is_returned(tmp_path: Path, l0: Path):
 
     answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
-    assert answer == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+    assert answer.text == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+
+
+def test_the_answer_carries_the_sessions_cost_turns_and_duration(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert (answer.cost_usd, answer.turns, answer.duration_ms) == (0.0421, 6, 18250)
+
+
+def test_an_answer_without_usage_figures_has_none(tmp_path: Path, l0: Path):
+    body = """\
+        print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                          "result": reply}))
+        sys.exit(0)
+        """
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path, body)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert answer.text.startswith("The hotel block closes")
+    assert (answer.cost_usd, answer.turns, answer.duration_ms) == (None, None, None)
 
 
 def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0: Path):

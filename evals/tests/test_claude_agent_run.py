@@ -42,7 +42,8 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             told = argv[argv.index("--append-system-prompt") + 1]
             model = argv[argv.index("--model") + 1] if "--model" in argv else "default"
             print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": f"[{model}] {told}"}))
+                              "result": f"[{model}] {told}", "total_cost_usd": 0.031,
+                              "num_turns": 5, "duration_ms": 12000}))
             """
         )
     )
@@ -81,7 +82,10 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert answers["day-of-week"].startswith("[sonnet] ")
     assert "Saturday, October 10, 2026, 09:00" in answers["day-of-week"]
     assert "Tuesday, October 6, 2026, 20:00" in answers["swim-instructor"]
+    figures = {(q["cost_usd"], q["turns"], q["duration_ms"]) for q in results["questions"]}
+    assert figures == {(0.031, 5, 12000)}
     assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
+        "corpus": str(CORPUS),
         "agent": "claude",
         "agent model": "sonnet",
         "as-of method": "system-prompt",

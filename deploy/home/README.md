@@ -82,6 +82,8 @@ Don't chat during an eval run: the run fails if the inbox changes while it runs,
 ```sh
 deploy/home/run-evals.sh                               # --agent claude --judge model
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet
+deploy/home/run-evals.sh --agent claude --judge model --corpus argus --runs 3   # run-1/ to run-3/ and comparison.md
+uv run pa-eval compare evals/baselines/v0.11 evals/runs/<run>                  # side by side, on the devbox
 ```
 
 The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
