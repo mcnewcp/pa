@@ -13,7 +13,12 @@ import pytest
 from pa_core.catalog import SqliteCatalog
 from pa_core.envelope import Envelope, Kind, Source
 from pa_core.ingest import IngestSummary, ingest
-from pa_core.model_client import FakeModelBackend, ModelClient, ModelRequest
+from pa_core.model_client import (
+    FakeModelBackend,
+    ModelBackendError,
+    ModelClient,
+    ModelRequest,
+)
 from pa_core.normalizers.assistant_chat import encode_exchange
 from pa_evals.corpus import generate_corpus
 from pa_evals.storyline import StorylineSpec, load_spec
@@ -229,3 +234,49 @@ def test_bulk_mail_ingests_with_its_senders_category_and_the_models_subject(
         ("sender", "deals@hammernail.example"),
         ("recipient", "argus@example.com"),
     ]
+
+
+def snapshot(directory: Path) -> dict[Path, bytes]:
+    return {p.relative_to(directory): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+
+
+FAILING = "Argus asks when the soil was delivered"
+"""What one exchange, written after many other calls, is about."""
+
+
+def test_a_run_interrupted_partway_resumes_without_repeating_a_completed_call(
+    spec: StorylineSpec, tmp_path: Path
+) -> None:
+    cache, out = tmp_path / "prose-cache", tmp_path / "corpus"
+
+    def unavailable_for_one_call(request: ModelRequest) -> dict[str, Any]:
+        if FAILING in request.prompt:
+            raise ModelBackendError("the model is unavailable")
+        return prose(request)
+
+    interrupted = FakeModelBackend.replying(unavailable_for_one_call)
+    with pytest.raises(ModelBackendError):
+        generate_corpus(spec, ModelClient(interrupted), out, cache_dir=cache)
+    assert not out.exists()
+    completed = {r.prompt for r in interrupted.requests if FAILING not in r.prompt}
+    assert completed
+
+    resumed = FakeModelBackend.replying(prose)
+    generate_corpus(spec, ModelClient(resumed), out, cache_dir=cache)
+
+    assert completed.isdisjoint(r.prompt for r in resumed.requests)
+    assert any(FAILING in r.prompt for r in resumed.requests)
+    uninterrupted = tmp_path / "uninterrupted"
+    generate_corpus(spec, fake_client(), uninterrupted)
+    assert snapshot(out) == snapshot(uninterrupted)
+
+
+def test_a_rerun_with_the_cache_makes_no_model_calls(spec: StorylineSpec, tmp_path: Path) -> None:
+    cache = tmp_path / "prose-cache"
+    generate_corpus(spec, fake_client(), tmp_path / "first", cache_dir=cache)
+
+    again = FakeModelBackend.replying(prose)
+    generate_corpus(spec, ModelClient(again), tmp_path / "again", cache_dir=cache)
+
+    assert again.requests == []
+    assert snapshot(tmp_path / "again") == snapshot(tmp_path / "first")

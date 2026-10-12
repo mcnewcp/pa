@@ -29,6 +29,7 @@ from pa_core.ingest import inbox_normalizer
 from pa_core.model_client import ModelClient
 from pa_core.normalizers import payload_extension
 from pa_core.normalizers.assistant_chat import TurnRole, encode_exchange
+from pa_evals.prose_cache import ProseCache
 from pa_evals.storyline import (
     Background,
     BulkEmail,
@@ -107,17 +108,23 @@ CHAT_DURATION = dt.timedelta(seconds=30)
 _CHAT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, UID_DOMAIN)
 
 
-def generate_corpus(spec: StorylineSpec, client: ModelClient, out_dir: Path) -> list[Path]:
+def generate_corpus(
+    spec: StorylineSpec, client: ModelClient, out_dir: Path, *, cache_dir: Path | None = None
+) -> list[Path]:
     """Write a raw payload for every event in `spec` under `out_dir`, which must be empty.
 
     For a spec with extensions, only the extensions' events are written: the base spec's
     payloads are frozen already. Each payload goes in its source's directory, as in the inbox.
     The model is asked for prose only. Nothing is written until all of it is generated, so a
     failed model call leaves `out_dir` as it was. Returns the payload files, in path order.
+
+    With a `cache_dir`, every reply is kept there as it arrives (see `ProseCache`), so a run
+    that fails partway resumes without asking the model again for what it already wrote.
     """
     if out_dir.exists() and any(out_dir.iterdir()):
         raise GeneratedCorpusError(f"{out_dir} is not empty; delete it or choose another directory")
-    payloads = _Generator(spec, client).payloads()
+    cache = ProseCache(cache_dir) if cache_dir is not None else None
+    payloads = _Generator(spec, client, cache).payloads()
     out_dir.mkdir(parents=True, exist_ok=True)
     for path, raw in payloads.items():
         target = out_dir / path
@@ -180,9 +187,10 @@ class _Section:
 
 
 class _Generator:
-    def __init__(self, spec: StorylineSpec, client: ModelClient) -> None:
+    def __init__(self, spec: StorylineSpec, client: ModelClient, cache: ProseCache | None) -> None:
         self.spec = spec
         self.client = client
+        self.cache = cache
         # An extended spec's base payloads are frozen already, so only its extension is written.
         self.events = [event for event in spec.events if not spec.in_base(event.id)]
 
@@ -197,8 +205,13 @@ class _Generator:
         payloads.update(self._bulk())
         return dict(sorted(payloads.items()))
 
+    def _generate[T: BaseModel](self, prompt: str, output: type[T]) -> T:
+        if self.cache is None:
+            return self.client.generate(prompt, output)
+        return self.cache.generate(self.client, prompt, output)
+
     def _prose(self, prompt: str) -> str:
-        return self.client.generate(prompt, Prose).text.strip()
+        return self._generate(prompt, Prose).text.strip()
 
     # Email
 
@@ -439,7 +452,7 @@ class _Generator:
             for start in range(0, len(emails), BULK_BATCH):
                 batch = emails[start : start + BULK_BATCH]
                 prompt = self._bulk_prompt(section, batch)
-                written = self.client.generate(prompt, _bulk_output(len(batch)))
+                written = self._generate(prompt, _bulk_output(len(batch)))
                 for email, prose in zip(batch, written.emails, strict=True):
                     payloads[payload_path(self.spec, email)] = self._email(
                         email, prose.subject.strip(), prose.body.strip()
@@ -487,7 +500,7 @@ class _Generator:
         payloads: dict[str, bytes] = {}
         for event in chats:
             session = sessions[_session(event)]
-            turns = self.client.generate(self._chat_prompt(event, session), ChatProse).turns
+            turns = self._generate(self._chat_prompt(event, session), ChatProse).turns
             session.extend(turns)
             payloads[payload_path(spec, event)] = self._chat(event, turns)
         return payloads
