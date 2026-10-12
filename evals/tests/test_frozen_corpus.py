@@ -94,7 +94,8 @@ def test_the_eval_set_is_exactly_what_the_questions_build_into(spec, eval_set: E
 def test_the_eval_set_covers_every_category_with_at_least_two_questions(eval_set: EvalSet):
     counts = Counter(question.category for question in eval_set.questions)
 
-    measured = [category for category in CATEGORIES if category != "canary"]
+    # Connection questions arrived with the scale corpus; the Argus set has none.
+    measured = [category for category in CATEGORIES if category not in {"canary", "connection"}]
     assert len(measured) == 9
     assert {category: counts[category] for category in measured if counts[category] < 2} == {}
     assert 1 <= counts["canary"] <= 2

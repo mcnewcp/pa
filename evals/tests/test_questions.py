@@ -116,6 +116,17 @@ def test_a_question_in_an_unknown_category_is_reported(
         build_eval_set(write(tmp_path, text), spec, corpus)
 
 
+def test_a_connection_question_asks_how_people_and_topics_relate(
+    tmp_path: Path, spec: StorylineSpec, corpus: Path
+) -> None:
+    text = QUESTIONS.replace("category: stance_change", "category: connection")
+
+    eval_set = build_eval_set(write(tmp_path, text), spec, corpus)
+
+    [question] = [q for q in eval_set.questions if q.id == "swim-stance"]
+    assert question.category == "connection"
+
+
 def test_eval_set_build_writes_the_eval_set_the_harness_reads(
     tmp_path: Path, spec: StorylineSpec, corpus: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
