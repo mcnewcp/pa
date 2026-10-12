@@ -59,12 +59,12 @@ def run_eval(
     one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
-    agent or judge raises is recorded as failed and the run goes on.
+    assistant or judge raises is recorded as failed and the run goes on.
 
-    `configuration` says what the agent is given. One with the claims graph has `librarian`
-    build it from the ingested L0 before any question is asked, and gives the agent the PA MCP
-    server over it. `setup` describes the run (for example which agent runner and judge) and is
-    carried into the results as it is.
+    `configuration` says what the assistant is given. One with the claims graph has
+    `librarian` build it from the ingested L0 before any question is asked, and gives the
+    assistant the PA MCP server over it. `setup` describes the run (for example which agent
+    runner and judge) and is carried into the results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")

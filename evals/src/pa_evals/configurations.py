@@ -1,8 +1,8 @@
-"""The configurations an eval run can ask: what the agent is given besides its files.
+"""The configurations an eval run can ask: what the assistant is given besides its files.
 
 Every configuration keeps file access to L0. One that has the claims graph builds it for each
-run from the run's own L0 (see `pa_evals.librarian`) and gives the agent the PA MCP server over
-it, with all of the server's tools or only some.
+run from the run's own L0 (see `pa_evals.librarian`) and gives the assistant the PA MCP server
+over it, with all of the server's tools or only some.
 """
 
 from __future__ import annotations
@@ -17,14 +17,14 @@ from pa_core.claims.server import tool_names
 class Configuration:
     name: str
     about: str
-    """What it gives the agent, for `pa-eval run --help`."""
+    """What it gives the assistant, for `pa-eval run --help`."""
     graph: bool = False
-    """Whether the run builds the claims graph and the agent gets the PA MCP server."""
+    """Whether the run builds the claims graph and the assistant gets the PA MCP server."""
     tools: AbstractSet[str] | None = None
-    """The PA MCP server's tools the agent gets, by name; None for all of them."""
+    """The PA MCP server's tools the assistant gets, by name; None for all of them."""
 
     def hidden_tools(self) -> frozenset[str]:
-        """The PA MCP server's tools this configuration keeps from the agent."""
+        """The PA MCP server's tools this configuration keeps from the assistant."""
         if self.tools is None:
             return frozenset()
         return frozenset(tool_names()) - self.tools
