@@ -20,8 +20,6 @@ from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
 from pa_home.graph.reader import CypherRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
 
-_DECLARED = {t.label: set(t.properties) for t in (*NODE_TYPES, *EDGE_TYPES)}
-
 
 @dataclass(frozen=True)
 class DomainQuery:
@@ -33,7 +31,7 @@ class DomainQuery:
 FIND_EXACT = DomainQuery(
     name="find_exact",
     cypher="""\
-MATCH (n:Person:Organization)
+MATCH (n:Person:Organization:Topic)
 WITH n, CASE
     WHEN n.id = $key THEN 'id'
     WHEN list_contains(n.addresses, $key) THEN 'address'
@@ -47,11 +45,11 @@ ORDER BY CASE matched_on WHEN 'id' THEN 0 WHEN 'address' THEN 1 WHEN 'domain' TH
     WHEN 'name' THEN 2 ELSE 3 END,
   n.name, n.id""",
     rules=(
-        "$key is the name in lower case with its whitespace collapsed. A person or "
-        "organization matches when it is exactly their id, one of their addresses, one of an "
-        "organization's mail domains, their name, or one of their aliases, ignoring case. "
-        "Runs first: full-text search tokenizes away digits and punctuation, so it can't be "
-        "trusted to rank an exact address or alias first."
+        "$key is the name in lower case with its whitespace collapsed. A person, "
+        "organization, or topic matches when it is exactly its id, one of its addresses "
+        "(people and organizations), one of an organization's mail domains, its name, or one "
+        "of its aliases, ignoring case. Runs first: full-text search tokenizes away digits "
+        "and punctuation, so it can't be trusted to rank an exact address or alias first."
     ),
 )
 
@@ -79,6 +77,7 @@ LIMIT 10""",
 FIND_FULL_TEXT = (
     _find_full_text("Person", "person_fts", "name, aliases, and addresses"),
     _find_full_text("Organization", "organization_fts", "name, aliases, domains, and addresses"),
+    _find_full_text("Topic", "topic_fts", "name, aliases, and description"),
 )
 """One query per full-text index: a union can't join nodes of different types, and an index
 with no hits would end a query that chained them."""
@@ -103,23 +102,55 @@ STATEMENTS = DomainQuery(
     cypher="""\
 MATCH (p)-[said:SAID]->(s:Statement)-[rec:RECORDED_IN]->(e:Episode)
 WHERE (CAST($who AS STRING) IS NULL OR p.id = $who)
+  AND (CAST($topic AS STRING) IS NULL
+    OR EXISTS { MATCH (s)-[:ABOUT]->(about_topic:Topic) WHERE about_topic.id = $topic })
   AND (CAST($since AS TIMESTAMP) IS NULL OR s.at >= CAST($since AS TIMESTAMP))
   AND (CAST($until AS TIMESTAMP) IS NULL OR s.at < CAST($until AS TIMESTAMP))
+OPTIONAL MATCH (s)-[about:ABOUT]->(t:Topic)
 OPTIONAL MATCH (s)-[m:MENTIONS]->(x)
-RETURN p, said, s, rec, e, m, x
+RETURN p, said, s, rec, e, about, t, m, x
 ORDER BY s.at, s.id""",
     rules=(
-        "Statements said by the person or organization $who (everyone's when null), from "
-        "$since (inclusive) to $until (exclusive), in UTC, oldest first. Each comes with its "
-        "speaker (SAID), the episode it is recorded in (RECORDED_IN), and the people and "
-        "organizations it mentions (MENTIONS). A secondhand statement is one the episode's "
-        "sender recounts, so its speaker didn't write that episode. Statements are events and "
-        "are never invalidated, so a later one may contradict an earlier one: read them in "
-        "order."
+        "Statements said by the person or organization $who (everyone's when null) about the "
+        "topic $topic (about anything or nothing when null), from $since (inclusive) to "
+        "$until (exclusive), in UTC, oldest first. Each comes with its speaker (SAID), the "
+        "episode it is recorded in (RECORDED_IN), every topic it is about (ABOUT), and the "
+        "people and organizations it mentions (MENTIONS). A secondhand statement is one the "
+        "episode's sender recounts, so its speaker didn't write that episode. Statements are "
+        "events and are never invalidated, so a later one may contradict an earlier one: read "
+        "them in order."
     ),
 )
 
-DOMAIN_QUERIES: tuple[DomainQuery, ...] = (FIND_EXACT, *FIND_FULL_TEXT, MEMBERSHIPS, STATEMENTS)
+TIMELINE_STATEMENTS = DomainQuery(
+    name="timeline_statements",
+    cypher="""\
+MATCH (t:Topic)<-[about:ABOUT]-(s:Statement)-[rec:RECORDED_IN]->(e:Episode),
+  (speaker)-[said:SAID]->(s)
+WHERE t.id = $topic
+  AND (CAST($since AS TIMESTAMP) IS NULL OR s.at >= CAST($since AS TIMESTAMP))
+  AND (CAST($until AS TIMESTAMP) IS NULL OR s.at < CAST($until AS TIMESTAMP))
+RETURN s.at AS at, t, about, s, speaker, said, rec, e
+ORDER BY s.at, s.id""",
+    rules=(
+        "The timeline's statements: each statement about the topic $topic (ABOUT) from "
+        "$since (inclusive) to $until (exclusive), in UTC, oldest first, with its speaker "
+        "(SAID) and its episode (RECORDED_IN). Topics are flat, so there are no subtopics "
+        "to follow."
+    ),
+)
+
+TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS,)
+"""The parts of `timeline`. Each returns an `at` column, and their rows are merged in `at`
+order, so calendar events and loop openings and closings join it as parts of their own."""
+
+DOMAIN_QUERIES: tuple[DomainQuery, ...] = (
+    FIND_EXACT,
+    *FIND_FULL_TEXT,
+    MEMBERSHIPS,
+    STATEMENTS,
+    *TIMELINE,
+)
 
 
 class LadybugClaimsGraph:
@@ -152,11 +183,24 @@ class LadybugClaimsGraph:
         ]
         return Found(matches=matches, graph=shaped.graph.as_graph())
 
-    def statements(self, who: str | None, since: datetime | None, until: datetime | None) -> Graph:
+    def statements(
+        self,
+        who: str | None,
+        topic: str | None,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> Graph:
         rows = self._runner.run(
             STATEMENTS.cypher,
-            {"who": who, "since": _engine_time(since), "until": _engine_time(until)},
+            {"who": who, "topic": topic, **_span(since, until)},
         )
+        return shape(rows).graph.as_graph()
+
+    def timeline(self, topic: str, since: datetime | None, until: datetime | None) -> Graph:
+        rows: list[Row] = []
+        for query in TIMELINE:
+            rows += self._runner.run(query.cypher, {"topic": topic, **_span(since, until)})
+        rows.sort(key=lambda row: row["at"])  # stable, so each part's own order breaks ties
         return shape(rows).graph.as_graph()
 
 
@@ -218,16 +262,15 @@ def _internal_id(value: dict[str, int]) -> tuple[int, int]:
     return (value["table"], value["offset"])
 
 
+_DECLARED = {t.label: frozenset(t.properties) for t in (*NODE_TYPES, *EDGE_TYPES)}
+
+
 def _properties(value: dict[str, Any]) -> dict[str, Any]:
-    """The properties the schema declares for the value's type. A variable spanning several
-    node types (`n:Person:Organization`) carries every type's columns, null where absent."""
-    declared = _DECLARED.get(value["_LABEL"])
-    hidden = {"id", "episode_ids", SEARCH_TEXT}
-    return {
-        key: _plain(item)
-        for key, item in value.items()
-        if not key.startswith("_") and key not in hidden and (declared is None or key in declared)
-    }
+    """The properties its type declares. A node matched under several labels at once, as in
+    `(n:Person:Organization:Topic)`, also carries the other labels' columns as nulls; they
+    are left out."""
+    declared = _DECLARED[value["_LABEL"]]
+    return {key: _plain(item) for key, item in value.items() if key in declared}
 
 
 def _node(value: dict[str, Any]) -> GraphNode:
@@ -266,6 +309,10 @@ def _plain(value: Any) -> Any:
     if isinstance(value, list):
         return [_plain(item) for item in value]
     return value
+
+
+def _span(since: datetime | None, until: datetime | None) -> dict[str, datetime | None]:
+    return {"since": _engine_time(since), "until": _engine_time(until)}
 
 
 def _engine_time(moment: datetime | None) -> datetime | None:

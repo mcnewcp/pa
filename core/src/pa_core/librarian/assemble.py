@@ -127,7 +127,7 @@ def assemble(
             speaker, kind, mentioned = _attribute(statement, sender, people, eid, context)
             for party in (speaker, *mentioned):
                 people.known_from(party, statement.summary)
-            sid = stable_id("statement", eid, str(position))
+            sid = statement_id(eid, position)
             nodes.append(
                 NodeRecord(
                     label=STATEMENT.label,
@@ -151,6 +151,12 @@ def assemble(
     party_nodes, memberships = people.records()
     records = GraphRecords(nodes=[*party_nodes, *nodes], edges=[*edges, *memberships])
     return Assembled(records=records, statements=tally)
+
+
+def statement_id(episode_id: str, position: int) -> str:
+    """A statement's id: its episode and its position in that episode's extraction, counted
+    before any statement is dropped."""
+    return stable_id("statement", episode_id, str(position))
 
 
 def _attribute(

@@ -73,14 +73,23 @@ STATEMENT = NodeType(
         "l0_path": _S,
     },
 )
+TOPIC = NodeType("Topic", {"name": _S, "aliases": _SS, "description": _S})
 
 SAID = EdgeType("SAID", (("Person", "Statement"), ("Organization", "Statement")), {})
 RECORDED_IN = EdgeType("RECORDED_IN", (("Statement", "Episode"),), {})
 PARTICIPATED_IN = EdgeType(
     "PARTICIPATED_IN", (("Person", "Episode"), ("Organization", "Episode")), {"role": _S}
 )
+ABOUT = EdgeType("ABOUT", (("Statement", "Topic"),), {})
 MENTIONS = EdgeType("MENTIONS", (("Statement", "Person"), ("Statement", "Organization")), {})
 MEMBER_OF = EdgeType("MEMBER_OF", (("Person", "Organization"),), {})
 
-NODE_TYPES: tuple[NodeType, ...] = (PERSON, ORGANIZATION, EPISODE, STATEMENT)
-EDGE_TYPES: tuple[EdgeType, ...] = (SAID, RECORDED_IN, PARTICIPATED_IN, MENTIONS, MEMBER_OF)
+NODE_TYPES: tuple[NodeType, ...] = (PERSON, ORGANIZATION, EPISODE, STATEMENT, TOPIC)
+EDGE_TYPES: tuple[EdgeType, ...] = (
+    SAID,
+    RECORDED_IN,
+    PARTICIPATED_IN,
+    ABOUT,
+    MENTIONS,
+    MEMBER_OF,
+)

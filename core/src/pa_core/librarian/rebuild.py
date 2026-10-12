@@ -9,14 +9,17 @@ The stages:
    as context, cached, on a small worker pool.
 3. Assembly, in time order: people and organizations resolved (a model call, cached, only
    for a name the records can't decide), speakers attributed, quotes checked.
-4. Build and publish, through the `GraphBuilder`.
+4. Topics: the kept statements' topic names placed under topics, in time order (`topics.py`).
+5. Build and publish, through the `GraphBuilder`.
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
-is built, and every triage answer and extraction finished so far stays cached for the next run.
+is built, and every triage answer, extraction, identification, and topic decision finished so
+far stays cached for the next run.
 """
 
 from __future__ import annotations
 
+import functools
 import threading
 import time
 from collections import Counter, defaultdict
@@ -28,8 +31,8 @@ from functools import partial
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction, identify, triage
-from pa_core.librarian.assemble import assemble
+from pa_core.librarian import extraction, identify, topics, triage
+from pa_core.librarian.assemble import Assembled, assemble, statement_id
 from pa_core.librarian.extraction import Extraction
 from pa_core.librarian.identify import Identifier
 from pa_core.librarian.ports import (
@@ -69,6 +72,7 @@ def rebuild(
 ) -> BuildReport:
     started_at, started = clock(), time.monotonic()
     calls = _CallLog()
+    backend_for = functools.cache(backend_for)  # one backend per model choice, shared by stages
     envelopes = sorted(l0.envelopes(), key=_time_order)
     handled = [envelope for envelope in envelopes if envelope.kind in _EXTRACTED_KINDS]
 
@@ -82,7 +86,7 @@ def rebuild(
     quotable = {e.episode_id: extraction.quotable(e, l0) for e in selected}
     identifier = Identifier(
         models.default,
-        _lazy_client(calls, identify.STAGE, models.default, backend_for),
+        ModelClient(calls.counting(identify.STAGE, models.default, backend_for(models.default))),
         cache,
         owner,
     )
@@ -93,6 +97,20 @@ def rebuild(
             f"resolution failed, so nothing was published; every extraction and decision "
             f"made so far is cached for the next run: {error}"
         ) from error
+    resolver = topics.TopicResolver(
+        ModelClient(calls.counting(topics.STAGE, models.default, backend_for(models.default))),
+        cache,
+        topics.resolver_version(models.default),
+    )
+    try:
+        resolved = resolver.resolve(_topic_inputs(selected, extractions, assembled))
+    except PaError as error:
+        raise LibrarianError(
+            "topic resolution failed, so nothing was published; the decisions made so far "
+            f"are cached for the next run: {error}"
+        ) from error
+    assembled.records.nodes.extend(resolved.nodes)
+    assembled.records.edges.extend(resolved.edges)
     assembled.records.validate()
     published = builder.build(assembled.records)
 
@@ -114,6 +132,7 @@ def rebuild(
             triage.STAGE: triager.cache_counts,
             extraction.STAGE: extractor.cache_counts,
             identify.STAGE: identifier.cache_counts,
+            topics.STAGE: resolver.cache_counts,
         },
         model_calls=calls.by_stage(),
         statements=StatementCounts(
@@ -188,6 +207,30 @@ class _Triager:
         return triage.Outcome.RELEVANT if answer.relevant else triage.Outcome.NOT_RELEVANT
 
 
+def _topic_inputs(
+    episodes: Sequence[Envelope], extractions: dict[str, Extraction], assembled: Assembled
+) -> list[topics.EpisodeTopics]:
+    """The kept statements of `episodes` (in time order) that name topics, by episode."""
+    kept = {node.id for node in assembled.records.nodes}
+    inputs = []
+    for envelope in episodes:
+        found = extractions.get(envelope.episode_id)
+        if found is None:
+            continue
+        statements = [
+            topics.StatementTopics(sid, statement.summary, statement.topics)
+            for position, statement in enumerate(found.statements)
+            if statement.topics and (sid := statement_id(envelope.episode_id, position)) in kept
+        ]
+        if statements:
+            inputs.append(
+                topics.EpisodeTopics(
+                    envelope.episode_id, envelope.thread_ref, envelope.subject, statements
+                )
+            )
+    return inputs
+
+
 class _Extractor:
     def __init__(
         self,
@@ -231,21 +274,6 @@ class _Extractor:
         result = self._client.generate(prompt, Extraction)
         self._cache.put(extraction.STAGE, key, result.model_dump_json())
         return result
-
-
-def _lazy_client(
-    calls: _CallLog, stage: str, choice: ModelChoice, backend_for: BackendFor
-) -> Callable[[], ModelClient]:
-    """A stage's model client, made on its first call, so a stage that never calls the model
-    never makes a backend."""
-    made: list[ModelClient] = []
-
-    def client() -> ModelClient:
-        if not made:
-            made.append(ModelClient(calls.counting(stage, choice, backend_for(choice))))
-        return made[0]
-
-    return client
 
 
 def _in_pool[T](

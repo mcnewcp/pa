@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -92,7 +91,7 @@ class Identifier:
     def __init__(
         self,
         choice: ModelChoice,
-        client: Callable[[], ModelClient],
+        client: ModelClient,
         cache: LibrarianCache,
         owner: Owner,
     ) -> None:
@@ -101,22 +100,22 @@ class Identifier:
         self._client = client
         self._cache = cache
         self._owner = owner
-        self._lock = threading.Lock()
 
     def __call__(self, question: Question) -> int | None:
-        """The index of the candidate `question.name` is, or None for someone new."""
+        """The index of the candidate `question.name` is, or None for someone new.
+
+        Resolution runs in time order on one thread, so questions come one at a time."""
         prompt = identification_prompt(question, self._owner)
         key = cache_key(prompt, self._choice)
         cached = self._cache.get(STAGE, key)
-        with self._lock:
-            if cached is None:
-                self.cache_counts.misses += 1
-            else:
-                self.cache_counts.hits += 1
-        if cached is not None:
-            answer = Identification.model_validate_json(cached)
+        if cached is None:
+            self.cache_counts.misses += 1
+            answer = self._client.generate(prompt, Identification)
+            _check(answer, question.candidates)
+            self._cache.put(STAGE, key, answer.model_dump_json())
         else:
-            answer = self._client().generate(prompt, Identification)
+            self.cache_counts.hits += 1
+            answer = Identification.model_validate_json(cached)
             _check(answer, question.candidates)
             self._cache.put(STAGE, key, answer.model_dump_json())
         return None if answer.candidate is None else answer.candidate - 1
