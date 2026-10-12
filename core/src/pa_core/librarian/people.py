@@ -71,6 +71,8 @@ PERSONAL_MAIL_DOMAINS = frozenset(
 """Domains of personal mail: an address at one says nothing about an organization."""
 
 MAX_CANDIDATES = 8
+KNOWN_FROM = 3
+"""How many of a candidate's latest statements (said or mentioned in) a question shows."""
 
 type Identify = Callable[[Question], int | None]
 """Asks who a name is: the index of the candidate it is, or None for someone new."""
@@ -86,6 +88,7 @@ class _Party:
     addresses: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     episode_ids: list[str] = field(default_factory=list)
+    known_from: list[str] = field(default_factory=list)
 
     def names(self) -> list[str]:
         return [self.name, *self.aliases] if self.name else list(self.aliases)
@@ -194,6 +197,15 @@ class People:
         person = self._by_id[person_id]
         if org_id is not None and person.kind == "person":
             self._join(person, self._by_id[org_id], episode_id)
+
+    def known_from(self, party_id: str, summary: str) -> None:
+        """Remember a statement `party_id` made or is mentioned in, so a later question can
+        show what each candidate is known from."""
+        known = self._by_id[party_id].known_from
+        if summary in known:
+            known.remove(summary)
+        known.append(summary)
+        del known[:-KNOWN_FROM]
 
     def records(self) -> tuple[list[NodeRecord], list[EdgeRecord]]:
         nodes = [_node(party) for party in self._parties]
@@ -350,6 +362,8 @@ def _describe(party: _Party) -> str:
         parts.append(f"addresses {', '.join(party.addresses)}")
     if party.domains:
         parts.append(f"mail domains {', '.join(party.domains)}")
+    if party.known_from:
+        parts.append(f"known from: {' / '.join(party.known_from)}")
     return " | ".join(parts)
 
 

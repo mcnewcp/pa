@@ -125,6 +125,8 @@ def assemble(
             tally.kept += 1
             context = f"{header}\n\nIt is named in this statement: {statement.summary}"
             speaker, kind, mentioned = _attribute(statement, sender, people, eid, context)
+            for party in (speaker, *mentioned):
+                people.known_from(party, statement.summary)
             sid = stable_id("statement", eid, str(position))
             nodes.append(
                 NodeRecord(

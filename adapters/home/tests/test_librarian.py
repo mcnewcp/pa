@@ -938,6 +938,38 @@ def test_mail_from_an_unknown_address_under_the_owners_name_is_not_the_owners(
     ]
 
 
+def test_identification_shows_what_each_candidate_is_known_from(librarian: Librarian):
+    librarian.mail.receive("Would you read at our wedding?", sender=DAVE)
+    librarian.mail.note("## Wedding\nDave and Priya's wedding is Oct 24 in Duluth.", day=20)
+    librarian.model.says(
+        "Would you read at our wedding",
+        statement(
+            "Would you read at our wedding?",
+            kind="asked",
+            summary="David Kim asked Argus to read at his wedding.",
+        ),
+    )
+    librarian.model.says(
+        "Dave and Priya's wedding",
+        statement(
+            "Dave and Priya's wedding is Oct 24 in Duluth.",
+            summary="Argus noted Dave and Priya's wedding is on Oct 24.",
+            mentions=(person("Dave"),),
+        ),
+    )
+    librarian.model.identifies("Dave", as_="David Kim")
+
+    librarian.rebuild()
+
+    (asked,) = [p for p in librarian.model.prompts if "<name>Dave</name>" in p]
+    (candidate,) = [line for line in asked.splitlines() if line.startswith("[1] David Kim")]
+    assert "David Kim asked Argus to read at his wedding." in candidate
+    said = librarian.call("statements", who="David Kim")
+    assert mentioned_by(said, nodes(said, "Statement")[0]["id"]) == []
+    noted = librarian.call("statements", who="argus@example.com")
+    assert mentioned_by(noted, nodes(noted, "Statement")[0]["id"]) == ["David Kim"]
+
+
 def test_a_failing_identification_publishes_nothing_and_a_rerun_repeats_no_finished_work(
     librarian: Librarian,
 ):
