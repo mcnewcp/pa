@@ -16,8 +16,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match
+from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
 from pa_home.graph.reader import CypherRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
+
+_DECLARED = {t.label: set(t.properties) for t in (*NODE_TYPES, *EDGE_TYPES)}
 
 
 @dataclass(frozen=True)
@@ -30,39 +33,68 @@ class DomainQuery:
 FIND_EXACT = DomainQuery(
     name="find_exact",
     cypher="""\
-MATCH (p:Person)
-WITH p, CASE
-    WHEN p.id = $key THEN 'id'
-    WHEN list_contains(p.addresses, $key) THEN 'address'
-    WHEN lower(p.name) = $key THEN 'name'
-    WHEN list_contains(list_transform(p.aliases, a -> lower(a)), $key) THEN 'alias'
+MATCH (n:Person:Organization)
+WITH n, CASE
+    WHEN n.id = $key THEN 'id'
+    WHEN list_contains(n.addresses, $key) THEN 'address'
+    WHEN list_contains(n.domains, $key) THEN 'domain'
+    WHEN lower(n.name) = $key THEN 'name'
+    WHEN list_contains(list_transform(n.aliases, a -> lower(a)), $key) THEN 'alias'
   END AS matched_on
 WHERE matched_on IS NOT NULL
-RETURN p AS node, matched_on, NULL AS score
-ORDER BY CASE matched_on WHEN 'id' THEN 0 WHEN 'address' THEN 1 WHEN 'name' THEN 2 ELSE 3 END,
-  p.name, p.id""",
+RETURN n AS node, matched_on, NULL AS score
+ORDER BY CASE matched_on WHEN 'id' THEN 0 WHEN 'address' THEN 1 WHEN 'domain' THEN 1
+    WHEN 'name' THEN 2 ELSE 3 END,
+  n.name, n.id""",
     rules=(
-        "$key is the name in lower case with its whitespace collapsed. A person matches when "
-        "it is exactly their id, one of their addresses, their name, or one of their aliases, "
-        "ignoring case. Runs first: full-text search tokenizes away digits and punctuation, "
-        "so it can't be trusted to rank an exact address or alias first."
+        "$key is the name in lower case with its whitespace collapsed. A person or "
+        "organization matches when it is exactly their id, one of their addresses, one of an "
+        "organization's mail domains, their name, or one of their aliases, ignoring case. "
+        "Runs first: full-text search tokenizes away digits and punctuation, so it can't be "
+        "trusted to rank an exact address or alias first."
     ),
 )
 
-FIND_FULL_TEXT = DomainQuery(
-    name="find_full_text",
-    cypher="""\
-CALL QUERY_FTS_INDEX('Person', 'person_fts', $text)
+
+def _find_full_text(label: str, index: str, holds: str) -> DomainQuery:
+    return DomainQuery(
+        name=f"find_full_text_{label.lower()}",
+        cypher=f"""\
+CALL QUERY_FTS_INDEX('{label}', '{index}', $text)
 WITH node, score
 WHERE score > 0
 RETURN node, 'full_text' AS matched_on, score
 ORDER BY score DESC, node.id
 LIMIT 10""",
+        rules=(
+            f"Runs only when nothing matched exactly, beside the other find_full_text queries, "
+            f"whose hits are merged by score (at most 10, best first). Searches each "
+            f"{label}'s `{SEARCH_TEXT}` ({holds} together), with English stemming and "
+            "stopwords; any word may match. Hits scoring 0 are dropped: a word found in every "
+            f"{label} scores 0 and would return them all."
+        ),
+    )
+
+
+FIND_FULL_TEXT = (
+    _find_full_text("Person", "person_fts", "name, aliases, and addresses"),
+    _find_full_text("Organization", "organization_fts", "name, aliases, domains, and addresses"),
+)
+"""One query per full-text index: a union can't join nodes of different types, and an index
+with no hits would end a query that chained them."""
+
+MEMBERSHIPS = DomainQuery(
+    name="memberships",
+    cypher="""\
+MATCH (p:Person)-[m:MEMBER_OF]->(o:Organization)
+WHERE list_contains($ids, p.id) OR list_contains($ids, o.id)
+RETURN p, m, o
+ORDER BY o.name, p.name, m.id""",
     rules=(
-        f"Runs only when nothing matched exactly. Searches each person's `{SEARCH_TEXT}` "
-        "(name, aliases, and addresses together), with English stemming and stopwords; any "
-        "word may match. Hits scoring 0 are dropped: a word found in every person scores 0 "
-        "and would return everyone. At most 10, best first."
+        "Runs after find, for its matches: the organizations each matched person belongs to, "
+        "and the people each matched organization has, so a name comes with who it is "
+        "connected to. A person belongs to an organization by writing from its mail domain "
+        "or by an episode saying so."
     ),
 )
 
@@ -87,7 +119,7 @@ ORDER BY s.at, s.id""",
     ),
 )
 
-DOMAIN_QUERIES: tuple[DomainQuery, ...] = (FIND_EXACT, FIND_FULL_TEXT, STATEMENTS)
+DOMAIN_QUERIES: tuple[DomainQuery, ...] = (FIND_EXACT, *FIND_FULL_TEXT, MEMBERSHIPS, STATEMENTS)
 
 
 class LadybugClaimsGraph:
@@ -102,8 +134,13 @@ class LadybugClaimsGraph:
             return Found()
         rows = self._runner.run(FIND_EXACT.cypher, {"key": key})
         if not rows and any(character.isalpha() for character in key):
-            rows = self._runner.run(FIND_FULL_TEXT.cypher, {"text": key})
-        shaped = shape(rows)
+            hits = [
+                row for q in FIND_FULL_TEXT for row in self._runner.run(q.cypher, {"text": key})
+            ]
+            rows = sorted(hits, key=lambda row: (-row["score"], row["node"]["id"]))[:10]
+        ids = sorted({row["node"]["id"] for row in rows})
+        memberships = self._runner.run(MEMBERSHIPS.cypher, {"ids": ids}) if ids else []
+        shaped = shape([*rows, *memberships])
         matches = [
             Match(
                 id=row["node"],
@@ -111,7 +148,7 @@ class LadybugClaimsGraph:
                 matched_on=row["matched_on"],
                 score=row["score"],
             )
-            for row in shaped.rows
+            for row in shaped.rows[: len(rows)]
         ]
         return Found(matches=matches, graph=shaped.graph.as_graph())
 
@@ -182,11 +219,14 @@ def _internal_id(value: dict[str, int]) -> tuple[int, int]:
 
 
 def _properties(value: dict[str, Any]) -> dict[str, Any]:
+    """The properties the schema declares for the value's type. A variable spanning several
+    node types (`n:Person:Organization`) carries every type's columns, null where absent."""
+    declared = _DECLARED.get(value["_LABEL"])
     hidden = {"id", "episode_ids", SEARCH_TEXT}
     return {
         key: _plain(item)
         for key, item in value.items()
-        if not key.startswith("_") and key not in hidden
+        if not key.startswith("_") and key not in hidden and (declared is None or key in declared)
     }
 
 

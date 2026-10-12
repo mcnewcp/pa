@@ -156,7 +156,7 @@ class People:
                 party = self._organization_at(domain, address, organization or name, context)
             else:
                 party = self._resolve(_clean(name), "person", context, episode_id, address)
-                party.addresses.append(address)
+            party.addresses.append(address)
             self._by_address[address] = party
         party.add_name(name)
         if party.kind == "organization":
@@ -327,6 +327,7 @@ def _node(party: _Party) -> NodeRecord:
             "name": party.name or (party.domains[0] if party.domains else party.id),
             "aliases": list(party.aliases),
             "domains": list(party.domains),
+            "addresses": list(party.addresses),
         },
         episode_ids=tuple(party.episode_ids),
     )

@@ -676,3 +676,61 @@ def test_an_ambiguous_mention_is_one_model_call_whose_decision_a_rebuild_reuses(
     assert first.model_calls["people"] == {"claude-sonnet-5-5": 1}
     assert "people" not in second.model_calls
     assert (second.cache["people"].hits, second.cache["people"].misses) == (1, 0)
+
+
+def test_someone_known_only_from_a_mention_is_a_person_who_can_be_found(librarian: Librarian):
+    librarian.mail.receive("Theo has a cold, so we'll skip the pool.", sender=DAVE)
+    librarian.model.says(
+        "Theo has a cold",
+        statement("Theo has a cold", kind="reported_status", mentions=(person("Theo"),)),
+    )
+
+    report = librarian.rebuild()
+
+    found = librarian.call("find", name="theo")
+    (theo,) = found["matches"]
+    assert (theo["type"], theo["matched_on"]) == ("Person", "name")
+    assert nodes(found, "Person")[0]["properties"]["addresses"] == []
+    said = librarian.call("statements", who=DAVE_ADDRESS)
+    assert mentioned_by(said, nodes(said, "Statement")[0]["id"]) == ["Theo"]
+    assert "people" not in report.model_calls  # no one resembles Theo, so no question to ask
+
+
+def members(result: dict[str, Any]) -> list[tuple[str, str]]:
+    """(person, organization) names for each MEMBER_OF edge in the result."""
+    return sorted(
+        (librarian_name(result, e["source"]), librarian_name(result, e["target"]))
+        for e in result["edges"]
+        if e["type"] == "MEMBER_OF"
+    )
+
+
+def test_an_organization_comes_from_a_mail_domain_but_never_from_personal_webmail(
+    librarian: Librarian,
+):
+    librarian.mail.receive("The cabinets ship Tuesday.", sender=RICK)
+    librarian.mail.receive("See you at the game!", sender="Kate Brennan <kate.b@gmail.com>")
+    librarian.model.says(
+        "The cabinets ship",
+        statement("The cabinets ship Tuesday."),
+        sender_organization="Alvarez Kitchen & Bath",
+    )
+
+    report = librarian.rebuild()
+
+    by_name = librarian.call("find", name="alvarez kitchen & bath")
+    by_domain = librarian.call("find", name="alvarezkb.example")
+    for found in (by_name, by_domain):
+        (match,) = found["matches"]
+        assert match["type"] == "Organization"
+        assert librarian_name(found, match["id"]) == "Alvarez Kitchen & Bath"
+        assert members(found) == [("Rick Alvarez", "Alvarez Kitchen & Bath")]
+    (org,) = nodes(by_name, "Organization")
+    assert org["properties"]["domains"] == ["alvarezkb.example"]
+    assert members(librarian.call("find", name="Rick")) == [
+        ("Rick Alvarez", "Alvarez Kitchen & Bath")
+    ]
+    assert [m["type"] for m in librarian.call("find", name="gmail.com")["matches"]] == ["Person"]
+    assert members(librarian.call("find", name="Kate Brennan")) == []
+    assert report.nodes["Organization"] == 1
+    assert report.edges["MEMBER_OF"] == 1

@@ -45,7 +45,10 @@ _S, _SS, _B, _T = (
 )
 
 PERSON = NodeType("Person", {"name": _S, "aliases": _SS, "addresses": _SS, "is_owner": _B})
-ORGANIZATION = NodeType("Organization", {"name": _S, "aliases": _SS, "domains": _SS})
+ORGANIZATION = NodeType(
+    "Organization", {"name": _S, "aliases": _SS, "domains": _SS, "addresses": _SS}
+)
+"""`addresses` are the organization's own (an appointments desk), where it writes as itself."""
 EPISODE = NodeType(
     "Episode",
     {
