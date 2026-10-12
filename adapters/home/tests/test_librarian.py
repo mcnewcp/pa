@@ -633,6 +633,39 @@ def test_pa_librarian_rebuild_runs_on_sonnet_at_medium_effort_and_prints_its_rep
     assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
 
 
+def test_pa_librarian_extensions_puts_the_pinned_extension_where_the_server_loads_it(
+    tmp_path: Path,
+    extensions_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    """The VM fetches it once per deploy: the server itself never downloads."""
+    fetched = extensions.extension_path(extensions_root, extensions.FTS)
+    machine = tmp_path / "extensions"
+    path = extensions.extension_path(machine, extensions.FTS)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(fetched.read_bytes())
+    monkeypatch.setenv("PA_LBUG_EXTENSIONS_DIR", str(machine))
+
+    assert cli.main(["librarian", "extensions"]) == 0
+
+    assert str(path) in capsys.readouterr().out
+    graph_server(tmp_path / "graph")  # finds it there
+
+
+def test_pa_librarian_extensions_refuses_a_file_that_isnt_the_pinned_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    path = extensions.extension_path(tmp_path, extensions.FTS)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"not the extension")
+    monkeypatch.setenv("PA_LBUG_EXTENSIONS_DIR", str(tmp_path))
+
+    assert cli.main(["librarian", "extensions"]) == 1
+
+    assert "not the pinned" in capsys.readouterr().err
+
+
 def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: Path):
     librarian.mail.receive("The tile arrives Friday.")
     librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))

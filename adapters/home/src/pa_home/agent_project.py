@@ -1,10 +1,10 @@
 """The agent project, and rendering it for one instance.
 
 `agent/` at the repository root is the Claude Code project the assistant runs in: CLAUDE.md,
-.claude/settings.json (permissions and hooks) and .claude/hooks/ (the exchange capture
-hook). It is shared by both instances and names none of them. CLAUDE.md and settings.json are
-templates with `${name}` placeholders; rendering writes a filled-in copy with the owner and the
-instance paths.
+.mcp.json (the PA MCP server), .claude/settings.json (permissions, hooks and which MCP servers
+may run), .claude/hooks/ (the exchange capture hook) and .claude/skills/. It is shared by both
+instances and names none of them. CLAUDE.md, .mcp.json and settings.json are templates with
+`${name}` placeholders; rendering writes a filled-in copy with the owner and the instance paths.
 """
 
 from __future__ import annotations
@@ -21,7 +21,10 @@ from pa_core.owner import Owner
 AGENT_PROJECT = Path(__file__).resolve().parents[4] / "agent"
 """`agent/` at the repository root: the shared agent project."""
 
-_TEMPLATES = ("CLAUDE.md", ".claude/settings.json")
+_MCP_CONFIG = ".mcp.json"
+"""Declares the PA MCP server, reading the instance's graph directory."""
+
+_TEMPLATES = ("CLAUDE.md", ".claude/settings.json", _MCP_CONFIG)
 """The files that hold placeholders; every other file is copied as is."""
 
 
@@ -35,12 +38,15 @@ def render_agent_project(
     owner: Owner,
     l0: Path,
     scratch: Path,
+    graph: Path | None = None,
     source: Path = AGENT_PROJECT,
     python: Path = Path(sys.executable),
 ) -> None:
     """Writes a copy of the agent project to `target`, filled in for this instance.
 
     `l0` is the store the assistant reads, and `scratch` the only directory it may write to.
+    `graph` is the claims graph's directory, which the PA MCP server reads; with none, the
+    project declares no MCP server and the assistant has its files alone.
     `python` runs the project's hooks; the default, the interpreter rendering it, has the core
     package installed. `target` must not exist yet, or be empty: a rendered project is replaced
     by deleting it and rendering again, never by writing over files.
@@ -60,8 +66,14 @@ def render_agent_project(
         "python": str(python),
     }
     shutil.copytree(source, target, dirs_exist_ok=True)
+    if graph is None:
+        (target / _MCP_CONFIG).unlink()
+    else:
+        values["graph"] = str(graph)
     for name in _TEMPLATES:
         path = target / name
+        if not path.exists():
+            continue
         if path.suffix == ".json":
             # Each value lands inside a JSON string, so it is escaped as one.
             filled = {key: json.dumps(value)[1:-1] for key, value in values.items()}

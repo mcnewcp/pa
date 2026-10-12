@@ -42,6 +42,12 @@ captured, not when it happened, so never use it to date anything.
 Search with Bash (`grep`, `find`), and read with Read. Look at more than one source before you
 answer: the same story often runs through emails, calendar events and notes.
 
+## The claims graph
+
+When you have the PA MCP server's tools (`mcp__pa__*`), load the `claims-graph` skill before
+your first call to them: it says when to use the graph and when the files, which tool fits, and
+how to attribute and cite what they return.
+
 ## Now
 
 Each question comes with the current date and time. That is "now": use it for "today",

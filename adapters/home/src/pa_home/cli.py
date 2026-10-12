@@ -24,6 +24,7 @@ from pa_home.config import (
     require_outside_repository,
 )
 from pa_home.filesystem_l0 import FilesystemL0
+from pa_home.graph import extensions
 from pa_home.librarian import rebuild_graph
 from pa_home.mcp_server import graph_server
 
@@ -45,6 +46,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     librarian_commands = librarian.add_subparsers(dest="librarian_command", required=True)
     librarian_commands.add_parser(
         "rebuild", help="Rebuild the claims graph from L0 and publish it as the current build."
+    )
+    librarian_commands.add_parser(
+        "extensions",
+        help="Fetch LadybugDB's pinned full-text extension to this machine, or check the copy "
+        "already there. The PA MCP server loads it from there and never downloads it.",
     )
     mcp = commands.add_parser("mcp", help="The PA MCP server over the claims graph.")
     mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
@@ -76,14 +82,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=True,
         help="The only directory the assistant may write to.",
     )
+    render.add_argument(
+        "--graph",
+        type=Path,
+        help="The claims graph's directory, which the PA MCP server reads. Without it, the "
+        "project declares no MCP server: the assistant has its files alone.",
+    )
     args = parser.parse_args(argv)
 
     try:
         if args.command == "agent-project":
-            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch)
+            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch, graph=args.graph)
             return 0
         if args.command == "mcp":
             _serve(args.graph or load_data_root().graph)
+            return 0
+        if args.command == "librarian" and args.librarian_command == "extensions":
+            _fetch_extensions()
             return 0
         data_root = load_data_root()
         if args.command == "ingest":
@@ -148,12 +163,17 @@ def _rebuild_graph(data_root: DataRoot) -> None:
     print(report.summary())
 
 
+def _fetch_extensions() -> None:
+    path = extensions.ensure(extensions.extensions_dir(), extensions.FTS)
+    print(f"LadybugDB {extensions.FTS.name} extension: {path}")
+
+
 def _serve(graph: Path) -> None:
     # stdout is the protocol channel; nothing else may print to it.
     graph_server(graph.expanduser().resolve()).run("stdio")
 
 
-def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
+def _render_agent_project(target: Path, *, l0: Path, scratch: Path, graph: Path | None) -> None:
     owner = load_owner()
     target = target.expanduser().resolve()
     require_outside_repository(
@@ -162,6 +182,10 @@ def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
         "A rendered agent project names the owner, so it must live outside the repository.",
     )
     render_agent_project(
-        target, owner=owner, l0=l0.expanduser().resolve(), scratch=scratch.expanduser().resolve()
+        target,
+        owner=owner,
+        l0=l0.expanduser().resolve(),
+        scratch=scratch.expanduser().resolve(),
+        graph=graph.expanduser().resolve() if graph else None,
     )
     print(f"rendered the agent project into {target}")
