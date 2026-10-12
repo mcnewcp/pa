@@ -128,6 +128,15 @@ def normalize_assistant_chat(raw: bytes, *, captured_at: datetime, owner: Owner)
     )
 
 
+def owner_turns(raw: bytes) -> list[str]:
+    """The text of each of the owner's turns in an exchange's raw payload.
+
+    Read from the payload, not the envelope's body, where an assistant turn could hold a line
+    that reads like an owner's turn.
+    """
+    return [turn.text for turn in _parse(raw).turns if turn.role == "owner"]
+
+
 def _parse(raw: bytes) -> _Exchange:
     try:
         return _Exchange.model_validate_json(raw)

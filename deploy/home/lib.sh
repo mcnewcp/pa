@@ -37,6 +37,15 @@ PA_VM_SCRATCH=/home/assistant/scratch
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
 
+# The claims graph's builds and its `current` pointer, on the devbox.
+PA_GRAPH=$PA_DATA_ROOT/graph
+# Ladybug Explorer on the devbox (install-explorer.sh): our image, a container of that name
+# bound to localhost on this port, and `tailscale serve` on the same port on the tailnet.
+PA_EXPLORER=pa-explorer
+PA_EXPLORER_IMAGE=pa-explorer:local
+PA_EXPLORER_PORT=18000
+PA_EXPLORER_LOCAL_URL=http://127.0.0.1:$PA_EXPLORER_PORT
+
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
 
@@ -77,6 +86,24 @@ chat_inbox_missing_flags() {
 
 # rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.
 rc_unit() { incus exec "$PA_VM" -- systemctl "$@" "$PA_VM_RC_UNIT"; }
+
+# tailnet_name prints the devbox's name on the tailnet, such as devbox.example.ts.net.
+tailnet_name() {
+  tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
+}
+
+# explorer_tailnet_url prints the explorer's address on the tailnet.
+explorer_tailnet_url() { echo "http://$(tailnet_name):$PA_EXPLORER_PORT"; }
+
+# explorer_served: tailscale serve forwards the explorer's port on the tailnet to the explorer.
+explorer_served() {
+  tailscale serve status --json 2>/dev/null | python3 -c '
+import json, sys
+host, url = sys.argv[1:]
+web = json.load(sys.stdin).get("Web", {}).get(host, {})
+sys.exit(0 if web.get("Handlers", {}).get("/", {}).get("Proxy") == url else 1)
+' "$(tailnet_name):$PA_EXPLORER_PORT" "$PA_EXPLORER_LOCAL_URL"
+}
 
 # wait_for_agent waits until the VM's Incus agent answers, after a start or a restore.
 wait_for_agent() {
