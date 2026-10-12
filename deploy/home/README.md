@@ -17,8 +17,8 @@ deploy/home/setup-wizard.sh
 | `create-vm.sh` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale) |
 | `seed-data-root.sh` | Creates the instance's data root on the devbox from the frozen synthetic corpus, with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo) |
-| `mount-store.sh` | Mounts L0 into the VM read-only and `inbox/assistant_chat/` writable |
-| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
+| `mount-store.sh` | Mounts L0 and the claims graph into the VM read-only and `inbox/assistant_chat/` writable |
+| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>`, runs `uv sync` and fetches LadybugDB's pinned full-text extension, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `rollback.sh [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
@@ -43,14 +43,15 @@ The firewall loads at boot from `pa-vm-firewall.service`, after Docker and befor
 
 The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
 
-Two directories of it are mounted into the VM, and nothing else, the catalog included:
+Three directories of it are mounted into the VM, and nothing else, the catalog and the librarian's cache included:
 
 | On the devbox | In the VM | |
 |---|---|---|
 | `l0/` | `/srv/pa/l0` | Read-only. Enforced on the devbox, so even root in the VM can't write it |
 | `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode, or quarantines it ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
+| `graph/` | `/srv/pa/graph` | Read-only, like L0. The claims graph's published builds and its `current` pointer, which the PA MCP server reads |
 
-`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory. Each update deletes the rendered project and renders it again at the same path.
+`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory and the PA MCP server reading `/srv/pa/graph`. Each update deletes the rendered project and renders it again at the same path.
 
 The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes, so root in the VM could leave root-owned files there, setuid programs and device nodes included, or fill the devbox's disk. So that directory is a filesystem of its own (`install-chat-inbox.sh`): a 1 GiB ext4 image, `chat-inbox.img` in the data root, loop-mounted `nosuid,nodev,noexec` by a systemd mount unit. Nothing in it can run, setuid or not, or act as a device, and the VM can't write more than 1 GiB. The unit mounts it at boot before Incus, and Incus requires it: if it can't be mounted, Incus doesn't start and the VM stays down instead of sharing the bare directory.
 
@@ -59,12 +60,22 @@ Ingest reads only regular files and never follows a symbolic link (a link is qua
 To start the data root over (stopping the inbox mount stops Incus too, since Incus requires it; the next `incus` command starts it again):
 
 ```sh
-incus config device remove pa-home pa-l0 pa-chat-inbox
+incus config device remove pa-home pa-l0 pa-chat-inbox pa-graph
 unit=$(systemd-escape -p --suffix=mount ~/.local/share/pa-home-synthetic/inbox/assistant_chat)
 sudo systemctl disable --now "$unit"
 rm -rf ~/.local/share/pa-home-synthetic
 deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/mount-store.sh
 ```
+
+## The claims graph in the VM
+
+The assistant reads the claims graph through the PA MCP server, which runs in the VM over stdio and reads whichever build `/srv/pa/graph/current` points at when each call starts. Run `pa librarian rebuild` on the devbox, and the next call in a running session reads the new build, with nothing restarted.
+
+- **Declared by the agent project.** The rendered `.mcp.json` starts the server as `<repo venv>/bin/python -m pa_home mcp serve --graph /srv/pa/graph`. Claude Code starts one server per session (and one per `claude mcp list`).
+- **The only MCP server.** The rendered `settings.json` lets only a server named `pa` start (`allowedMcpServers`, which also blocks claude.ai connectors and any server in `~/.claude.json`), pre-approves it (`enabledMcpjsonServers`, since Remote Control has nobody to ask), allows its tools (`mcp__pa`), and keeps claude.ai connectors off (`disableClaudeAiConnectors`). There's no deny rule on MCP tools: a deny wins over every allow, so it would deny the PA server's tools too.
+- **Remote Control and `claude -p` load the same configuration.** Remote Control runs in the rendered project, a trusted folder, so it reads `.mcp.json` and the project's `settings.json`. `claude -p` reads `.mcp.json` from its working directory without asking, and the evals pass the project's `settings.json` with `--settings`, since `-p` never trusts a folder.
+- **The full-text extension.** The server loads LadybugDB's full-text extension from `~/.local/share/pa/lbug-extensions` and never downloads it, so `update.sh` fetches it there with `pa librarian extensions`, which checks its SHA-256.
+- `claude mcp list`, run as `assistant` in `/home/assistant/agent`, shows whether the server starts: `pa: … - ✔ Connected`.
 
 ## Remote Control
 
@@ -190,3 +201,11 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    deploy/home/check-explorer.sh
    ```
 4. Reboot the devbox: `pa-explorer` is running again and `check-explorer.sh` passes.
+
+## Acceptance run (#45)
+
+1. `mount-store.sh`, then `update.sh <ref>`. `check-store.sh` passes: the graph is readable at `/srv/pa/graph`, nobody in the VM can write it or the current build, root included, and the VM is shared exactly L0, the inbox directory and the graph.
+2. As `assistant` in `/home/assistant/agent`, `claude mcp list` shows `pa` connected, and `.mcp.json` names `/srv/pa/graph`.
+3. A rebuild is picked up: hold a session open, run `pa librarian rebuild` on the devbox (see #46's step 3), and the session's next graph call answers from the new build.
+4. A `claude -p` session in the rendered project answers "What's happened with the kitchen remodel so far?" with `mcp__pa__timeline` among its tool calls and `[ep:…]` citations.
+5. From the phone, a chat about the kitchen remodel uses the graph's tools (the app shows the `pa` tool calls).

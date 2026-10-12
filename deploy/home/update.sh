@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Usage: update.sh <commit|branch|tag>
 #
-# Snapshots the PA VM, puts the repo at <ref> and runs `uv sync`, then renders the agent project
-# for the instance owner into a stable directory and installs the Remote Control unit, restarting
-# it once the wizard has enabled it. The first run installs uv and Claude Code and clones the
-# repo. Roll back with rollback.sh.
+# Snapshots the PA VM, puts the repo at <ref>, runs `uv sync` and fetches LadybugDB's pinned
+# full-text extension, then renders the agent project for the instance owner into a stable
+# directory, with the PA MCP server reading the graph mount, and installs the Remote Control
+# unit, restarting it once the wizard has enabled it. The first run installs uv and Claude Code
+# and clones the repo. Roll back with rollback.sh.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -37,6 +38,9 @@ cd "$repo_dir"
 git fetch --quiet origin "$ref"
 git checkout --quiet --detach FETCH_HEAD
 "$bin/uv" sync --locked
+# The PA MCP server loads LadybugDB's full-text extension from a pinned local path and never
+# downloads it, so it's fetched (and its SHA-256 checked) here.
+.venv/bin/pa librarian extensions
 
 echo "deployed $(git rev-parse HEAD)"
 EOF
@@ -48,9 +52,10 @@ incus exec "$PA_VM" -- runuser -u "$PA_USER" -- \
   sh -c 'umask 077 && mkdir -p "${1%/*}" && cat >"$1"' sh "$PA_VM_OWNER_ENV" <"$PA_OWNER_ENV"
 
 log "rendering the agent project into $PA_VM_PROJECT"
-as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" "$PA_VM_L0" "$PA_VM_SCRATCH" <<'EOF'
+as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" "$PA_VM_L0" "$PA_VM_SCRATCH" \
+  "$PA_VM_GRAPH" <<'EOF'
 set -euo pipefail
-repo_dir=$1 owner_env=$2 project=$3 l0=$4 scratch=$5
+repo_dir=$1 owner_env=$2 project=$3 l0=$4 scratch=$5 graph=$6
 set -a
 source "$owner_env"
 set +a
@@ -58,7 +63,8 @@ set +a
 # folder trust and session history for it carry over.
 rm -rf "$project"
 mkdir -p "$scratch"
-"$repo_dir/.venv/bin/pa" agent-project render "$project" --l0 "$l0" --scratch "$scratch"
+"$repo_dir/.venv/bin/pa" agent-project render "$project" --l0 "$l0" --scratch "$scratch" \
+  --graph "$graph"
 EOF
 
 "$DEPLOY_DIR/install-remote-control.sh"
