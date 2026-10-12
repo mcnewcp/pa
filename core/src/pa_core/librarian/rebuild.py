@@ -108,7 +108,7 @@ def rebuild(
     )
 
 
-# Calendar episodes reach the graph through their own deterministic stage, not extraction.
+# Calendar episodes are not handled yet; their fields will come from the envelope, not a model.
 _EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT})
 
 
