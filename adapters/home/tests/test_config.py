@@ -1,5 +1,33 @@
+from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.owner import Owner
-from pa_home.config import load_owner
+from pa_home.config import load_librarian_models, load_owner
+
+
+def test_the_librarian_defaults_to_sonnet_at_medium_effort_for_every_stage():
+    models = load_librarian_models({})
+
+    assert models == LibrarianModels(
+        default=ModelChoice("claude-sonnet-5-5", "medium"),
+        extraction=ModelChoice("claude-sonnet-5-5", "medium"),
+    )
+
+
+def test_extractions_model_and_effort_are_set_apart_from_the_other_stages():
+    models = load_librarian_models(
+        {
+            "PA_LIBRARIAN_EXTRACTION_MODEL": "claude-opus-5-5",
+            "PA_LIBRARIAN_EXTRACTION_EFFORT": "high",
+        }
+    )
+
+    assert models.extraction == ModelChoice("claude-opus-5-5", "high")
+    assert models.default == ModelChoice("claude-sonnet-5-5", "medium")
+
+
+def test_extraction_follows_the_librarians_model_unless_set_apart():
+    models = load_librarian_models({"PA_LIBRARIAN_MODEL": "claude-opus-5-5"})
+
+    assert models.extraction == models.default == ModelChoice("claude-opus-5-5", "medium")
 
 
 def test_owner_identity_is_read_from_comma_separated_configuration():

@@ -3,7 +3,9 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import os
 import stat
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +13,7 @@ from typing import Any
 
 import anyio
 import pytest
-from mcp import Client
+from mcp import Client, StdioServerParameters
 
 from pa_core.envelope import Envelope
 from pa_core.librarian import extraction
@@ -21,6 +23,7 @@ from pa_core.librarian.report import BuildReport
 from pa_core.model_client import FakeModelBackend, ModelBackendError, ModelRequest
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
+from pa_home import cli
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.graph import extensions
@@ -398,6 +401,156 @@ def test_before_the_first_build_the_server_says_to_run_the_librarian(librarian: 
     message = librarian.call_failing("statements")
 
     assert "pa librarian rebuild" in message
+
+
+def two_davids(librarian: Librarian) -> None:
+    librarian.mail.receive("The toast is yours if you want it.", sender=DAVE)
+    librarian.mail.receive("Our pipes froze again.", sender="David Lee <dlee@example.org>")
+    librarian.model.says("The toast is yours", statement("The toast is yours if you want it."))
+    librarian.model.says("Our pipes froze", statement("Our pipes froze again."))
+    librarian.rebuild()
+
+
+def test_find_says_plainly_when_nothing_matches(librarian: Librarian):
+    two_davids(librarian)
+
+    result = librarian.call("find", name="Zebulon")
+
+    assert result["matches"] == [] and result["nodes"] == []
+    assert "Nothing matches 'Zebulon'" in result["message"]
+
+
+def test_find_returns_the_candidates_for_an_ambiguous_name(librarian: Librarian):
+    two_davids(librarian)
+
+    result = librarian.call("find", name="david")
+
+    names = {librarian_name(result, m["id"]) for m in result["matches"]}
+    assert names == {"David Kim", "David Lee"}
+    assert "2 candidates" in result["message"]
+
+
+def test_find_matches_an_exact_address_name_or_alias_before_full_text(librarian: Librarian):
+    two_davids(librarian)
+
+    by_address = librarian.call("find", name="DKim@Example.net")
+    by_name = librarian.call("find", name="david  kim")
+    by_alias = librarian.call("find", name="gus")
+
+    assert [
+        (librarian_name(by_address, m["id"]), m["matched_on"]) for m in by_address["matches"]
+    ] == [("David Kim", "address")]
+    assert [(librarian_name(by_name, m["id"]), m["matched_on"]) for m in by_name["matches"]] == [
+        ("David Kim", "name")
+    ]
+    assert [(librarian_name(by_alias, m["id"]), m["matched_on"]) for m in by_alias["matches"]] == [
+        ("Argus McNevans", "alias")
+    ]
+
+
+def test_statements_by_an_ambiguous_name_return_the_candidates_instead_of_guessing(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    result = librarian.call("statements", who="David")
+
+    assert quotes(result) == []
+    assert len(result["matches"]) == 2
+    assert "candidate's id" in result["message"]
+    (lee,) = [m["id"] for m in result["matches"] if librarian_name(result, m["id"]) == "David Lee"]
+    assert quotes(librarian.call("statements", who=lee)) == ["Our pipes froze again."]
+
+
+def test_every_result_is_graph_shaped_with_episode_ids(librarian: Librarian):
+    two_davids(librarian)
+
+    found = librarian.call("find", name="David Lee")
+    said = librarian.call("statements", who="dkim@example.net")
+
+    for result in (found, said):
+        assert result["nodes"]
+        for item in [*result["nodes"], *result["edges"]]:
+            assert item["id"] and item["type"] and item["episode_ids"]
+    (statement_node,) = nodes(said, "Statement")
+    (episode,) = nodes(said, "Episode")
+    assert statement_node["episode_ids"] == [episode["id"]]
+    assert statement_node["properties"]["l0_path"] == episode["properties"]["l0_path"]
+    assert episode["properties"]["l0_path"].startswith("episodes/gmail/")
+    node_ids = {node["id"] for node in said["nodes"]}
+    assert {e["type"] for e in said["edges"]} == {"SAID", "RECORDED_IN"}
+    assert all(e["source"] in node_ids and e["target"] in node_ids for e in said["edges"])
+
+
+def test_statements_can_be_limited_to_a_span_of_time(librarian: Librarian):
+    for day, text in ((3, "The tile is ordered."), (10, "The tile shipped."), (20, "Tile is in.")):
+        librarian.mail.receive(text, day=day)
+        librarian.model.says(text, statement(text))
+    librarian.rebuild()
+
+    result = librarian.call(
+        "statements", who="dkim@example.net", since="2026-09-10", until="2026-09-19"
+    )
+
+    assert quotes(result) == ["The tile shipped."]
+
+
+def test_pa_librarian_rebuild_runs_on_sonnet_at_medium_effort_and_prints_its_report(
+    librarian: Librarian,
+    extensions_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+    backends: list[tuple[str | None, str | None]] = []
+
+    def claude(*, model: str | None = None, effort: str | None = None) -> FakeModelBackend:
+        backends.append((model, effort))
+        return librarian.model.backend
+
+    monkeypatch.setattr(cli, "ClaudeCliBackend", claude)
+    monkeypatch.setenv("PA_DATA_DIR", str(librarian.data_root.path))
+    monkeypatch.setenv("PA_OWNER_NAME", OWNER.name)
+    monkeypatch.setenv("PA_OWNER_EMAILS", ",".join(OWNER.email_addresses))
+    monkeypatch.setenv("PA_LBUG_EXTENSIONS_DIR", str(extensions_root))
+
+    assert cli.main(["librarian", "rebuild"]) == 0
+
+    assert backends == [("claude-sonnet-5-5", "medium")]
+    out = capsys.readouterr().out
+    assert "published build" in out and "1 to claude-sonnet-5-5" in out
+    assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
+
+
+def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: Path):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+    librarian.rebuild()
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from pa_home.cli import main; raise SystemExit(main())", "mcp", "serve"],
+        env={
+            **os.environ,
+            "PA_DATA_DIR": str(librarian.data_root.path),
+            "PA_LBUG_EXTENSIONS_DIR": str(extensions_root),
+        },
+    )
+
+    async def go() -> dict[str, Any] | None:
+        # The initialize handshake, as Claude Code connects.
+        async with Client(server, mode="legacy") as client:
+            tools = await client.list_tools()
+            assert {tool.name for tool in tools.tools} == {"find", "statements"}
+            return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
+
+    found = anyio.run(go)
+
+    assert found is not None and found["message"] == "1 match for 'dkim@example.net'."
+
+
+def librarian_name(result: dict[str, Any], node_id: str) -> str:
+    return next(n["properties"]["name"] for n in result["nodes"] if n["id"] == node_id)
 
 
 def current_build(librarian: Librarian) -> Path:

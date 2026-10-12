@@ -10,17 +10,22 @@ from pathlib import Path
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
+from pa_core.librarian.ports import ModelChoice
 from pa_core.renormalize import renormalize
 from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
+from pa_home.claude_model import ClaudeCliBackend
 from pa_home.config import (
     DataRoot,
     load_data_root,
+    load_librarian_models,
     load_owner,
     require_backup_config,
     require_outside_repository,
 )
 from pa_home.filesystem_l0 import FilesystemL0
+from pa_home.librarian import rebuild_graph
+from pa_home.mcp_server import graph_server
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,6 +38,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser("backup", help="Back up L0 to the configured restic repository.")
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
+    )
+    librarian = commands.add_parser(
+        "librarian", help="Derive the claims graph from the episodes in L0."
+    )
+    librarian_commands = librarian.add_subparsers(dest="librarian_command", required=True)
+    librarian_commands.add_parser(
+        "rebuild", help="Rebuild the claims graph from L0 and publish it as the current build."
+    )
+    mcp = commands.add_parser("mcp", help="The PA MCP server over the claims graph.")
+    mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
+    serve = mcp_commands.add_parser(
+        "serve", help="Serve the current build's domain queries over stdio."
+    )
+    serve.add_argument(
+        "--graph",
+        type=Path,
+        help="The graph directory holding `current` (default: the data root's).",
     )
     agent_project = commands.add_parser(
         "agent-project", help="Manage the agent project the assistant runs in."
@@ -60,6 +82,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "agent-project":
             _render_agent_project(args.target, l0=args.l0, scratch=args.scratch)
             return 0
+        if args.command == "mcp":
+            _serve(args.graph or load_data_root().graph)
+            return 0
         data_root = load_data_root()
         if args.command == "ingest":
             _ingest(data_root)
@@ -69,6 +94,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _backup(data_root)
         elif args.command == "renormalize":
             _renormalize(data_root)
+        elif args.command == "librarian":
+            _rebuild_graph(data_root)
     except PaError as error:
         print(f"pa: {error}", file=sys.stderr)
         return 1
@@ -109,6 +136,21 @@ def _renormalize(data_root: DataRoot) -> None:
     # The catalog indexes the old envelopes until it is rebuilt from the new ones.
     rebuild_catalog(data_root.catalog, store)
     print(f"renormalized {count} episodes; catalog rebuilt")
+
+
+def _rebuild_graph(data_root: DataRoot) -> None:
+    def backend_for(choice: ModelChoice) -> ClaudeCliBackend:
+        return ClaudeCliBackend(model=choice.model, effort=choice.effort)
+
+    report = rebuild_graph(
+        data_root, load_owner(), models=load_librarian_models(), backend_for=backend_for
+    )
+    print(report.summary())
+
+
+def _serve(graph: Path) -> None:
+    # stdout is the protocol channel; nothing else may print to it.
+    graph_server(graph.expanduser().resolve()).run("stdio")
 
 
 def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:

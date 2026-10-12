@@ -8,12 +8,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pa_core.errors import PaError
+from pa_core.librarian.ports import DEFAULT_MODEL, LibrarianModels, ModelChoice
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
+# The librarian's model and effort for every stage, and extraction's apart from the rest.
+LIBRARIAN_MODEL_VAR = "PA_LIBRARIAN_MODEL"
+LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
+EXTRACTION_MODEL_VAR = "PA_LIBRARIAN_EXTRACTION_MODEL"
+EXTRACTION_EFFORT_VAR = "PA_LIBRARIAN_EXTRACTION_EFFORT"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -101,6 +107,22 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
         email_addresses=email_addresses,
         other_names=_comma_separated(environ, OWNER_OTHER_NAMES_VAR),
     )
+
+
+def load_librarian_models(environ: Mapping[str, str] = os.environ) -> LibrarianModels:
+    """The librarian's models: Sonnet 5.5 at medium effort unless configured otherwise.
+
+    Extraction uses the librarian's model and effort unless its own are set.
+    """
+    default = ModelChoice(
+        environ.get(LIBRARIAN_MODEL_VAR, "").strip() or DEFAULT_MODEL.model,
+        environ.get(LIBRARIAN_EFFORT_VAR, "").strip() or DEFAULT_MODEL.effort,
+    )
+    extraction = ModelChoice(
+        environ.get(EXTRACTION_MODEL_VAR, "").strip() or default.model,
+        environ.get(EXTRACTION_EFFORT_VAR, "").strip() or default.effort,
+    )
+    return LibrarianModels(default=default, extraction=extraction)
 
 
 def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
