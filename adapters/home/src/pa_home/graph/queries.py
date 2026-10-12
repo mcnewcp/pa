@@ -175,7 +175,24 @@ ORDER BY c.starts_at, c.id, v.changed_at, e.id""",
     ),
 )
 
-TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS,)
+TIMELINE_EVENTS = DomainQuery(
+    name="timeline_events",
+    cypher="""\
+MATCH (t:Topic)<-[about:ABOUT]-(c:CalendarEvent)<-[v:VERSION_OF]-(e:Episode)
+WHERE t.id = $topic
+  AND (CAST($since AS TIMESTAMP) IS NULL OR c.starts_at >= CAST($since AS TIMESTAMP))
+  AND (CAST($until AS TIMESTAMP) IS NULL OR c.starts_at < CAST($until AS TIMESTAMP))
+RETURN c.starts_at AS at, t, about, c, v, e
+ORDER BY c.starts_at, c.id, v.changed_at, e.id""",
+    rules=(
+        "The timeline's calendar events: each event about the topic $topic (ABOUT) whose "
+        "current start is from $since (inclusive) to $until (exclusive), in UTC, placed at "
+        "that start, with every version (VERSION_OF, from its episode). Use events for who "
+        "takes part."
+    ),
+)
+
+TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS, TIMELINE_EVENTS)
 """The parts of `timeline`. Each returns an `at` column, and their rows are merged in `at`
 order, so calendar events and loop openings and closings join it as parts of their own."""
 

@@ -86,12 +86,19 @@ class ClaimsTools:
         if about is None:
             raise ToolInputError("timeline needs a topic: its id, or a name to find it by")
         graph = self._graph.timeline(about.id, since_at, until_at)
-        count = _count(graph, "Statement")
+        counted = [
+            _plural(count, noun)
+            for count, noun in (
+                (_count(graph, "Statement"), "statement"),
+                (_count(graph, "CalendarEvent"), "calendar event"),
+            )
+            if count
+        ]
         span = f" about {about.name}{_span(since, until)}"
-        if count == 0:
+        if not counted:
             message = f"Nothing recorded{span}."
         else:
-            message = f"{_plural(count, 'statement')}{span}, oldest first."
+            message = f"{' and '.join(counted)}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
 
     def events(

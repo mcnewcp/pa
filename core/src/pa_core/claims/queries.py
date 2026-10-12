@@ -147,7 +147,7 @@ class ClaimsGraph(Protocol):
     def timeline(self, topic: str, since: datetime | None, until: datetime | None) -> Graph:
         """What happened about the topic with id `topic`, from `since` (inclusive) up to
         `until` (exclusive), in time order: its statements, with their speakers and
-        episodes."""
+        episodes, and its calendar events at their current start, with their versions."""
         ...
 
     def events(

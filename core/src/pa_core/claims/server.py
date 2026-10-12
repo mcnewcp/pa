@@ -22,8 +22,9 @@ The claims graph: who said what, about which topic, and when, derived from the e
 by the librarian. It is an index; the episodes are the evidence. Every node and edge carries the
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
-`timeline` tells what happened about one. Use `find` before concluding there is no record of
-someone or something."""
+`timeline` tells what happened about one. Calendar events keep every version, so `events`
+shows where a moved or cancelled event stands now and where it was before. Use `find` before
+concluding there is no record of someone or something."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
@@ -70,7 +71,9 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         `topic` is a topic's id or name, resolved as `find` does; if it matches more than one
         topic, the candidates come back instead, to call again with one id. `since` and
         `until` work as in `statements`. Each statement about the topic comes with its speaker
-        (SAID), its episode (RECORDED_IN), and the topic (ABOUT).
+        (SAID), its episode (RECORDED_IN), and the topic (ABOUT). Each calendar event about it
+        (CalendarEvent, by its current start) comes with its versions (VERSION_OF); use
+        `events` for who takes part.
         """
         with _reported():
             return tools.timeline(topic, since, until)
