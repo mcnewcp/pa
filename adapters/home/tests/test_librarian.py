@@ -2441,3 +2441,29 @@ def test_a_failing_loop_decision_publishes_nothing_and_a_rerun_makes_it(libraria
     assert librarian.model.calls - calls == 1  # only the decision; the extractions were cached
     assert report.model_calls == {"loops": {"claude-sonnet-5-5": 1}}
     assert nodes(librarian.call("open_loops"), "Commitment")
+
+
+def test_a_to_do_in_the_owners_note_is_a_commitment_owed_to_themselves(librarian: Librarian):
+    librarian.mail.note("To do: call North Star this week to book the knee appointment.", day=16)
+    librarian.model.says(
+        "call North Star",
+        statement(
+            "call North Star this week to book the knee appointment.",
+            kind="committed",
+            opens=(
+                commitment(
+                    "call North Star to book the knee appointment",
+                    owed_by="Argus McNevans",
+                    owed_to="Argus McNevans",
+                    due="2026-09-20",
+                ),
+            ),
+        ),
+    )
+
+    librarian.rebuild()
+
+    owed = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    (to_do,) = nodes(owed, "Commitment")
+    assert to_do["properties"]["what"] == "call North Star to book the knee appointment"
+    assert owes_and_owed(owed, to_do["id"]) == ("Argus McNevans", "Argus McNevans")

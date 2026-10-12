@@ -306,9 +306,8 @@ class LoopResolver:
         return result
 
     def _may_open(self, opening: Opening, statement: LoopStatement) -> bool:
-        """No one but the owner makes the owner promise or ask something."""
-        if opening.owed_by == opening.owed_to:
-            return False
+        """No one but the owner makes the owner promise or ask something. A to-do is a
+        commitment owed to oneself."""
         if statement.owners_own:
             return True
         if opening.type == LoopType.COMMITMENT:

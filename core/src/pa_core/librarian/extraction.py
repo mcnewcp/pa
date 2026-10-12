@@ -172,7 +172,8 @@ secondhand statement by that someone. For each statement give:
   promising to do something) the statement makes, each with its type, who owes it (the one
   asked, or the one who promised), whom it is owed to (the one asking, or the one promised),
   each by name (the owner as {owner_name}, never "I" or "you"), what is to be done, and the
-  day it is due, if one is given. Agreeing to a request is a commitment. Usually none.
+  day it is due, if one is given. Agreeing to a request is a commitment, and so is a to-do,
+  owed to whoever wrote it down. Usually none.
 
 {sender}
 
@@ -243,7 +244,8 @@ SOURCE_RULES: dict[Kind, _SourceRules] = {
             "This is an exchange between the owner and their assistant; each turn starts with "
             "`owner:` or\n`assistant:`. List only the statements the owner makes in their own "
             "turns. The assistant's turns\nare context only: record nothing from them and "
-            "quote nothing from them, even where they restate\nwhat the owner said.\n"
+            "quote nothing from them, even where they restate\nwhat the owner said. What the "
+            "owner asks the assistant itself to do or answer is not a request.\n"
         ),
         speaker="the owner.",
         quotable="the owner's turns below",
