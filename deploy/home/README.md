@@ -67,6 +67,16 @@ rm -rf ~/.local/share/pa-home-synthetic
 deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/mount-store.sh
 ```
 
+## The claims graph in the VM
+
+The assistant reads the claims graph through the PA MCP server, which runs in the VM over stdio and reads whichever build `/srv/pa/graph/current` points at when each call starts. Run `pa librarian rebuild` on the devbox, and the next call in a running session reads the new build, with nothing restarted.
+
+- **Declared by the agent project.** The rendered `.mcp.json` starts the server as `<repo venv>/bin/python -m pa_home mcp serve --graph /srv/pa/graph`. Claude Code starts one server per session (and one per `claude mcp list`).
+- **The only MCP server.** The rendered `settings.json` lets only a server named `pa` start (`allowedMcpServers`, which also blocks claude.ai connectors and any server in `~/.claude.json`), pre-approves it (`enabledMcpjsonServers`, since Remote Control has nobody to ask), allows its tools (`mcp__pa`), and keeps claude.ai connectors off (`disableClaudeAiConnectors`). There's no deny rule on MCP tools: a deny wins over every allow, so it would deny the PA server's tools too.
+- **Remote Control and `claude -p` load the same configuration.** Remote Control runs in the rendered project, a trusted folder, so it reads `.mcp.json` and the project's `settings.json`. `claude -p` reads `.mcp.json` from its working directory without asking, and the evals pass the project's `settings.json` with `--settings`, since `-p` never trusts a folder.
+- **The full-text extension.** The server loads LadybugDB's full-text extension from `~/.local/share/pa/lbug-extensions` and never downloads it, so `update.sh` fetches it there with `pa librarian extensions`, which checks its SHA-256.
+- `claude mcp list`, run as `assistant` in `/home/assistant/agent`, shows whether the server starts: `pa: … - ✔ Connected`.
+
 ## Remote Control
 
 `pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a session lands in the inbox for `ingest.sh`.
@@ -191,3 +201,11 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    deploy/home/check-explorer.sh
    ```
 4. Reboot the devbox: `pa-explorer` is running again and `check-explorer.sh` passes.
+
+## Acceptance run (#45)
+
+1. `mount-store.sh`, then `update.sh <ref>`. `check-store.sh` passes: the graph is readable at `/srv/pa/graph`, nobody in the VM can write it or the current build, root included, and the VM is shared exactly L0, the inbox directory and the graph.
+2. As `assistant` in `/home/assistant/agent`, `claude mcp list` shows `pa` connected, and `.mcp.json` names `/srv/pa/graph`.
+3. A rebuild is picked up: hold a session open, run `pa librarian rebuild` on the devbox (see #46's step 3), and the session's next graph call answers from the new build.
+4. A `claude -p` session in the rendered project answers "What's happened with the kitchen remodel so far?" with `mcp__pa__timeline` among its tool calls and `[ep:…]` citations.
+5. From the phone, a chat about the kitchen remodel uses the graph's tools (the app shows the `pa` tool calls).
