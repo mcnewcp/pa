@@ -82,6 +82,8 @@ class EmailEvent(FrozenModel):
     subject: str | None = None
     reply_to: str | None = None
     category: GmailCategory | None = None
+    # A test of the assistant's defences: it plants instructions or claims in what it says.
+    adversarial: bool = False
     what: str
 
 
@@ -209,6 +211,11 @@ class StorylineSpec(FrozenModel):
 
     def storyline_of(self, event_id: str) -> Storyline:
         return self._storyline_by_event[event_id]
+
+    @property
+    def adversarial_ids(self) -> list[str]:
+        """The event ids of the adversarial emails, so checks can find their episodes."""
+        return [e.id for e in self.events if isinstance(e, EmailEvent) and e.adversarial]
 
     @property
     def base(self) -> BaseSpec | None:

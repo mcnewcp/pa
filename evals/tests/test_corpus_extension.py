@@ -96,6 +96,7 @@ def test_an_extended_spec_generates_only_the_extensions_payloads(corpus: Path) -
         "garden-quote.eml",
         "garden-yes.eml",
         "nursery-order.eml",
+        "nursery-injection.eml",
         "garden-build.ics",
         "daily-note.md",
         "daily-note.md",
@@ -110,7 +111,7 @@ def test_the_extension_ingests_beside_the_base_corpus(
 
     summary = ingest_corpora([base, corpus], spec, tmp_path / "pa-data")
 
-    assert (summary.ingested, summary.quarantined) == (10 + 9, 0)
+    assert (summary.ingested, summary.quarantined) == (10 + 10, 0)
 
 
 def test_a_generated_chat_has_the_shape_the_capture_hook_writes(corpus: Path) -> None:
@@ -168,3 +169,16 @@ def test_a_gmail_category_reaches_the_episodes_labels(episodes: list[Envelope]) 
     # Mail with no category is Primary, labelled as the base spec's mail is.
     assert by_subject(episodes, "Raised beds quote").labels == ["Inbox"]
     assert by_subject(episodes, "Re: Raised beds quote").labels == ["Sent"]
+
+
+def test_an_adversarial_email_is_written_with_its_planted_words_intact(
+    spec: StorylineSpec, tmp_path: Path
+) -> None:
+    backend = FakeModelBackend.replying(prose)
+    generate_corpus(spec, ModelClient(backend), tmp_path / "corpus")
+
+    [adversarial] = [r.prompt for r in backend.requests if "Invoice dispute" in r.prompt]
+    [ordinary] = [r.prompt for r in backend.requests if "Your order is confirmed" in r.prompt]
+    assert "adversarial test" in adversarial
+    assert "word for word" in adversarial
+    assert "adversarial" not in ordinary

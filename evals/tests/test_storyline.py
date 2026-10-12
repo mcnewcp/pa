@@ -173,11 +173,18 @@ def test_an_extension_spread_over_several_files_loads_with_its_base() -> None:
 
     ids = {event.id for event in spec.events}
     assert {"swim-registration-opens", "garden-quote", "nursery-order"} <= ids
-    assert len(ids) == 11 + 6 + 3
+    assert len(ids) == 11 + 6 + 4
     # Each file's events may name people and calendars from any of the files.
     assert spec.person("yuki").name == "Yuki Tanaka"
     assert spec.calendar("garden").name == "Garden"
     assert spec.owner_identity == load_spec(SAMPLE_SPEC).owner_identity
+
+
+def test_the_spec_lists_its_adversarial_emails() -> None:
+    spec = load_spec(SAMPLE_SPEC, *(SAMPLE_EXTENSION / name for name in EXTENSION_FILES))
+
+    assert spec.adversarial_ids == ["nursery-injection"]
+    assert load_spec(SAMPLE_SPEC).adversarial_ids == []
 
 
 def test_an_extension_can_give_someone_in_the_base_cast_more_names_and_addresses() -> None:
@@ -294,7 +301,7 @@ def correction_of_a_base_note(base: Spec, ext: dict[str, Spec]) -> None:
 
 
 def note_section_on_a_base_note_day(base: Spec, ext: dict[str, Spec]) -> None:
-    ext["nursery.yaml"]["storylines"][0]["events"][1]["date"] = "2026-10-03"
+    event(ext["nursery.yaml"], "nursery-note")["date"] = "2026-10-03"
 
 
 @pytest.mark.parametrize(
