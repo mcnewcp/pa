@@ -12,6 +12,8 @@ This is where who said what is decided:
   no one can speak for the owner.
 - A statement whose quote is not in the episode's body (for a chat, in one of the owner's
   turns) is dropped. Every statement from a chat is marked as told to the assistant.
+- The parties of the requests and commitments a kept statement opens are resolved here too,
+  for loop resolution (`loops.py`), which runs after topics.
 
 People and organizations are resolved in the order episodes are offered (time order).
 """
@@ -36,10 +38,12 @@ from pa_core.librarian.extraction import (
     ExtractedStatement,
     Extraction,
     MentionType,
+    OpenedLoop,
     StatementKind,
     quote_is_in,
     render_header,
 )
+from pa_core.librarian.loops import LoopStatement, Opening, due_day
 from pa_core.librarian.people import Identify, People
 from pa_core.owner import Owner
 
@@ -58,6 +62,9 @@ class StatementTally:
 class Assembled:
     records: GraphRecords
     statements: StatementTally = field(default_factory=StatementTally)
+    loops: list[LoopStatement] = field(default_factory=list)
+    """Every kept statement, in time order, with the requests and commitments it opens."""
+    owner_id: str = ""
 
 
 def assemble(
@@ -76,6 +83,7 @@ def assemble(
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
     tally = StatementTally()
+    loops: list[LoopStatement] = []
     participations: set[str] = set()
     for envelope in episodes:
         eid = envelope.episode_id
@@ -84,6 +92,7 @@ def assemble(
         extraction = extractions.get(eid)
         nodes.append(_episode(envelope, l0_path))
         sender: str | None = None
+        participants: set[str] = set()
         for participant in envelope.participants:
             is_sender = participant.role in _SPEAKER_ROLES and sender is None
             party = people.participant(
@@ -99,6 +108,7 @@ def assemble(
             )
             if is_sender:
                 sender = party
+            participants.add(party)
             edge_id = stable_id("participated_in", party, eid, participant.role)
             if edge_id in participations:  # the same address twice in one header
                 continue
@@ -148,9 +158,29 @@ def assemble(
             edges.append(_edge(SAID.label, speaker, sid, eid))
             edges.append(_edge(RECORDED_IN.label, sid, eid, eid))
             edges.extend(_edge(MENTIONS.label, sid, party, eid) for party in mentioned)
+            openings = [
+                _opening(loop, index, people, eid, context)
+                for index, loop in enumerate(statement.opens)
+            ]
+            loops.append(
+                LoopStatement(
+                    statement_id=sid,
+                    episode_id=eid,
+                    thread_ref=envelope.thread_ref,
+                    subject=envelope.subject,
+                    at=envelope.occurred_at.start,
+                    speaker=speaker,
+                    owners_own=sender == people.owner_id,
+                    kind=str(kind),
+                    summary=statement.summary,
+                    quote=statement.quote,
+                    parties=frozenset({speaker, *mentioned, *participants}),
+                    openings=tuple(opening for opening in openings if opening is not None),
+                )
+            )
     party_nodes, memberships = people.records()
     records = GraphRecords(nodes=[*party_nodes, *nodes], edges=[*edges, *memberships])
-    return Assembled(records=records, statements=tally)
+    return Assembled(records=records, statements=tally, loops=loops, owner_id=people.owner_id)
 
 
 def statement_id(episode_id: str, position: int) -> str:
@@ -181,6 +211,18 @@ def _attribute(
         speaker, kind = sender, StatementKind.REPORTED_STATUS
         mentioned.append(people.owner_id)
     return speaker, kind, [party for party in dict.fromkeys(mentioned) if party != speaker]
+
+
+def _opening(
+    loop: OpenedLoop, position: int, people: People, episode_id: str, context: str
+) -> Opening | None:
+    """The request or commitment with its parties resolved; None if either is unnamed."""
+    owed_by = people.speaker(loop.owed_by, episode_id, context)
+    owed_to = people.speaker(loop.owed_to, episode_id, context)
+    what = " ".join(loop.what.split())
+    if owed_by is None or owed_to is None or not what:
+        return None
+    return Opening(loop.type, owed_by, owed_to, what, due_day(loop.due), position)
 
 
 def _episode(envelope: Envelope, l0_path: str) -> NodeRecord:

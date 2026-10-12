@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -82,6 +82,26 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
+    def open_loops(
+        who: str | None = None, direction: Literal["owed_by", "owed_to"] | None = None
+    ) -> ToolResult:
+        """The requests and commitments still open: "who still owes me what?", "what have I
+        promised?", "who hasn't answered me?".
+
+        `who` is a person's or organization's id, or a name, alias, or address, resolved as
+        `find` does; if it matches more than one, the candidates come back instead. Leave it
+        out for everyone's. `direction` is `owed_by` for what `who` owes (requests made of
+        them, and their promises), `owed_to` for what is owed to them (their requests, and
+        promises made to them), or left out for both. Each comes with who owes it (OWES), whom
+        it is owed to (OWED_TO), what, its due date if one was given, and the statement that
+        opened it (OPENS) with its episode to cite. A commitment that came from accepting a
+        request, or that replaced an older promise, comes with that request or promise
+        (ACCEPTED_AS, SUPERSEDES). Overdue is never recorded: judge it by comparing the due
+        date with now. A closed loop, and how it closed, is in `timeline`.
+        """
+        with _reported():
+            return tools.open_loops(who, direction)
+
     def schema() -> Schema:
         """The claims graph's live schema, for writing a `query`: its tables with their
         properties, the relationships between them, and the full-text indexes. Also every
@@ -108,6 +128,7 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     server.add_tool(timeline, annotations=_READ_ONLY)
+    server.add_tool(open_loops, annotations=_READ_ONLY)
     server.add_tool(schema, annotations=_READ_ONLY)
     server.add_tool(query, annotations=_READ_ONLY)
     return server

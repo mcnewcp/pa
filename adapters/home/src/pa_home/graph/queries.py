@@ -19,10 +19,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from pa_core.claims.queries import (
+    Direction,
     DomainQueryText,
     Found,
     Graph,
@@ -172,7 +173,59 @@ ORDER BY s.at, s.id""",
     ),
 )
 
-TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS,)
+OPEN_LOOPS = DomainQuery(
+    name="open_loops",
+    cypher="""\
+MATCH (debtor)-[owes:OWES]->(l:Request:Commitment)-[owed:OWED_TO]->(creditor)
+WHERE l.status = 'open'
+  AND (CAST($who AS STRING) IS NULL
+    OR (CAST($direction AS STRING) IS NULL AND (debtor.id = $who OR creditor.id = $who))
+    OR ($direction = 'owed_by' AND debtor.id = $who)
+    OR ($direction = 'owed_to' AND creditor.id = $who))
+MATCH (speaker)-[said:SAID]->(s:Statement)-[opens:OPENS]->(l), (s)-[rec:RECORDED_IN]->(e:Episode)
+OPTIONAL MATCH (l)-[link:ACCEPTED_AS|SUPERSEDES]-(earlier)
+RETURN debtor, owes, l, owed, creditor, speaker, said, s, opens, rec, e, link, earlier
+ORDER BY l.opened_at, l.id""",
+    rules=(
+        "Requests and commitments whose status is still 'open', owed by $who when $direction "
+        "is 'owed_by', owed to $who when it is 'owed_to', either when it is null; everyone's "
+        "when $who is null. A request is owed by the one asked and to the one asking; a "
+        "commitment by the one who promised and to the one promised. Oldest first, each with "
+        "who owes it (OWES), whom it is owed to (OWED_TO), the statement that opened it "
+        "(OPENS) with its speaker and episode, and, for a commitment, the request it was "
+        "accepted from (ACCEPTED_AS) or the older promise it replaced (SUPERSEDES), which are "
+        "closed. `due` is a day, or null; nothing is marked overdue, because that depends on "
+        "when you ask: compare `due` with now."
+    ),
+)
+
+TIMELINE_LOOPS = DomainQuery(
+    name="timeline_loops",
+    cypher="""\
+MATCH (t:Topic)<-[:ABOUT]-(:Statement)-[:OPENS|CLOSES]->(l:Request:Commitment)
+WHERE t.id = $topic
+MATCH (speaker)-[said:SAID]->(s:Statement)-[change:OPENS|CLOSES]->(l),
+  (s)-[rec:RECORDED_IN]->(e:Episode),
+  (debtor)-[owes:OWES]->(l)-[owed:OWED_TO]->(creditor)
+WHERE (CAST($since AS TIMESTAMP) IS NULL OR s.at >= CAST($since AS TIMESTAMP))
+  AND (CAST($until AS TIMESTAMP) IS NULL OR s.at < CAST($until AS TIMESTAMP))
+OPTIONAL MATCH (l)-[link:ACCEPTED_AS|SUPERSEDES]-(other)
+RETURN s.at AS at, speaker, said, s, change, l, rec, e, debtor, owes, owed, creditor, link,
+  other
+ORDER BY s.at, s.id""",
+    rules=(
+        "The timeline's openings and closings: each request or commitment opened or closed "
+        "by a statement about the topic $topic, and every statement that opened it (OPENS) or "
+        "closed it (CLOSES, with `how`), about the topic or not, from $since (inclusive) to "
+        "$until (exclusive), in UTC, oldest first. Each comes with its speaker and episode, "
+        "who owes the request or commitment (OWES) and to whom (OWED_TO), and the request it "
+        "was accepted from, the commitment it became (ACCEPTED_AS), or the promise it "
+        "replaced or was replaced by (SUPERSEDES). A request or commitment's `status` is how "
+        "it stands now: open, or how it closed."
+    ),
+)
+
+TIMELINE: tuple[DomainQuery, ...] = (TIMELINE_STATEMENTS, TIMELINE_LOOPS)
 """The parts of `timeline`. Each returns an `at` column, and their rows are merged in `at`
 order, so calendar events and loop openings and closings join it as parts of their own."""
 
@@ -182,6 +235,7 @@ DOMAIN_QUERIES: tuple[DomainQuery, ...] = (
     MEMBERSHIPS,
     STATEMENTS,
     *TIMELINE,
+    OPEN_LOOPS,
 )
 
 
@@ -235,6 +289,10 @@ class LadybugClaimsGraph:
         for query in TIMELINE:
             rows += self._runner.run(query.cypher, {"topic": topic, **_span(since, until)})
         rows.sort(key=lambda row: row["at"])  # stable, so each part's own order breaks ties
+        return shape(rows).graph.as_graph()
+
+    def open_loops(self, who: str | None, direction: Direction | None) -> Graph:
+        rows = self._runner.run(OPEN_LOOPS.cypher, {"who": who, "direction": direction})
         return shape(rows).graph.as_graph()
 
     def schema(self) -> Schema:
@@ -412,10 +470,13 @@ def _edge(value: dict[str, Any], internal: dict[tuple[int, int], str]) -> GraphE
 
 
 def _plain(value: Any) -> Any:
-    """A JSON-ready value; timestamps, stored in UTC without an offset, get theirs back."""
+    """A JSON-ready value; timestamps, stored in UTC without an offset, get theirs back, and
+    days are ISO dates."""
     if isinstance(value, datetime):
         moment = value if value.tzinfo else value.replace(tzinfo=UTC)
         return moment.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, list):
         return [_plain(item) for item in value]
     return value

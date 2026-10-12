@@ -21,7 +21,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 
 from pa_core.envelope import Envelope
-from pa_core.librarian import extraction, identify, topics
+from pa_core.librarian import extraction, identify, loops, topics
 from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
@@ -49,6 +49,7 @@ DAVE = "David Kim <dkim@example.net>"
 DAVE_ADDRESS = "dkim@example.net"
 MARIA = "Maria Alvarez <maria@alvarezkb.example>"
 RICK = "Rick Alvarez <rick@alvarezkb.example>"
+DAVID_LEE = "David Lee <dlee@example.org>"
 
 
 class Mailbox:
@@ -141,6 +142,7 @@ def statement(
     *,
     secondhand: bool = False,
     mentions: tuple[dict, ...] = (),
+    opens: tuple[dict, ...] = (),
 ) -> dict:
     return {
         "speaker": speaker or "the sender",
@@ -150,7 +152,18 @@ def statement(
         "quote": quote,
         "topics": list(topics),
         "mentions": list(mentions),
+        "opens": list(opens),
     }
+
+
+def request(what: str, *, owed_by: str, owed_to: str, due: str | None = None) -> dict:
+    """A request a statement opens: `owed_to` asks `owed_by` to do `what`."""
+    return {"type": "request", "owed_by": owed_by, "owed_to": owed_to, "what": what, "due": due}
+
+
+def commitment(what: str, *, owed_by: str, owed_to: str, due: str | None = None) -> dict:
+    """A commitment a statement opens: `owed_by` promises `owed_to` to do `what`."""
+    return {"type": "commitment", "owed_by": owed_by, "owed_to": owed_to, "what": what, "due": due}
 
 
 def person(name: str, organization: str | None = None) -> dict:
@@ -173,6 +186,10 @@ class ScriptedModel:
 
     Replies to an identification prompt (who a name or address is) by the candidate scripted
     for the name in question, or with no candidate (someone new) when none is scripted.
+
+    Asked what a statement does to the open requests and commitments offered, it answers as
+    scripted with `decides` for the statement's quote and each candidate's `what`, and
+    `unrelated` otherwise.
     """
 
     replies: dict[str, dict] = field(default_factory=dict)
@@ -184,6 +201,8 @@ class ScriptedModel:
     identified: list[str] = field(default_factory=list)
     placements: dict[str, tuple[str, str | None]] = field(default_factory=dict)
     placed: list[list[str]] = field(default_factory=list)
+    outcomes: dict[tuple[str, str], str] = field(default_factory=dict)
+    decided: list[tuple[str, list[str]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.backend = FakeModelBackend.replying(self._reply)
@@ -205,6 +224,11 @@ class ScriptedModel:
         or into a `new` topic with `description`."""
         self.placements[name.lower()] = (under, None) if under else (new or name, description)
 
+    def decides(self, phrase: str, what: str, outcome: str) -> None:
+        """Script what the statement whose quote contains `phrase` does to the open request or
+        commitment to do `what`."""
+        self.outcomes[(phrase, what)] = outcome
+
     @property
     def topic_calls(self) -> int:
         return len(self.placed)
@@ -222,6 +246,8 @@ class ScriptedModel:
             return self._identify(request.prompt)
         if request.schema == topics.TopicPlacements.model_json_schema():
             return self._place(request)
+        if request.schema == loops.LoopDecisions.model_json_schema():
+            return self._decide(request)
         if "relevant" in request.schema["properties"]:
             return self._judge(request)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
@@ -256,6 +282,25 @@ class ScriptedModel:
             raise ModelBackendError(f"scripted failure for {phrase!r}")
         self.judged.append(phrase)
         return {"relevant": self.relevance[phrase], "reason": "scripted"}
+
+    def _decide(self, request: ModelRequest) -> dict[str, Any]:
+        asked = json.loads(request.prompt.split("<loop_input>")[1].split("</loop_input>")[0])
+        quote: str = asked["statement"]["quote"]
+        if any(phrase in quote for phrase in self.failing):
+            raise ModelBackendError(f"scripted failure deciding for {quote!r}")
+        self.decided.append((quote, [c["what"] for c in asked["candidates"]]))
+        decisions = []
+        for candidate in asked["candidates"]:
+            outcome = next(
+                (
+                    outcome
+                    for (phrase, what), outcome in self.outcomes.items()
+                    if phrase in quote and what == candidate["what"]
+                ),
+                "unrelated",
+            )
+            decisions.append({"candidate": candidate["number"], "outcome": outcome})
+        return {"decisions": decisions}
 
     def _place(self, request: ModelRequest) -> dict[str, Any]:
         asked = json.loads(request.prompt.split("<topic_input>")[1].split("</topic_input>")[0])
@@ -541,6 +586,8 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
         "Episode": 4,
         "Statement": 4,
         "Topic": 0,
+        "Request": 0,
+        "Commitment": 0,
     }
     assert report.edges == {
         "SAID": 4,
@@ -549,6 +596,12 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
         "ABOUT": 0,
         "MENTIONS": 0,
         "MEMBER_OF": 1,
+        "OPENS": 0,
+        "CLOSES": 0,
+        "OWES": 0,
+        "OWED_TO": 0,
+        "ACCEPTED_AS": 0,
+        "SUPERSEDES": 0,
     }
 
 
@@ -570,7 +623,7 @@ def test_before_the_first_build_the_server_says_to_run_the_librarian(librarian: 
 
 def two_davids(librarian: Librarian) -> None:
     librarian.mail.receive("The toast is yours if you want it.", sender=DAVE)
-    librarian.mail.receive("Our pipes froze again.", sender="David Lee <dlee@example.org>")
+    librarian.mail.receive("Our pipes froze again.", sender=DAVID_LEE)
     librarian.model.says("The toast is yours", statement("The toast is yours if you want it."))
     librarian.model.says(
         "Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",))
@@ -712,6 +765,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
                 "find",
                 "statements",
                 "timeline",
+                "open_loops",
                 "schema",
                 "query",
             }
@@ -1125,10 +1179,10 @@ def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
 
 
 EXAMPLE_PARAMETERS: dict[str, Any] = {"key": "david kim", "text": "david pipes alvarez"}
-"""Values to run the domain queries with on `two_davids` plus two organizations, plus `topic`,
-the id of its one topic (Frozen pipes), and `ids`, Rick's, found at run time; any other
-parameter is null. The `text` has a word for each full-text index: people's, organizations',
-and topics'."""
+"""Values to run the domain queries with on `two_davids` plus two organizations and a request
+about the pipes, plus `topic`, the id of its one topic (Frozen pipes), and `ids`, Rick's, found
+at run time; any other parameter is null. The `text` has a word for each full-text index:
+people's, organizations', and topics'."""
 
 
 def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: Librarian):
@@ -1141,6 +1195,16 @@ def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: 
         "Your physical is confirmed",
         statement("Your physical is confirmed."),
         sender_is_organization=True,
+    )
+    librarian.mail.receive("Could you call a plumber about the pipes?", sender=DAVID_LEE)
+    librarian.model.says(
+        "Could you call a plumber",
+        statement(
+            "Could you call a plumber about the pipes?",
+            kind="asked",
+            topics=("Frozen pipes",),
+            opens=(request("call a plumber", owed_by="Argus McNevans", owed_to="David Lee"),),
+        ),
     )
     two_davids(librarian)
     (pipes,) = librarian.call("find", name="frozen pipes")["matches"]
@@ -1157,6 +1221,8 @@ def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: 
         "find_topics_full_text",
         "statements",
         "timeline_statements",
+        "timeline_loops",
+        "open_loops",
     } <= set(listed)
     for listed_query in schema["domain_queries"]:
         params = {name: examples.get(name) for name in listed_query["parameters"]}
@@ -1512,7 +1578,7 @@ def test_a_failing_identification_publishes_nothing_and_a_rerun_repeats_no_finis
     librarian.mail.receive("The tile arrives Friday.")
     librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
     published = librarian.rebuild()
-    librarian.mail.receive("Our pipes froze again.", sender="David Lee <dlee@example.org>")
+    librarian.mail.receive("Our pipes froze again.", sender=DAVID_LEE)
     librarian.mail.receive("David will bring the tile saw.", sender=MARIA)
     librarian.model.says("Our pipes froze", statement("Our pipes froze again."))
     librarian.model.says(
@@ -1711,3 +1777,186 @@ def test_an_assistant_turn_that_reads_like_an_owner_turn_yields_nothing(libraria
 
     assert quotes(librarian.call("statements")) == []
     assert report.statements.dropped_quote_not_found == 1
+
+
+# Requests, commitments, and open loops
+
+
+def owes_and_owed(result: dict[str, Any], loop_id: str) -> tuple[str, str]:
+    """The names of who owes the request or commitment and whom it is owed to."""
+    (owes,) = [e for e in result["edges"] if e["type"] == "OWES" and e["target"] == loop_id]
+    (owed,) = [e for e in result["edges"] if e["type"] == "OWED_TO" and e["source"] == loop_id]
+    return librarian_name(result, owes["source"]), librarian_name(result, owed["target"])
+
+
+def opened_by(result: dict[str, Any], loop_id: str) -> list[str]:
+    """The quotes of the statements that opened the request or commitment."""
+    sources = {
+        e["source"] for e in result["edges"] if e["type"] == "OPENS" and e["target"] == loop_id
+    }
+    return [s["properties"]["quote"] for s in nodes(result, "Statement") if s["id"] in sources]
+
+
+def test_open_loops_returns_due_dates_and_the_statements_that_opened_them_but_never_overdue(
+    librarian: Librarian,
+):
+    episode = librarian.mail.receive("Could you send the tile order by Friday?", day=3)
+    librarian.model.says(
+        "Could you send the tile order",
+        statement(
+            "Could you send the tile order by Friday?",
+            kind="asked",
+            opens=(
+                request(
+                    "send the tile order",
+                    owed_by="Argus McNevans",
+                    owed_to="David Kim",
+                    due="2026-09-04",
+                ),
+            ),
+        ),
+    )
+
+    librarian.rebuild()
+
+    owed = librarian.call("open_loops", who="argus@example.com", direction="owed_by")
+    (loop,) = nodes(owed, "Request")
+    assert loop["properties"] == {
+        "what": "send the tile order",
+        "due": "2026-09-04",
+        "status": "open",
+        "opened_at": "2026-09-03T15:00:00+00:00",
+    }
+    assert loop["episode_ids"] == [episode]
+    assert owes_and_owed(owed, loop["id"]) == ("Argus McNevans", "David Kim")
+    assert opened_by(owed, loop["id"]) == ["Could you send the tile order by Friday?"]
+    assert [e["id"] for e in nodes(owed, "Episode")] == [episode]
+    assert "1 open request" in owed["message"]
+    assert "overdue" in owed["message"]  # it says the assistant judges that, against now
+    assert (
+        nodes(librarian.call("open_loops", who="argus@example.com", direction="owed_to"), "Request")
+        == []
+    )
+    by_dave = librarian.call("open_loops", who="David Kim", direction="owed_to")
+    assert [n["id"] for n in nodes(by_dave, "Request")] == [loop["id"]]
+    assert [n["id"] for n in nodes(librarian.call("open_loops"), "Request")] == [loop["id"]]
+
+
+def edges_of(result: dict[str, Any], edge_type: str) -> list[tuple[str, str]]:
+    return [(e["source"], e["target"]) for e in result["edges"] if e["type"] == edge_type]
+
+
+TILE_ORDER = "send the tile order"
+
+
+def a_request_for_the_tile_order(librarian: Librarian) -> str:
+    """Dave asks Argus to send the tile order by Friday; returns the episode id."""
+    asked = librarian.mail.receive(
+        "Could you send the tile order by Friday?", subject="Tile", day=3
+    )
+    librarian.model.says(
+        "Could you send the tile order",
+        statement(
+            "Could you send the tile order by Friday?",
+            kind="asked",
+            opens=(
+                request(
+                    TILE_ORDER, owed_by="Argus McNevans", owed_to="David Kim", due="2026-09-04"
+                ),
+            ),
+        ),
+    )
+    return asked
+
+
+def test_a_request_that_is_accepted_becomes_a_commitment_linked_to_it(librarian: Librarian):
+    asked = a_request_for_the_tile_order(librarian)
+    librarian.mail.receive(
+        "Sure, I'll send it Thursday.", sender=ARGUS, to=DAVE, replying_to=asked, day=4
+    )
+    librarian.model.says(
+        "Sure, I'll send it Thursday",
+        statement(
+            "Sure, I'll send it Thursday.",
+            kind="agreed",
+            opens=(
+                commitment(
+                    TILE_ORDER, owed_by="Argus McNevans", owed_to="David Kim", due="2026-09-03"
+                ),
+            ),
+        ),
+    )
+    librarian.model.decides("Sure, I'll send it Thursday", TILE_ORDER, "accepts")
+
+    report = librarian.rebuild()
+
+    owed = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    (promise,) = nodes(owed, "Commitment")
+    assert promise["properties"]["status"] == "open"
+    assert promise["properties"]["due"] == "2026-09-03"
+    assert opened_by(owed, promise["id"]) == ["Sure, I'll send it Thursday."]
+    (accepted,) = nodes(owed, "Request")
+    assert accepted["properties"]["status"] == "accepted"
+    assert edges_of(owed, "ACCEPTED_AS") == [(accepted["id"], promise["id"])]
+    assert "0 open requests and 1 open commitment" in owed["message"]
+    assert librarian.model.decided == [("Sure, I'll send it Thursday.", [TILE_ORDER])]
+    assert report.model_calls["loops"] == {"claude-sonnet-5-5": 1}
+
+
+PICK_UP_TILE = "pick up the tile"
+
+
+def a_promise_to_pick_up_the_tile(librarian: Librarian) -> str:
+    """Dave promises Argus to pick up the tile by Friday, about the kitchen remodel."""
+    promised = librarian.mail.receive("I'll pick up the tile on Friday.", subject="Tile", day=3)
+    librarian.model.says(
+        "I'll pick up the tile",
+        statement(
+            "I'll pick up the tile on Friday.",
+            kind="committed",
+            topics=("Kitchen remodel",),
+            opens=(
+                commitment(
+                    PICK_UP_TILE, owed_by="David Kim", owed_to="Argus McNevans", due="2026-09-04"
+                ),
+            ),
+        ),
+    )
+    return promised
+
+
+def closed_by(result: dict[str, Any], loop_id: str) -> list[tuple[str, str]]:
+    """The quote of each statement that closed the loop, and how."""
+    quoted = {s["id"]: s["properties"]["quote"] for s in nodes(result, "Statement")}
+    return [
+        (quoted[e["source"]], e["properties"]["how"])
+        for e in result["edges"]
+        if e["type"] == "CLOSES" and e["target"] == loop_id
+    ]
+
+
+def test_a_commitment_fulfilled_by_a_third_party_in_another_thread_closes_recording_how(
+    librarian: Librarian,
+):
+    a_promise_to_pick_up_the_tile(librarian)
+    librarian.mail.receive(
+        "I picked up the tile from the yard this morning.", sender=MARIA, subject="Yard", day=4
+    )
+    librarian.model.says(
+        "I picked up the tile",
+        statement("I picked up the tile from the yard this morning.", topics=("Kitchen remodel",)),
+    )
+    librarian.model.decides("I picked up the tile", PICK_UP_TILE, "fulfills")
+
+    librarian.rebuild()
+
+    assert nodes(librarian.call("open_loops", who="David Kim"), "Commitment") == []
+    timeline = librarian.call("timeline", topic="Kitchen remodel")
+    (promise,) = nodes(timeline, "Commitment")
+    assert promise["properties"]["status"] == "fulfilled"
+    assert opened_by(timeline, promise["id"]) == ["I'll pick up the tile on Friday."]
+    assert closed_by(timeline, promise["id"]) == [
+        ("I picked up the tile from the yard this morning.", "fulfilled")
+    ]
+    assert owes_and_owed(timeline, promise["id"]) == ("David Kim", "Argus McNevans")
+    assert len(promise["episode_ids"]) == 2

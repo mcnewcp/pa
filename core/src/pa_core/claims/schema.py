@@ -21,6 +21,8 @@ class PropertyType(StrEnum):
     BOOL = "bool"
     TIMESTAMP = "timestamp"
     """An aware datetime. Engines may store it in UTC; it reads back in UTC."""
+    DATE = "date"
+    """A calendar day, with no time or zone."""
 
 
 @dataclass(frozen=True)
@@ -37,11 +39,12 @@ class EdgeType:
     properties: Mapping[str, PropertyType]
 
 
-_S, _SS, _B, _T = (
+_S, _SS, _B, _T, _D = (
     PropertyType.STRING,
     PropertyType.STRINGS,
     PropertyType.BOOL,
     PropertyType.TIMESTAMP,
+    PropertyType.DATE,
 )
 
 PERSON = NodeType("Person", {"name": _S, "aliases": _SS, "addresses": _SS, "is_owner": _B})
@@ -75,6 +78,17 @@ STATEMENT = NodeType(
 )
 TOPIC = NodeType("Topic", {"name": _S, "aliases": _SS, "description": _S})
 
+_LOOP = {"what": _S, "due": _D, "status": _S, "opened_at": _T}
+REQUEST = NodeType("Request", _LOOP)
+"""Someone asking someone to do something. `status` is `open`, or how it closed: `fulfilled`,
+`declined`, `withdrawn`, or `accepted` (it became a commitment, ACCEPTED_AS). Never overdue:
+that depends on when you ask."""
+COMMITMENT = NodeType("Commitment", _LOOP)
+"""A promise. `status` is `open`, `fulfilled`, `withdrawn`, or `superseded` (by a newer
+promise, which SUPERSEDES it)."""
+_LOOPS = ("Request", "Commitment")
+_PARTIES = ("Person", "Organization")
+
 SAID = EdgeType("SAID", (("Person", "Statement"), ("Organization", "Statement")), {})
 RECORDED_IN = EdgeType("RECORDED_IN", (("Statement", "Episode"),), {})
 PARTICIPATED_IN = EdgeType(
@@ -83,8 +97,26 @@ PARTICIPATED_IN = EdgeType(
 ABOUT = EdgeType("ABOUT", (("Statement", "Topic"),), {})
 MENTIONS = EdgeType("MENTIONS", (("Statement", "Person"), ("Statement", "Organization")), {})
 MEMBER_OF = EdgeType("MEMBER_OF", (("Person", "Organization"),), {})
+OPENS = EdgeType("OPENS", tuple(("Statement", loop) for loop in _LOOPS), {})
+CLOSES = EdgeType("CLOSES", tuple(("Statement", loop) for loop in _LOOPS), {"how": _S})
+"""`how` is the status the request or commitment closed with."""
+OWES = EdgeType("OWES", tuple((party, loop) for party in _PARTIES for loop in _LOOPS), {})
+"""From whoever is to do it: the one asked, or the one who promised."""
+OWED_TO = EdgeType("OWED_TO", tuple((loop, party) for loop in _LOOPS for party in _PARTIES), {})
+"""To whomever it is owed: the one who asked, or the one promised."""
+ACCEPTED_AS = EdgeType("ACCEPTED_AS", (("Request", "Commitment"),), {})
+SUPERSEDES = EdgeType("SUPERSEDES", (("Commitment", "Commitment"),), {})
+"""From the newer promise to the one it replaced."""
 
-NODE_TYPES: tuple[NodeType, ...] = (PERSON, ORGANIZATION, EPISODE, STATEMENT, TOPIC)
+NODE_TYPES: tuple[NodeType, ...] = (
+    PERSON,
+    ORGANIZATION,
+    EPISODE,
+    STATEMENT,
+    TOPIC,
+    REQUEST,
+    COMMITMENT,
+)
 EDGE_TYPES: tuple[EdgeType, ...] = (
     SAID,
     RECORDED_IN,
@@ -92,4 +124,10 @@ EDGE_TYPES: tuple[EdgeType, ...] = (
     ABOUT,
     MENTIONS,
     MEMBER_OF,
+    OPENS,
+    CLOSES,
+    OWES,
+    OWED_TO,
+    ACCEPTED_AS,
+    SUPERSEDES,
 )

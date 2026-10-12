@@ -10,11 +10,13 @@ The stages:
 3. Assembly, in time order: people and organizations resolved (a model call, cached, only
    for a name the records can't decide), speakers attributed, quotes checked.
 4. Topics: the kept statements' topic names placed under topics, in time order (`topics.py`).
-5. Build and publish, through the `GraphBuilder`.
+5. Loops: the requests and commitments statements open, and how each closes, in time order
+   (`loops.py`).
+6. Build and publish, through the `GraphBuilder`.
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
-is built, and every triage answer, extraction, identification, and topic decision finished so
-far stays cached for the next run.
+is built, and every triage answer, extraction, identification, topic, and loop decision
+finished so far stays cached for the next run.
 """
 
 from __future__ import annotations
@@ -28,10 +30,12 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from functools import partial
 
+from pa_core.claims.records import EdgeRecord, NodeRecord
+from pa_core.claims.schema import ABOUT, ORGANIZATION, PERSON
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction, identify, topics, triage
+from pa_core.librarian import extraction, identify, loops, topics, triage
 from pa_core.librarian.assemble import Assembled, assemble, statement_id
 from pa_core.librarian.extraction import Extraction
 from pa_core.librarian.identify import Identifier
@@ -111,6 +115,22 @@ def rebuild(
         ) from error
     assembled.records.nodes.extend(resolved.nodes)
     assembled.records.edges.extend(resolved.edges)
+    looper = loops.LoopResolver(
+        ModelClient(calls.counting(loops.STAGE, models.default, backend_for(models.default))),
+        cache,
+        loops.resolver_version(models.default),
+        owner_id=assembled.owner_id,
+        names=_party_names(assembled.records.nodes),
+    )
+    try:
+        closed = looper.resolve(assembled.loops, _topics_by_statement(resolved.edges))
+    except PaError as error:
+        raise LibrarianError(
+            "loop resolution failed, so nothing was published; the decisions made so far are "
+            f"cached for the next run: {error}"
+        ) from error
+    assembled.records.nodes.extend(closed.nodes)
+    assembled.records.edges.extend(closed.edges)
     assembled.records.validate()
     published = builder.build(assembled.records)
 
@@ -133,6 +153,7 @@ def rebuild(
             extraction.STAGE: extractor.cache_counts,
             identify.STAGE: identifier.cache_counts,
             topics.STAGE: resolver.cache_counts,
+            loops.STAGE: looper.cache_counts,
         },
         model_calls=calls.by_stage(),
         statements=StatementCounts(
@@ -229,6 +250,22 @@ def _topic_inputs(
                 )
             )
     return inputs
+
+
+def _party_names(nodes: Iterable[NodeRecord]) -> dict[str, str]:
+    return {
+        node.id: str(node.properties["name"])
+        for node in nodes
+        if node.label in (PERSON.label, ORGANIZATION.label)
+    }
+
+
+def _topics_by_statement(edges: Iterable[EdgeRecord]) -> dict[str, frozenset[str]]:
+    about: defaultdict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        if edge.label == ABOUT.label:
+            about[edge.source].add(edge.target)
+    return {statement: frozenset(topic_ids) for statement, topic_ids in about.items()}
 
 
 class _Extractor:
