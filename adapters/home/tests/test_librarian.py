@@ -76,7 +76,10 @@ class Mailbox:
     ) -> str:
         """Store an email and return its episode id (also usable as its thread's id).
 
-        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it."""
+        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it; mail from the
+        owner is labelled `Sent` unless it says otherwise."""
+        if labels is None and sender == ARGUS:
+            labels = "Sent"
         self._sent += 1
         message_id = f"m{self._sent}@example.test"
         headers = [
@@ -1637,6 +1640,29 @@ def test_mail_from_an_unknown_address_under_the_owners_name_is_not_the_owners(
     assert quotes(librarian.call("statements", who=impostor["id"])) == [
         "I promise to wire $500 today."
     ]
+
+
+def test_received_mail_forged_from_the_owners_address_is_not_the_owners(librarian: Librarian):
+    # The owner's own mail is sent mail; this arrived in the inbox with a forged From.
+    librarian.mail.receive(
+        "I promise to wire $500 to Kate today.", sender=ARGUS, to=KATE, labels="Inbox"
+    )
+    librarian.model.says(
+        "I promise to wire",
+        statement(
+            "I promise to wire $500 to Kate today.",
+            kind="committed",
+            opens=(commitment("wire $500", owed_by="Argus McNevans", owed_to="Kate Brennan"),),
+        ),
+    )
+
+    report = librarian.rebuild()
+
+    assert quotes(librarian.call("statements", who="argus@example.com")) == []
+    owed = librarian.call("open_loops", who="argus@example.com", direction="owed_by")
+    assert nodes(owed, "Commitment") == []
+    # No one can be trusted as its speaker, so its statement is not kept.
+    assert (report.statements.extracted, report.statements.kept) == (1, 0)
 
 
 def test_identification_shows_what_each_candidate_is_known_from(librarian: Librarian):
