@@ -42,10 +42,10 @@ known-first-party = ["pa_core", "pa_home", "pa_evals"]
 [tool.pyright]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
-include = ["core", "adapters/home", "evals"]
+include = ["core", "adapters/home", "evals", "deploy/home/tests"]
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["core/tests", "adapters/home/tests", "evals/tests"]
+testpaths = ["core/tests", "adapters/home/tests", "evals/tests", "deploy/home/tests"]
 addopts = ["--import-mode=importlib", "--strict-markers"]
