@@ -9,13 +9,13 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, tzinfo
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from pa_core.claims.queries import ClaimsGraph, Schema
+from pa_core.claims.queries import ClaimsGraph, Direction, Schema
 from pa_core.claims.tools import ClaimsTools, QueryResult, ToolResult
 from pa_core.errors import PaError
 
@@ -93,9 +93,7 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
-    def open_loops(
-        who: str | None = None, direction: Literal["owed_by", "owed_to"] | None = None
-    ) -> ToolResult:
+    def open_loops(who: str | None = None, direction: Direction | None = None) -> ToolResult:
         """The requests and commitments still open: "who still owes me what?", "what have I
         promised?", "who hasn't answered me?".
 
