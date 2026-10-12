@@ -185,7 +185,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27, #30, #31, #33), and Ladybug Explorer beside it (#46): the steps only the owner can do, and the deploy
+# Sets up the PA VM on the devbox (#27, #30, #31, #33, #45), and Ladybug Explorer beside it (#46): the steps only the owner can do, and the deploy
 # scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh
 
@@ -320,9 +320,9 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
-say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
-say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
-say "way back. Nothing else of the data root goes in."
+say "L0 goes in read-only at $PA_VM_L0, and the claims graph at $PA_VM_GRAPH, enforced on the"
+say "devbox so even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
@@ -330,8 +330,8 @@ pause
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
 say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
-say "pushed to GitHub."
+say "runs uv sync, then renders the agent project into $PA_VM_PROJECT, with the PA MCP"
+say "server reading the claims graph. The ref must be pushed to GitHub."
 upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
 default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
 printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
@@ -423,9 +423,9 @@ pause
 
 # ── 15 ────────────────────────────────────────────────────────────────────
 stage "Store check"
-say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
-say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
-say "filesystem of its own; nothing else of the data root is visible."
+say "From inside the VM: L0 and the claims graph are readable where the agent project says, and"
+say "unwritable even as root; inbox/assistant_chat/ is writable, and on the devbox a"
+say "nosuid,nodev,noexec filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then
   ok "the store's mounts hold"
@@ -549,4 +549,5 @@ note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
 note "And for #46's: after a pa librarian rebuild, deploy/home/check-explorer.sh shows the new build."
+note "And for #45's: chat from your phone about a topic; the answer uses the graph's tools."
 printf '\n'
