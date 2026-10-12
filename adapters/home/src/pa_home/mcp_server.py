@@ -10,14 +10,27 @@ from pa_core.claims.server import create_server
 from pa_home.graph import extensions
 from pa_home.graph.layout import GraphDirectory
 from pa_home.graph.queries import LadybugClaimsGraph
-from pa_home.graph.reader import CurrentBuild
+from pa_home.graph.reader import Limits
+from pa_home.graph.worker import DOMAIN_LIMITS, QUERY_LIMITS, GuardedWorker
 
 
-def graph_server(graph_dir: Path, *, extensions_root: Path | None = None) -> MCPServer:
+def graph_server(
+    graph_dir: Path,
+    *,
+    extensions_root: Path | None = None,
+    domain_limits: Limits = DOMAIN_LIMITS,
+    query_limits: Limits = QUERY_LIMITS,
+) -> MCPServer:
     """The server over whichever build `graph_dir/current` points at when each call starts.
+
+    The domain queries and `find` run in one guarded worker process, and the `query` tool's
+    queries in another, each under its own limits, so neither a runaway query nor an engine
+    crash takes the server down, and a slow `query` doesn't hold up the domain queries.
 
     It never downloads: the full-text extension must already be at the pinned local path.
     """
     fts = extensions.verified(extensions_root or extensions.extensions_dir(), extensions.FTS)
-    runner = CurrentBuild(GraphDirectory(graph_dir), fts_extension=fts)
-    return create_server(LadybugClaimsGraph(runner))
+    graph = GraphDirectory(graph_dir)
+    domain = GuardedWorker(graph, fts_extension=fts, limits=domain_limits)
+    open_ended = GuardedWorker(graph, fts_extension=fts, limits=query_limits)
+    return create_server(LadybugClaimsGraph(domain, query_runner=open_ended))

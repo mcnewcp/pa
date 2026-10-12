@@ -10,6 +10,7 @@ adapter, and add a tool for it in `ClaimsTools` and `create_server`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
@@ -57,6 +58,72 @@ class Found(BaseModel):
     graph: Graph = Graph()
 
 
+class Rows(BaseModel):
+    """What `query` returns from an adapter: its rows, and every node and edge in them."""
+
+    columns: list[str]
+    rows: list[dict[str, Any]] = Field(
+        description="One object per row, by column. A node or edge appears as its id; it is in "
+        "`nodes` or `edges`. A path appears as {nodes: [ids], edges: [ids]}."
+    )
+    truncated: bool = Field(description="True when there were more rows than the row cap.")
+    graph: Graph = Graph()
+
+
+class Property(BaseModel):
+    name: str
+    type: str
+
+
+class Connection(BaseModel):
+    source: str = Field(description="The table an edge of this type comes from.")
+    target: str = Field(description="The table it goes to.")
+
+
+class Table(BaseModel):
+    name: str
+    kind: str = Field(description="NODE or REL, in the engine's words.")
+    properties: list[Property]
+    connections: list[Connection] = Field(
+        default=[], description="For a relationship table, the node tables it joins."
+    )
+
+
+class Index(BaseModel):
+    table: str
+    name: str
+    type: str
+    properties: list[str]
+
+
+class DomainQueryText(BaseModel):
+    name: str
+    text: str = Field(description="The query exactly as the domain tool runs it.")
+    rules: str = Field(description="What it includes and excludes, and why.")
+    parameters: list[str] = Field(description="The parameters it takes, as `$name` in `text`.")
+
+
+class QueryLimits(BaseModel):
+    max_rows: int | None = Field(description="Rows past this are cut off, and flagged.")
+    timeout_seconds: float
+    memory_mb: int = Field(description="A query using more is stopped.")
+    starts: list[str] = Field(description="The clauses a statement may start with.")
+    procedures: list[str] = Field(description="The only procedures CALL may run.")
+    rejected: list[str] = Field(description="Keywords that get a statement rejected.")
+
+
+class Schema(BaseModel):
+    """What `schema` returns: the current build's live schema, the domain queries' own text
+    to adapt for `query`, and `query`'s limits."""
+
+    language: str
+    tables: list[Table]
+    indexes: list[Index]
+    domain_queries: list[DomainQueryText]
+    query_limits: QueryLimits
+    notes: list[str] = Field(description="Quirks of the query language worth knowing.")
+
+
 class ClaimsGraph(Protocol):
     """The domain queries over the current build. Times are aware datetimes."""
 
@@ -81,4 +148,14 @@ class ClaimsGraph(Protocol):
         """What happened about the topic with id `topic`, from `since` (inclusive) up to
         `until` (exclusive), in time order: its statements, with their speakers and
         episodes."""
+        ...
+
+    def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
+        """One read-only statement in the engine's query language, run under the query
+        limits. Raises a `PaError` saying why when it is rejected or stopped."""
+        ...
+
+    def schema(self) -> Schema:
+        """The current build's live schema, every domain query's text and rules, and the
+        `query` limits."""
         ...

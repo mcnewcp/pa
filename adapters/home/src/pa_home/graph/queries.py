@@ -2,22 +2,42 @@
 
 Each domain query is a Cypher string and a short rules note saying what it includes and
 excludes, and why. Code only binds parameters and shapes rows; what a query returns is decided
-by its Cypher alone, which is what `schema()` will show the assistant.
+by its Cypher alone, which is what `schema()` shows the assistant.
 
 To add a domain query: define a `DomainQuery`, add it to `DOMAIN_QUERIES`, and add the method
 that binds and shapes it to `LadybugClaimsGraph`. Queries return nodes and relationships with
 both endpoints in the same row, so `shape` can give every edge its endpoints' stable ids.
+`schema()` lists every query in `DOMAIN_QUERIES`, and a test runs each one through the `query`
+tool, so a domain query must also pass its allowlist (`pa_home.graph.guard`).
+
+The `query` tool's open-ended Cypher is checked against that allowlist here, before it is
+sent to the query worker, and shaped the same way, with paths unpacked.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match
+from pa_core.claims.queries import (
+    DomainQueryText,
+    Found,
+    Graph,
+    GraphEdge,
+    GraphNode,
+    Match,
+    QueryLimits,
+    Rows,
+    Schema,
+)
 from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
-from pa_home.graph.reader import CypherRunner, Row
+from pa_core.errors import PaError
+from pa_home.graph import guard
+from pa_home.graph.live_schema import DIALECT_NOTES, LANGUAGE, live_indexes, live_tables
+from pa_home.graph.reader import CypherRunner, QueryRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
 
 
@@ -26,6 +46,11 @@ class DomainQuery:
     name: str
     cypher: str
     rules: str
+
+    @property
+    def parameters(self) -> list[str]:
+        """Its `$name` parameters, in order of first use."""
+        return list(dict.fromkeys(re.findall(r"\$([A-Za-z_][A-Za-z0-9_]*)", self.cypher)))
 
 
 FIND_EXACT = DomainQuery(
@@ -138,10 +163,12 @@ DOMAIN_QUERIES: tuple[DomainQuery, ...] = (
 
 
 class LadybugClaimsGraph:
-    """`ClaimsGraph` over LadybugDB, running every query through a `CypherRunner`."""
+    """`ClaimsGraph` over LadybugDB: the domain queries run through `runner`, and the `query`
+    tool's open-ended queries, once allowlisted, through `query_runner` under its limits."""
 
-    def __init__(self, runner: CypherRunner) -> None:
+    def __init__(self, runner: CypherRunner, *, query_runner: QueryRunner) -> None:
         self._runner = runner
+        self._query_runner = query_runner
 
     def find(self, name: str) -> Found:
         key = " ".join(name.split()).lower()
@@ -184,6 +211,47 @@ class LadybugClaimsGraph:
         rows.sort(key=lambda row: row["at"])  # stable, so each part's own order breaks ties
         return shape(rows).graph.as_graph()
 
+    def schema(self) -> Schema:
+        limits = self._query_runner.limits
+        return Schema(
+            language=LANGUAGE,
+            tables=live_tables(self._runner),
+            indexes=live_indexes(self._runner),
+            domain_queries=[
+                DomainQueryText(
+                    name=query.name,
+                    text=query.cypher,
+                    rules=query.rules,
+                    parameters=query.parameters,
+                )
+                for query in DOMAIN_QUERIES
+            ],
+            query_limits=QueryLimits(
+                max_rows=limits.max_rows,
+                timeout_seconds=limits.timeout_seconds,
+                memory_mb=min(limits.memory_bytes, limits.buffer_pool_bytes) >> 20,
+                starts=list(guard.READ_CLAUSES),
+                procedures=list(guard.PROCEDURES),
+                rejected=list(guard.REJECTED),
+            ),
+            notes=list(DIALECT_NOTES),
+        )
+
+    def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
+        guard.check_read_only(text)
+        fetched = self._query_runner.fetch(text, parameters)
+        shaped = shape(fetched.rows)
+        return Rows(
+            columns=fetched.columns,
+            rows=shaped.rows,
+            truncated=fetched.truncated,
+            graph=shaped.graph.as_graph(),
+        )
+
+
+class UnshapeableRows(PaError):
+    """Rows that can't be shaped into a graph."""
+
 
 @dataclass
 class _ShapedGraph:
@@ -204,31 +272,53 @@ class Shaped:
 def shape(rows: list[Row]) -> Shaped:
     """Every node and relationship in `rows` as a graph with stable ids, in first-seen order.
 
-    LadybugDB's internal ids are used only to find each relationship's endpoints among the
-    nodes in the same result, and never leave this function.
+    Nodes and relationships are found anywhere in a row: in a column, in a list, or in a path.
+    In the shaped rows each is replaced by its stable id, and a path by `{"nodes": [ids],
+    "edges": [ids]}`. LadybugDB's internal ids are used only to find each relationship's
+    endpoints among the nodes in the same result, and never leave this function.
     """
     graph = _ShapedGraph({}, {})
     internal: dict[tuple[int, int], str] = {}
     for row in rows:
         for value in row.values():
-            if _is_node(value):
-                node = _node(value)
-                graph.nodes_by_id.setdefault(node.id, node)
-                internal[_internal_id(value["_ID"])] = node.id
-    shaped_rows = []
-    for row in rows:
-        shaped: dict[str, Any] = {}
-        for column, value in row.items():
-            if _is_node(value):
-                shaped[column] = value["id"]
-            elif _is_relationship(value):
-                edge = _edge(value, internal)
-                graph.edges_by_id.setdefault(edge.id, edge)
-                shaped[column] = edge.id
-            else:
-                shaped[column] = _plain(value)
-        shaped_rows.append(shaped)
+            _collect_nodes(value, graph, internal)
+    shaped_rows = [
+        {column: _shape_value(value, graph, internal) for column, value in row.items()}
+        for row in rows
+    ]
     return Shaped(graph=graph, rows=shaped_rows)
+
+
+def _collect_nodes(value: Any, graph: _ShapedGraph, internal: dict[tuple[int, int], str]) -> None:
+    if _is_node(value):
+        node = _node(value)
+        graph.nodes_by_id.setdefault(node.id, node)
+        internal[_internal_id(value["_ID"])] = node.id
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_nodes(item, graph, internal)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_nodes(item, graph, internal)
+
+
+def _shape_value(value: Any, graph: _ShapedGraph, internal: dict[tuple[int, int], str]) -> Any:
+    if _is_node(value):
+        return value["id"]
+    if _is_relationship(value):
+        edge = _edge(value, internal)
+        graph.edges_by_id.setdefault(edge.id, edge)
+        return edge.id
+    if _is_path(value):
+        return {
+            "nodes": [_shape_value(node, graph, internal) for node in value["_NODES"]],
+            "edges": [_shape_value(rel, graph, internal) for rel in value["_RELS"]],
+        }
+    if isinstance(value, dict):
+        return {key: _shape_value(item, graph, internal) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shape_value(item, graph, internal) for item in value]
+    return _plain(value)
 
 
 def _is_node(value: Any) -> bool:
@@ -239,18 +329,30 @@ def _is_relationship(value: Any) -> bool:
     return isinstance(value, dict) and "_SRC" in value and "_DST" in value
 
 
+def _is_path(value: Any) -> bool:
+    return isinstance(value, dict) and "_NODES" in value and "_RELS" in value
+
+
 def _internal_id(value: dict[str, int]) -> tuple[int, int]:
     return (value["table"], value["offset"])
 
 
-_DECLARED = {t.label: frozenset(t.properties) for t in (*NODE_TYPES, *EDGE_TYPES)}
+_DECLARED: dict[str, frozenset[str]] = {
+    declared.label: frozenset(declared.properties) for declared in (*NODE_TYPES, *EDGE_TYPES)
+}
 
 
 def _properties(value: dict[str, Any]) -> dict[str, Any]:
-    """The properties its type declares. A node matched under several labels at once, as in
-    `(n:Person:Topic)`, also carries the other labels' columns as nulls; they are left out."""
-    declared = _DECLARED[value["_LABEL"]]
-    return {key: _plain(item) for key, item in value.items() if key in declared}
+    """The properties its type declares. A node in a path carries every node table's
+    properties, and one matched under several labels at once, as in `(n:Person:Topic)`, the
+    other labels' columns; those come back null, so the declaration decides which are its own."""
+    declared = _DECLARED.get(value["_LABEL"])
+    hidden = {"id", "episode_ids", SEARCH_TEXT}
+    return {
+        key: _plain(item)
+        for key, item in value.items()
+        if not key.startswith("_") and key not in hidden and (declared is None or key in declared)
+    }
 
 
 def _node(value: dict[str, Any]) -> GraphNode:
@@ -267,9 +369,10 @@ def _edge(value: dict[str, Any], internal: dict[tuple[int, int], str]) -> GraphE
         source = internal[_internal_id(value["_SRC"])]
         target = internal[_internal_id(value["_DST"])]
     except KeyError:
-        raise ValueError(
-            f"a {value['_LABEL']} relationship came back without both of its nodes; "
-            "domain queries must return each relationship's endpoints too"
+        raise UnshapeableRows(
+            f"A {value['_LABEL']} relationship came back without both of its nodes, so its "
+            "ends have no ids: return each relationship with both of its nodes, or the whole "
+            "path."
         ) from None
     return GraphEdge(
         id=value["id"],
