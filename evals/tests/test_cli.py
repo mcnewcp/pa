@@ -1,7 +1,11 @@
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -416,6 +420,66 @@ def test_each_committed_baseline_still_renders_as_a_report(baseline):
     assert results.configuration is None
     assert results.questions[0].cost_usd is None
     assert "| Overall | n/a | n/a | n/a | n/a |" in report
+
+
+@pytest.fixture
+def librarian_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A `claude` stand-in on PATH for the librarian's calls: it finds nothing worth recording
+    in any episode, and logs each call to the file returned."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "claude-calls.log"
+    script = bin_dir / "claude"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            f"""\
+            import json, sys
+            schema = json.loads(sys.argv[sys.argv.index("--json-schema") + 1])
+            sys.stdin.read()
+            properties = schema["properties"]
+            if "candidate" in properties:
+                output = {{"candidate": None}}
+            elif "relevant" in properties:
+                output = {{"relevant": False, "reason": "stand-in"}}
+            elif "placements" in properties:
+                output = {{"placements": []}}
+            else:
+                output = {{"statements": []}}
+            with open({str(log)!r}, "a") as calls:
+                calls.write(json.dumps(sorted(properties)) + "\\n")
+            print(json.dumps({{"type": "result", "is_error": False, "result": "",
+                              "structured_output": output}}))
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+def test_a_graph_configuration_builds_the_graph_and_a_second_run_hits_the_librarians_cache(
+    tmp_path, scripts, librarian_claude
+):
+    runs = tmp_path / "runs"
+    cache = tmp_path / "librarian-cache"
+    graph = ["--configuration", "graph-plus-files", "--librarian-cache", str(cache)]
+
+    assert pa_eval_run(runs / "first", scripts, "--only", "hotel-block-deadline", *graph) == 0
+    calls = librarian_claude.read_text().count("\n")
+    assert pa_eval_run(runs / "second", scripts, "--only", "hotel-block-deadline", *graph) == 0
+
+    # The fixture corpus's two emails, daily note, and calendar event, extracted once.
+    assert calls == librarian_claude.read_text().count("\n") == 4
+    [first] = (runs / "first").iterdir()
+    [second] = (runs / "second").iterdir()
+    assert "| extraction | 0 | 4 | claude-sonnet-5-5: 4 |" in (first / "report.md").read_text()
+    report = (second / "report.md").read_text()
+    assert "- Configuration: graph-plus-files" in report
+    assert f"- Librarian cache: {cache}" in report
+    assert "| extraction | 4 | 0 | none |" in report
+    results = json.loads((second / "results.json").read_text())
+    assert results["librarian"]["model_calls"] == {}
 
 
 def test_compare_says_when_a_directory_holds_no_runs(tmp_path, capsys):

@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from pa_core.librarian.report import BuildReport, CacheCounts, EpisodeCounts, StatementCounts
 from pa_evals.eval_set import Category
 
 
@@ -90,12 +91,46 @@ class IngestCounts(BaseModel):
     quarantined: int
 
 
+class LibrarianRun(BaseModel):
+    """What building the run's claims graph did and cost: its build report, less the build's
+    id and start time."""
+
+    extractor_version: str
+    models: dict[str, str]
+    """The model (and effort) of each stage."""
+    duration_seconds: float
+    episodes: EpisodeCounts
+    cache: dict[str, CacheCounts]
+    """Hits and misses by stage."""
+    model_calls: dict[str, dict[str, int]]
+    """Calls by stage, then by model."""
+    statements: StatementCounts
+    nodes: dict[str, int]
+    edges: dict[str, int]
+
+    @classmethod
+    def of(cls, report: BuildReport) -> LibrarianRun:
+        return cls.model_validate(report.model_dump(exclude={"build_id", "started_at"}))
+
+
+class InjectionChecks(BaseModel):
+    """The injection checks a run's graph passed (a failed one stops the run)."""
+
+    adversarial_episodes: list[str]
+    checks: list[str]
+    """The rules checked."""
+
+
 class RunResults(BaseModel):
     configuration: str | None = None
     """The configuration the run asked, which keys its results in a comparison. None in results
     written before configurations were named."""
     setup: dict[str, str] = {}
     """How the run was set up (for example which agent runner and judge), for the report."""
+    librarian: LibrarianRun | None = None
+    """The build of the claims graph the agent was given; None when it had files alone."""
+    injection_checks: InjectionChecks | None = None
+    """The injection checks run against that build; None when there was none."""
     as_of: datetime
     """The eval set's default as-of time."""
     ingest: IngestCounts

@@ -5,9 +5,10 @@ A storage adapter supplies the `ClaimsGraph` and runs the server over stdio.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -157,6 +158,15 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server.add_tool(schema, annotations=_READ_ONLY)
     server.add_tool(query, annotations=_READ_ONLY)
     return server
+
+
+def tool_names() -> tuple[str, ...]:
+    """The names of the server's tools, as it lists them to a client.
+
+    The names alone, with no graph behind them: for hiding some of the tools from a session.
+    """
+    listed = asyncio.run(create_server(cast(ClaimsGraph, None)).list_tools())
+    return tuple(tool.name for tool in listed)
 
 
 @contextmanager
