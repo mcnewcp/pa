@@ -1,8 +1,10 @@
 """The corpus generator on an extended spec: the sample spec plus its two extension files."""
 
 import hashlib
+import itertools
 import json
 import shutil
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -269,6 +271,25 @@ def test_a_run_interrupted_partway_resumes_without_repeating_a_completed_call(
     uninterrupted = tmp_path / "uninterrupted"
     generate_corpus(spec, fake_client(), uninterrupted)
     assert snapshot(out) == snapshot(uninterrupted)
+
+
+def test_model_calls_run_in_parallel_and_write_what_one_at_a_time_would(
+    spec: StorylineSpec, tmp_path: Path
+) -> None:
+    together = threading.Barrier(4, timeout=5)
+    arrivals = itertools.count()
+
+    def four_at_once(request: ModelRequest) -> dict[str, Any]:
+        if next(arrivals) < 4:
+            together.wait()  # broken, failing the run, unless 4 calls are in flight at once
+        return prose(request)
+
+    generate_corpus(
+        spec, ModelClient(FakeModelBackend.replying(four_at_once)), tmp_path / "par", workers=4
+    )
+    generate_corpus(spec, fake_client(), tmp_path / "one", workers=1)
+
+    assert snapshot(tmp_path / "par") == snapshot(tmp_path / "one")
 
 
 def test_a_rerun_with_the_cache_makes_no_model_calls(spec: StorylineSpec, tmp_path: Path) -> None:

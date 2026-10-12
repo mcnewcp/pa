@@ -12,12 +12,14 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email import policy
 from email.headerregistry import Address as MailAddress
 from email.message import EmailMessage
 from email.utils import format_datetime
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
@@ -91,6 +93,9 @@ class BulkMail(BaseModel):
 BULK_BATCH = 25
 """How many bulk emails one model call writes."""
 
+DEFAULT_WORKERS = 4
+"""How many model calls are made at once, unless told otherwise."""
+
 
 def _bulk_output(count: int) -> type[BulkMail]:
     """The output for a batch of `count` bulk emails: exactly that many, so none is missed."""
@@ -109,14 +114,20 @@ _CHAT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, UID_DOMAIN)
 
 
 def generate_corpus(
-    spec: StorylineSpec, client: ModelClient, out_dir: Path, *, cache_dir: Path | None = None
+    spec: StorylineSpec,
+    client: ModelClient,
+    out_dir: Path,
+    *,
+    cache_dir: Path | None = None,
+    workers: int = DEFAULT_WORKERS,
 ) -> list[Path]:
     """Write a raw payload for every event in `spec` under `out_dir`, which must be empty.
 
     For a spec with extensions, only the extensions' events are written: the base spec's
     payloads are frozen already. Each payload goes in its source's directory, as in the inbox.
-    The model is asked for prose only. Nothing is written until all of it is generated, so a
-    failed model call leaves `out_dir` as it was. Returns the payload files, in path order.
+    The model is asked for prose only, by up to `workers` calls at once. Nothing is written
+    until all of it is generated, so a failed model call leaves `out_dir` as it was. Returns
+    the payload files, in path order.
 
     With a `cache_dir`, every reply is kept there as it arrives (see `ProseCache`), so a run
     that fails partway resumes without asking the model again for what it already wrote.
@@ -124,7 +135,7 @@ def generate_corpus(
     if out_dir.exists() and any(out_dir.iterdir()):
         raise GeneratedCorpusError(f"{out_dir} is not empty; delete it or choose another directory")
     cache = ProseCache(cache_dir) if cache_dir is not None else None
-    payloads = _Generator(spec, client, cache).payloads()
+    payloads = _Generator(spec, client, cache, workers).payloads()
     out_dir.mkdir(parents=True, exist_ok=True)
     for path, raw in payloads.items():
         target = out_dir / path
@@ -186,23 +197,37 @@ class _Section:
     text: str
 
 
+type _Task = Callable[[], dict[str, bytes]]
+"""Generates some payloads, making its model calls one after another."""
+
+
 class _Generator:
-    def __init__(self, spec: StorylineSpec, client: ModelClient, cache: ProseCache | None) -> None:
+    """Generates the payloads, its model calls split into tasks run on a worker pool.
+
+    Calls that depend on one another are in one task, made in order: an email thread (a reply
+    follows on from the message it answers), a day's daily note with its corrections, and a
+    chat session. Everything else (each thread, day, session, and batch of bulk mail) is
+    independent, so the result is the same however many workers there are.
+    """
+
+    def __init__(
+        self, spec: StorylineSpec, client: ModelClient, cache: ProseCache | None, workers: int
+    ) -> None:
         self.spec = spec
         self.client = client
         self.cache = cache
+        self.workers = workers
         # An extended spec's base payloads are frozen already, so only its extension is written.
         self.events = [event for event in spec.events if not spec.in_base(event.id)]
 
     def payloads(self) -> dict[str, bytes]:
         payloads: dict[str, bytes] = {}
-        payloads.update(self._emails())
         for event in self.events:
             if isinstance(event, CalendarEvent | CalendarUpdate):
                 payloads[payload_path(self.spec, event)] = self._calendar(event)
-        payloads.update(self._daily_notes())
-        payloads.update(self._chats())
-        payloads.update(self._bulk())
+        tasks = [*self._email_threads(), *self._note_days(), *self._chat_sessions()]
+        for written in _run(tasks + self._bulk_batches(), self.workers):
+            payloads.update(written)
         return dict(sorted(payloads.items()))
 
     def _generate[T: BaseModel](self, prompt: str, output: type[T]) -> T:
@@ -215,11 +240,17 @@ class _Generator:
 
     # Email
 
-    def _emails(self) -> dict[str, bytes]:
+    def _email_threads(self) -> list[_Task]:
+        threads: dict[str, list[EmailEvent]] = defaultdict(list)
+        for event in self.events:
+            if isinstance(event, EmailEvent):
+                threads[_thread_root(self.spec, event)].append(event)
+        return [partial(self._email_thread, emails) for emails in threads.values()]
+
+    def _email_thread(self, emails: list[EmailEvent]) -> dict[str, bytes]:
         spec = self.spec
-        emails = [event for event in self.events if isinstance(event, EmailEvent)]
         # A reply is written after the message it replies to, so its prose can follow on.
-        emails.sort(key=lambda event: spec.local(event.at))
+        emails = sorted(emails, key=lambda event: spec.local(event.at))
         bodies: dict[str, str] = {}
         subjects: dict[str, str] = {}
         payloads: dict[str, bytes] = {}
@@ -355,35 +386,40 @@ class _Generator:
 
     # Daily notes
 
-    def _daily_notes(self) -> dict[str, bytes]:
+    def _note_days(self) -> list[_Task]:
         spec = self.spec
         days: dict[dt.date, list[NoteSection]] = defaultdict(list)
+        corrections: dict[dt.date, list[NoteCorrection]] = defaultdict(list)
         for event in self.events:
             if isinstance(event, NoteSection):
                 days[event.date].append(event)
-        corrections = sorted(
-            (event for event in self.events if isinstance(event, NoteCorrection)),
-            key=lambda event: spec.local(event.at),
-        )
-        payloads: dict[str, bytes] = {}
-        notes: dict[dt.date, dict[str, _Section]] = {}
-        for day in sorted(days):
-            notes[day] = {
-                section.id: _Section(section.heading, self._prose(self._note_prompt(section)))
-                for section in days[day]
-            }
-            payloads[payload_path(spec, days[day][0])] = self._note(
-                day, notes[day].values(), spec.note_captured_at(day)
+            elif isinstance(event, NoteCorrection):
+                section = spec.event(event.corrects)
+                assert isinstance(section, NoteSection)
+                corrections[section.date].append(event)
+        return [partial(self._daily_note, day, days[day], corrections[day]) for day in sorted(days)]
+
+    def _daily_note(
+        self, day: dt.date, sections: list[NoteSection], corrections: list[NoteCorrection]
+    ) -> dict[str, bytes]:
+        """A day's daily note, and a new version of it for each correction, in time order."""
+        spec = self.spec
+        note = {
+            section.id: _Section(section.heading, self._prose(self._note_prompt(section)))
+            for section in sections
+        }
+        payloads = {
+            payload_path(spec, sections[0]): self._note(
+                day, note.values(), spec.note_captured_at(day)
             )
-        for correction in corrections:
+        }
+        for correction in sorted(corrections, key=lambda event: spec.local(event.at)):
             section_event = spec.event(correction.corrects)
             assert isinstance(section_event, NoteSection)
-            section = notes[section_event.date][section_event.id]
+            section = note[section_event.id]
             section.text = self._prose(self._correction_prompt(section_event, section, correction))
             payloads[payload_path(spec, correction)] = self._note(
-                section_event.date,
-                notes[section_event.date].values(),
-                spec.local(correction.at),
+                day, note.values(), spec.local(correction.at)
             )
         return payloads
 
@@ -440,24 +476,27 @@ class _Generator:
 
     # Bulk mail
 
-    def _bulk(self) -> dict[str, bytes]:
-        """Bulk mail, written BULK_BATCH emails of a background section to a model call."""
+    def _bulk_batches(self) -> list[_Task]:
+        """Bulk mail, BULK_BATCH emails of a background section to a model call."""
         sections: dict[str, list[BulkEmail]] = defaultdict(list)
         for event in self.events:
             if isinstance(event, BulkEmail):
                 sections[event.background].append(event)
-        payloads: dict[str, bytes] = {}
-        for section in self.spec.background:
-            emails = sections[section.id]
-            for start in range(0, len(emails), BULK_BATCH):
-                batch = emails[start : start + BULK_BATCH]
-                prompt = self._bulk_prompt(section, batch)
-                written = self._generate(prompt, _bulk_output(len(batch)))
-                for email, prose in zip(batch, written.emails, strict=True):
-                    payloads[payload_path(self.spec, email)] = self._email(
-                        email, prose.subject.strip(), prose.body.strip()
-                    )
-        return payloads
+        return [
+            partial(self._bulk_batch, section, emails[start : start + BULK_BATCH])
+            for section in self.spec.background
+            for emails in [sections[section.id]]
+            for start in range(0, len(emails), BULK_BATCH)
+        ]
+
+    def _bulk_batch(self, section: Background, batch: list[BulkEmail]) -> dict[str, bytes]:
+        written = self._generate(self._bulk_prompt(section, batch), _bulk_output(len(batch)))
+        return {
+            payload_path(self.spec, email): self._email(
+                email, prose.subject.strip(), prose.body.strip()
+            )
+            for email, prose in zip(batch, written.emails, strict=True)
+        }
 
     def _bulk_prompt(self, section: Background, batch: list[BulkEmail]) -> str:
         spec = self.spec
@@ -490,18 +529,21 @@ class _Generator:
 
     # Assistant chat
 
-    def _chats(self) -> dict[str, bytes]:
+    def _chat_sessions(self) -> list[_Task]:
+        sessions: dict[str, list[ChatEvent]] = defaultdict(list)
+        for event in self.events:
+            if isinstance(event, ChatEvent):
+                sessions[_session(event)].append(event)
+        return [partial(self._chat_session, chats) for chats in sessions.values()]
+
+    def _chat_session(self, chats: list[ChatEvent]) -> dict[str, bytes]:
+        """A session's exchanges, in time order, each following on from the ones before it."""
         spec = self.spec
-        chats = sorted(
-            (event for event in self.events if isinstance(event, ChatEvent)),
-            key=lambda event: spec.local(event.at),
-        )
-        sessions: dict[str, list[ChatTurn]] = defaultdict(list)
+        earlier: list[ChatTurn] = []
         payloads: dict[str, bytes] = {}
-        for event in chats:
-            session = sessions[_session(event)]
-            turns = self._generate(self._chat_prompt(event, session), ChatProse).turns
-            session.extend(turns)
+        for event in sorted(chats, key=lambda event: spec.local(event.at)):
+            turns = self._generate(self._chat_prompt(event, earlier), ChatProse).turns
+            earlier = [*earlier, *turns]
             payloads[payload_path(spec, event)] = self._chat(event, turns)
         return payloads
 
@@ -577,6 +619,29 @@ def message_id(spec: StorylineSpec, event: EmailEvent | BulkEmail) -> str:
 def calendar_uid(version: CalendarVersion) -> str:
     """A calendar event's UID, the same for every version: its first event id."""
     return f"{version.event.id}@{UID_DOMAIN}"
+
+
+def _run(tasks: list[_Task], workers: int) -> list[dict[str, bytes]]:
+    """Every task's payloads, from up to `workers` tasks at once.
+
+    When a task fails, tasks not yet started are dropped and the ones running are let finish
+    (their replies are cached), then the failure is raised.
+    """
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="corpus")
+    try:
+        futures = [pool.submit(task) for task in tasks]
+        return [future.result() for future in futures]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _thread_root(spec: StorylineSpec, event: EmailEvent) -> str:
+    """The event id of the first email in `event`'s thread."""
+    while event.reply_to:
+        parent = spec.event(event.reply_to)
+        assert isinstance(parent, EmailEvent)
+        event = parent
+    return event.id
 
 
 def _thread(spec: StorylineSpec, event: EmailEvent) -> list[str]:
