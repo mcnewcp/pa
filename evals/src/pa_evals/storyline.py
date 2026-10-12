@@ -67,6 +67,10 @@ class Calendar(FrozenModel):
     timezone: str | None = None
 
 
+type GmailCategory = Literal["promotions", "social", "updates", "forums"]
+"""The Gmail category (inbox tab) a received email is sorted into; none means Primary."""
+
+
 class EmailEvent(FrozenModel):
     id: Id
     channel: Literal["email"]
@@ -77,6 +81,7 @@ class EmailEvent(FrozenModel):
     # Unset on a reply: "Re: " plus the subject of the message it replies to.
     subject: str | None = None
     reply_to: str | None = None
+    category: GmailCategory | None = None
     what: str
 
 
@@ -379,6 +384,13 @@ def _problems(spec: StorylineSpec) -> Iterator[str]:
         for ref in _people_refs(event):
             if ref.lower() not in people:
                 yield f"event {event.id}: {ref!r} is not a cast id or a cast email address"
+        if (
+            isinstance(event, EmailEvent)
+            and event.category
+            and event.sender.lower() in people
+            and people[event.sender.lower()].id == spec.owner
+        ):
+            yield f"event {event.id}: the owner's sent mail has no Gmail category"
         match event:
             case EmailEvent(reply_to=parent_id) if parent_id is not None:
                 parent = events.get(parent_id)

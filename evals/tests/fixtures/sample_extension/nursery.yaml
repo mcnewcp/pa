@@ -15,6 +15,7 @@ storylines:
         from: nursery
         to: [argus]
         subject: Your order is confirmed
+        category: updates
         what: Bloom Street confirms two cubic yards of garden soil, delivered May 19.
       - id: nursery-note
         channel: note

@@ -123,11 +123,13 @@ class _Generator:
     def __init__(self, spec: StorylineSpec, client: ModelClient) -> None:
         self.spec = spec
         self.client = client
+        # An extended spec's base payloads are frozen already, so only its extension is written.
+        self.events = [event for event in spec.events if not spec.in_base(event.id)]
 
     def payloads(self) -> dict[str, bytes]:
         payloads: dict[str, bytes] = {}
         payloads.update(self._emails())
-        for event in self.spec.events:
+        for event in self.events:
             if isinstance(event, CalendarEvent | CalendarUpdate):
                 payloads[payload_path(self.spec, event)] = self._calendar(event)
         payloads.update(self._daily_notes())
@@ -140,7 +142,7 @@ class _Generator:
 
     def _emails(self) -> dict[str, bytes]:
         spec = self.spec
-        emails = [event for event in spec.events if isinstance(event, EmailEvent)]
+        emails = [event for event in self.events if isinstance(event, EmailEvent)]
         # A reply is written after the message it replies to, so its prose can follow on.
         emails.sort(key=lambda event: spec.local(event.at))
         bodies: dict[str, str] = {}
@@ -160,9 +162,7 @@ class _Generator:
     def _email(self, event: EmailEvent, subject: str, body: str) -> bytes:
         spec = self.spec
         message = EmailMessage(policy=policy.SMTP)
-        message["X-Gmail-Labels"] = (
-            "Sent" if spec.person(event.sender).id == spec.owner else "Inbox"
-        )
+        message["X-Gmail-Labels"] = _gmail_labels(spec, event)
         message["Message-ID"] = f"<{message_id(spec, event)}>"
         thread = _thread(spec, event)
         if thread:
@@ -275,11 +275,11 @@ class _Generator:
     def _daily_notes(self) -> dict[str, bytes]:
         spec = self.spec
         days: dict[dt.date, list[NoteSection]] = defaultdict(list)
-        for event in spec.events:
+        for event in self.events:
             if isinstance(event, NoteSection):
                 days[event.date].append(event)
         corrections = sorted(
-            (event for event in spec.events if isinstance(event, NoteCorrection)),
+            (event for event in self.events if isinstance(event, NoteCorrection)),
             key=lambda event: spec.local(event.at),
         )
         payloads: dict[str, bytes] = {}
@@ -399,6 +399,15 @@ def _thread(spec: StorylineSpec, event: EmailEvent) -> list[str]:
         thread.insert(0, message_id(spec, parent))
         current = parent
     return thread
+
+
+def _gmail_labels(spec: StorylineSpec, event: EmailEvent) -> str:
+    """The email's X-Gmail-Labels header, spelled as Gmail's Takeout export spells it."""
+    if spec.person(event.sender).id == spec.owner:
+        return "Sent"
+    if event.category is None:  # Primary
+        return "Inbox"
+    return f"Inbox,Category {event.category.capitalize()}"
 
 
 def _reply_subject(subject: str) -> str:

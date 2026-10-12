@@ -99,6 +99,14 @@ def unknown_channel(spec: Spec) -> None:
     event(spec, "wedding-day")["channel"] = "sms"
 
 
+def sent_mail_with_a_category(spec: Spec) -> None:
+    event(spec, "swim-registration-question")["category"] = "updates"
+
+
+def unknown_gmail_category(spec: Spec) -> None:
+    event(spec, "wedding-hotel-block")["category"] = "primary"
+
+
 @pytest.mark.parametrize(
     ("break_spec", "message"),
     [
@@ -118,6 +126,8 @@ def unknown_channel(spec: Spec) -> None:
         (unknown_time_zone, "unknown time zone 'America/Gotham'"),
         (event_without_what, "what"),
         (unknown_channel, "sms"),
+        (sent_mail_with_a_category, "swim-registration-question: the owner's sent mail has no"),
+        (unknown_gmail_category, "'promotions', 'social', 'updates' or 'forums'"),
     ],
 )
 def test_an_inconsistent_spec_is_refused_saying_why(
