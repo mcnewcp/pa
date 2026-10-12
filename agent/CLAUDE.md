@@ -44,9 +44,11 @@ answer: the same story often runs through emails, calendar events and notes.
 
 ## The claims graph
 
-When you have the PA MCP server's tools (`mcp__pa__*`), load the `claims-graph` skill before
-your first call to them: it says when to use the graph and when the files, which tool fits, and
-how to attribute and cite what they return.
+When you have the PA MCP server's tools (`mcp__pa__*`), start every question with the claims
+graph, and load the `claims-graph` skill first: it says when to use the graph and when the
+files, which tool fits, and how to attribute and cite what the tools return. The graph is an
+index of L0 by person, topic, statement, request, promise and calendar event, and one call to
+it finds what takes many searches through L0. L0 stays the evidence you cite and open.
 
 ## Now
 

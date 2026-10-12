@@ -11,19 +11,20 @@ and commitments with how each one closed, and calendar events with every version
 and edge carries the ids of the episodes it came from. L0 stays the **evidence**: the graph
 tells you where to look and what was said; the episodes are what you cite.
 
-## Graph or files
+## Graph first, then files
 
-- **Start with the graph** for who, what was said, what happened about a matter, what is
-  still open, how people connect, and when things are scheduled. One call there replaces many
-  greps through L0.
-- **Go to the files** when you need more than a statement's quote (the full wording, the
-  surrounding thread, details the extraction left out), and to check anything the answer
-  rests on. A statement carries its episode's id and L0 path: open that file with Read.
-- **Search the files** for what the graph leaves out: bulk mail that triage skipped
-  (promotions, social notifications, most updates and newsletters), and anything that isn't a
-  claim by someone, such as an attachment's details or a message's exact layout.
-- When the graph comes back empty or thin for something the owner clearly expects to be
-  there, search L0 before you answer.
+1. **Graph first.** Your first calls for a question go to the graph, before any search of
+   L0: `find` each person, organization or topic the question names, then the tool that fits
+   (below). Who someone is, what they said, what happened about a matter, what is still open,
+   how people connect, and when things are scheduled are all one or two graph calls, where L0
+   takes many searches.
+2. **Then open the episodes** the graph points to when you need more than a statement's
+   quote: the full wording, the surrounding thread, details the extraction left out. A
+   statement carries its episode's id and L0 path: open that file with Read.
+3. **Then search L0** for what the graph leaves out: bulk mail that triage skipped
+   (promotions, social notifications, most updates and newsletters), anything that isn't a
+   claim by someone (an attachment's details, a message's exact layout), and anything the
+   owner clearly expects to be there when the graph comes back empty, thin, or with an error.
 
 ## Which tool
 
