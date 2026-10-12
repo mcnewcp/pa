@@ -41,7 +41,7 @@ class Graph(BaseModel):
         return next((node for node in self.nodes if node.id == node_id), None)
 
 
-type MatchedOn = Literal["id", "address", "name", "alias", "full_text"]
+type MatchedOn = Literal["id", "address", "domain", "name", "alias", "full_text"]
 
 
 class Match(BaseModel):
@@ -128,8 +128,9 @@ class ClaimsGraph(Protocol):
     """The domain queries over the current build. Times are aware datetimes."""
 
     def find(self, name: str) -> Found:
-        """People and topics whose id, address, name, or alias is exactly `name` (any case),
-        ranked by kind of match. Only when there are none, full-text matches, best first."""
+        """People, organizations, and topics whose id, address, mail domain, name, or alias is
+        exactly `name` (any case), ranked by kind of match. Only when there are none, full-text
+        matches, best first. The graph also holds the matches' memberships (MEMBER_OF)."""
         ...
 
     def statements(
@@ -139,9 +140,9 @@ class ClaimsGraph(Protocol):
         since: datetime | None,
         until: datetime | None,
     ) -> Graph:
-        """Statements said by the node with id `who` (anyone's when None) about the topic with
-        id `topic` (any when None), from `since` (inclusive) up to `until` (exclusive), in time
-        order, with their speakers, episodes, and topics."""
+        """Statements said by the person or organization with id `who` (anyone's when None)
+        about the topic with id `topic` (any when None), from `since` (inclusive) up to `until`
+        (exclusive), in time order, with their speakers, episodes, topics, and mentions."""
         ...
 
     def timeline(self, topic: str, since: datetime | None, until: datetime | None) -> Graph:

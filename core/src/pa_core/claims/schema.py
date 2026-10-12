@@ -45,6 +45,10 @@ _S, _SS, _B, _T = (
 )
 
 PERSON = NodeType("Person", {"name": _S, "aliases": _SS, "addresses": _SS, "is_owner": _B})
+ORGANIZATION = NodeType(
+    "Organization", {"name": _S, "aliases": _SS, "domains": _SS, "addresses": _SS}
+)
+"""`addresses` are the organization's own (an appointments desk), where it writes as itself."""
 EPISODE = NodeType(
     "Episode",
     {
@@ -71,10 +75,21 @@ STATEMENT = NodeType(
 )
 TOPIC = NodeType("Topic", {"name": _S, "aliases": _SS, "description": _S})
 
-SAID = EdgeType("SAID", (("Person", "Statement"),), {})
+SAID = EdgeType("SAID", (("Person", "Statement"), ("Organization", "Statement")), {})
 RECORDED_IN = EdgeType("RECORDED_IN", (("Statement", "Episode"),), {})
-PARTICIPATED_IN = EdgeType("PARTICIPATED_IN", (("Person", "Episode"),), {"role": _S})
+PARTICIPATED_IN = EdgeType(
+    "PARTICIPATED_IN", (("Person", "Episode"), ("Organization", "Episode")), {"role": _S}
+)
 ABOUT = EdgeType("ABOUT", (("Statement", "Topic"),), {})
+MENTIONS = EdgeType("MENTIONS", (("Statement", "Person"), ("Statement", "Organization")), {})
+MEMBER_OF = EdgeType("MEMBER_OF", (("Person", "Organization"),), {})
 
-NODE_TYPES: tuple[NodeType, ...] = (PERSON, EPISODE, STATEMENT, TOPIC)
-EDGE_TYPES: tuple[EdgeType, ...] = (SAID, RECORDED_IN, PARTICIPATED_IN, ABOUT)
+NODE_TYPES: tuple[NodeType, ...] = (PERSON, ORGANIZATION, EPISODE, STATEMENT, TOPIC)
+EDGE_TYPES: tuple[EdgeType, ...] = (
+    SAID,
+    RECORDED_IN,
+    PARTICIPATED_IN,
+    ABOUT,
+    MENTIONS,
+    MEMBER_OF,
+)

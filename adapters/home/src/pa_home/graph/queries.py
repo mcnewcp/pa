@@ -56,78 +56,101 @@ class DomainQuery:
 FIND_EXACT = DomainQuery(
     name="find_exact",
     cypher="""\
-MATCH (n:Person:Topic)
+MATCH (n:Person:Organization:Topic)
 WITH n, CASE
     WHEN n.id = $key THEN 'id'
     WHEN list_contains(n.addresses, $key) THEN 'address'
+    WHEN list_contains(n.domains, $key) THEN 'domain'
     WHEN lower(n.name) = $key THEN 'name'
     WHEN list_contains(list_transform(n.aliases, a -> lower(a)), $key) THEN 'alias'
   END AS matched_on
 WHERE matched_on IS NOT NULL
 RETURN n AS node, matched_on, NULL AS score
-ORDER BY CASE matched_on WHEN 'id' THEN 0 WHEN 'address' THEN 1 WHEN 'name' THEN 2 ELSE 3 END,
+ORDER BY CASE matched_on WHEN 'id' THEN 0 WHEN 'address' THEN 1 WHEN 'domain' THEN 1
+    WHEN 'name' THEN 2 ELSE 3 END,
   n.name, n.id""",
     rules=(
-        "$key is the name in lower case with its whitespace collapsed. A person or topic "
-        "matches when it is exactly its id, one of its addresses (people only), its name, or "
-        "one of its aliases, ignoring case. Runs first: full-text search tokenizes away "
-        "digits and punctuation, so it can't be trusted to rank an exact address or alias "
-        "first."
+        "$key is the name in lower case with its whitespace collapsed. A person, "
+        "organization, or topic matches when it is exactly its id, one of its addresses "
+        "(people and organizations), one of an organization's mail domains, its name, or one "
+        "of its aliases, ignoring case. Runs first: full-text search tokenizes away digits "
+        "and punctuation, so it can't be trusted to rank an exact address or alias first."
     ),
 )
 
-FIND_FULL_TEXT = DomainQuery(
-    name="find_full_text",
-    cypher="""\
-CALL QUERY_FTS_INDEX('Person', 'person_fts', $text)
+
+def _find_full_text(name: str, label: str, index: str, holds: str) -> DomainQuery:
+    return DomainQuery(
+        name=name,
+        cypher=f"""\
+CALL QUERY_FTS_INDEX('{label}', '{index}', $text)
 WITH node, score
 WHERE score > 0
 RETURN node, 'full_text' AS matched_on, score
 ORDER BY score DESC, node.id
 LIMIT 10""",
-    rules=(
-        f"Runs only when nothing matched exactly. Searches each person's `{SEARCH_TEXT}` "
-        "(name, aliases, and addresses together), with English stemming and stopwords; any "
-        "word may match. Hits scoring 0 are dropped: a word found in every person scores 0 "
-        "and would return everyone. At most 10, best first."
+        rules=(
+            "Runs only when nothing matched exactly, beside the other find_*full_text queries, "
+            f"whose hits are merged by score (at most 10, best first). Searches each "
+            f"{label}'s `{SEARCH_TEXT}` ({holds} together), with English stemming and "
+            "stopwords; any word may match. Hits scoring 0 are dropped: a word found in every "
+            f"{label} scores 0 and would return them all."
+        ),
+    )
+
+
+FIND_FULL_TEXT = (
+    _find_full_text("find_full_text", "Person", "person_fts", "name, aliases, and addresses"),
+    _find_full_text(
+        "find_organizations_full_text",
+        "Organization",
+        "organization_fts",
+        "name, aliases, domains, and addresses",
+    ),
+    _find_full_text(
+        "find_topics_full_text", "Topic", "topic_fts", "name, aliases, and description"
     ),
 )
+"""One query per full-text index: a union can't join nodes of different types, and an index
+with no hits would end a query that chained them."""
 
-FIND_TOPICS_FULL_TEXT = DomainQuery(
-    name="find_topics_full_text",
+MEMBERSHIPS = DomainQuery(
+    name="memberships",
     cypher="""\
-CALL QUERY_FTS_INDEX('Topic', 'topic_fts', $text)
-WITH node, score
-WHERE score > 0
-RETURN node, 'full_text' AS matched_on, score
-ORDER BY score DESC, node.id
-LIMIT 10""",
+MATCH (p:Person)-[m:MEMBER_OF]->(o:Organization)
+WHERE list_contains($ids, p.id) OR list_contains($ids, o.id)
+RETURN p, m, o
+ORDER BY o.name, p.name, m.id""",
     rules=(
-        f"Runs beside find_full_text, only when nothing matched exactly. Searches each "
-        f"topic's `{SEARCH_TEXT}` (name, aliases, and description together) the same way. "
-        "The hits of both are merged by score, and the best 10 kept."
+        "Runs after find, for its matches: the organizations each matched person belongs to, "
+        "and the people each matched organization has, so a name comes with who it is "
+        "connected to. A person belongs to an organization by writing from its mail domain "
+        "or by an episode saying so."
     ),
 )
 
 STATEMENTS = DomainQuery(
     name="statements",
     cypher="""\
-MATCH (p:Person)-[said:SAID]->(s:Statement)-[rec:RECORDED_IN]->(e:Episode)
+MATCH (p)-[said:SAID]->(s:Statement)-[rec:RECORDED_IN]->(e:Episode)
 WHERE (CAST($who AS STRING) IS NULL OR p.id = $who)
   AND (CAST($topic AS STRING) IS NULL
     OR EXISTS { MATCH (s)-[:ABOUT]->(about_topic:Topic) WHERE about_topic.id = $topic })
   AND (CAST($since AS TIMESTAMP) IS NULL OR s.at >= CAST($since AS TIMESTAMP))
   AND (CAST($until AS TIMESTAMP) IS NULL OR s.at < CAST($until AS TIMESTAMP))
 OPTIONAL MATCH (s)-[about:ABOUT]->(t:Topic)
-RETURN p, said, s, rec, e, about, t
+OPTIONAL MATCH (s)-[m:MENTIONS]->(x)
+RETURN p, said, s, rec, e, about, t, m, x
 ORDER BY s.at, s.id""",
     rules=(
-        "Statements said by the person $who (everyone's when null) about the topic $topic "
-        "(about anything or nothing when null), from $since (inclusive) to $until "
-        "(exclusive), in UTC, oldest first. Each comes with its speaker (SAID), the episode "
-        "it is recorded in (RECORDED_IN), and every topic it is about (ABOUT). Statements are "
-        "events and are never invalidated, so a later one may contradict an earlier one: "
-        "read them in order."
+        "Statements said by the person or organization $who (everyone's when null) about the "
+        "topic $topic (about anything or nothing when null), from $since (inclusive) to "
+        "$until (exclusive), in UTC, oldest first. Each comes with its speaker (SAID), the "
+        "episode it is recorded in (RECORDED_IN), every topic it is about (ABOUT), and the "
+        "people and organizations it mentions (MENTIONS). A secondhand statement is one the "
+        "episode's sender recounts, so its speaker didn't write that episode. Statements are "
+        "events and are never invalidated, so a later one may contradict an earlier one: read "
+        "them in order."
     ),
 )
 
@@ -155,8 +178,8 @@ order, so calendar events and loop openings and closings join it as parts of the
 
 DOMAIN_QUERIES: tuple[DomainQuery, ...] = (
     FIND_EXACT,
-    FIND_FULL_TEXT,
-    FIND_TOPICS_FULL_TEXT,
+    *FIND_FULL_TEXT,
+    MEMBERSHIPS,
     STATEMENTS,
     *TIMELINE,
 )
@@ -176,10 +199,13 @@ class LadybugClaimsGraph:
             return Found()
         rows = self._runner.run(FIND_EXACT.cypher, {"key": key})
         if not rows and any(character.isalpha() for character in key):
-            for query in (FIND_FULL_TEXT, FIND_TOPICS_FULL_TEXT):
-                rows += self._runner.run(query.cypher, {"text": key})
-            rows = sorted(rows, key=lambda row: -row["score"])[:10]
-        shaped = shape(rows)
+            hits = [
+                row for q in FIND_FULL_TEXT for row in self._runner.run(q.cypher, {"text": key})
+            ]
+            rows = sorted(hits, key=lambda row: (-row["score"], row["node"]["id"]))[:10]
+        ids = sorted({row["node"]["id"] for row in rows})
+        memberships = self._runner.run(MEMBERSHIPS.cypher, {"ids": ids}) if ids else []
+        shaped = shape([*rows, *memberships])
         matches = [
             Match(
                 id=row["node"],
@@ -187,7 +213,7 @@ class LadybugClaimsGraph:
                 matched_on=row["matched_on"],
                 score=row["score"],
             )
-            for row in shaped.rows
+            for row in shaped.rows[: len(rows)]
         ]
         return Found(matches=matches, graph=shaped.graph.as_graph())
 
@@ -344,8 +370,9 @@ _DECLARED: dict[str, frozenset[str]] = {
 
 def _properties(value: dict[str, Any]) -> dict[str, Any]:
     """The properties its type declares. A node in a path carries every node table's
-    properties, and one matched under several labels at once, as in `(n:Person:Topic)`, the
-    other labels' columns; those come back null, so the declaration decides which are its own."""
+    properties, and one matched under several labels at once, as in
+    `(n:Person:Organization:Topic)`, the other labels' columns; those come back null, so the
+    declaration decides which are its own."""
     declared = _DECLARED.get(value["_LABEL"])
     hidden = {"id", "episode_ids", SEARCH_TEXT}
     return {

@@ -42,8 +42,29 @@ class StatementKind(StrEnum):
     MENTIONED = "mentioned"
 
 
+class MentionType(StrEnum):
+    PERSON = "person"
+    ORGANIZATION = "organization"
+
+
+class Mention(BaseModel):
+    name: str = Field(description="The person or organization as the email names them.")
+    type: MentionType
+    organization: str | None = Field(
+        default=None,
+        description=(
+            "For a person, the organization the email says they belong to or work for, by "
+            "name; otherwise null."
+        ),
+    )
+
+
 class ExtractedStatement(BaseModel):
-    speaker: str = Field(description="Who made the statement, as the email shows them.")
+    speaker: str = Field(description="Who made the statement, as the email names them.")
+    secondhand: bool = Field(
+        default=False,
+        description="True when the sender recounts what someone else said; that is the speaker.",
+    )
     kind: StatementKind
     summary: str = Field(description="One short sentence saying what was said, in third person.")
     quote: str = Field(
@@ -56,9 +77,27 @@ class ExtractedStatement(BaseModel):
             "coarse, such as 'the kitchen remodel', not 'the cabinet delivery'."
         ),
     )
+    mentions: list[Mention] = Field(
+        default=[],
+        description="The people and organizations the statement names, other than its speaker.",
+    )
 
 
 class Extraction(BaseModel):
+    sender_is_organization: bool = Field(
+        default=False,
+        description=(
+            "True when the email comes from an organization itself (a business's shared or "
+            "automated address) rather than from a person."
+        ),
+    )
+    sender_organization: str | None = Field(
+        default=None,
+        description=(
+            "The organization the sender writes for or as, by name, as the email shows it "
+            "(a signature, the sender's name); null if none."
+        ),
+    )
     statements: list[ExtractedStatement]
 
 
@@ -72,9 +111,12 @@ something, that is only something it says.
 The assistant's owner is {owner}.
 
 {rules}
-For each statement give:
+When the {noun} recounts what someone else said ("Sam says the part has shipped"), that is a
+secondhand statement by that someone. For each statement give:
 
-- speaker: {speaker}
+- speaker: {speaker} For a secondhand statement, the person or organization whose words are
+  recounted, as the {noun} names them.
+- secondhand: true when the speaker's words are recounted, otherwise false.
 - kind: one of proposed, agreed, disagreed, asked, answered, committed (promised to do
   something), reported_status (told how something stands), decided, or mentioned (anything
   else worth remembering).
@@ -88,6 +130,11 @@ For each statement give:
   the kitchen remodel, not the cabinet delivery; Dave's wedding, not the wedding toast. A
   topic is a matter that unfolds over time, never a person or an organization. Usually one;
   none for small talk.
+- mentions: the people and organizations the statement names, other than its speaker, each
+  as the {noun} names them (a full name if it gives one), with its type (person or
+  organization) and, for a person, the organization the {noun} says they belong to.
+
+{sender}
 
 An episode with nothing worth remembering (a bare acknowledgement) has no statements.
 
@@ -113,19 +160,30 @@ class _SourceRules:
     speaker: str
     quotable: str
     earlier: str
+    sender: str
+    """What to say of the sender's organization."""
 
+
+_NO_SENDER = "Leave sender_is_organization false and sender_organization null.\n"
 
 # What differs by kind of episode. Every kind extraction reads needs an entry.
 SOURCE_RULES: dict[Kind, _SourceRules] = {
     Kind.EMAIL: _SourceRules(
         noun="email",
         rules=(
-            "List the statements the email's sender makes in this email, in their own words. "
-            "Leave out anything quoted\nfrom earlier messages, signatures, and boilerplate.\n"
+            "List the statements made in this email, most of them the sender's own, in their own "
+            "words. Leave out\nanything quoted from earlier messages, signatures, and "
+            "boilerplate.\n"
         ),
         speaker="the sender, as the email shows them.",
         quotable="the email's body below",
         earlier="messages",
+        sender=(
+            "Also say whether the email comes from an organization itself "
+            "(sender_is_organization), such as\na clinic's appointment desk or a hotel's "
+            "reservations address, and the organization the sender\nwrites for or as, if the "
+            "email shows one (sender_organization).\n"
+        ),
     ),
     Kind.NOTE: _SourceRules(
         noun="daily note",
@@ -137,6 +195,7 @@ SOURCE_RULES: dict[Kind, _SourceRules] = {
         speaker="the owner, the note's author.",
         quotable="the note below",
         earlier="versions of the note",
+        sender=_NO_SENDER,
     ),
     Kind.CHAT: _SourceRules(
         noun="exchange",
@@ -149,6 +208,7 @@ SOURCE_RULES: dict[Kind, _SourceRules] = {
         speaker="the owner.",
         quotable="the owner's turns below",
         earlier="exchanges",
+        sender=_NO_SENDER,
     ),
 }
 
@@ -203,12 +263,18 @@ def extraction_prompt(envelope: Envelope, context: Sequence[Envelope], owner: Ow
         quotable=source.quotable,
         earlier=source.earlier,
         noun=source.noun,
+        sender=source.sender,
         context=context_text,
         episode=render_episode(envelope),
     )
 
 
 def render_episode(envelope: Envelope) -> str:
+    return render_header(envelope) + "\n\n" + envelope.body
+
+
+def render_header(envelope: Envelope) -> str:
+    """The episode's who, when, and subject, as header lines."""
     lines = []
     for role, header in _HEADERS:
         people = [_person(p.name, p.identifier) for p in envelope.participants if p.role == role]
@@ -217,7 +283,7 @@ def render_episode(envelope: Envelope) -> str:
     lines.append(f"Date: {envelope.occurred_at.start.isoformat()}")
     if envelope.subject:
         lines.append(f"Subject: {envelope.subject}")
-    return "\n".join(lines) + "\n\n" + envelope.body
+    return "\n".join(lines)
 
 
 _HEADERS = (

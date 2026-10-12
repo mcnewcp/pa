@@ -7,13 +7,14 @@ The stages:
    are not extracted yet.
 2. Extraction: one model call per kept episode, with the earlier episodes of its thread
    as context, cached, on a small worker pool.
-3. Assembly: people resolved by address, firsthand speakers from metadata, quotes checked.
+3. Assembly, in time order: people and organizations resolved (a model call, cached, only
+   for a name the records can't decide), speakers attributed, quotes checked.
 4. Topics: the kept statements' topic names placed under topics, in time order (`topics.py`).
 5. Build and publish, through the `GraphBuilder`.
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
-is built, and every triage answer, extraction, and topic decision finished so far stays cached
-for the next run.
+is built, and every triage answer, extraction, identification, and topic decision finished so
+far stays cached for the next run.
 """
 
 from __future__ import annotations
@@ -30,9 +31,10 @@ from functools import partial
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction, topics, triage
+from pa_core.librarian import extraction, identify, topics, triage
 from pa_core.librarian.assemble import Assembled, assemble, statement_id
 from pa_core.librarian.extraction import Extraction
+from pa_core.librarian.identify import Identifier
 from pa_core.librarian.ports import (
     BackendFor,
     GraphBuilder,
@@ -82,7 +84,19 @@ def rebuild(
     extractions = extractor.extract_all(selected, workers)
 
     quotable = {e.episode_id: extraction.quotable(e, l0) for e in selected}
-    assembled = assemble(selected, extractions, owner, quotable)
+    identifier = Identifier(
+        models.default,
+        ModelClient(calls.counting(identify.STAGE, models.default, backend_for(models.default))),
+        cache,
+        owner,
+    )
+    try:
+        assembled = assemble(selected, extractions, owner, quotable, identifier)
+    except PaError as error:
+        raise LibrarianError(
+            f"resolution failed, so nothing was published; every extraction and decision "
+            f"made so far is cached for the next run: {error}"
+        ) from error
     resolver = topics.TopicResolver(
         ModelClient(calls.counting(topics.STAGE, models.default, backend_for(models.default))),
         cache,
@@ -117,6 +131,7 @@ def rebuild(
         cache={
             triage.STAGE: triager.cache_counts,
             extraction.STAGE: extractor.cache_counts,
+            identify.STAGE: identifier.cache_counts,
             topics.STAGE: resolver.cache_counts,
         },
         model_calls=calls.by_stage(),
