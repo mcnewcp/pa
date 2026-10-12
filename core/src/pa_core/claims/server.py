@@ -23,8 +23,9 @@ by the librarian. It is an index; the episodes are the evidence. Every node and 
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
 `timeline` tells what happened about one. Calendar events keep every version, so `events`
-shows where a moved or cancelled event stands now and where it was before. Use `find` before
-concluding there is no record of someone or something."""
+shows where a moved or cancelled event stands now and where it was before. `open_loops` tells
+what is still asked or promised, with due dates; whether one is overdue is yours to judge
+against now. Use `find` before concluding there is no record of someone or something."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 

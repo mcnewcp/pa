@@ -91,6 +91,8 @@ class ClaimsTools:
             for count, noun in (
                 (_count(graph, "Statement"), "statement"),
                 (_count(graph, "CalendarEvent"), "calendar event"),
+                (_count(graph, "Request"), "request"),
+                (_count(graph, "Commitment"), "commitment"),
             )
             if count
         ]
@@ -98,7 +100,10 @@ class ClaimsTools:
         if not counted:
             message = f"Nothing recorded{span}."
         else:
-            message = f"{' and '.join(counted)}{span}, oldest first."
+            listed = " and ".join(
+                [", ".join(counted[:-1]), counted[-1]] if counted[1:] else counted
+            )
+            message = f"{listed}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
 
     def events(
