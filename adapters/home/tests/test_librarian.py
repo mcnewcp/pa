@@ -2562,3 +2562,84 @@ def test_a_to_do_in_the_owners_note_is_a_commitment_owed_to_themselves(librarian
     (to_do,) = nodes(owed, "Commitment")
     assert to_do["properties"]["what"] == "call North Star to book the knee appointment"
     assert owes_and_owed(owed, to_do["id"]) == ("Argus McNevans", "Argus McNevans")
+
+
+def many_to_dos_about_the_kitchen(librarian: Librarian, *, day: int, count: int = 24) -> None:
+    """The owner's note listing `count` open to-dos about the kitchen remodel."""
+    whats = [f"pick the paint for wall {n}" for n in range(1, count + 1)]
+    librarian.mail.note("Kitchen to-dos:\n" + "\n".join(whats), day=day)
+    librarian.model.says(
+        "Kitchen to-dos",
+        *(
+            statement(
+                what,
+                kind="committed",
+                topics=("Kitchen remodel",),
+                opens=(commitment(what, owed_by="Argus McNevans", owed_to="Argus McNevans"),),
+            )
+            for what in whats
+        ),
+    )
+
+
+def test_an_older_open_loop_on_a_busy_topic_can_still_be_closed(librarian: Librarian):
+    hinges = "order the cabinet hinges"
+    librarian.mail.note(f"Kitchen: {hinges}.", day=1)
+    librarian.model.says(
+        "Kitchen: order",
+        statement(
+            f"{hinges}.",
+            kind="committed",
+            topics=("Kitchen remodel",),
+            opens=(commitment(hinges, owed_by="Argus McNevans", owed_to="Argus McNevans"),),
+        ),
+    )
+    many_to_dos_about_the_kitchen(librarian, day=2)
+    librarian.mail.receive(
+        "I ordered the cabinet hinges for you today.", sender=RICK, subject="Hinges", day=3
+    )
+    librarian.model.says(
+        "I ordered the cabinet hinges",
+        statement("I ordered the cabinet hinges for you today.", topics=("Kitchen remodel",)),
+    )
+    librarian.model.decides("I ordered the cabinet hinges", hinges, "fulfills")
+
+    librarian.rebuild()
+
+    owed = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    whats = [n["properties"]["what"] for n in nodes(owed, "Commitment")]
+    assert len(whats) == 24
+    assert hinges not in whats
+    ((_, offered),) = [d for d in librarian.model.decided if "hinges" in d[0]]
+    assert hinges in offered
+    assert len(offered) <= 30
+
+
+def test_an_older_open_loop_on_the_same_thread_is_always_offered(librarian: Librarian):
+    asked = librarian.mail.receive("Could you send me the tile order?", sender=DAVE, day=1)
+    librarian.model.says(
+        "Could you send me the tile order",
+        statement(
+            "Could you send me the tile order?",
+            kind="asked",
+            topics=("Kitchen remodel",),
+            opens=(request(TILE_ORDER, owed_by="Argus McNevans", owed_to="David Kim"),),
+        ),
+    )
+    many_to_dos_about_the_kitchen(librarian, day=2, count=40)
+    librarian.mail.receive(
+        "Attached, as promised.", sender=ARGUS, to=DAVE, replying_to=asked, day=3
+    )
+    librarian.model.says(
+        "Attached, as promised",
+        statement("Attached, as promised.", topics=("Kitchen remodel",)),
+    )
+    librarian.model.decides("Attached, as promised", TILE_ORDER, "fulfills")
+
+    librarian.rebuild()
+
+    asked_of_owner = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    assert TILE_ORDER not in [n["properties"]["what"] for n in nodes(asked_of_owner, "Request")]
+    ((_, offered),) = [d for d in librarian.model.decided if d[0] == "Attached, as promised."]
+    assert TILE_ORDER in offered
+    assert len(offered) <= 30

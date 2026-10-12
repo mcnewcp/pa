@@ -217,7 +217,7 @@ class TopicResolver:
         most words with a name, in the order the topics were made."""
         by_words: dict[int, int] = {}  # topic index -> its best score for any name
         for name in names:
-            wanted = _words(name)
+            wanted = content_words(name)
             scored = [(_overlap(wanted, topic), index) for index, topic in enumerate(self._topics)]
             best = sorted((s for s in scored if s[0] > 0), key=lambda s: (-s[0], s[1]))
             for score, index in best[:_PER_NAME]:
@@ -286,7 +286,8 @@ _STOPWORDS = frozenset(
 )
 
 
-def _words(text: str) -> set[str]:
+def content_words(text: str) -> set[str]:
+    """Its words, for comparing texts: lower case, stopwords left out, a plural's s dropped."""
     words = set()
     for word in re.findall(r"[a-z0-9]+", text.lower()):
         if word in _STOPWORDS:
@@ -297,8 +298,8 @@ def _words(text: str) -> set[str]:
 
 def _overlap(wanted: set[str], topic: _Topic) -> int:
     """Shared words, those in its names counting twice those in its description."""
-    named = set().union(*(_words(name) for name in topic.names()))
-    return 2 * len(wanted & named) + len(wanted & _words(topic.description) - named)
+    named = set().union(*(content_words(name) for name in topic.names()))
+    return 2 * len(wanted & named) + len(wanted & content_words(topic.description) - named)
 
 
 def _clean(text: str) -> str:
