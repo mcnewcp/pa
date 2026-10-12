@@ -35,9 +35,8 @@ if [[ $before != "$after" ]]; then
 fi
 log "the eval run left $PA_CHAT_INBOX unchanged"
 
-report=$(sed -n 's/^report: //p' "$output")
-[[ -n $report ]] || die "the run didn't say where its report is"
-run_dir=$(dirname "$report")
+run_dir=$(sed -n 's/^run directory: //p' "$output")
+[[ -n $run_dir ]] || die "the run didn't say where its run directory is"
 mkdir -p "$REPO_DIR/evals/runs"
 incus file pull -r "$PA_VM$run_dir" "$REPO_DIR/evals/runs/"
 log "copied to evals/runs/$(basename "$run_dir")"
