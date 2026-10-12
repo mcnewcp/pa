@@ -85,6 +85,7 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     figures = {(q["cost_usd"], q["turns"], q["duration_ms"]) for q in results["questions"]}
     assert figures == {(0.031, 5, 12000)}
     assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
+        "corpus": str(CORPUS),
         "agent": "claude",
         "agent model": "sonnet",
         "as-of method": "system-prompt",

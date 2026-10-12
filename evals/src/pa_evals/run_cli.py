@@ -227,15 +227,15 @@ def add_run_command(commands: Any) -> None:
     )
     run.add_argument(
         "--corpus",
-        type=Path,
-        default=frozen.PAYLOADS,
-        help="Directory of raw payloads (default: the frozen corpus, evals/corpus/payloads/).",
+        default=frozen.DEFAULT_CORPUS,
+        help=f"A frozen corpus by name ({', '.join(frozen.CORPORA)}), asked with its own eval "
+        "set, or a directory of raw payloads, asked with --eval-set "
+        f"(default: {frozen.DEFAULT_CORPUS}).",
     )
     run.add_argument(
         "--eval-set",
         type=Path,
-        default=frozen.EVAL_SET,
-        help="Eval set JSON file (default: the Argus eval set, evals/corpus/eval_set.json).",
+        help="Eval set JSON file (default: the named corpus's own; needed with --corpus DIR).",
     )
     run.add_argument(
         "--runs-dir",
@@ -278,7 +278,8 @@ def add_run_command(commands: Any) -> None:
 
 
 def _run(args: argparse.Namespace) -> int:
-    eval_set = load_eval_set(args.eval_set)
+    payloads, eval_set_path = _corpus(args.corpus, args.eval_set)
+    eval_set = load_eval_set(eval_set_path)
     if args.only:
         eval_set = eval_set.only(*args.only)
     agent = AGENTS[args.agent].build(args)
@@ -287,7 +288,7 @@ def _run(args: argparse.Namespace) -> int:
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
         results = run_eval(
-            args.corpus,
+            payloads,
             eval_set,
             agent,
             judge,
@@ -316,10 +317,29 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _corpus(corpus: str, eval_set: Path | None) -> tuple[Path, Path]:
+    """The payload directory and eval set for `--corpus` (a name or a directory)."""
+    if corpus in frozen.CORPORA:
+        named = frozen.CORPORA[corpus]
+        return named.payloads, eval_set or named.eval_set
+    if not Path(corpus).is_dir():
+        raise CorpusChoiceError(
+            f"{corpus} is neither a corpus ({', '.join(frozen.CORPORA)}) nor a directory"
+        )
+    if eval_set is None:
+        raise CorpusChoiceError("--corpus DIR needs --eval-set FILE")
+    return Path(corpus), eval_set
+
+
+class CorpusChoiceError(PaError):
+    """A `--corpus` that names no corpus, or a corpus directory given without its eval set."""
+
+
 def _setup(args: argparse.Namespace) -> dict[str, str]:
     """How the run was set up, as shown at the top of the report."""
     return {
         "commit": _workspace_commit(),
+        "corpus": args.corpus,
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
         "judge": args.judge,

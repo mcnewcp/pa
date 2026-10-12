@@ -63,7 +63,7 @@ def render_report(results: RunResults) -> str:
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
-        f"- Corpus: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
+        f"- Ingest: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
         f"quarantined {ingest.quarantined}",
         f"- Questions: {overall.questions} ({overall.failed} failed)",
         "",

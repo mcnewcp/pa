@@ -78,6 +78,7 @@ def test_run_writes_a_report_and_results_into_a_timestamped_run_directory(
     assert results["categories"]["cross_channel_synthesis"]["evidence_recall"] == 0.5
     assert results["categories"]["cross_channel_synthesis"]["citation_validity"] == 0.5
     assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
+        "corpus": str(CORPUS),
         "agent": "scripted",
         "judge": "scripted",
     }
@@ -194,7 +195,8 @@ def test_the_report_says_which_commit_the_run_ran_from(tmp_path, scripts):
     assert f"- Commit: {commit}\n" in (run_dir / "report.md").read_text()
 
 
-def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
+@pytest.mark.parametrize("corpus", [[], ["--corpus", "argus"]], ids=["default", "by name"])
+def test_run_chooses_the_argus_corpus_and_its_eval_set_by_default_or_by_name(tmp_path, corpus):
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
     verdicts = tmp_path / "verdicts.json"
@@ -205,6 +207,7 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     status = main(
         [
             "run",
+            *corpus,
             *["--runs-dir", str(runs), "--only", "day-of-week"],
             *["--agent", "scripted", "--answers", str(answers)],
             *["--judge", "scripted", "--verdicts", str(verdicts)],
@@ -214,6 +217,8 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     assert status == 0
     [run_dir] = runs.iterdir()
     results = json.loads((run_dir / "results.json").read_text())
+    assert results["setup"]["corpus"] == "argus"
+    assert "- Corpus: argus\n" in (run_dir / "report.md").read_text()
     assert results["ingest"] == {
         "ingested": len([path for path in frozen.PAYLOADS.rglob("*") if path.is_file()]),
         "unchanged": 0,
@@ -221,6 +226,23 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     }
     assert results["as_of"] == load_eval_set(frozen.EVAL_SET).as_of.isoformat()
     assert [question["id"] for question in results["questions"]] == ["day-of-week"]
+
+
+def test_a_corpus_directory_needs_its_eval_set(tmp_path, scripts, capsys):
+    args = ["run", "--corpus", str(CORPUS), "--runs-dir", str(tmp_path / "runs"), *scripts]
+
+    assert main(args) == 1
+
+    assert "--corpus DIR needs --eval-set FILE" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+
+
+def test_an_unknown_corpus_name_is_refused(tmp_path, scripts, capsys):
+    args = ["run", "--corpus", "atlantis", "--runs-dir", str(tmp_path / "runs"), *scripts]
+
+    assert main(args) == 1
+
+    assert "atlantis is neither a corpus (argus) nor a directory" in capsys.readouterr().err
 
 
 def test_the_report_shows_each_answers_cost_turns_and_duration_and_sums_them_up_by_category(
