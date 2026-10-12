@@ -42,6 +42,15 @@ class DataRoot:
     def catalog(self) -> Path:
         return self.path / "catalog" / "catalog.sqlite"
 
+    @property
+    def graph(self) -> Path:
+        """The claims graph's published builds and its `current` pointer."""
+        return self.path / "graph"
+
+    @property
+    def librarian_cache(self) -> Path:
+        return self.path / "librarian" / "cache"
+
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
     """The configured data root; refuses one that is unset or inside the repository."""
