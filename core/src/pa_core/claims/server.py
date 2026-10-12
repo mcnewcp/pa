@@ -25,9 +25,10 @@ by the librarian. It is an index; the episodes are the evidence. Every node and 
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
 `timeline` tells what happened about one. Calendar events keep every version, so `events`
-shows where a moved or cancelled event stands now and where it was before. `open_loops` tells
-what is still asked or promised, with due dates; whether one is overdue is yours to judge
-against now. Use `find` before concluding there is no record of someone or something.
+shows where a moved or cancelled calendar event stands now and where it was before.
+`open_loops` tells what is still asked or promised, with due dates; whether one is overdue is
+yours to judge against now. Use `find` before concluding there is no record of someone or
+something.
 Dates and times given without a UTC offset are read in the owner's time zone, {time_zone}."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
@@ -122,12 +123,13 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         "when's my next appointment with Dr. Patel?" or "what's on for the wedding?".
 
         `who` is someone taking part (organizer or attendee, in any version) and `topic` a
-        topic the event is about, each an id or a name resolved as `find` does; if one matches
-        more than one node, the candidates come back instead. `since` and `until` bound the
-        event's current start and work as in `statements`. Each event (CalendarEvent) has its
-        current title, start, end, location, and status (scheduled or cancelled). Every
-        version comes as a VERSION_OF edge from its episode, carrying that version's fields
-        and when it was made (changed_at), so a moved event shows where it was before.
+        topic the calendar event is about, each an id or a name resolved as `find` does; if one
+        matches more than one node, the candidates come back instead. `since` and `until` bound
+        the calendar event's current start and work as in `statements`. Each calendar event
+        (CalendarEvent) has its current title, start, end, location, and status (scheduled or
+        cancelled). Every version comes as a VERSION_OF edge from its episode, carrying that
+        version's fields and when it was made (changed_at), so a moved calendar event shows
+        where it was before.
         """
         with _reported():
             return tools.events(who, topic, since, until)
