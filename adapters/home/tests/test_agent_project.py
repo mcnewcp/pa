@@ -207,6 +207,9 @@ def test_the_source_project_names_no_owner_and_no_instance_path():
             assert value not in text, f"{path} names {value!r}"
         # The PA MCP server's `schema` tool carries the Cypher examples, so none go stale here.
         assert not re.search(r"\b(MATCH|RETURN)\b", text), f"{path} holds a Cypher example"
+        # Nothing engine-specific: the graph's engine and query language can change under it.
+        for engine_word in ("Cypher", "Ladybug", "lbug"):
+            assert engine_word.lower() not in text.lower(), f"{path} names {engine_word!r}"
     settings = json.loads((AGENT_PROJECT / SETTINGS).read_text())
     for value in _strings(settings):
         assert not value.startswith("/"), f"settings.json names an absolute path: {value!r}"

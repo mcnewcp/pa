@@ -37,9 +37,9 @@ tells you where to look and what was said; the episodes are what you cite.
    calendar events). Read each tool's description and use the one that fits.
 3. **`query` for the rest.** For paths, connections between people, counts, and anything no
    domain query covers: call `schema` first. It returns the live schema and every domain
-   query's own Cypher with its rules. Adapt the nearest domain query rather than writing one
-   from scratch, then run it with `query`. If `query` reports an error, a stop, or
-   `truncated`, narrow the query and try again.
+   query's own text in the query language, with its rules. Adapt the nearest domain query
+   rather than writing one from scratch, then run it with `query`. If `query` reports an
+   error, a stop, or `truncated`, narrow the query and try again.
 
 ## No record
 
