@@ -21,6 +21,7 @@ from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
 from pa_core.model_client import FakeModelBackend, ModelBackendError, ModelRequest
+from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
 from pa_home import cli
@@ -79,6 +80,15 @@ class Mailbox:
             "\r\n".join([*headers, 'Content-Type: text/plain; charset="utf-8"', "", body]) + "\r\n"
         ).encode()
         envelope = normalize_email(raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC))
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def note(self, text: str, *, day: int) -> str:
+        """Store the owner's daily note for a day in September and return its episode id."""
+        raw = f"Vault-Path: Daily/2026-09-{day:02d}.md\n\n{text}".encode()
+        envelope = normalize_daily_note(
+            raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
+        )
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
@@ -683,3 +693,36 @@ def test_primary_and_uncategorised_mail_is_extracted_without_a_relevance_check(
     assert "triage" not in report.model_calls
     assert len(quotes(librarian.call("statements"))) == 3
     assert report.episodes.triage.primary == 3
+
+
+# Daily notes and chats: the owner's own episodes.
+
+
+def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
+    librarian: Librarian,
+):
+    librarian.mail.note(
+        "## Kitchen\nOrdered the tile from Alvarez today.\nI'll call the plumber on Monday.\n",
+        day=5,
+    )
+    librarian.model.says(
+        "Ordered the tile from Alvarez",
+        statement("Ordered the tile from Alvarez today.", kind="reported_status"),
+        statement("I'll call the plumber on Monday.", kind="committed", speaker="Rick"),
+    )
+
+    report = librarian.rebuild()
+
+    by_owner = librarian.call("statements", who="argus@example.com")
+    assert sorted(quotes(by_owner)) == [
+        "I'll call the plumber on Monday.",
+        "Ordered the tile from Alvarez today.",
+    ]
+    for node in nodes(by_owner, "Statement"):
+        assert speaker_of(by_owner, node["id"])["properties"]["is_owner"] is True
+        assert node["properties"]["secondhand"] is False
+        assert node["properties"]["told_to_assistant"] is False
+    (episode,) = nodes(by_owner, "Episode")
+    assert episode["properties"]["kind"] == "note"
+    assert episode["properties"]["l0_path"].startswith("episodes/obsidian/")
+    assert report.episodes.extracted == 1

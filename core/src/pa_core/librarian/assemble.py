@@ -1,8 +1,8 @@
 """Assembly: turning episodes and their extractions into the graph's node and edge records.
 
 This is where who said what is decided. A firsthand statement's speaker is the episode's
-sender, from its metadata, whatever the model wrote; a statement whose quote is not in the
-episode's body is dropped.
+sender or author (the owner, for a daily note or a chat), from its metadata, whatever the model
+wrote; a statement whose quote is not in the episode's body is dropped.
 """
 
 from __future__ import annotations
@@ -17,6 +17,9 @@ from pa_core.l0 import episode_ref
 from pa_core.librarian.extraction import Extraction, quote_is_in
 from pa_core.librarian.people import People
 from pa_core.owner import Owner
+
+# Whose words an episode is: an email's sender, or the author of a note or a chat.
+_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR})
 
 
 @dataclass
@@ -48,7 +51,7 @@ def assemble(
         sender: str | None = None
         for participant in envelope.participants:
             person = people.by_address(participant.identifier, participant.name, eid)
-            if participant.role == Role.SENDER and sender is None:
+            if participant.role in _SPEAKER_ROLES and sender is None:
                 sender = person
             edge_id = stable_id("participated_in", person, eid, participant.role)
             if edge_id in participations:  # the same address twice in one header
