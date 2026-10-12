@@ -137,6 +137,8 @@ class _Extractor:
             }
             for future in as_completed(futures):
                 envelope = futures[future]
+                if future.cancelled():  # after a failure: never started, so nothing to keep
+                    continue
                 try:
                     results[envelope.episode_id] = future.result()
                 except PaError as error:

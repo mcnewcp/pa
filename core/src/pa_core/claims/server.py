@@ -5,11 +5,16 @@ A storage adapter supplies the `ClaimsGraph` and runs the server over stdio.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from pa_core.claims.queries import ClaimsGraph
 from pa_core.claims.tools import ClaimsTools, ToolResult
+from pa_core.errors import PaError
 
 INSTRUCTIONS = """\
 The claims graph: who said what, and when, derived from the episodes in L0 by the librarian.
@@ -31,7 +36,8 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         first. When nothing matches, the message says so: that is not proof there is no
         record, so try another spelling, a nickname, or an address.
         """
-        return tools.find(name)
+        with _reported():
+            return tools.find(name)
 
     def statements(
         who: str | None = None, since: str | None = None, until: str | None = None
@@ -46,8 +52,19 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         speaker (SAID), the episode it is recorded in (RECORDED_IN), its kind, summary, and a
         quote checked against the episode's body.
         """
-        return tools.statements(who, since, until)
+        with _reported():
+            return tools.statements(who, since, until)
 
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     return server
+
+
+@contextmanager
+def _reported() -> Iterator[None]:
+    """Our own errors (no build yet, a malformed date) reach the assistant with their message;
+    anything else is a crash, which the SDK reports without its details."""
+    try:
+        yield
+    except PaError as error:
+        raise ToolError(str(error)) from error

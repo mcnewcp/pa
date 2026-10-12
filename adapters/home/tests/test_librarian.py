@@ -3,6 +3,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import stat
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,9 @@ import pytest
 from mcp import Client
 
 from pa_core.envelope import Envelope
+from pa_core.librarian import extraction
 from pa_core.librarian.ports import LibrarianModels, ModelChoice
+from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
 from pa_core.model_client import FakeModelBackend, ModelBackendError, ModelRequest
 from pa_core.normalizers.email import normalize_email
@@ -27,6 +30,7 @@ from pa_home.mcp_server import graph_server
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
 ARGUS = "Argus McNevans <argus@example.com>"
 DAVE = "David Kim <dkim@example.net>"
+DAVE_ADDRESS = "dkim@example.net"
 MARIA = "Maria Alvarez <maria@alvarezkb.example>"
 RICK = "Rick Alvarez <rick@alvarezkb.example>"
 
@@ -159,6 +163,17 @@ class Librarian:
 
         return anyio.run(go)
 
+    def call_failing(self, tool: str, **arguments: Any) -> str:
+        """The error text of a tool call that fails."""
+
+        async def go() -> str:
+            async with Client(self.server) as client:
+                result = await client.call_tool(tool, arguments)
+            assert result.is_error
+            return " ".join(getattr(block, "text", "") for block in result.content)
+
+        return anyio.run(go)
+
 
 def nodes(result: dict[str, Any], node_type: str) -> list[dict[str, Any]]:
     return [node for node in result["nodes"] if node["type"] == node_type]
@@ -201,3 +216,193 @@ def test_a_firsthand_statement_is_the_senders_even_when_the_model_names_someone_
     (said,) = [n["id"] for n in by_dave["nodes"] if n["type"] == "Statement"]
     assert speaker_of(by_dave, said)["properties"]["addresses"] == ["dkim@example.net"]
     assert quotes(librarian.call("statements", who="argus@example.com")) == []
+
+
+def test_a_statement_whose_quote_is_not_in_the_body_is_dropped_and_counted(librarian: Librarian):
+    librarian.mail.receive("The tile arrives Friday.\nI'll  set it\nthe week after.")
+    librarian.model.says(
+        "The tile arrives Friday",
+        statement("The tile arrives Friday.", kind="reported_status"),
+        statement("I'll set it the week after.", kind="committed"),
+        statement("The tile was paid for in full.", kind="reported_status"),
+    )
+
+    report = librarian.rebuild()
+
+    assert quotes(librarian.call("statements", who=DAVE_ADDRESS)) == [
+        "The tile arrives Friday.",
+        "I'll set it the week after.",
+    ]
+    assert report.statements.dropped_quote_not_found == 1
+    assert report.statements.kept == 2
+
+
+def a_thread_of_three(librarian: Librarian) -> list[str]:
+    """Dave asks, Argus answers, Dave confirms; plus an unrelated email from Maria."""
+    mail, model = librarian.mail, librarian.model
+    first = mail.receive("Could you send the tile order?", subject="Tile")
+    second = mail.receive(
+        "Sending the tile order tonight.", sender=ARGUS, to=DAVE, replying_to=first
+    )
+    third = mail.receive("Got the tile order, thanks.", replying_to=first)
+    other = mail.receive("The countertop is templated.", sender=MARIA)
+    model.says("Could you send the tile order", statement("Could you send the tile order?"))
+    model.says("Sending the tile order tonight", statement("Sending the tile order tonight."))
+    model.says("Got the tile order", statement("Got the tile order, thanks."))
+    model.says("The countertop is templated", statement("The countertop is templated."))
+    return [first, second, third, other]
+
+
+def test_a_second_rebuild_with_nothing_changed_makes_no_model_calls(librarian: Librarian):
+    a_thread_of_three(librarian)
+    first = librarian.rebuild()
+    calls = librarian.model.calls
+
+    second = librarian.rebuild()
+
+    assert librarian.model.calls == calls == 4
+    assert second.model_calls_by_model() == {}
+    assert (second.cache["extraction"].hits, second.cache["extraction"].misses) == (4, 0)
+    assert first.model_calls_by_model() == {"claude-sonnet-5-5": 4}
+
+
+def test_a_changed_prompt_re_extracts_every_episode(
+    librarian: Librarian, monkeypatch: pytest.MonkeyPatch
+):
+    a_thread_of_three(librarian)
+    first = librarian.rebuild()
+    calls = librarian.model.calls
+
+    monkeypatch.setattr(extraction, "PROMPT", extraction.PROMPT + "\nBe brief.\n")
+    second = librarian.rebuild()
+
+    assert librarian.model.calls - calls == 4
+    assert second.extractor_version != first.extractor_version
+
+
+def test_a_changed_episode_re_extracts_only_itself_and_the_later_episodes_in_its_thread(
+    librarian: Librarian,
+):
+    _, second, _, _ = a_thread_of_three(librarian)
+    librarian.rebuild()
+    calls = librarian.model.calls
+
+    librarian.mail.edit(second, "Sending the tile order tomorrow.")
+    librarian.model.says("Sending the tile order tomorrow", statement("Sending the tile order"))
+    report = librarian.rebuild()
+
+    re_extracted = sorted(librarian.model.answered[calls:])
+    assert re_extracted == ["Got the tile order", "Sending the tile order tomorrow"]
+    assert (report.cache["extraction"].hits, report.cache["extraction"].misses) == (2, 2)
+
+
+def test_a_reply_is_extracted_with_the_earlier_messages_of_its_thread(librarian: Librarian):
+    a_thread_of_three(librarian)
+
+    librarian.rebuild()
+
+    (reply_prompt,) = [p for p in librarian.model.prompts if "Got the tile order" in p]
+    assert "Could you send the tile order?" in reply_prompt
+    assert "Sending the tile order tonight." in reply_prompt
+    (unrelated,) = [p for p in librarian.model.prompts if "countertop" in p]
+    assert "tile" not in unrelated
+
+
+def test_ids_are_identical_across_rebuilds(librarian: Librarian):
+    a_thread_of_three(librarian)
+    librarian.rebuild()
+    before = librarian.call("statements")
+
+    librarian.rebuild()
+    after = librarian.call("statements")
+
+    assert after == before
+    assert len(nodes(after, "Statement")) == 4
+
+
+def test_a_failing_model_call_publishes_nothing_and_a_rerun_repeats_no_finished_work(
+    librarian: Librarian,
+):
+    a_thread_of_three(librarian)
+    published = librarian.rebuild()
+    before = librarian.call("statements")
+    librarian.mail.receive("The plumber comes Monday.", sender=RICK)
+    librarian.mail.receive("The sink is back-ordered.", sender=RICK)
+    librarian.model.says("The plumber comes Monday", statement("The plumber comes Monday."))
+    librarian.model.says("The sink is back-ordered", statement("The sink is back-ordered."))
+    librarian.model.failing.add("The plumber comes Monday")
+
+    with pytest.raises(LibrarianError, match="nothing was published"):
+        librarian.rebuild()
+
+    assert current_build(librarian).name == published.build_id
+    assert librarian.call("statements") == before
+    done = set(librarian.model.answered)
+    answered_so_far = len(librarian.model.answered)
+
+    librarian.model.failing.clear()
+    librarian.rebuild()
+
+    rerun = librarian.model.answered[answered_so_far:]
+    assert "The plumber comes Monday" in rerun
+    assert not done & set(rerun)
+    assert len(quotes(librarian.call("statements", who="rick@alvarezkb.example"))) == 2
+
+
+def test_the_server_answers_from_a_newly_published_build_without_a_restart(
+    librarian: Librarian,
+):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+    librarian.rebuild()
+    assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
+
+    librarian.mail.receive("The grout is in too.")
+    librarian.model.says("The grout is in too", statement("The grout is in too."))
+    librarian.rebuild()
+
+    assert quotes(librarian.call("statements")) == [
+        "The tile arrives Friday.",
+        "The grout is in too.",
+    ]
+
+
+def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_beside_it(
+    librarian: Librarian,
+):
+    a_thread_of_three(librarian)
+
+    report = librarian.rebuild()
+
+    build = current_build(librarian)
+    assert build.name == report.build_id
+    assert sorted(path.name for path in build.iterdir()) == ["graph.lbdb"]  # no write-ahead log
+    assert is_read_only(build) and is_read_only(build / "graph.lbdb")
+    beside = build.parent / f"{report.build_id}.report.json"
+    assert BuildReport.model_validate_json(beside.read_text()) == report
+    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4}
+    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8}
+
+
+def test_only_the_last_few_builds_are_kept(librarian: Librarian):
+    a_thread_of_three(librarian)
+
+    reports = [librarian.rebuild() for _ in range(5)]
+
+    builds = sorted(p.name for p in (librarian.data_root.graph / "builds").iterdir())
+    kept = [r.build_id for r in reports[-3:]]
+    assert builds == sorted([*kept, *(f"{build_id}.report.json" for build_id in kept)])
+
+
+def test_before_the_first_build_the_server_says_to_run_the_librarian(librarian: Librarian):
+    message = librarian.call_failing("statements")
+
+    assert "pa librarian rebuild" in message
+
+
+def current_build(librarian: Librarian) -> Path:
+    return (librarian.data_root.graph / "current").resolve(strict=True)
+
+
+def is_read_only(path: Path) -> bool:
+    return stat.S_IMODE(path.stat().st_mode) & 0o222 == 0
