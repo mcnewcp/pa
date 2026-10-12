@@ -1,6 +1,7 @@
 """The agent runner interface: how the harness asks the agent one question.
 
-A runner answers in free text and cites evidence as `[ep:<episode_id>]`. Anything it raises
+A runner answers in free text and cites evidence as `[ep:<episode_id>]`, with what the answer
+cost where it knows (dollars, turns, and duration). Anything it raises
 (including AgentTimeoutError) is recorded as a failed result for that question; the run goes on.
 The harness cannot interrupt a runner, so a runner enforces its own timeout.
 """
@@ -13,10 +14,12 @@ from datetime import datetime
 from typing import Protocol
 
 from pa_core.owner import Owner
-from pa_home.agent import AgentError, AgentTimeoutError, ClaudeAgent
+from pa_evals.script import Script
+from pa_home.agent import AgentAnswer, AgentError, AgentTimeoutError, ClaudeAgent
 from pa_home.config import DataRoot
 
 __all__ = [
+    "AgentAnswer",
     "AgentError",
     "AgentRequest",
     "AgentRunner",
@@ -40,7 +43,7 @@ class AgentRequest:
 
 
 class AgentRunner(Protocol):
-    def answer(self, request: AgentRequest) -> str:
+    def answer(self, request: AgentRequest) -> AgentAnswer:
         """The agent's answer, citing evidence as `[ep:<episode_id>]`."""
         ...
 
@@ -51,30 +54,33 @@ class ClaudeAgentRunner:
     def __init__(self, agent: ClaudeAgent) -> None:
         self._agent = agent
 
-    def answer(self, request: AgentRequest) -> str:
+    def answer(self, request: AgentRequest) -> AgentAnswer:
         return self._agent.answer(
             request.question, owner=request.owner, l0=request.data_root.l0, now=request.as_of
         )
 
 
-type ScriptedAnswer = str | Exception
+type ScriptedAnswer = str | AgentAnswer | Exception
 
 
 class ScriptedAgent:
     """A fake agent that answers each question id with a scripted answer, or raises its error.
 
+    A question id may have a list of answers instead, one per run, played in order. An answer
+    scripted as text has no cost, turns, or duration.
+
     Every request it receives is recorded in `requests`.
     """
 
-    def __init__(self, answers: Mapping[str, ScriptedAnswer]) -> None:
-        self._answers = dict(answers)
+    def __init__(self, answers: Mapping[str, ScriptedAnswer | list[ScriptedAnswer]]) -> None:
+        self._answers = Script(answers)
         self.requests: list[AgentRequest] = []
 
-    def answer(self, request: AgentRequest) -> str:
+    def answer(self, request: AgentRequest) -> AgentAnswer:
         self.requests.append(request)
-        scripted = self._answers.get(request.question_id)
+        scripted = self._answers.next(request.question_id)
         if scripted is None:
             raise AgentError(f"no scripted answer for question {request.question_id}")
         if isinstance(scripted, Exception):
             raise scripted
-        return scripted
+        return AgentAnswer(scripted) if isinstance(scripted, str) else scripted

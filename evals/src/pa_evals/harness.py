@@ -35,6 +35,7 @@ def run_eval(
     judge: Judge,
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
+    configuration: str | None = None,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
@@ -43,8 +44,9 @@ def run_eval(
     one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
-    agent or judge raises is recorded as failed and the run goes on. `setup` describes the run
-    (for example which agent runner and judge) and is carried into the results as is.
+    agent or judge raises is recorded as failed and the run goes on. `configuration` names the
+    configuration asked, and `setup` describes the run (for example which agent runner and
+    judge); both are carried into the results as they are.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
@@ -68,6 +70,7 @@ def run_eval(
     for result in questions:
         categories.setdefault(result.category, []).append(result)
     return RunResults(
+        configuration=configuration,
         setup=dict(setup or {}),
         as_of=eval_set.as_of,
         ingest=IngestCounts(
@@ -105,11 +108,14 @@ def _ask(
         recall = 0.0 if question.evidence else None
         return result.model_copy(update={"error": f"agent: {answer}", "evidence_recall": recall})
 
-    cited = parse_citations(answer)
+    cited = parse_citations(answer.text)
     existing = [episode_id for episode_id in cited if episode_id in known]
     result = result.model_copy(
         update={
-            "answer": answer,
+            "answer": answer.text,
+            "cost_usd": answer.cost_usd,
+            "turns": answer.turns,
+            "duration_ms": answer.duration_ms,
             "cited": cited,
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
@@ -123,7 +129,7 @@ def _ask(
                 question=question.question,
                 expected_answer=question.expected_answer,
                 as_of=as_of,
-                answer=answer,
+                answer=answer.text,
                 cited_episodes=episodes,
             )
         )

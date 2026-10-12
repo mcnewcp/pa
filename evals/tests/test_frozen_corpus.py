@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pa_evals import frozen
-from pa_evals.agent import AgentRequest
+from pa_evals.agent import AgentAnswer, AgentRequest
 from pa_evals.corpus import payload_path
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
 from pa_evals.harness import run_eval
@@ -46,12 +46,12 @@ def harness_l0(eval_set: EvalSet) -> tuple[IngestCounts, dict[str, str]]:
     episodes: dict[str, str] = {}
 
     class ListingAgent:
-        def answer(self, request: AgentRequest) -> str:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
             l0 = request.data_root.l0
             for envelope in FilesystemL0(l0).envelopes():
                 files = sorted(l0.rglob(f"{envelope.episode_id}.*"))
                 episodes[envelope.episode_id] = "\n".join(p.read_text("utf-8") for p in files)
-            return "answer"
+            return AgentAnswer("answer")
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
