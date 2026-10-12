@@ -2,13 +2,16 @@
 
 This is where who said what is decided:
 
-- A firsthand statement's speaker is the episode's sender, from its metadata, whatever the
-  model wrote. A secondhand statement's speaker is the person or organization the model named,
-  resolved; the statement is secondhand only if that is someone other than the sender.
-- A statement is the owner's only if the episode is the owner's own (their sent mail). In
-  anyone else's episode, a statement that resolves to the owner is recorded as the sender's
-  report (kind: reported status) mentioning the owner, so no one can speak for the owner.
-- A statement whose quote is not in the episode's body is dropped.
+- A firsthand statement's speaker is the episode's sender or author (the owner, for a daily
+  note or a chat), from its metadata, whatever the model wrote. A secondhand statement's
+  speaker is the person or organization the model named, resolved; the statement is
+  secondhand only if that is someone other than the sender or author.
+- A statement is the owner's only if the episode is the owner's own (their sent mail, their
+  note, their turns in a chat). In anyone else's episode, a statement that resolves to the
+  owner is recorded as the sender's report (kind: reported status) mentioning the owner, so
+  no one can speak for the owner.
+- A statement whose quote is not in the episode's body (for a chat, in one of the owner's
+  turns) is dropped. Every statement from a chat is marked as told to the assistant.
 
 People and organizations are resolved in the order episodes are offered (time order).
 """
@@ -27,7 +30,7 @@ from pa_core.claims.schema import (
     SAID,
     STATEMENT,
 )
-from pa_core.envelope import Envelope, Role
+from pa_core.envelope import Envelope, Kind, Role
 from pa_core.l0 import episode_ref
 from pa_core.librarian.extraction import (
     ExtractedStatement,
@@ -39,6 +42,9 @@ from pa_core.librarian.extraction import (
 )
 from pa_core.librarian.people import Identify, People
 from pa_core.owner import Owner
+
+# Whose words an episode is: an email's sender, or the author of a note or a chat.
+_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR})
 
 
 @dataclass
@@ -58,10 +64,12 @@ def assemble(
     episodes: Sequence[Envelope],
     extractions: Mapping[str, Extraction],
     owner: Owner,
+    quotable: Mapping[str, Sequence[str]],
     identify: Identify,
 ) -> Assembled:
     """Records for `episodes` (in time order) and the statements extracted from each.
 
+    A statement is kept only if its quote is in one of its episode's `quotable` texts.
     `identify` is asked who a name is when the records can't decide.
     """
     people = People(owner, identify)
@@ -77,7 +85,7 @@ def assemble(
         nodes.append(_episode(envelope, l0_path))
         sender: str | None = None
         for participant in envelope.participants:
-            is_sender = participant.role == Role.SENDER and sender is None
+            is_sender = participant.role in _SPEAKER_ROLES and sender is None
             party = people.participant(
                 participant.identifier,
                 participant.name,
@@ -111,7 +119,7 @@ def assemble(
             tally.extracted += 1
             if sender is None:
                 continue
-            if not quote_is_in(statement.quote, envelope.body):
+            if not any(quote_is_in(statement.quote, text) for text in quotable[eid]):
                 tally.dropped_quote_not_found += 1
                 continue
             tally.kept += 1
@@ -128,7 +136,7 @@ def assemble(
                         "quote": statement.quote,
                         "at": envelope.occurred_at.start,
                         "secondhand": speaker != sender,
-                        "told_to_assistant": False,
+                        "told_to_assistant": envelope.kind == Kind.CHAT,
                         "episode_id": eid,
                         "l0_path": l0_path,
                     },

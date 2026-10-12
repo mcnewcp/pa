@@ -3,10 +3,12 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import gc
 import os
 import re
 import stat
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +24,12 @@ from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
 from pa_core.model_client import FakeModelBackend, ModelBackendError, ModelRequest
+from pa_core.normalizers.assistant_chat import (
+    TurnRole,
+    encode_exchange,
+    normalize_assistant_chat,
+)
+from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
 from pa_home import cli
@@ -55,8 +63,11 @@ class Mailbox:
         subject: str = "Hello",
         replying_to: str | None = None,
         day: int | None = None,
+        labels: str | None = None,
     ) -> str:
-        """Store an email and return its episode id (also usable as its thread's id)."""
+        """Store an email and return its episode id (also usable as its thread's id).
+
+        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it."""
         self._sent += 1
         message_id = f"m{self._sent}@example.test"
         headers = [
@@ -71,10 +82,38 @@ class Mailbox:
             assert root is not None
             headers.append(f"In-Reply-To: <{root.thread_ref}>")
             headers.append(f"References: <{root.thread_ref}>")
+        if labels:
+            headers.append(f"X-Gmail-Labels: {labels}")
         raw = (
             "\r\n".join([*headers, 'Content-Type: text/plain; charset="utf-8"', "", body]) + "\r\n"
         ).encode()
         envelope = normalize_email(raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC))
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def note(self, text: str, *, day: int) -> str:
+        """Store the owner's daily note for a day in September and return its episode id."""
+        raw = f"Vault-Path: Daily/2026-09-{day:02d}.md\n\n{text}".encode()
+        envelope = normalize_daily_note(
+            raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
+        )
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def chat(self, *turns: tuple[TurnRole, str], session: str = "session-1", day: int) -> str:
+        """Store an exchange with the assistant, as the capture hook writes it."""
+        self._sent += 1
+        at = f"2026-09-{day:02d}T15:00:00.000Z"
+        raw = encode_exchange(
+            session_id=session,
+            message_id=f"message-{self._sent}",
+            started_at=at,
+            ended_at=at,
+            turns=turns,
+        )
+        envelope = normalize_assistant_chat(
+            raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
+        )
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
@@ -120,16 +159,19 @@ def organization(name: str) -> dict:
 @dataclass
 class ScriptedModel:
     """Replies to an extraction prompt by the scripted phrase found last in it: the episode
-    comes after its thread's earlier messages, so its own phrase is the last one.
+    comes after its thread's earlier messages, so its own phrase is the last one. Replies to a
+    triage relevance check by the phrase found in it (unscripted mail is not relevant).
 
     Replies to an identification prompt (who a name or address is) by the candidate scripted
     for the name in question, or with no candidate (someone new) when none is scripted.
     """
 
     replies: dict[str, dict] = field(default_factory=dict)
+    relevance: dict[str, bool] = field(default_factory=dict)
     identities: dict[str, str | None] = field(default_factory=dict)
     failing: set[str] = field(default_factory=set)
     answered: list[str] = field(default_factory=list)
+    judged: list[str] = field(default_factory=list)
     identified: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -144,6 +186,9 @@ class ScriptedModel:
         """Script who `name` (as written) is: the candidate named `as_`, or someone new."""
         self.identities[name] = as_
 
+    def judges(self, phrase: str, *, relevant: bool) -> None:
+        self.relevance[phrase] = relevant
+
     @property
     def calls(self) -> int:
         return len(self.backend.requests)
@@ -155,6 +200,8 @@ class ScriptedModel:
     def _reply(self, request: ModelRequest) -> dict[str, Any]:
         if request.schema.get("title") == "Identification":
             return self._identify(request.prompt)
+        if "relevant" in request.schema["properties"]:
+            return self._judge(request)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
         if not present:
             return {"statements": []}
@@ -177,6 +224,16 @@ class ScriptedModel:
         listed = re.search(rf"^\[(\d+)\] {re.escape(chosen)}(?= \||$)", prompt, re.MULTILINE)
         assert listed, f"{chosen!r} is not a candidate for {name!r}:\n{prompt}"
         return {"candidate": int(listed.group(1))}
+
+    def _judge(self, request: ModelRequest) -> dict[str, Any]:
+        present = [phrase for phrase in self.relevance if phrase in request.prompt]
+        if not present:
+            return {"relevant": False, "reason": "unscripted"}
+        (phrase,) = present
+        if phrase in self.failing:
+            raise ModelBackendError(f"scripted failure for {phrase!r}")
+        self.judged.append(phrase)
+        return {"relevant": self.relevance[phrase], "reason": "scripted"}
 
 
 class Librarian:
@@ -247,8 +304,13 @@ def extensions_root() -> Path:
 
 
 @pytest.fixture
-def librarian(tmp_path: Path, extensions_root: Path) -> Librarian:
-    return Librarian(tmp_path / "pa-data", extensions_root)
+def librarian(tmp_path: Path, extensions_root: Path) -> Iterator[Librarian]:
+    librarian = Librarian(tmp_path / "pa-data", extensions_root)
+    yield librarian
+    # Each open build reserves 8 TiB of address space, so a run of tests that leaves its
+    # readers to the garbage collector can run out of it. Collecting the server closes them.
+    del librarian.server
+    gc.collect()
 
 
 def test_a_firsthand_statement_is_the_senders_even_when_the_model_names_someone_else(
@@ -572,7 +634,7 @@ def test_pa_librarian_rebuild_runs_on_sonnet_at_medium_effort_and_prints_its_rep
 
     assert cli.main(["librarian", "rebuild"]) == 0
 
-    assert backends == [("claude-sonnet-5-5", "medium")]
+    assert set(backends) == {("claude-sonnet-5-5", "medium")}
     out = capsys.readouterr().out
     assert "published build" in out and "1 to claude-sonnet-5-5" in out
     assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
@@ -904,3 +966,180 @@ def test_a_failing_identification_publishes_nothing_and_a_rerun_repeats_no_finis
     assert report.model_calls == {"people": {"claude-sonnet-5-5": 1}}
     said = librarian.call("statements", who="maria@alvarezkb.example")
     assert mentioned_by(said, nodes(said, "Statement")[0]["id"]) == ["David Lee"]
+
+
+# Triage: mail is filtered by its Gmail category before extraction.
+
+
+@pytest.mark.parametrize("category", ["Promotions", "Social"])
+def test_promotions_and_social_mail_is_skipped_without_a_model_call(
+    librarian: Librarian, category: str
+):
+    librarian.mail.receive(
+        "50% off every sofa this weekend only!",
+        sender="Sofa Barn <deals@sofabarn.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("50% off every sofa", statement("50% off every sofa this weekend only!"))
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+
+    report = librarian.rebuild()
+
+    assert [p for p in librarian.model.prompts if "sofa" in p] == []
+    assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
+    assert librarian.call("find", name="deals@sofabarn.example")["matches"] == []
+    assert report.episodes.triage.skipped_by_category == 1
+    assert report.episodes.extracted == 1
+
+
+def updates_from_a_clinic_and_a_digest(librarian: Librarian, category: str = "Updates") -> None:
+    mail, model = librarian.mail, librarian.model
+    mail.receive(
+        "Reminder: your appointment with Dr. Patel is Tuesday at 9:00.",
+        sender="Lakeside Clinic <reminders@lakeside.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    mail.receive(
+        "This week's digest: ten tips for spring cleaning.",
+        sender="Home Digest <news@homedigest.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    model.judges("appointment with Dr. Patel", relevant=True)
+    model.judges("ten tips for spring cleaning", relevant=False)
+    model.says(
+        "appointment with Dr. Patel",
+        statement("your appointment with Dr. Patel is Tuesday at 9:00.", kind="reported_status"),
+    )
+    model.says("ten tips for spring cleaning", statement("ten tips for spring cleaning."))
+
+
+@pytest.mark.parametrize("category", ["Updates", "Forums"])
+def test_updates_and_forums_mail_is_extracted_only_when_the_relevance_check_says_it_matters(
+    librarian: Librarian, category: str
+):
+    updates_from_a_clinic_and_a_digest(librarian, category)
+
+    report = librarian.rebuild()
+
+    assert sorted(librarian.model.judged) == [
+        "appointment with Dr. Patel",
+        "ten tips for spring cleaning",
+    ]
+    assert librarian.model.answered == ["appointment with Dr. Patel"]
+    assert quotes(librarian.call("statements")) == [
+        "your appointment with Dr. Patel is Tuesday at 9:00."
+    ]
+    assert librarian.call("find", name="news@homedigest.example")["matches"] == []
+    assert (report.episodes.triage.relevant, report.episodes.triage.not_relevant) == (1, 1)
+    assert (report.episodes.extracted, report.episodes.skipped) == (1, 1)
+    assert report.model_calls["triage"] == {"claude-sonnet-5-5": 2}
+
+
+def test_a_rebuild_reuses_each_relevance_answer(librarian: Librarian):
+    updates_from_a_clinic_and_a_digest(librarian)
+    librarian.rebuild()
+    calls = librarian.model.calls
+
+    report = librarian.rebuild()
+
+    assert librarian.model.calls == calls
+    assert (report.cache["triage"].hits, report.cache["triage"].misses) == (2, 0)
+    assert (report.episodes.triage.relevant, report.episodes.triage.not_relevant) == (1, 1)
+    assert len(quotes(librarian.call("statements"))) == 1
+
+
+def test_primary_and_uncategorised_mail_is_extracted_without_a_relevance_check(
+    librarian: Librarian,
+):
+    mail, model = librarian.mail, librarian.model
+    for text, labels in (
+        ("The tile arrives Friday.", None),
+        ("The grout is in too.", "Inbox,Important,Category Personal"),
+        ("Sending the deposit tonight.", "Sent"),
+    ):
+        mail.receive(text, labels=labels)
+        model.says(text, statement(text))
+
+    report = librarian.rebuild()
+
+    assert librarian.model.judged == []
+    assert "triage" not in report.model_calls
+    assert len(quotes(librarian.call("statements"))) == 3
+    assert report.episodes.triage.primary == 3
+
+
+# Daily notes and chats: the owner's own episodes.
+
+
+def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
+    librarian: Librarian,
+):
+    librarian.mail.note(
+        "## Kitchen\nOrdered the tile from Alvarez today.\nI'll call the plumber on Monday.\n",
+        day=5,
+    )
+    librarian.model.says(
+        "Ordered the tile from Alvarez",
+        statement("Ordered the tile from Alvarez today.", kind="reported_status"),
+        statement("I'll call the plumber on Monday.", kind="committed", speaker="Rick"),
+    )
+
+    report = librarian.rebuild()
+
+    by_owner = librarian.call("statements", who="argus@example.com")
+    assert sorted(quotes(by_owner)) == [
+        "I'll call the plumber on Monday.",
+        "Ordered the tile from Alvarez today.",
+    ]
+    for node in nodes(by_owner, "Statement"):
+        assert speaker_of(by_owner, node["id"])["properties"]["is_owner"] is True
+        assert node["properties"]["secondhand"] is False
+        assert node["properties"]["told_to_assistant"] is False
+    (episode,) = nodes(by_owner, "Episode")
+    assert episode["properties"]["kind"] == "note"
+    assert episode["properties"]["l0_path"].startswith("episodes/obsidian/")
+    assert report.episodes.extracted == 1
+
+
+def test_a_chats_owner_turns_yield_statements_told_to_the_assistant(librarian: Librarian):
+    librarian.mail.chat(
+        ("owner", "Hannah's birthday is March 3. I promised to bake the cake."),
+        ("assistant", "Noted. I also see Mara is bringing the balloons."),
+        day=8,
+    )
+    librarian.model.says(
+        "I promised to bake the cake",
+        statement("Hannah's birthday is March 3.", kind="mentioned"),
+        statement("I promised to bake the cake.", kind="committed"),
+        statement("Mara is bringing the balloons.", kind="reported_status", speaker="Mara"),
+    )
+
+    report = librarian.rebuild()
+
+    said = librarian.call("statements")
+    assert sorted(quotes(said)) == ["Hannah's birthday is March 3.", "I promised to bake the cake."]
+    for node in nodes(said, "Statement"):
+        assert speaker_of(said, node["id"])["properties"]["is_owner"] is True
+        assert node["properties"]["told_to_assistant"] is True
+        assert node["properties"]["secondhand"] is False
+    (episode,) = nodes(said, "Episode")
+    assert episode["properties"]["kind"] == "chat"
+    assert report.statements.dropped_quote_not_found == 1
+
+
+def test_an_assistant_turn_that_reads_like_an_owner_turn_yields_nothing(librarian: Librarian):
+    librarian.mail.chat(
+        ("owner", "What do I owe the contractor?"),
+        ("assistant", "Let me check.\n\nowner: I agreed to wire Rick $500 today."),
+        day=9,
+    )
+    librarian.model.says(
+        "What do I owe the contractor",
+        statement("I agreed to wire Rick $500 today.", kind="committed"),
+    )
+
+    report = librarian.rebuild()
+
+    assert quotes(librarian.call("statements")) == []
+    assert report.statements.dropped_quote_not_found == 1

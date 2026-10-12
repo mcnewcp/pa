@@ -25,6 +25,8 @@ deploy/home/setup-wizard.sh
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
+| `install-explorer.sh [--serve]` | Builds our Ladybug Explorer image (`explorer/`) and runs it as the `pa-explorer` container; `--serve` also puts it on the tailnet with `tailscale serve` |
+| `check-explorer.sh` | Checks the explorer: the current build, the refused routes, no writes, and who can reach it |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -87,6 +89,22 @@ uv run pa-eval compare evals/baselines/v0.11 evals/runs/<run>                  #
 ```
 
 The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
+
+## Ladybug Explorer
+
+The owner looks at the claims graph in Ladybug Explorer, to debug bad merges and missing links and to find connections. It runs on the devbox, not in the VM, as the Docker container `pa-explorer`, and Docker starts it at boot.
+
+- **Our image** (`explorer/Dockerfile`): upstream's source at a pinned commit, on the LadybugDB version the builder and the PA MCP server use. `explorer/package.json` and its lockfile pin it, and a test checks it against `adapters/home/pyproject.toml`. To move LadybugDB, change both, regenerate the lockfile with the image's npm, and re-run `install-explorer.sh`.
+- **Nothing to change things with.** `/api/db` (reopen any path or mount) and `/api/gpt` (send the schema and questions to OpenAI) are deleted from the server, and `openai` from the dependencies, so they answer 404. In read-only mode upstream doesn't mount `/api/reset` or `/api/import`.
+- **Read-only.** The graph directory is mounted `:ro` and opened read-only, and nothing in the container is writable: no tmpfs, no `/dev/shm`. So a query can't change a build, write a file anywhere, or install an extension. A 512 MiB buffer pool and a 10 s query timeout make a runaway query fail fast.
+- **Who reaches it.** Docker publishes it on `127.0.0.1:18000` only. `tailscale serve` forwards port 18000 on the devbox's tailnet name to it, so the owner's devices reach it at `http://devbox.<tailnet>.ts.net:18000`. Plain HTTP: the tailnet encrypts it already. The VM reaches it at none of the devbox's addresses: the bridge firewall drops its traffic to the devbox, and `tag:pa` is granted nothing on the tailnet.
+- **New builds.** The server opens its build once and never looks at `current` again, so the image's entrypoint, `explorer/follow-current`, reads `current` every 2 s and restarts the server on each new build. A rebuild shows up within a few seconds, with no command to run. If the server dies, the container exits and Docker restarts it.
+
+```sh
+deploy/home/install-explorer.sh --serve   # build, run, serve on the tailnet (sudo for tailscale serve)
+deploy/home/check-explorer.sh             # from the devbox and the VM
+docker logs pa-explorer                   # which build it serves: "follow-current: serving builds/<id>"
+```
 
 ## Updating and rolling back
 
@@ -159,3 +177,16 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    deploy/home/install-remote-control.sh
    ```
 6. `run-evals.sh`, with the service running, leaves the inbox unchanged.
+
+## Acceptance run (#46)
+
+1. `install-explorer.sh --serve` runs, and `check-explorer.sh` passes: it serves the current build, read-only, on the pinned LadybugDB; `/api/db` and `/api/gpt` answer 404; `CREATE`, `CHECKPOINT`, `COPY … TO` and `INSTALL` are refused and the graph directory is unchanged byte for byte; it's published on `127.0.0.1` only, nothing answers on the devbox's LAN address, `tailscale serve` forwards to it; and the VM can't reach it via the bridge, the LAN address, or the tailnet address.
+2. From the phone with Tailscale on, `http://devbox.<tailnet>.ts.net:18000` opens the explorer. With Tailscale off on the home Wi-Fi, `http://<devbox LAN address>:18000` doesn't load.
+3. A rebuild shows up:
+   ```sh
+   set -a; source ~/.local/share/pa-home-synthetic/owner.env; set +a
+   PA_DATA_DIR=~/.local/share/pa-home-synthetic uv run pa librarian rebuild   # cached: model calls: none
+   docker logs pa-explorer | tail -n 4   # follow-current: serving builds/<the new id>
+   deploy/home/check-explorer.sh
+   ```
+4. Reboot the devbox: `pa-explorer` is running again and `check-explorer.sh` passes.
