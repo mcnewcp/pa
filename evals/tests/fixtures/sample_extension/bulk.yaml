@@ -1,0 +1,33 @@
+# The third file of the sample extension (see garden.yaml): eight weeks of bulk mail.
+background:
+  - id: bulk
+    title: Bulk mail
+    summary: The offers, digests, alerts, and forum notifications Argus gets.
+    seed: 7
+    start: 2026-05-01
+    end: 2026-06-25
+    senders:
+      - id: hardware
+        name: Hammer & Nail Hardware
+        email: deals@hammernail.example
+        category: promotions
+        per_week: 3
+        kinds: [weekly ad, coupon for 20% off]
+      - id: blocktalk
+        name: Block Talk
+        email: digest@blocktalk.example
+        category: social
+        per_week: 2
+        kinds: [neighbourhood digest]
+      - id: bank
+        name: Lakeshore Bank
+        email: alerts@lakeshorebank.example
+        category: updates
+        per_week: 1
+        kinds: [statement ready, low balance alert]
+      - id: garden-forum
+        name: Garden Forum
+        email: noreply@gardenforum.example
+        category: forums
+        per_week: 1
+        kinds: [new replies in a thread Argus follows]

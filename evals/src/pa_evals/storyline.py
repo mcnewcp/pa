@@ -1,8 +1,12 @@
 """The storyline spec: the hand-written YAML ground truth of the synthetic corpus.
 
 A spec lists the cast, the calendars, and the storylines, each with its dated events. Every
-event names its channel (email, calendar event, calendar update, daily note section, or a
-correction to a daily note), its participants, its time, and what happens (`what`).
+event names its channel (email, calendar event, calendar update, daily note section, a
+correction to a daily note, or an exchange with the assistant), its participants, its time, and
+what happens (`what`). Background sections describe bulk mail (who sends it, how often, and
+what kind), which is expanded into dated emails with a fixed seed.
+
+A spec may span several files: a base spec and extensions that add to it (see `load_spec`).
 
 Times without a UTC offset are read in the spec's `timezone`. People are referred to by cast
 id (meaning their first email address) or by one of their email addresses.
@@ -11,6 +15,7 @@ id (meaning their first email address) or by one of their email addresses.
 from __future__ import annotations
 
 import datetime as dt
+import random
 from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
@@ -33,6 +38,7 @@ from pa_core.owner import Owner
 from pa_evals.models import FrozenModel
 
 NOTE_CAPTURE_TIME = dt.time(1, 0)  # local time, the night after the note's day
+BULK_HOURS = (6, 22)  # bulk mail is sent from 6:00 to 21:59 local time, never in a DST gap
 
 
 class SpecError(PaError):
@@ -166,14 +172,61 @@ class ChatEvent(FrozenModel):
     what: str
 
 
-type Event = EmailEvent | CalendarEvent | CalendarUpdate | NoteSection | NoteCorrection | ChatEvent
+type StorylineEvent = (
+    EmailEvent | CalendarEvent | CalendarUpdate | NoteSection | NoteCorrection | ChatEvent
+)
 
 
 class Storyline(FrozenModel):
     id: Id
     title: str
     summary: str = ""
-    events: list[Annotated[Event, Field(discriminator="channel")]]
+    events: list[Annotated[StorylineEvent, Field(discriminator="channel")]]
+
+
+class BulkSender(FrozenModel):
+    """A sender of bulk mail, how often it writes (a rough rate), and what kinds of mail."""
+
+    id: Id
+    name: str
+    email: str
+    category: GmailCategory | None = None
+    per_week: Annotated[float, Field(gt=0)]
+    kinds: Annotated[list[str], Field(min_length=1)]
+
+
+class Background(FrozenModel):
+    """Bulk mail, from `start` to `end` (both included), expanded into emails with `seed`.
+
+    Each sender writes about `per_week` emails a week, give or take a fifth, at random days
+    and waking hours, each of one of its kinds. The same section and seed always expand to the
+    same emails. They go to `to`, or to the owner if unset.
+    """
+
+    id: Id
+    title: str
+    summary: str = ""
+    seed: int
+    start: dt.date
+    end: dt.date
+    to: list[str] = []
+    senders: Annotated[list[BulkSender], Field(min_length=1)]
+
+
+@dataclass(frozen=True)
+class BulkEmail:
+    """One email a background section expands into. Its subject and body are the model's."""
+
+    id: str
+    background: str  # the background section's id
+    at: dt.datetime  # local time, in the spec's zone
+    sender: str  # the bulk sender's id
+    to: tuple[str, ...]
+    category: GmailCategory | None
+    kind: str
+
+
+type Event = StorylineEvent | BulkEmail
 
 
 class Address(FrozenModel):
@@ -191,6 +244,7 @@ class StorylineSpec(FrozenModel):
     cast_additions: list[CastAddition] = []
     calendars: list[Calendar] = []
     storylines: list[Storyline]
+    background: list[Background] = []
     # Set when the spec is a base spec with extensions (see `load_spec`).
     _base: BaseSpec | None = PrivateAttr(default=None)
 
@@ -200,8 +254,14 @@ class StorylineSpec(FrozenModel):
 
     @cached_property
     def events(self) -> list[Event]:
-        """Every event, in the order the spec lists them."""
-        return [event for storyline in self.storylines for event in storyline.events]
+        """Every event, in the order the spec lists them, then the bulk mail."""
+        storylines = [event for storyline in self.storylines for event in storyline.events]
+        return [*storylines, *self.bulk_emails]
+
+    @cached_property
+    def bulk_emails(self) -> list[BulkEmail]:
+        """The emails every background section expands into, section by section, in time order."""
+        return [email for section in self.background for email in _expand(section, self.owner)]
 
     def event(self, event_id: str) -> Event:
         return self._events_by_id[event_id]
@@ -224,12 +284,8 @@ class StorylineSpec(FrozenModel):
 
     def in_base(self, event_id: str) -> bool:
         """Whether the event is the base spec's, not an extension's (False if not extended)."""
-        storyline = self._storyline_by_event.get(event_id)
-        return (
-            self._base is not None
-            and storyline is not None
-            and storyline.id in self._base.storylines
-        )
+        part = self._part_of_event.get(event_id)
+        return self._base is not None and part in self._base.parts
 
     def calendar(self, calendar_id: str) -> Calendar:
         return self._calendars_by_id[calendar_id]
@@ -278,12 +334,22 @@ class StorylineSpec(FrozenModel):
         return {event.id: storyline for storyline in self.storylines for event in storyline.events}
 
     @cached_property
+    def _part_of_event(self) -> dict[str, str]:
+        """The storyline or background section each event is part of, by event id."""
+        parts = {event_id: storyline.id for event_id, storyline in self._storyline_by_event.items()}
+        parts.update((email.id, email.background) for email in self.bulk_emails)
+        return parts
+
+    @cached_property
     def people(self) -> list[Person]:
-        """The cast, each person with any names and addresses added to them."""
+        """Everyone who sends or receives anything: the cast, then the bulk senders.
+
+        Each cast member has any names and addresses an extension adds to them.
+        """
         additions: dict[str, list[CastAddition]] = defaultdict(list)
         for addition in self.cast_additions:
             additions[addition.id].append(addition)
-        return [
+        cast = [
             person.model_copy(
                 update={
                     "aliases": [*person.aliases, *(a for x in more for a in x.aliases)],
@@ -294,6 +360,12 @@ class StorylineSpec(FrozenModel):
             else person
             for person in self.cast
         ]
+        senders = [
+            Person(id=sender.id, name=sender.name, emails=[sender.email])
+            for section in self.background
+            for sender in section.senders
+        ]
+        return [*cast, *senders]
 
     @cached_property
     def _people_by_ref(self) -> dict[str, Person]:
@@ -315,10 +387,11 @@ class StorylineSpec(FrozenModel):
 
 @dataclass(frozen=True)
 class BaseSpec:
-    """The base spec of an extended spec: its file's name, and the storylines it holds."""
+    """The base spec of an extended spec: its file's name, and the ids of its storylines and
+    background sections."""
 
     name: str
-    storylines: frozenset[str]
+    parts: frozenset[str]
 
 
 class SpecExtension(FrozenModel):
@@ -331,14 +404,15 @@ class SpecExtension(FrozenModel):
     cast_additions: list[CastAddition] = []
     calendars: list[Calendar] = []
     storylines: list[Storyline] = []
+    background: list[Background] = []
 
 
 def load_spec(path: Path, *extensions: Path) -> StorylineSpec:
     """Read and check a storyline spec; raises SpecError saying what is wrong.
 
     The spec is the base spec at `path` plus any `extensions`, files beside it that each add
-    cast, calendars, and storylines to it. They are checked together, so an id may be used in
-    only one of them, and any of them may refer to what another one defines.
+    cast, calendars, storylines, and background sections to it. They are checked together, so
+    an id may be used in only one of them, and any of them may refer to what another defines.
 
     The base spec's payloads are frozen, so an extension may not change them or their episode
     ids: it adds no events to the base spec's threads (replies to its emails, updates of its
@@ -356,7 +430,8 @@ def load_spec(path: Path, *extensions: Path) -> StorylineSpec:
         for key in SpecExtension.model_fields:
             merged[key] = [*merged.get(key, []), *more.get(key, [])]
     where = f"{path} with {', '.join(str(extension) for extension in extensions)}"
-    base_spec = BaseSpec(path.name, frozenset(storyline.id for storyline in base.storylines))
+    parts = [*(storyline.id for storyline in base.storylines), *(s.id for s in base.background)]
+    base_spec = BaseSpec(path.name, frozenset(parts))
     return _validate(StorylineSpec, merged, where, context={"base": base_spec})
 
 
@@ -378,7 +453,8 @@ def _validate[T: FrozenModel](
 
 def _problems(spec: StorylineSpec) -> Iterator[str]:
     """Everything inconsistent in a spec whose fields each parsed."""
-    yield from _duplicates("cast id", [person.id for person in spec.cast])
+    # Bulk senders are named like the cast, so their ids and addresses must differ from it.
+    yield from _duplicates("cast id", [person.id for person in spec.people])
     yield from _duplicates(
         "email address", [email.lower() for person in spec.people for email in person.emails]
     )
@@ -387,8 +463,16 @@ def _problems(spec: StorylineSpec) -> Iterator[str]:
         if addition.id not in cast_ids:
             yield f"cast_additions: {addition.id!r} is not in the cast"
     yield from _duplicates("calendar id", [calendar.id for calendar in spec.calendars])
-    yield from _duplicates("storyline id", [storyline.id for storyline in spec.storylines])
+    yield from _duplicates(
+        "storyline id", [part.id for part in [*spec.storylines, *spec.background]]
+    )
     yield from _duplicates("event id", [event.id for event in spec.events])
+    for section in spec.background:
+        if section.end < section.start:
+            yield f"background {section.id}: it ends before it starts"
+        for ref in section.to:
+            if ref.lower() not in spec._people_by_ref:
+                yield f"background {section.id}: {ref!r} is not a cast id or a cast email address"
     for zone in [spec.timezone, *(c.timezone for c in spec.calendars if c.timezone)]:
         try:
             ZoneInfo(zone)
@@ -586,6 +670,42 @@ def _people_refs(event: Event) -> list[str]:
             return event.participants
         case NoteCorrection() | ChatEvent():
             return []
+        case BulkEmail():
+            return []  # its sender is a bulk sender, and its section's recipients are checked
+
+
+def _expand(section: Background, owner: str) -> list[BulkEmail]:
+    """The emails a background section expands into, in time order; the same every time."""
+    rng = random.Random(f"{section.id}:{section.seed}")
+    days = (section.end - section.start).days + 1
+    if days < 1:
+        return []  # reported as a problem
+    emails: list[BulkEmail] = []
+    for sender in section.senders:
+        count = max(1, round(sender.per_week * days / 7 * rng.uniform(0.8, 1.2)))
+        drafts = sorted(
+            (
+                dt.datetime.combine(
+                    section.start + dt.timedelta(days=rng.randrange(days)),
+                    dt.time(rng.randrange(*BULK_HOURS), rng.randrange(60)),
+                ),
+                rng.choice(sender.kinds),
+            )
+            for _ in range(count)
+        )
+        emails += [
+            BulkEmail(
+                id=f"{section.id}-{sender.id}-{number:03d}",
+                background=section.id,
+                at=at,
+                sender=sender.id,
+                to=tuple(section.to or [owner]),
+                category=sender.category,
+                kind=kind,
+            )
+            for number, (at, kind) in enumerate(drafts, start=1)
+        ]
+    return sorted(emails, key=lambda email: (email.at, email.id))
 
 
 def _duplicates(what: str, values: list[str]) -> Iterator[str]:

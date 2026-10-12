@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from email import policy
 from email.headerregistry import Address as MailAddress
@@ -21,7 +21,7 @@ from email.utils import format_datetime
 from pathlib import Path, PurePosixPath
 from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, create_model, field_validator
 
 from pa_core.envelope import Source
 from pa_core.errors import PaError
@@ -30,6 +30,8 @@ from pa_core.model_client import ModelClient
 from pa_core.normalizers import payload_extension
 from pa_core.normalizers.assistant_chat import TurnRole, encode_exchange
 from pa_evals.storyline import (
+    Background,
+    BulkEmail,
     CalendarEvent,
     CalendarUpdate,
     CalendarVersion,
@@ -72,6 +74,30 @@ class ChatProse(BaseModel):
         if turns[0].role != "owner" or turns[-1].role != "assistant":
             raise ValueError("the first turn must be the owner's and the last the assistant's")
         return turns
+
+
+class BulkProse(BaseModel):
+    subject: Annotated[str, Field(min_length=1)]
+    body: Annotated[str, Field(min_length=1)]
+
+
+class BulkMail(BaseModel):
+    """What the model writes for a batch of bulk mail: each email's subject and body, in order."""
+
+    emails: list[BulkProse]
+
+
+BULK_BATCH = 25
+"""How many bulk emails one model call writes."""
+
+
+def _bulk_output(count: int) -> type[BulkMail]:
+    """The output for a batch of `count` bulk emails: exactly that many, so none is missed."""
+    return create_model(
+        "BulkMail",
+        __base__=BulkMail,
+        emails=(Annotated[list[BulkProse], Field(min_length=count, max_length=count)], ...),
+    )
 
 
 CHAT_DURATION = dt.timedelta(seconds=30)
@@ -117,6 +143,8 @@ def payload_path(spec: StorylineSpec, event: Event) -> str:
             source, stem = Source.OBSIDIAN, f"{_stamp(spec.local(event.at))}_{event.id}"
         case ChatEvent():
             source, stem = Source.ASSISTANT_CHAT, f"{_stamp(spec.local(event.at))}_{event.id}"
+        case BulkEmail():
+            source, stem = Source.GMAIL, f"{_stamp(spec.local(event.at))}_{event.id}"
     return f"{source}/{stem}{payload_extension(source)}"
 
 
@@ -166,6 +194,7 @@ class _Generator:
                 payloads[payload_path(self.spec, event)] = self._calendar(event)
         payloads.update(self._daily_notes())
         payloads.update(self._chats())
+        payloads.update(self._bulk())
         return dict(sorted(payloads.items()))
 
     def _prose(self, prompt: str) -> str:
@@ -192,25 +221,25 @@ class _Generator:
             payloads[payload_path(spec, event)] = self._email(event, subject, bodies[event.id])
         return payloads
 
-    def _email(self, event: EmailEvent, subject: str, body: str) -> bytes:
+    def _email(self, event: EmailEvent | BulkEmail, subject: str, body: str) -> bytes:
         spec = self.spec
         message = EmailMessage(policy=policy.SMTP)
         message["X-Gmail-Labels"] = _gmail_labels(spec, event)
         message["Message-ID"] = f"<{message_id(spec, event)}>"
-        thread = _thread(spec, event)
+        thread = _thread(spec, event) if isinstance(event, EmailEvent) else []
         if thread:
             message["In-Reply-To"] = f"<{thread[-1]}>"
             message["References"] = " ".join(f"<{ref}>" for ref in thread)
         message["Date"] = format_datetime(spec.local(event.at))
         message["From"] = self._mail_addresses([event.sender])
         message["To"] = self._mail_addresses(event.to)
-        if event.cc:
+        if isinstance(event, EmailEvent) and event.cc:
             message["Cc"] = self._mail_addresses(event.cc)
         message["Subject"] = subject
         message.set_content(body + "\n")
         return message.as_bytes()
 
-    def _mail_addresses(self, refs: list[str]) -> tuple[MailAddress, ...]:
+    def _mail_addresses(self, refs: Sequence[str]) -> tuple[MailAddress, ...]:
         addresses = (self.spec.address(ref) for ref in refs)
         return tuple(MailAddress(display_name=a.name, addr_spec=a.email) for a in addresses)
 
@@ -396,6 +425,56 @@ class _Generator:
             ]
         )
 
+    # Bulk mail
+
+    def _bulk(self) -> dict[str, bytes]:
+        """Bulk mail, written BULK_BATCH emails of a background section to a model call."""
+        sections: dict[str, list[BulkEmail]] = defaultdict(list)
+        for event in self.events:
+            if isinstance(event, BulkEmail):
+                sections[event.background].append(event)
+        payloads: dict[str, bytes] = {}
+        for section in self.spec.background:
+            emails = sections[section.id]
+            for start in range(0, len(emails), BULK_BATCH):
+                batch = emails[start : start + BULK_BATCH]
+                prompt = self._bulk_prompt(section, batch)
+                written = self.client.generate(prompt, _bulk_output(len(batch)))
+                for email, prose in zip(batch, written.emails, strict=True):
+                    payloads[payload_path(self.spec, email)] = self._email(
+                        email, prose.subject.strip(), prose.body.strip()
+                    )
+        return payloads
+
+    def _bulk_prompt(self, section: Background, batch: list[BulkEmail]) -> str:
+        spec = self.spec
+        owner = spec.person(spec.owner)
+        summary = f" {section.summary}" if section.summary else ""
+        lines = [
+            "You are writing part of a synthetic corpus: the fictional personal life of "
+            f"{owner.name}.",
+            f"Background, for context only: this is the bulk mail in their inbox, "
+            f"'{section.title}'.{summary}",
+            "",
+            f"Write the subject line and plain-text body of each of these {len(batch)} emails,",
+            "in the order listed: one entry per email.",
+            "",
+        ]
+        for number, email in enumerate(batch, start=1):
+            tab = (email.category or "primary").capitalize()
+            lines.append(
+                f"{number}. From: {self._who(email.sender)}; To: "
+                f"{', '.join(self._who(ref) for ref in email.to)}; Gmail tab: {tab}; sent "
+                f"{_spoken_time(spec.local(email.at))}; kind of email: {email.kind}."
+            )
+        lines += [
+            "",
+            "Write each as its sender would write that kind of email: a subject line, and a",
+            "short body of a few lines. Vary them as real mail varies. Mention nothing about the",
+            "recipient beyond their name, and no one else in their life.",
+        ]
+        return "\n".join(lines)
+
     # Assistant chat
 
     def _chats(self) -> dict[str, bytes]:
@@ -477,7 +556,7 @@ class _Generator:
         return f"{person.name} <{address.email}>{known_as}"
 
 
-def message_id(spec: StorylineSpec, event: EmailEvent) -> str:
+def message_id(spec: StorylineSpec, event: EmailEvent | BulkEmail) -> str:
     """An email's internet message ID: its event id at the sender's domain."""
     return f"{event.id}@{spec.address(event.sender).email.rsplit('@', 1)[1]}"
 
@@ -510,7 +589,7 @@ def _hook_time(moment: dt.datetime) -> str:
     )
 
 
-def _gmail_labels(spec: StorylineSpec, event: EmailEvent) -> str:
+def _gmail_labels(spec: StorylineSpec, event: EmailEvent | BulkEmail) -> str:
     """The email's X-Gmail-Labels header, spelled as Gmail's Takeout export spells it."""
     if spec.person(event.sender).id == spec.owner:
         return "Sent"

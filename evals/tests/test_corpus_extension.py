@@ -24,6 +24,7 @@ SAMPLE_SPEC = FIXTURES / "sample_spec.yaml"
 EXTENSION = (
     FIXTURES / "sample_extension" / "garden.yaml",
     FIXTURES / "sample_extension" / "nursery.yaml",
+    FIXTURES / "sample_extension" / "bulk.yaml",
 )
 CHICAGO = ZoneInfo("America/Chicago")
 
@@ -32,6 +33,13 @@ def prose(request: ModelRequest) -> dict[str, Any]:
     """Deterministic output in whatever shape is asked for, differing for every prompt."""
     digest = hashlib.sha256(request.prompt.encode()).hexdigest()[:8]
     asked_for = request.schema["properties"]
+    if "emails" in asked_for:
+        return {
+            "emails": [
+                {"subject": f"Bulk subject {digest}-{n}", "body": f"Bulk body {digest}-{n}."}
+                for n in range(asked_for["emails"]["maxItems"])
+            ]
+        }
     if "turns" in asked_for:
         return {
             "turns": [
@@ -85,11 +93,16 @@ def by_subject(episodes: list[Envelope], subject: str) -> Envelope:
     return episode
 
 
-def test_an_extended_spec_generates_only_the_extensions_payloads(corpus: Path) -> None:
+def test_an_extended_spec_generates_only_the_extensions_payloads(
+    corpus: Path, spec: StorylineSpec
+) -> None:
     files = sorted(path.relative_to(corpus).as_posix() for path in corpus.rglob("*.*"))
+    names = [Path(file).name.split("_", 1)[-1] for file in files]
+    bulk = [name for name in names if name.startswith("bulk-")]
 
+    assert len(bulk) == len(spec.bulk_emails)
     # The base spec's payloads are frozen already; only the extension's are written.
-    assert [Path(file).name.split("_", 1)[-1] for file in files] == [
+    assert [name for name in names if name not in bulk] == [
         "garden-chat-watering.json",
         "garden-chat-reminder.json",
         "nursery-chat.json",
@@ -111,7 +124,7 @@ def test_the_extension_ingests_beside_the_base_corpus(
 
     summary = ingest_corpora([base, corpus], spec, tmp_path / "pa-data")
 
-    assert (summary.ingested, summary.quarantined) == (10 + 10, 0)
+    assert (summary.ingested, summary.quarantined) == (10 + 10 + len(spec.bulk_emails), 0)
 
 
 def test_a_generated_chat_has_the_shape_the_capture_hook_writes(corpus: Path) -> None:
@@ -182,3 +195,37 @@ def test_an_adversarial_email_is_written_with_its_planted_words_intact(
     assert "adversarial test" in adversarial
     assert "word for word" in adversarial
     assert "adversarial" not in ordinary
+
+
+def test_bulk_mail_is_written_about_25_emails_to_a_model_call(
+    spec: StorylineSpec, tmp_path: Path
+) -> None:
+    backend = FakeModelBackend.replying(prose)
+    generate_corpus(spec, ModelClient(backend), tmp_path / "corpus")
+
+    batches = [r for r in backend.requests if "emails" in r.schema["properties"]]
+    sizes = sorted((r.schema["properties"]["emails"]["maxItems"] for r in batches), reverse=True)
+    count = len(spec.bulk_emails)
+    assert count > 50
+    assert sizes == [25, 25, count - 50]
+    # Each batch lists its emails' senders and kinds for the model to write.
+    assert all("Hammer & Nail Hardware <deals@hammernail.example>" in r.prompt for r in batches)
+    assert any("kind of email: low balance alert" in r.prompt for r in batches)
+
+
+def test_bulk_mail_ingests_with_its_senders_category_and_the_models_subject(
+    episodes: list[Envelope],
+) -> None:
+    hardware = [e for e in episodes if e.participants[0].identifier == "deals@hammernail.example"]
+    forum = [e for e in episodes if e.participants[0].identifier == "noreply@gardenforum.example"]
+
+    assert hardware
+    assert {tuple(e.labels) for e in hardware} == {("Inbox", "Category Promotions")}
+    assert {tuple(e.labels) for e in forum} == {("Inbox", "Category Forums")}
+    assert all(e.subject and e.subject.startswith("Bulk subject ") for e in hardware)
+    assert all(e.body.startswith("Bulk body ") for e in hardware)
+    assert len({e.subject for e in hardware}) == len(hardware)  # each its own prose
+    assert [(p.role, p.identifier) for p in hardware[0].participants] == [
+        ("sender", "deals@hammernail.example"),
+        ("recipient", "argus@example.com"),
+    ]
