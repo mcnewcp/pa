@@ -141,7 +141,7 @@ What the assistant is given besides L0's files in an eval run: nothing (files al
 _Avoid_: Mode, variant, arm
 
 **Injection checks**:
-The checks run against every eval build of the claims graph: no statement recorded in an adversarial email is the owner's, and no request or commitment owed by the owner is opened by one. A failure stops the run.
+The checks run against every eval build of the claims graph: no statement recorded in an adversarial email is the owner's, no commitment owed by the owner is opened by one, and no request made by the owner is opened by one (anyone may ask the owner something). A failure stops the run.
 
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".
