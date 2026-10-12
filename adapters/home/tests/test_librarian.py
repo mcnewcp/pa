@@ -4,6 +4,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 from __future__ import annotations
 
 import gc
+import itertools
 import json
 import os
 import stat
@@ -38,6 +39,8 @@ from pa_home import cli
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.graph import extensions
+from pa_home.graph.queries import DOMAIN_QUERIES
+from pa_home.graph.reader import Limits
 from pa_home.librarian import rebuild_graph
 from pa_home.mcp_server import graph_server
 
@@ -358,8 +361,8 @@ def extensions_root() -> Path:
 def librarian(tmp_path: Path, extensions_root: Path) -> Iterator[Librarian]:
     librarian = Librarian(tmp_path / "pa-data", extensions_root)
     yield librarian
-    # Each open build reserves 8 TiB of address space, so a run of tests that leaves its
-    # readers to the garbage collector can run out of it. Collecting the server closes them.
+    # The server's readers are worker processes, each holding the build open (and 8 TiB of
+    # address space). Collecting the server stops them now, not whenever the collector runs.
     del librarian.server
     gc.collect()
 
@@ -568,7 +571,9 @@ def two_davids(librarian: Librarian) -> None:
     librarian.mail.receive("The toast is yours if you want it.", sender=DAVE)
     librarian.mail.receive("Our pipes froze again.", sender="David Lee <dlee@example.org>")
     librarian.model.says("The toast is yours", statement("The toast is yours if you want it."))
-    librarian.model.says("Our pipes froze", statement("Our pipes froze again."))
+    librarian.model.says(
+        "Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",))
+    )
     librarian.rebuild()
 
 
@@ -702,7 +707,13 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
         # The initialize handshake, as Claude Code connects.
         async with Client(server, mode="legacy") as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"find", "statements", "timeline"}
+            assert {tool.name for tool in tools.tools} == {
+                "find",
+                "statements",
+                "timeline",
+                "schema",
+                "query",
+            }
             return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
 
     found = anyio.run(go)
@@ -943,6 +954,236 @@ def test_a_topic_named_only_by_a_dropped_statement_is_never_made(librarian: Libr
     assert librarian.model.placed == [["Kitchen remodel"]]
     assert report.nodes["Topic"] == 1
     assert librarian.call("find", name="wire transfer")["matches"] == []
+
+
+def test_query_answers_a_read_with_rows_whose_nodes_and_edges_are_in_the_graph(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    result = librarian.call(
+        "query",
+        cypher="MATCH (p:Person)-[said:SAID]->(s:Statement) WHERE p.name = $name "
+        "RETURN p, said, s, s.quote AS quote",
+        params={"name": "David Lee"},
+    )
+
+    (row,) = result["rows"]
+    assert result["columns"] == ["p", "said", "s", "quote"]
+    assert row["quote"] == "Our pipes froze again."
+    assert librarian_name(result, row["p"]) == "David Lee"
+    (said,) = result["edges"]
+    assert (said["id"], said["source"], said["target"]) == (row["said"], row["p"], row["s"])
+    assert result["truncated"] is False
+    assert result["message"] == "1 row."
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        "CREATE (:Person {id: 'p1', name: 'Mallory'})",
+        "MATCH (p:Person) SET p.name = 'Mallory'",
+        "MATCH (p:Person) DETACH DELETE p",
+        "MERGE (:Person {id: 'p1'})",
+        "MATCH (p:Person) REMOVE p.name",
+        "DROP TABLE Person",
+        "COPY (MATCH (p:Person) RETURN p.name) TO '/tmp/people.csv'",
+        "COPY Person FROM '/tmp/people.csv'",
+        "LOAD FROM '/tmp/people.csv' RETURN *",
+        "LOAD EXTENSION '/tmp/libevil.lbug_extension'",
+        "INSTALL httpfs",
+        "UNINSTALL fts",
+        "UPDATE fts",
+        "ATTACH '/tmp/other.lbdb' AS other (dbtype lbug)",
+        "EXPORT DATABASE '/tmp/dump'",
+        "IMPORT DATABASE '/tmp/dump'",
+        "CHECKPOINT",
+        "CALL timeout=0",
+        "CALL timeout=0; MATCH (p:Person) RETURN p",
+        "MATCH (p:Person) RETURN p; MATCH (s:Statement) RETURN s",
+        "match (p:Person) /* a comment */ set p.name = 'x'",
+        "CALL CREATE_FTS_INDEX('Person', 'evil', ['name'])",
+    ],
+)
+def test_query_rejects_anything_but_one_read_statement_before_it_reaches_the_database(
+    librarian: Librarian, cypher: str
+):
+    # No build is published yet, so a statement that reached the database would fail with
+    # "No claims graph has been published" instead.
+    message = librarian.call_failing("query", cypher=cypher)
+
+    assert "Rejected" in message
+    assert "published" not in message
+
+
+def test_query_never_writes_a_file(librarian: Librarian, tmp_path: Path):
+    two_davids(librarian)
+    target = tmp_path / "people.csv"
+
+    message = librarian.call_failing(
+        "query", cypher=f"COPY (MATCH (p:Person) RETURN p.name) TO '{target}'"
+    )
+
+    assert "Rejected" in message and "COPY" in message
+    assert not target.exists()
+
+
+def test_query_accepts_reads_that_mention_write_words_in_strings_comments_and_properties(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    result = librarian.call(
+        "query",
+        cypher="// set, create, or delete nothing\n"
+        "MATCH (p:Person) WHERE p.name <> 'Create; Set; Delete' "
+        "RETURN count(*) AS `delete people`;",
+    )
+
+    assert result["rows"] == [{"delete people": 3}]
+
+
+def test_query_caps_its_rows_and_says_so(librarian: Librarian):
+    two_davids(librarian)
+
+    capped = librarian.call("query", cypher="UNWIND range(1, 5000) AS i RETURN i")
+    whole = librarian.call("query", cypher="UNWIND range(1, 200) AS i RETURN i")
+
+    assert [row["i"] for row in capped["rows"]] == list(range(1, 201))
+    assert capped["truncated"] is True
+    assert "Only the first 200 rows" in capped["message"]
+    assert len(whole["rows"]) == 200 and whole["truncated"] is False
+
+
+RUNAWAY = "MATCH p = (a:Person)-[*]-(b:Person) RETURN count(*)"
+"""Every walk of up to 30 hops between two people: it outgrows any memory or time limit."""
+
+
+def test_a_runaway_query_is_stopped_and_the_next_call_succeeds(librarian: Librarian):
+    a_thread_of_three(librarian)
+    two_davids(librarian)
+
+    message = librarian.call_failing("query", cypher=RUNAWAY)
+
+    assert "stopped" in message
+    assert librarian.call("query", cypher="MATCH (p:Person) RETURN count(*) AS n")["rows"] == [
+        {"n": 4}
+    ]
+    assert len(quotes(librarian.call("statements"))) == 6
+
+
+def test_a_query_worker_over_its_memory_cap_is_killed_and_replaced(librarian: Librarian):
+    a_thread_of_three(librarian)
+    two_davids(librarian)
+    # A buffer pool too big to fill and a long timeout leave only the memory cap to stop it.
+    librarian.server = graph_server(
+        librarian.data_root.graph,
+        extensions_root=librarian.extensions_root,
+        query_limits=Limits(
+            timeout_seconds=60, memory_bytes=200 << 20, buffer_pool_bytes=4 << 30, max_rows=10
+        ),
+    )
+
+    message = librarian.call_failing("query", cypher=RUNAWAY)
+
+    assert "stopped" in message and "200 MB of memory" in message
+    assert librarian.call("query", cypher="MATCH (p:Person) RETURN count(*) AS n")["rows"] == [
+        {"n": 4}
+    ]
+    assert len(quotes(librarian.call("statements"))) == 6
+
+
+def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
+    a_thread_of_three(librarian)
+    librarian.rebuild()
+
+    result = librarian.call(
+        "query",
+        cypher="MATCH p = (a:Person)-[* SHORTEST 1..4]-(b:Person) "
+        "WHERE a.name = 'Maria Alvarez' AND b.name = 'David Kim' "
+        "RETURN p, nodes(p) AS stops, length(p) AS hops",
+    )
+
+    (row,) = result["rows"]
+    assert row["hops"] == 4  # Maria -> her email -> Argus -> a tile email -> Dave
+    path = row["p"]
+    assert path["nodes"] == row["stops"]
+    assert [librarian_name(result, path["nodes"][i]) for i in (0, 2, 4)] == [
+        "Maria Alvarez",
+        "Argus McNevans",
+        "David Kim",
+    ]
+    assert {node["type"] for node in result["nodes"]} == {"Person", "Episode"}
+    assert sorted(node["id"] for node in result["nodes"]) == sorted(path["nodes"])
+    assert [edge["id"] for edge in result["edges"]] == path["edges"]
+    for edge, (here, there) in zip(result["edges"], itertools.pairwise(path["nodes"]), strict=True):
+        assert {edge["source"], edge["target"]} == {here, there}
+        assert edge["type"] == "PARTICIPATED_IN"
+    maria = next(n for n in result["nodes"] if n["id"] == path["nodes"][0])
+    assert set(maria["properties"]) == {"name", "aliases", "addresses", "is_owner"}
+
+
+EXAMPLE_PARAMETERS: dict[str, Any] = {"key": "david kim", "text": "david pipes"}
+"""Values to run the domain queries with on `two_davids`, plus `topic`, the id of its one topic
+(Frozen pipes), found at run time; any other parameter is null. The `text` has a word for the
+people's full-text index and one for the topics'."""
+
+
+def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: Librarian):
+    two_davids(librarian)
+    (pipes,) = librarian.call("find", name="frozen pipes")["matches"]
+    examples = {**EXAMPLE_PARAMETERS, "topic": pipes["id"]}
+
+    schema = librarian.call("schema")
+
+    listed = {q["name"]: (q["text"], q["rules"]) for q in schema["domain_queries"]}
+    assert listed == {q.name: (q.cypher, q.rules) for q in DOMAIN_QUERIES}
+    assert {
+        "find_exact",
+        "find_full_text",
+        "find_topics_full_text",
+        "statements",
+        "timeline_statements",
+    } <= set(listed)
+    for listed_query in schema["domain_queries"]:
+        params = {name: examples.get(name) for name in listed_query["parameters"]}
+        result = librarian.call("query", cypher=listed_query["text"], params=params)
+        assert result["rows"], listed_query["name"]
+    statements_query = next(q for q in schema["domain_queries"] if q["name"] == "statements")
+    assert statements_query["parameters"] == ["who", "topic", "since", "until"]
+
+
+def test_schema_reads_the_live_schema_of_the_current_build_and_states_the_query_limits(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    schema = librarian.call("schema")
+
+    tables = {table["name"]: table for table in schema["tables"]}
+    person = {p["name"]: p["type"] for p in tables["Person"]["properties"]}
+    assert tables["Person"]["kind"] == "NODE"
+    assert (person["id"], person["name"], person["aliases"]) == ("STRING", "STRING", "STRING[]")
+    assert tables["SAID"]["kind"] == "REL"
+    assert tables["SAID"]["connections"] == [{"source": "Person", "target": "Statement"}]
+    assert {(i["table"], i["name"], i["type"]) for i in schema["indexes"]} >= {
+        ("Person", "person_fts", "FTS")
+    }
+    limits = schema["query_limits"]
+    assert (limits["max_rows"], limits["timeout_seconds"]) == (200, 10)
+    assert "QUERY_FTS_INDEX" in limits["procedures"]
+    assert "COPY" in limits["rejected"]
+
+
+def test_query_explains_a_statement_it_cannot_run(librarian: Librarian):
+    two_davids(librarian)
+
+    misspelt = librarian.call_failing("query", cypher="MATCH (p:Persn) RETURN p")
+    without_ends = librarian.call_failing("query", cypher="MATCH ()-[said:SAID]->() RETURN said")
+
+    assert "LadybugDB" in misspelt and "Persn" in misspelt
+    assert "SAID" in without_ends and "both of its nodes" in without_ends
+    assert librarian.call("query", cypher="RETURN 1 AS one")["rows"] == [{"one": 1}]
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:

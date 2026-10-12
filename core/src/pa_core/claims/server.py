@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from pa_core.claims.queries import ClaimsGraph
-from pa_core.claims.tools import ClaimsTools, ToolResult
+from pa_core.claims.queries import ClaimsGraph, Schema
+from pa_core.claims.tools import ClaimsTools, QueryResult, ToolResult
 from pa_core.errors import PaError
 
 INSTRUCTIONS = """\
@@ -74,9 +75,34 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
+    def schema() -> Schema:
+        """The claims graph's live schema, for writing a `query`: its tables with their
+        properties, the relationships between them, and the full-text indexes. Also every
+        domain query's own Cypher and rules, to adapt rather than starting from nothing, the
+        limits `query` runs under, and quirks of the query language.
+        """
+        with _reported():
+            return tools.schema()
+
+    def query(cypher: str, params: dict[str, Any] | None = None) -> QueryResult:
+        """Run one read-only Cypher statement, for questions no other tool answers (paths,
+        connections, counts). Prefer a domain query when one fits.
+
+        Call `schema` first: it gives the tables, the indexes, every domain query's own Cypher
+        to adapt, and this tool's limits. Pass values as `params` and refer to them as `$name`.
+        Only read clauses and a few read-only procedures are accepted; anything else is
+        rejected before it reaches the database. A query that runs too long or uses too much
+        memory is stopped. Rows are capped, and `truncated` says when some were cut off. Return
+        a relationship together with both of its nodes, or return the whole path.
+        """
+        with _reported():
+            return tools.query(cypher, params)
+
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     server.add_tool(timeline, annotations=_READ_ONLY)
+    server.add_tool(schema, annotations=_READ_ONLY)
+    server.add_tool(query, annotations=_READ_ONLY)
     return server
 
 

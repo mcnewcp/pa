@@ -3,12 +3,14 @@ domain queries of a `ClaimsGraph`."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 from pydantic import Field
 
-from pa_core.claims.queries import ClaimsGraph, Found, Graph, Match
+from pa_core.claims.queries import ClaimsGraph, Found, Graph, Match, Rows, Schema
 from pa_core.errors import PaError
 
 
@@ -27,6 +29,15 @@ class ToolResult(Graph):
             "matched more than one node: call again with one candidate's id."
         ),
     )
+
+
+class QueryResult(Graph):
+    """The `query` tool's result: the rows, the nodes and edges in them, and a message."""
+
+    columns: list[str]
+    rows: list[dict[str, Any]] = Field(description=Rows.model_fields["rows"].description)
+    truncated: bool = Field(description=Rows.model_fields["truncated"].description)
+    message: str = Field(description="How many rows came back, and whether more were cut off.")
 
 
 class ClaimsTools:
@@ -82,6 +93,29 @@ class ClaimsTools:
         else:
             message = f"{_plural(count, 'statement')}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+
+    def schema(self) -> Schema:
+        return self._graph.schema()
+
+    def query(self, text: str, parameters: Mapping[str, Any] | None = None) -> QueryResult:
+        rows = self._graph.query(text, parameters or {})
+        count = len(rows.rows)
+        plural = "s" if count != 1 else ""
+        if rows.truncated:
+            message = (
+                f"Only the first {count} row{plural}: there were more, and they were cut off. "
+                "Narrow the query, aggregate, or page with SKIP and LIMIT."
+            )
+        else:
+            message = f"{count} row{plural}."
+        return QueryResult(
+            nodes=rows.graph.nodes,
+            edges=rows.graph.edges,
+            columns=rows.columns,
+            rows=rows.rows,
+            truncated=rows.truncated,
+            message=message,
+        )
 
     def _resolve(
         self, name: str | None, argument: str, types: frozenset[str]
