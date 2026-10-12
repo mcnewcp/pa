@@ -11,14 +11,26 @@ both endpoints in the same row, so `shape` can give every edge its endpoints' st
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match, Rows
+from pa_core.claims.queries import (
+    DomainQueryText,
+    Found,
+    Graph,
+    GraphEdge,
+    GraphNode,
+    Match,
+    QueryLimits,
+    Rows,
+    Schema,
+)
 from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
-from pa_home.graph.guard import check_read_only
+from pa_home.graph import guard
+from pa_home.graph.live_schema import DIALECT_NOTES, LANGUAGE, live_indexes, live_tables
 from pa_home.graph.reader import CypherRunner, QueryRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
 
@@ -28,6 +40,11 @@ class DomainQuery:
     name: str
     cypher: str
     rules: str
+
+    @property
+    def parameters(self) -> list[str]:
+        """Its `$name` parameters, in order of first use."""
+        return list(dict.fromkeys(re.findall(r"\$([A-Za-z_][A-Za-z0-9_]*)", self.cypher)))
 
 
 FIND_EXACT = DomainQuery(
@@ -123,8 +140,34 @@ class LadybugClaimsGraph:
         )
         return shape(rows).graph.as_graph()
 
+    def schema(self) -> Schema:
+        limits = self._query_runner.limits
+        return Schema(
+            language=LANGUAGE,
+            tables=live_tables(self._runner),
+            indexes=live_indexes(self._runner),
+            domain_queries=[
+                DomainQueryText(
+                    name=query.name,
+                    text=query.cypher,
+                    rules=query.rules,
+                    parameters=query.parameters,
+                )
+                for query in DOMAIN_QUERIES
+            ],
+            query_limits=QueryLimits(
+                max_rows=limits.max_rows,
+                timeout_seconds=limits.timeout_seconds,
+                memory_mb=min(limits.memory_bytes, limits.buffer_pool_bytes) >> 20,
+                starts=list(guard.READ_CLAUSES),
+                procedures=list(guard.PROCEDURES),
+                rejected=list(guard.REJECTED),
+            ),
+            notes=list(DIALECT_NOTES),
+        )
+
     def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
-        check_read_only(text)
+        guard.check_read_only(text)
         fetched = self._query_runner.fetch(text, parameters)
         shaped = shape(fetched.rows)
         return Rows(

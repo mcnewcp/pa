@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import Field
 
-from pa_core.claims.queries import ClaimsGraph, Found, Graph, Match, Rows
+from pa_core.claims.queries import ClaimsGraph, Found, Graph, Match, Rows, Schema
 from pa_core.errors import PaError
 
 
@@ -69,6 +69,9 @@ class ClaimsTools:
             plural = "s" if count != 1 else ""
             message = f"{count} statement{plural} by {speaker_name}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+
+    def schema(self) -> Schema:
+        return self._graph.schema()
 
     def query(self, text: str, parameters: Mapping[str, Any] | None = None) -> QueryResult:
         rows = self._graph.query(text, parameters or {})

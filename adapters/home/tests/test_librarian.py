@@ -28,6 +28,7 @@ from pa_home import cli
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.graph import extensions
+from pa_home.graph.queries import DOMAIN_QUERIES
 from pa_home.graph.reader import Limits
 from pa_home.librarian import rebuild_graph
 from pa_home.mcp_server import graph_server
@@ -543,7 +544,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
         # The initialize handshake, as Claude Code connects.
         async with Client(server, mode="legacy") as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"find", "statements", "query"}
+            assert {tool.name for tool in tools.tools} == {"find", "statements", "schema", "query"}
             return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
 
     found = anyio.run(go)
@@ -716,6 +717,48 @@ def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
         assert edge["type"] == "PARTICIPATED_IN"
     maria = next(n for n in result["nodes"] if n["id"] == path["nodes"][0])
     assert set(maria["properties"]) == {"name", "aliases", "addresses", "is_owner"}
+
+
+EXAMPLE_PARAMETERS: dict[str, Any] = {"key": "david kim", "text": "david"}
+"""Values to run the domain queries with; any other parameter is null."""
+
+
+def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: Librarian):
+    two_davids(librarian)
+
+    schema = librarian.call("schema")
+
+    listed = {q["name"]: (q["text"], q["rules"]) for q in schema["domain_queries"]}
+    assert listed == {q.name: (q.cypher, q.rules) for q in DOMAIN_QUERIES}
+    assert {"find_exact", "find_full_text", "statements"} <= set(listed)
+    for listed_query in schema["domain_queries"]:
+        params = {name: EXAMPLE_PARAMETERS.get(name) for name in listed_query["parameters"]}
+        result = librarian.call("query", cypher=listed_query["text"], params=params)
+        assert result["rows"], listed_query["name"]
+    statements_query = next(q for q in schema["domain_queries"] if q["name"] == "statements")
+    assert statements_query["parameters"] == ["who", "since", "until"]
+
+
+def test_schema_reads_the_live_schema_of_the_current_build_and_states_the_query_limits(
+    librarian: Librarian,
+):
+    two_davids(librarian)
+
+    schema = librarian.call("schema")
+
+    tables = {table["name"]: table for table in schema["tables"]}
+    person = {p["name"]: p["type"] for p in tables["Person"]["properties"]}
+    assert tables["Person"]["kind"] == "NODE"
+    assert (person["id"], person["name"], person["aliases"]) == ("STRING", "STRING", "STRING[]")
+    assert tables["SAID"]["kind"] == "REL"
+    assert tables["SAID"]["connections"] == [{"source": "Person", "target": "Statement"}]
+    assert {(i["table"], i["name"], i["type"]) for i in schema["indexes"]} >= {
+        ("Person", "person_fts", "FTS")
+    }
+    limits = schema["query_limits"]
+    assert (limits["max_rows"], limits["timeout_seconds"]) == (200, 10)
+    assert "QUERY_FTS_INDEX" in limits["procedures"]
+    assert "COPY" in limits["rejected"]
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:

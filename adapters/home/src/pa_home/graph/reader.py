@@ -78,7 +78,7 @@ class _Open:
         connection = lb.Connection(self.database)
         try:
             # Loaded once per database; every later connection to it sees the extension.
-            connection.execute(f"LOAD EXTENSION '{_literal(str(fts_extension))}'")
+            connection.execute(f"LOAD EXTENSION '{string_literal(str(fts_extension))}'")
         finally:
             connection.close()
         self.in_flight = 0
@@ -175,5 +175,6 @@ class CurrentBuild:
                 opened.close()
 
 
-def _literal(text: str) -> str:
+def string_literal(text: str) -> str:
+    """`text` escaped to go between single quotes in Cypher."""
     return text.replace("\\", "\\\\").replace("'", "\\'")
