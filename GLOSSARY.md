@@ -8,6 +8,14 @@ A personal assistant that remembers the world around its owner (people, meetings
 The one person a PA instance serves. Their identity (names, email addresses) is instance configuration.
 _Avoid_: User, me
 
+**Person**:
+A human in the owner's world, known by their addresses, names, and aliases, or only from being mentioned (a child, a doctor named in a note). The owner is a person too.
+_Avoid_: Contact, user, entity
+
+**Organization**:
+A business or institution that sends mail, makes statements, or makes commitments, such as a clinic, a hotel, or a YMCA. A person can belong to one.
+_Avoid_: Company, vendor, entity
+
 ## Capture and L0
 
 **Source**:
@@ -50,6 +58,44 @@ _Avoid_: Journal, log
 A derived, rebuildable index of the episodes in L0, for fast lookups by id, source, time, and participant.
 _Avoid_: Database, manifest
 
+## Memory
+
+**Librarian**:
+The batch process that reads episodes and derives claims from them into memory, using models that have no tools.
+_Avoid_: Extractor, indexer, pipeline
+
+**Claim**:
+Anything derived from episodes into memory: a statement, a request or commitment, what a statement is about, or who someone is. Every claim points back to the episode it came from.
+_Avoid_: Fact, knowledge
+
+**Topic**:
+A matter in the owner's life that unfolds over time and that they would ask about by name, such as a kitchen remodel, a wedding, or a knee injury. A statement can be about several topics. People and organizations are not topics.
+_Avoid_: Subject, tag, project, thread
+
+**Statement**:
+Something someone said or wrote, as recorded in one episode, of a kind such as proposed, agreed, disagreed, asked, answered, committed, reported status, or decided. It is firsthand when the episode is the speaker's own words (their email, their note, their turn), and secondhand when the episode's author recounts what someone else said. Statements accumulate: a later statement never changes an earlier one.
+_Avoid_: Fact, assertion, utterance
+
+**Request**:
+Someone asking someone else to do something, made in a statement and open until it is fulfilled, declined, withdrawn, or accepted. Accepting a request makes a commitment.
+_Avoid_: Ask, task
+
+**Commitment**:
+A promise by someone to do something for someone, made in a statement and open until it is fulfilled, withdrawn, or superseded by a newer promise.
+_Avoid_: Task, to-do, action item
+
+**Calendar event**:
+Something on the owner's calendar at a set time, such as a meeting or an appointment. It can be moved or cancelled; each change arrives as a new episode, and the latest shows where it stands now.
+_Avoid_: Appointment, meeting, event
+
+**Open loop**:
+A request or commitment that is still open. It is overdue when its due date has passed, which depends on when you ask, not on anything recorded.
+_Avoid_: Pending item, outstanding task
+
+**Stance**:
+Someone's position on a topic at a point in time, as their statements show it. It can change; the latest statements show where it stands now.
+_Avoid_: Opinion, view
+
 ## Assistant
 
 **Assistant**:
@@ -77,6 +123,10 @@ _Avoid_: Utterance, message
 **Synthetic corpus**:
 A fictional, frozen set of raw payloads used to evaluate the PA. It is a test fixture, not data.
 _Avoid_: Test data, sample data
+
+**Scale corpus**:
+The synthetic corpus grown to a realistic size and mess: the original corpus unchanged, plus months of earlier history, new storylines, and the bulk mail a real inbox fills with. The original eval set's answers hold on it unchanged.
+_Avoid_: Big corpus, stress corpus
 
 **Storyline spec**:
 The hand-written description of the synthetic corpus's people, storylines, and dated events. The ground truth for the eval set.
