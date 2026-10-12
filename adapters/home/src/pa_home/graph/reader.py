@@ -21,10 +21,6 @@ from pa_home.graph.layout import DATABASE_FILE, GraphDirectory
 
 type Row = dict[str, Any]
 
-BUFFER_POOL_BYTES = 512 << 20
-"""LadybugDB's default buffer pool is 80% of RAM; a reader needs far less."""
-QUERY_TIMEOUT_MS = 10_000
-
 
 @dataclass(frozen=True)
 class Limits:
@@ -101,13 +97,14 @@ class CurrentBuild:
         graph: GraphDirectory,
         *,
         fts_extension: Path,
-        timeout_ms: int = QUERY_TIMEOUT_MS,
-        buffer_pool_bytes: int = BUFFER_POOL_BYTES,
+        limits: Limits,
     ) -> None:
+        """Each query runs under `limits`' timeout and buffer pool (LadybugDB's default pool is
+        80% of RAM; a reader needs far less). Its memory and row caps are the caller's."""
         self._graph = graph
         self._fts_extension = fts_extension
-        self._timeout_ms = timeout_ms
-        self._buffer_pool_bytes = buffer_pool_bytes
+        self._timeout_ms = round(limits.timeout_seconds * 1000)
+        self._buffer_pool_bytes = limits.buffer_pool_bytes
         self._lock = threading.Lock()
         self._open: _Open | None = None
 

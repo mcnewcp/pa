@@ -23,6 +23,7 @@ from pa_core.errors import PaError
 from pa_home.graph import extensions
 from pa_home.graph.layout import GraphDirectory
 from pa_home.graph.reader import CurrentBuild, Row
+from pa_home.graph.worker import DOMAIN_LIMITS
 
 
 class InjectionCheckError(PaError):
@@ -107,7 +108,7 @@ def check_graph(
     declared = {node.label for node in NODE_TYPES} | {edge.label for edge in EDGE_TYPES}
     checks = [check for check in CHECKS if check.tables <= declared]
     fts = extensions.verified(extensions_root or extensions.extensions_dir(), extensions.FTS)
-    build = CurrentBuild(GraphDirectory(graph), fts_extension=fts)
+    build = CurrentBuild(GraphDirectory(graph), fts_extension=fts, limits=DOMAIN_LIMITS)
     failures: list[str] = []
     try:
         for check in checks:
