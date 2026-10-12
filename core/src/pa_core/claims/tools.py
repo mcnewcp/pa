@@ -3,6 +3,7 @@ domain queries of a `ClaimsGraph`."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 
 from pydantic import Field
@@ -37,27 +38,92 @@ class ClaimsTools:
         return _found_result(name, found)
 
     def statements(
-        self, who: str | None = None, since: str | None = None, until: str | None = None
+        self,
+        who: str | None = None,
+        topic: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> ToolResult:
         since_at = _parse_moment(since, "since", end_of_day=False)
         until_at = _parse_moment(until, "until", end_of_day=True)
-        speaker: str | None = None
-        speaker_name = "anyone"
-        if who is not None and who.strip():
-            found = self._graph.find(who.strip())
-            if len(found.matches) != 1:
-                return _unresolved(who, found)
-            speaker = found.matches[0].id
-            speaker_name = _display_name(found.graph, speaker)
-        graph = self._graph.statements(speaker, since_at, until_at)
-        count = sum(1 for node in graph.nodes if node.type == "Statement")
-        span = _span(since, until)
+        speaker = self._resolve(who, "who", SPEAKER_TYPES)
+        if isinstance(speaker, ToolResult):
+            return speaker
+        about = self._resolve(topic, "topic", TOPIC_TYPES)
+        if isinstance(about, ToolResult):
+            return about
+        graph = self._graph.statements(
+            speaker.id if speaker else None, about.id if about else None, since_at, until_at
+        )
+        count = _count(graph, "Statement")
+        by = f" by {speaker.name}" if speaker else " by anyone"
+        span = f"{by}{f' about {about.name}' if about else ''}{_span(since, until)}"
         if count == 0:
-            message = f"No statements by {speaker_name}{span}."
+            message = f"No statements{span}."
         else:
-            plural = "s" if count != 1 else ""
-            message = f"{count} statement{plural} by {speaker_name}{span}, oldest first."
+            message = f"{_plural(count, 'statement')}{span}, oldest first."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+
+    def timeline(
+        self, topic: str, since: str | None = None, until: str | None = None
+    ) -> ToolResult:
+        since_at = _parse_moment(since, "since", end_of_day=False)
+        until_at = _parse_moment(until, "until", end_of_day=True)
+        about = self._resolve(topic, "topic", TOPIC_TYPES)
+        if isinstance(about, ToolResult):
+            return about
+        if about is None:
+            raise ToolInputError("timeline needs a topic: its id, or a name to find it by")
+        graph = self._graph.timeline(about.id, since_at, until_at)
+        count = _count(graph, "Statement")
+        span = f" about {about.name}{_span(since, until)}"
+        if count == 0:
+            message = f"Nothing recorded{span}."
+        else:
+            message = f"{_plural(count, 'statement')}{span}, oldest first."
+        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+
+    def _resolve(
+        self, name: str | None, argument: str, types: frozenset[str]
+    ) -> _Resolved | ToolResult | None:
+        """The one node of `types` that `name` finds; None when no name is given; or, unless
+        exactly one matches, a result holding the candidates (or saying there are none)."""
+        if name is None or not name.strip():
+            return None
+        found = _only(self._graph.find(name.strip()), types)
+        if len(found.matches) != 1:
+            return _unresolved(name, found, argument)
+        node_id = found.matches[0].id
+        return _Resolved(node_id, _display_name(found.graph, node_id))
+
+
+SPEAKER_TYPES = frozenset({"Person", "Organization"})
+"""What a `who` argument may name."""
+TOPIC_TYPES = frozenset({"Topic"})
+"""What a `topic` argument may name."""
+
+
+@dataclass(frozen=True)
+class _Resolved:
+    id: str
+    name: str
+    """For messages: its name and id."""
+
+
+def _only(found: Found, types: frozenset[str]) -> Found:
+    """`found` without the matches (and their nodes) of other types."""
+    matches = [match for match in found.matches if match.type in types]
+    kept = {match.id for match in matches}
+    nodes = [node for node in found.graph.nodes if node.id in kept]
+    return Found(matches=matches, graph=Graph(nodes=nodes))
+
+
+def _count(graph: Graph, node_type: str) -> int:
+    return sum(1 for node in graph.nodes if node.type == node_type)
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'s' if count != 1 else ''}"
 
 
 def _found_result(name: str, found: Found) -> ToolResult:
@@ -77,10 +143,15 @@ def _found_result(name: str, found: Found) -> ToolResult:
     )
 
 
-def _unresolved(who: str, found: Found) -> ToolResult:
-    result = _found_result(who, found)
+def _unresolved(name: str, found: Found, argument: str) -> ToolResult:
+    result = _found_result(name, found)
     if found.matches:
-        result.message += " Call again with one candidate's id as `who`."
+        result.message += f" Call again with one candidate's id as `{argument}`."
+    else:
+        result.message = (
+            f"Nothing that `{argument}` can name matches {name!r}. That is not proof there "
+            "is no record: check the spelling, try another name, or use find."
+        )
     return result
 
 

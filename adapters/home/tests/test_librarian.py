@@ -3,6 +3,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
@@ -16,7 +17,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 
 from pa_core.envelope import Envelope
-from pa_core.librarian import extraction
+from pa_core.librarian import extraction, topics
 from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
@@ -88,29 +89,50 @@ class Mailbox:
         self.l0.replace_envelopes(changed)
 
 
-def statement(quote: str, kind: str = "mentioned", speaker: str = "", summary: str = "") -> dict:
+def statement(
+    quote: str,
+    kind: str = "mentioned",
+    speaker: str = "",
+    summary: str = "",
+    topics: tuple[str, ...] = (),
+) -> dict:
     return {
         "speaker": speaker or "the sender",
         "kind": kind,
         "summary": summary or f"Said: {quote}",
         "quote": quote,
+        "topics": list(topics),
     }
 
 
 @dataclass
 class ScriptedModel:
     """Replies to an extraction prompt by the scripted phrase found last in it: the episode
-    comes after its thread's earlier messages, so its own phrase is the last one."""
+    comes after its thread's earlier messages, so its own phrase is the last one.
+
+    Asked to place topic names, it places each as scripted with `places`; a name it has no
+    script for becomes a new topic of that name."""
 
     replies: dict[str, list[dict]] = field(default_factory=dict)
     failing: set[str] = field(default_factory=set)
     answered: list[str] = field(default_factory=list)
+    placements: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    placed: list[list[str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.backend = FakeModelBackend.replying(self._reply)
 
     def says(self, phrase: str, *statements: dict) -> None:
         self.replies[phrase] = list(statements)
+
+    def places(self, name: str, *, under: str = "", new: str = "", description: str = "") -> None:
+        """Script where the topic name `name` goes: `under` the existing topic of that name,
+        or into a `new` topic with `description`."""
+        self.placements[name.lower()] = (under, None) if under else (new or name, description)
+
+    @property
+    def topic_calls(self) -> int:
+        return len(self.placed)
 
     @property
     def calls(self) -> int:
@@ -121,6 +143,8 @@ class ScriptedModel:
         return [request.prompt for request in self.backend.requests]
 
     def _reply(self, request: ModelRequest) -> dict[str, Any]:
+        if request.schema == topics.TopicPlacements.model_json_schema():
+            return self._place(request)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
         if not present:
             return {"statements": []}
@@ -129,6 +153,25 @@ class ScriptedModel:
             raise ModelBackendError(f"scripted failure for {phrase!r}")
         self.answered.append(phrase)
         return {"statements": self.replies[phrase]}
+
+    def _place(self, request: ModelRequest) -> dict[str, Any]:
+        asked = json.loads(request.prompt.split("<topic_input>")[1].split("</topic_input>")[0])
+        names: list[str] = asked["names"]
+        if any(name in self.failing for name in names):
+            raise ModelBackendError(f"scripted failure placing {names}")
+        self.placed.append(names)
+        by_name = {c["name"]: c["id"] for c in asked["candidates"]}
+        placements = []
+        for name in names:
+            target, description = self.placements.get(name.lower(), (name, f"About {name}."))
+            if description is None:
+                assert target in by_name, f"{target!r} is not among the candidates {by_name}"
+                placements.append({"name": name, "topic": by_name[target]})
+            else:
+                placements.append(
+                    {"name": name, "topic": "new", "new_name": target, "description": description}
+                )
+        return {"placements": placements}
 
 
 class Librarian:
@@ -383,8 +426,8 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
     assert is_read_only(build) and is_read_only(build / "graph.lbdb")
     beside = build.parent / f"{report.build_id}.report.json"
     assert BuildReport.model_validate_json(beside.read_text()) == report
-    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4}
-    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8}
+    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4, "Topic": 0}
+    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8, "ABOUT": 0}
 
 
 def test_only_the_last_few_builds_are_kept(librarian: Librarian):
@@ -541,12 +584,53 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
         # The initialize handshake, as Claude Code connects.
         async with Client(server, mode="legacy") as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"find", "statements"}
+            assert {tool.name for tool in tools.tools} == {"find", "statements", "timeline"}
             return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
 
     found = anyio.run(go)
 
     assert found is not None and found["message"] == "1 match for 'dkim@example.net'."
+
+
+def test_timeline_returns_a_topics_statements_in_time_order_with_speakers_and_episodes(
+    librarian: Librarian,
+):
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The countertop is templated.", sender=MARIA, day=9)
+    mail.receive("Our pipes froze again.", day=5)
+    mail.receive("The tile arrives Friday.", day=3)
+    model.says(
+        "The countertop is templated",
+        statement("The countertop is templated.", topics=("Kitchen remodel",)),
+    )
+    model.says("Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",)))
+    model.says(
+        "The tile arrives Friday",
+        statement("The tile arrives Friday.", topics=("Kitchen remodel",)),
+    )
+    model.places("Kitchen remodel", new="Kitchen remodel", description="Redoing the kitchen.")
+
+    librarian.rebuild()
+    result = librarian.call("timeline", topic="kitchen remodel")
+
+    assert quotes(result) == ["The tile arrives Friday.", "The countertop is templated."]
+    speakers = [
+        librarian_name(result, speaker_of(result, s["id"])["id"])
+        for s in nodes(result, "Statement")
+    ]
+    assert speakers == ["David Kim", "Maria Alvarez"]
+    (topic,) = nodes(result, "Topic")
+    assert topic["properties"]["name"] == "Kitchen remodel"
+    assert topic["properties"]["description"] == "Redoing the kitchen."
+    statement_ids = {s["id"] for s in nodes(result, "Statement")}
+    about = [e for e in result["edges"] if e["type"] == "ABOUT"]
+    assert {(e["source"], e["target"]) for e in about} == {(s, topic["id"]) for s in statement_ids}
+    episode_ids = {e["id"] for e in nodes(result, "Episode")}
+    assert len(episode_ids) == 2
+    assert set(topic["episode_ids"]) == episode_ids
+    for item in [*result["nodes"], *result["edges"]]:
+        assert item["episode_ids"]
+    assert "2 statements about Kitchen remodel" in result["message"]
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:

@@ -75,7 +75,7 @@ def assemble(
                 tally.dropped_quote_not_found += 1
                 continue
             tally.kept += 1
-            sid = stable_id("statement", eid, str(position))
+            sid = statement_id(eid, position)
             nodes.append(
                 NodeRecord(
                     label=STATEMENT.label,
@@ -97,6 +97,12 @@ def assemble(
             edges.append(_edge(RECORDED_IN.label, sid, eid, eid))
     records = GraphRecords(nodes=[*people.records(), *nodes], edges=edges)
     return Assembled(records=records, statements=tally)
+
+
+def statement_id(episode_id: str, position: int) -> str:
+    """A statement's id: its episode and its position in that episode's extraction, counted
+    before any statement is dropped."""
+    return stable_id("statement", episode_id, str(position))
 
 
 def _episode(envelope: Envelope, l0_path: str) -> NodeRecord:

@@ -6,14 +6,16 @@ The stages:
 2. Extraction: one model call per selected episode, with the earlier episodes of its thread
    as context, cached, on a small worker pool.
 3. Assembly: people resolved by address, firsthand speakers from metadata, quotes checked.
-4. Build and publish, through the `GraphBuilder`.
+4. Topics: the kept statements' topic names placed under topics, in time order (`topics.py`).
+5. Build and publish, through the `GraphBuilder`.
 
 A model call that fails (after the model client's retries) fails the rebuild before anything
-is built, and every extraction finished so far stays cached for the next run.
+is built, and every result finished so far stays cached for the next run.
 """
 
 from __future__ import annotations
 
+import functools
 import threading
 import time
 from collections import Counter, defaultdict
@@ -24,8 +26,8 @@ from datetime import UTC, datetime
 from pa_core.envelope import Envelope, Kind
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian import extraction
-from pa_core.librarian.assemble import assemble
+from pa_core.librarian import extraction, topics
+from pa_core.librarian.assemble import Assembled, assemble, statement_id
 from pa_core.librarian.extraction import Extraction
 from pa_core.librarian.ports import (
     BackendFor,
@@ -63,6 +65,7 @@ def rebuild(
 ) -> BuildReport:
     started_at, started = clock(), time.monotonic()
     calls = _CallLog()
+    backend_for = functools.cache(backend_for)  # one backend per model choice, shared by stages
     envelopes = sorted(l0.envelopes(), key=_time_order)
     selected = [envelope for envelope in envelopes if envelope.kind == Kind.EMAIL]
 
@@ -70,6 +73,20 @@ def rebuild(
     extractions = extractor.extract_all(selected, workers)
 
     assembled = assemble(selected, extractions, owner)
+    resolver = topics.TopicResolver(
+        ModelClient(calls.counting(topics.STAGE, models.default, backend_for(models.default))),
+        cache,
+        topics.resolver_version(models.default),
+    )
+    try:
+        resolved = resolver.resolve(_topic_inputs(selected, extractions, assembled))
+    except PaError as error:
+        raise LibrarianError(
+            "topic resolution failed, so nothing was published; the decisions made so far "
+            f"are cached for the next run: {error}"
+        ) from error
+    assembled.records.nodes.extend(resolved.nodes)
+    assembled.records.edges.extend(resolved.edges)
     assembled.records.validate()
     published = builder.build(assembled.records)
 
@@ -85,7 +102,7 @@ def rebuild(
             extracted=len(extractions),
             not_extracted=len(envelopes) - len(selected),
         ),
-        cache={extraction.STAGE: extractor.cache_counts},
+        cache={extraction.STAGE: extractor.cache_counts, topics.STAGE: resolver.cache_counts},
         model_calls=calls.by_stage(),
         statements=StatementCounts(
             extracted=tally.extracted,
@@ -99,6 +116,30 @@ def rebuild(
 
 def _time_order(envelope: Envelope) -> tuple[datetime, str]:
     return (envelope.occurred_at.start, envelope.episode_id)
+
+
+def _topic_inputs(
+    episodes: Sequence[Envelope], extractions: dict[str, Extraction], assembled: Assembled
+) -> list[topics.EpisodeTopics]:
+    """The kept statements of `episodes` (in time order) that name topics, by episode."""
+    kept = {node.id for node in assembled.records.nodes}
+    inputs = []
+    for envelope in episodes:
+        found = extractions.get(envelope.episode_id)
+        if found is None:
+            continue
+        statements = [
+            topics.StatementTopics(sid, statement.summary, statement.topics)
+            for position, statement in enumerate(found.statements)
+            if statement.topics and (sid := statement_id(envelope.episode_id, position)) in kept
+        ]
+        if statements:
+            inputs.append(
+                topics.EpisodeTopics(
+                    envelope.episode_id, envelope.thread_ref, envelope.subject, statements
+                )
+            )
+    return inputs
 
 
 class _Extractor:
