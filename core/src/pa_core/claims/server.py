@@ -22,8 +22,9 @@ The claims graph: who said what, about which topic, and when, derived from the e
 by the librarian. It is an index; the episodes are the evidence. Every node and edge carries the
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
-`timeline` tells what happened about one. Use `find` before concluding there is no record of
-someone or something."""
+`timeline` tells what happened about one. Calendar events keep every version, so `events`
+shows where a moved or cancelled event stands now and where it was before. Use `find` before
+concluding there is no record of someone or something."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
@@ -77,10 +78,32 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         `topic` is a topic's id or name, resolved as `find` does; if it matches more than one
         topic, the candidates come back instead, to call again with one id. `since` and
         `until` work as in `statements`. Each statement about the topic comes with its speaker
-        (SAID), its episode (RECORDED_IN), and the topic (ABOUT).
+        (SAID), its episode (RECORDED_IN), and the topic (ABOUT). Each calendar event about it
+        (CalendarEvent, by its current start) comes with its versions (VERSION_OF); use
+        `events` for who takes part.
         """
         with _reported():
             return tools.timeline(topic, since, until)
+
+    def events(
+        who: str | None = None,
+        topic: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> ToolResult:
+        """Calendar events, each in its current version with its history, by start time:
+        "when's my next appointment with Dr. Patel?" or "what's on for the wedding?".
+
+        `who` is someone taking part (organizer or attendee, in any version) and `topic` a
+        topic the event is about, each an id or a name resolved as `find` does; if one matches
+        more than one node, the candidates come back instead. `since` and `until` bound the
+        event's current start and work as in `statements`. Each event (CalendarEvent) has its
+        current title, start, end, location, and status (scheduled or cancelled). Every
+        version comes as a VERSION_OF edge from its episode, carrying that version's fields
+        and when it was made (changed_at), so a moved event shows where it was before.
+        """
+        with _reported():
+            return tools.events(who, topic, since, until)
 
     def schema() -> Schema:
         """The claims graph's live schema, for writing a `query`: its tables with their
@@ -108,6 +131,7 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     server.add_tool(timeline, annotations=_READ_ONLY)
+    server.add_tool(events, annotations=_READ_ONLY)
     server.add_tool(schema, annotations=_READ_ONLY)
     server.add_tool(query, annotations=_READ_ONLY)
     return server

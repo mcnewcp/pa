@@ -2,16 +2,18 @@
 
 This is where who said what is decided:
 
-- A firsthand statement's speaker is the episode's sender or author (the owner, for a daily
-  note or a chat), from its metadata, whatever the model wrote. A secondhand statement's
-  speaker is the person or organization the model named, resolved; the statement is
-  secondhand only if that is someone other than the sender or author.
+- A firsthand statement's speaker is the episode's sender, author (the owner, for a daily
+  note or a chat), or organizer (for a calendar event), from its metadata, whatever the model
+  wrote. A secondhand statement's speaker is the person or organization the model named,
+  resolved; the statement is secondhand only if that is someone other than the sender or
+  author.
 - A statement is the owner's only if the episode is the owner's own (their sent mail, their
-  note, their turns in a chat). In anyone else's episode, a statement that resolves to the
-  owner is recorded as the sender's report (kind: reported status) mentioning the owner, so
-  no one can speak for the owner.
-- A statement whose quote is not in the episode's body (for a chat, in one of the owner's
-  turns) is dropped. Every statement from a chat is marked as told to the assistant.
+  note, their turns in a chat, an event they organized). In anyone else's episode, a
+  statement that resolves to the owner is recorded as the sender's report (kind: reported
+  status) mentioning the owner, so no one can speak for the owner.
+- A statement whose quote is not in the episode's quotable texts (for a chat, one of the
+  owner's turns; for a calendar event, its title and description) is dropped. Every statement
+  from a chat is marked as told to the assistant.
 
 People and organizations are resolved in the order episodes are offered (time order).
 """
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from pa_core.claims.records import EdgeRecord, GraphRecords, NodeRecord, stable_id
 from pa_core.claims.schema import (
@@ -43,8 +46,9 @@ from pa_core.librarian.extraction import (
 from pa_core.librarian.people import Identify, People
 from pa_core.owner import Owner
 
-# Whose words an episode is: an email's sender, or the author of a note or a chat.
-_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR})
+# Whose words an episode is: an email's sender, the author of a note or a chat, or the
+# organizer of a calendar event.
+_SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR, Role.ORGANIZER})
 
 
 @dataclass
@@ -66,12 +70,17 @@ def assemble(
     owner: Owner,
     quotable: Mapping[str, Sequence[str]],
     identify: Identify,
+    *,
+    said_at: Mapping[str, datetime] | None = None,
 ) -> Assembled:
     """Records for `episodes` (in time order) and the statements extracted from each.
 
     A statement is kept only if its quote is in one of its episode's `quotable` texts.
-    `identify` is asked who a name is when the records can't decide.
+    `identify` is asked who a name is when the records can't decide. A statement was made when
+    its episode happened, unless `said_at` says otherwise for that episode (a version of a
+    calendar event is said when it was made, not when the event is).
     """
+    said_at = said_at or {}
     people = People(owner, identify)
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
@@ -136,7 +145,7 @@ def assemble(
                         "kind": str(kind),
                         "summary": statement.summary,
                         "quote": statement.quote,
-                        "at": envelope.occurred_at.start,
+                        "at": said_at.get(eid, envelope.occurred_at.start),
                         "secondhand": speaker != sender,
                         "told_to_assistant": envelope.kind == Kind.CHAT,
                         "episode_id": eid,
