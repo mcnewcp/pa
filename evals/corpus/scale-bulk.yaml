@@ -1,0 +1,195 @@
+# Scale corpus extension (v0.12): the bulk mail (see scale-basement.yaml for how the extension
+# files fit together). One background section, expanded with its seed into about 850 dated
+# emails from April 15 to October 13, 2026, labelled with Gmail's categories.
+#
+# The section ends October 13, not 14: its end date is inclusive and mail goes out until 21:59,
+# which on the 14th could pass the 20:00 as-of time.
+#
+# Kinds are chosen so bulk mail can't change an answer: no swim lessons, YMCA, airlines, hotels,
+# wedding registries, kitchen remodels, medical results, or booking details; and LakeStays, whose
+# mail is the abstention question's decoy, sends only marketing. The storyline Updates that
+# matter (claim notices, order and appointment confirmations) are storyline events, not bulk.
+
+background:
+  - id: bulk
+    title: Bulk mail
+    summary: >-
+      The offers, newsletters, social notifications, account alerts, and forum digests that fill
+      Argus McNevans's inbox. Argus and his wife Mara live in Minneapolis with their kids Theo (7)
+      and June (4).
+    seed: 1214
+    start: 2026-04-15
+    end: 2026-10-13
+    senders:
+      # Promotions --------------------------------------------------------------------------------
+      - id: northpoint
+        name: Northpoint Market
+        email: deals@northpointmarket.example
+        category: promotions
+        per_week: 3.5
+        kinds: [weekly grocery ad, digital coupon roundup, weekend flash sale]
+      - id: lakeland-hardware
+        name: Lakeland Hardware
+        email: offers@lakelandhardware.example
+        category: promotions
+        per_week: 1.5
+        kinds: [lawn and garden sale, tool deals of the week, seasonal clearance]
+      - id: trailhead
+        name: Trailhead Outfitters
+        email: news@trailheadoutfitters.example
+        category: promotions
+        per_week: 1.5
+        kinds: [camping gear sale, new arrivals in hiking boots, members-only discount]
+      - id: lakestays
+        name: LakeStays
+        email: hello@lakestays.example
+        category: promotions
+        per_week: 1
+        kinds: [lake cabin deals newsletter with no booking details, last-minute getaway ideas, fall color weekend inspiration]
+      - id: kiddo-threads
+        name: Kiddo Threads
+        email: style@kiddothreads.example
+        category: promotions
+        per_week: 2
+        kinds: [kids' clothing sale, back-to-school styles, new arrivals]
+      - id: bean-leaf
+        name: Bean & Leaf Coffee
+        email: rewards@beanandleaf.example
+        category: promotions
+        per_week: 1
+        kinds: [double rewards points, new seasonal drink, free pastry offer]
+      - id: pizza-lupo
+        name: Pizza Lupo
+        email: eat@pizzalupo.example
+        category: promotions
+        per_week: 1
+        kinds: [two-for-Tuesday deal, new pizza of the month]
+      - id: cozy-home
+        name: Cozy Home Furnishings
+        email: sale@cozyhome.example
+        category: promotions
+        per_week: 1.5
+        kinds: [living room furniture sale, bedding event, rug clearance]
+      - id: garden-gate
+        name: Garden Gate Nursery
+        email: grow@gardengatenursery.example
+        category: promotions
+        per_week: 0.7
+        kinds: [perennial sale, vegetable starts are in, mulch and soil deals]
+      - id: streambox
+        name: StreamBox
+        email: offers@streambox.example
+        category: promotions
+        per_week: 0.7
+        kinds: [new shows this month, annual plan discount]
+      - id: pagecraft
+        name: PageCraft Books
+        email: hello@pagecraftbooks.example
+        category: promotions
+        per_week: 1
+        kinds: [new releases, kids' book sale, staff picks]
+      # Social ------------------------------------------------------------------------------------
+      - id: blocktalk
+        name: Block Talk
+        email: digest@blocktalk.example
+        category: social
+        per_week: 2
+        kinds: [neighborhood digest of lost pets and garage sales, neighbors recommending local businesses]
+      - id: friendline
+        name: FriendLine
+        email: notification@friendline.example
+        category: social
+        per_week: 3.5
+        kinds: [someone commented on your photo, friend suggestions, a memory from years ago]
+      - id: pacelog
+        name: PaceLog
+        email: no-reply@pacelog.example
+        category: social
+        per_week: 1
+        kinds: [a friend gave you kudos, weekly activity summary]
+      - id: worknet
+        name: WorkNet
+        email: messages@worknet.example
+        category: social
+        per_week: 1
+        kinds: [people viewed your profile, jobs you may be interested in]
+      # Updates -----------------------------------------------------------------------------------
+      - id: lakeshore-bank
+        name: Lakeshore Bank
+        email: alerts@lakeshorebank.example
+        category: updates
+        per_week: 1.5
+        kinds: [statement ready, direct deposit received, card transaction alert]
+      - id: northern-power
+        name: Northern Power & Light
+        email: billing@northernpower.example
+        category: updates
+        per_week: 0.25
+        kinds: [your monthly bill is ready]
+      - id: city-water
+        name: City of Minneapolis Utility Billing
+        email: utilitybilling@minneapolis.example
+        category: updates
+        per_week: 0.25
+        kinds: [your quarterly water bill is ready]
+      - id: parcelpoint
+        name: ParcelPoint
+        email: tracking@parcelpoint.example
+        category: updates
+        per_week: 1.5
+        kinds: [your package was delivered, your package is out for delivery]
+      - id: great-plains-news
+        name: Great Plains Mutual
+        email: news@greatplainsmutual.example
+        category: updates
+        per_week: 0.3
+        kinds: [seasonal home safety tips newsletter with no account details]
+      - id: hennepin-library
+        name: Hennepin County Library
+        email: notices@hclib.example
+        category: updates
+        per_week: 0.7
+        kinds: [your hold is ready for pickup, items due soon]
+      - id: cloudvault
+        name: CloudVault
+        email: account@cloudvault.example
+        category: updates
+        per_week: 0.3
+        kinds: [your storage is almost full, new sign-in to your account]
+      - id: northwave-mobile
+        name: Northwave Mobile
+        email: billing@northwavemobile.example
+        category: updates
+        per_week: 0.25
+        kinds: [your monthly statement is ready]
+      - id: lake-hills-news
+        name: Lake Hills Elementary News
+        email: news@lakehills-pto.example
+        category: updates
+        per_week: 0.7
+        kinds: [PTO newsletter with general school community news and no specific dates]
+      # Forums ------------------------------------------------------------------------------------
+      - id: fixit-forum
+        name: FixIt Forum
+        email: digest@fixitforum.example
+        category: forums
+        per_week: 1
+        kinds: [new replies in a home repair thread Argus follows, weekly top threads digest]
+      - id: mn-fishing-forum
+        name: Minnesota Fishing Forum
+        email: noreply@mnfishingforum.example
+        category: forums
+        per_week: 0.7
+        kinds: [new posts in walleye tips, weekly fishing report digest]
+      - id: lake-hills-parents
+        name: Lake Hills Parents Group
+        email: lakehills-parents@groups.example
+        category: forums
+        per_week: 1.3
+        kinds: [a parent asks about used bikes for sale, lost and found items, a parent recommends a babysitter]
+      # Primary (no category) ---------------------------------------------------------------------
+      - id: twin-cities-weekly
+        name: The Twin Cities Weekly
+        email: letters@tcweekly.example
+        per_week: 1
+        kinds: [weekly local news newsletter about city happenings]

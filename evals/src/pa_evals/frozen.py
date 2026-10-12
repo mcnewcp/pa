@@ -1,6 +1,7 @@
-"""Where the frozen Argus corpus and its eval set live in the workspace (`evals/corpus/`).
+"""Where the frozen Argus corpus and its eval set live in the workspace (`evals/corpus/`), and
+the scale corpus's storyline extension and new questions beside them.
 
-They are the defaults for `pa-eval run` and `pa-eval eval-set build`.
+The Argus ones are the defaults for `pa-eval run` and `pa-eval eval-set build`.
 """
 
 from __future__ import annotations
@@ -16,3 +17,8 @@ QUESTIONS = CORPUS_ROOT / "questions.yaml"
 """The eval set's questions, hand-written, with evidence named by spec event id."""
 EVAL_SET = CORPUS_ROOT / "eval_set.json"
 """The eval set built from the questions (`pa-eval eval-set build`); never edited by hand."""
+
+SCALE_EXTENSION = tuple(sorted(CORPUS_ROOT.glob("scale-*.yaml")))
+"""The scale corpus's storyline extension: the files that add to the spec, hand-written."""
+SCALE_QUESTIONS = CORPUS_ROOT / "questions-scale.yaml"
+"""The scale corpus's new questions, hand-written, with evidence named by spec event id."""
