@@ -49,3 +49,13 @@ storylines:
         heading: Garden
         participants: [yuki, dave]
         what: Yuki built the beds; Dave dropped off tomato starts.
+      - id: garden-chat-watering
+        channel: assistant_chat
+        at: 2026-05-20T21:10:00
+        session: garden-chat
+        what: Argus tells the assistant Yuki said to water the beds every other day for two weeks.
+      - id: garden-chat-reminder
+        channel: assistant_chat
+        at: 2026-05-20T21:14:00
+        session: garden-chat
+        what: Argus asks what Yuki said about watering, and the assistant tells him.

@@ -149,7 +149,22 @@ class NoteCorrection(FrozenModel):
     what: str
 
 
-type Event = EmailEvent | CalendarEvent | CalendarUpdate | NoteSection | NoteCorrection
+class ChatEvent(FrozenModel):
+    """One exchange between the owner and the assistant: the owner's message and its reply.
+
+    `at` is when the owner sends the message. Exchanges with the same `session` are one
+    conversation, each following on from the ones before it; an exchange with no session is a
+    conversation of its own.
+    """
+
+    id: Id
+    channel: Literal["assistant_chat"]
+    at: dt.datetime
+    session: Id | None = None
+    what: str
+
+
+type Event = EmailEvent | CalendarEvent | CalendarUpdate | NoteSection | NoteCorrection | ChatEvent
 
 
 class Storyline(FrozenModel):
@@ -562,7 +577,7 @@ def _people_refs(event: Event) -> list[str]:
             return [*([event.organizer] if event.organizer else []), *(event.attendees or [])]
         case NoteSection():
             return event.participants
-        case NoteCorrection():
+        case NoteCorrection() | ChatEvent():
             return []
 
 

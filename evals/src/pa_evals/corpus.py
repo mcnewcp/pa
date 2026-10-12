@@ -10,6 +10,7 @@ copied into one.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,18 +19,21 @@ from email.headerregistry import Address as MailAddress
 from email.message import EmailMessage
 from email.utils import format_datetime
 from pathlib import Path, PurePosixPath
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.ingest import inbox_normalizer
 from pa_core.model_client import ModelClient
 from pa_core.normalizers import payload_extension
+from pa_core.normalizers.assistant_chat import TurnRole, encode_exchange
 from pa_evals.storyline import (
     CalendarEvent,
     CalendarUpdate,
     CalendarVersion,
+    ChatEvent,
     EmailEvent,
     Event,
     NoteCorrection,
@@ -52,12 +56,38 @@ class Prose(BaseModel):
     text: str
 
 
+class ChatTurn(BaseModel):
+    role: TurnRole
+    text: Annotated[str, Field(min_length=1)]
+
+
+class ChatProse(BaseModel):
+    """What the model writes for an exchange with the assistant: its turns, in order."""
+
+    turns: Annotated[list[ChatTurn], Field(min_length=2)]
+
+    @field_validator("turns")
+    @classmethod
+    def _owner_opens_and_assistant_replies(cls, turns: list[ChatTurn]) -> list[ChatTurn]:
+        if turns[0].role != "owner" or turns[-1].role != "assistant":
+            raise ValueError("the first turn must be the owner's and the last the assistant's")
+        return turns
+
+
+CHAT_DURATION = dt.timedelta(seconds=30)
+"""How long an exchange with the assistant takes, from the owner's message to the reply."""
+
+# Chat session and message ids are UUIDs, as Claude Code's are, made from spec ids.
+_CHAT_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, UID_DOMAIN)
+
+
 def generate_corpus(spec: StorylineSpec, client: ModelClient, out_dir: Path) -> list[Path]:
     """Write a raw payload for every event in `spec` under `out_dir`, which must be empty.
 
-    Each payload goes in its source's directory, as in the inbox. The model is asked for prose
-    only. Nothing is written until all of it is generated, so a failed model call leaves
-    `out_dir` as it was. Returns the payload files, in path order.
+    For a spec with extensions, only the extensions' events are written: the base spec's
+    payloads are frozen already. Each payload goes in its source's directory, as in the inbox.
+    The model is asked for prose only. Nothing is written until all of it is generated, so a
+    failed model call leaves `out_dir` as it was. Returns the payload files, in path order.
     """
     if out_dir.exists() and any(out_dir.iterdir()):
         raise GeneratedCorpusError(f"{out_dir} is not empty; delete it or choose another directory")
@@ -85,6 +115,8 @@ def payload_path(spec: StorylineSpec, event: Event) -> str:
             source, stem = Source.OBSIDIAN, f"{event.date.isoformat()}_daily-note"
         case NoteCorrection():
             source, stem = Source.OBSIDIAN, f"{_stamp(spec.local(event.at))}_{event.id}"
+        case ChatEvent():
+            source, stem = Source.ASSISTANT_CHAT, f"{_stamp(spec.local(event.at))}_{event.id}"
     return f"{source}/{stem}{payload_extension(source)}"
 
 
@@ -133,6 +165,7 @@ class _Generator:
             if isinstance(event, CalendarEvent | CalendarUpdate):
                 payloads[payload_path(self.spec, event)] = self._calendar(event)
         payloads.update(self._daily_notes())
+        payloads.update(self._chats())
         return dict(sorted(payloads.items()))
 
     def _prose(self, prompt: str) -> str:
@@ -355,6 +388,63 @@ class _Generator:
             ]
         )
 
+    # Assistant chat
+
+    def _chats(self) -> dict[str, bytes]:
+        spec = self.spec
+        chats = sorted(
+            (event for event in self.events if isinstance(event, ChatEvent)),
+            key=lambda event: spec.local(event.at),
+        )
+        sessions: dict[str, list[ChatTurn]] = defaultdict(list)
+        payloads: dict[str, bytes] = {}
+        for event in chats:
+            session = sessions[_session(event)]
+            turns = self.client.generate(self._chat_prompt(event, session), ChatProse).turns
+            session.extend(turns)
+            payloads[payload_path(spec, event)] = self._chat(event, turns)
+        return payloads
+
+    def _chat(self, event: ChatEvent, turns: list[ChatTurn]) -> bytes:
+        started_at = self.spec.local(event.at)
+        return encode_exchange(
+            session_id=str(uuid.uuid5(_CHAT_NAMESPACE, f"session:{_session(event)}")),
+            message_id=str(uuid.uuid5(_CHAT_NAMESPACE, f"message:{event.id}")),
+            started_at=_hook_time(started_at),
+            ended_at=_hook_time(started_at + CHAT_DURATION),
+            turns=[(turn.role, turn.text.strip()) for turn in turns],
+        )
+
+    def _chat_prompt(self, event: ChatEvent, earlier: list[ChatTurn]) -> str:
+        owner = self.spec.person(self.spec.owner)
+        lines = [
+            self._preamble(event),
+            f"Write one exchange between {owner.name} and their personal assistant: an AI that",
+            "keeps track of their life from their email, calendar, and notes, and that they",
+            "message from their phone.",
+            "",
+            f"Sent: {_spoken_time(self.spec.local(event.at))}",
+            f"What happens in this exchange: {event.what}",
+        ]
+        if earlier:
+            lines += [
+                "",
+                "It follows on from this earlier conversation in the same chat:",
+                "---",
+                *(f"{turn.role}: {turn.text}" for turn in earlier),
+                "---",
+            ]
+        lines += [
+            "",
+            f"Write it as turns. The first is {owner.name}'s message (role 'owner') and the last",
+            "is the assistant's reply (role 'assistant'). If the assistant asks a question",
+            f"before it replies, add its question and {owner.name}'s answer as turns in between.",
+            f"{owner.name} writes casually, as in a chat; the assistant answers briefly and",
+            "plainly. Say exactly what 'What happens in this exchange' says, and add no other",
+            "dates, times, places, names, or decisions.",
+        ]
+        return "\n".join(lines)
+
     # Shared prompt parts
 
     def _preamble(self, event: Event) -> str:
@@ -399,6 +489,17 @@ def _thread(spec: StorylineSpec, event: EmailEvent) -> list[str]:
         thread.insert(0, message_id(spec, parent))
         current = parent
     return thread
+
+
+def _session(event: ChatEvent) -> str:
+    return event.session or event.id
+
+
+def _hook_time(moment: dt.datetime) -> str:
+    """A time as the capture hook records one: UTC, to the millisecond, with a Z."""
+    return moment.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.") + (
+        f"{moment.microsecond // 1000:03d}Z"
+    )
 
 
 def _gmail_labels(spec: StorylineSpec, event: EmailEvent) -> str:

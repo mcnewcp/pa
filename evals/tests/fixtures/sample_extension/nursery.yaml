@@ -23,3 +23,7 @@ storylines:
         heading: Garden
         participants: [yuki]
         what: The soil came; Argus filled the beds Yuki built.
+      - id: nursery-chat
+        channel: assistant_chat
+        at: 2026-05-21T07:30:00
+        what: Argus asks when the soil was delivered; the assistant says May 19.

@@ -173,7 +173,7 @@ def test_an_extension_spread_over_several_files_loads_with_its_base() -> None:
 
     ids = {event.id for event in spec.events}
     assert {"swim-registration-opens", "garden-quote", "nursery-order"} <= ids
-    assert len(ids) == 11 + 4 + 2
+    assert len(ids) == 11 + 6 + 3
     # Each file's events may name people and calendars from any of the files.
     assert spec.person("yuki").name == "Yuki Tanaka"
     assert spec.calendar("garden").name == "Garden"
