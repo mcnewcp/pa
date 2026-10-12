@@ -1174,6 +1174,8 @@ def test_query_answers_a_read_with_rows_whose_nodes_and_edges_are_in_the_graph(
         "MATCH (p:Person) RETURN p; MATCH (s:Statement) RETURN s",
         "match (p:Person) /* a comment */ set p.name = 'x'",
         "CALL CREATE_FTS_INDEX('Person', 'evil', ['name'])",
+        # No vector index is built, so vector search isn't offered.
+        "CALL QUERY_VECTOR_INDEX('Statement', 'statement_vec', [0.1, 0.2], 3) RETURN *",
     ],
 )
 def test_query_rejects_anything_but_one_read_statement_before_it_reaches_the_database(

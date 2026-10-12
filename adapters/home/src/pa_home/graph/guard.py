@@ -27,13 +27,13 @@ READ_CLAUSES = ("MATCH", "OPTIONAL MATCH", "UNWIND", "WITH", "RETURN", "CALL")
 
 PROCEDURES = (
     "QUERY_FTS_INDEX",
-    "QUERY_VECTOR_INDEX",
     "show_tables",
     "table_info",
     "show_connection",
     "show_indexes",
 )
-"""The procedures `CALL` may run: full-text and vector search, and schema listings."""
+"""The procedures `CALL` may run: full-text search and schema listings. (No vector index is
+built, so vector search is not among them.)"""
 
 REJECTED = (
     "CREATE",
