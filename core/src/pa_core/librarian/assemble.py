@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from pa_core.claims.records import EdgeRecord, GraphRecords, NodeRecord, stable_id
 from pa_core.claims.schema import EPISODE, PARTICIPATED_IN, RECORDED_IN, SAID, STATEMENT
@@ -43,11 +44,16 @@ def assemble(
     extractions: Mapping[str, Extraction],
     owner: Owner,
     quotable: Mapping[str, Sequence[str]],
+    *,
+    said_at: Mapping[str, datetime] | None = None,
 ) -> Assembled:
     """Records for `episodes` (in time order) and the statements extracted from each.
 
-    A statement is kept only if its quote is in one of its episode's `quotable` texts.
+    A statement is kept only if its quote is in one of its episode's `quotable` texts. It was
+    made when its episode happened, unless `said_at` says otherwise for that episode (a version
+    of a calendar event is said when it was made, not when the event is).
     """
+    said_at = said_at or {}
     people = People(owner)
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
@@ -96,7 +102,7 @@ def assemble(
                         "kind": str(statement.kind),
                         "summary": statement.summary,
                         "quote": statement.quote,
-                        "at": envelope.occurred_at.start,
+                        "at": said_at.get(eid, envelope.occurred_at.start),
                         "secondhand": False,
                         "told_to_assistant": envelope.kind == Kind.CHAT,
                         "episode_id": eid,

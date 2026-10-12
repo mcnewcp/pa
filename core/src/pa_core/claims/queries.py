@@ -150,6 +150,20 @@ class ClaimsGraph(Protocol):
         episodes."""
         ...
 
+    def events(
+        self,
+        who: str | None,
+        topic: str | None,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> Graph:
+        """Calendar events that the node with id `who` takes part in (anyone's when None),
+        about the topic with id `topic` (any when None), whose current start is from `since`
+        (inclusive) up to `until` (exclusive), by start time: each in its current version, with
+        every version (VERSION_OF, from its episode), each version's participants, and its
+        topics."""
+        ...
+
     def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
         """One read-only statement in the engine's query language, run under the query
         limits. Raises a `PaError` saying why when it is rejected or stopped."""

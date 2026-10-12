@@ -547,8 +547,20 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
     assert is_read_only(build) and is_read_only(build / "graph.lbdb")
     beside = build.parent / f"{report.build_id}.report.json"
     assert BuildReport.model_validate_json(beside.read_text()) == report
-    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4, "Topic": 0}
-    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8, "ABOUT": 0}
+    assert report.nodes == {
+        "Person": 3,
+        "Episode": 4,
+        "Statement": 4,
+        "Topic": 0,
+        "CalendarEvent": 0,
+    }
+    assert report.edges == {
+        "SAID": 4,
+        "RECORDED_IN": 4,
+        "PARTICIPATED_IN": 8,
+        "ABOUT": 0,
+        "VERSION_OF": 0,
+    }
 
 
 def test_only_the_last_few_builds_are_kept(librarian: Librarian):
@@ -711,6 +723,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
                 "find",
                 "statements",
                 "timeline",
+                "events",
                 "schema",
                 "query",
             }
@@ -1124,12 +1137,17 @@ def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
 
 
 EXAMPLE_PARAMETERS: dict[str, Any] = {"key": "david kim", "text": "david pipes"}
-"""Values to run the domain queries with on `two_davids`, plus `topic`, the id of its one topic
-(Frozen pipes), found at run time; any other parameter is null. The `text` has a word for the
-people's full-text index and one for the topics'."""
+"""Values to run the domain queries with on `two_davids` and a plumber's visit, plus `topic`,
+the id of their one topic (Frozen pipes), found at run time; any other parameter is null. The
+`text` has a word for the people's full-text index and one for the topics'."""
 
 
 def test_schema_lists_every_domain_query_and_each_runs_through_query(librarian: Librarian):
+    librarian.mail.event("Plumber visit", description="Thaw the frozen pipes.")
+    librarian.model.says(
+        "Thaw the frozen pipes",
+        statement("Thaw the frozen pipes.", topics=("Frozen pipes",)),
+    )
     two_davids(librarian)
     (pipes,) = librarian.call("find", name="frozen pipes")["matches"]
     examples = {**EXAMPLE_PARAMETERS, "topic": pipes["id"]}
@@ -1408,3 +1426,47 @@ def test_a_calendar_events_title_and_description_yield_its_organizers_statements
     assert report.episodes.extracted == 1
     (prompt,) = librarian.model.prompts
     assert "Lakeside" not in prompt
+
+
+def test_a_moved_event_shows_its_current_time_and_its_earlier_versions(librarian: Librarian):
+    booked = librarian.mail.event(
+        "Fasting blood draw",
+        uid="blood-draw",
+        starts="2026-10-13T07:30",
+        ends="2026-10-13T07:50",
+        changed="2026-09-16T10:15",
+        location="Lakeside Family Medicine lab",
+    )
+    moved = librarian.mail.event(
+        "Fasting blood draw",
+        uid="blood-draw",
+        starts="2026-10-06T07:30",
+        ends="2026-10-06T07:50",
+        changed="2026-10-02T09:45",
+        sequence=1,
+        location="Lakeside Family Medicine lab",
+    )
+
+    report = librarian.rebuild()
+
+    result = librarian.call("events")
+    (event,) = nodes(result, "CalendarEvent")
+    assert event["properties"] == {
+        "title": "Fasting blood draw",
+        "starts_at": "2026-10-06T12:30:00+00:00",
+        "ends_at": "2026-10-06T12:50:00+00:00",
+        "location": "Lakeside Family Medicine lab",
+        "status": "scheduled",
+    }
+    assert sorted(event["episode_ids"]) == sorted([booked, moved])
+    versions = {
+        edge["source"]: edge["properties"]
+        for edge in result["edges"]
+        if edge["type"] == "VERSION_OF" and edge["target"] == event["id"]
+    }
+    assert versions[booked]["starts_at"] == "2026-10-13T12:30:00+00:00"
+    assert versions[booked]["changed_at"] == "2026-09-16T15:15:00+00:00"
+    assert versions[moved]["starts_at"] == "2026-10-06T12:30:00+00:00"
+    assert {node["id"] for node in nodes(result, "Episode")} == {booked, moved}
+    assert result["message"] == "1 calendar event, by start time."
+    assert report.model_calls_by_model() == {"claude-sonnet-5-5": 2}

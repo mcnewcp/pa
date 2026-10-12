@@ -75,6 +75,26 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
+    def events(
+        who: str | None = None,
+        topic: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> ToolResult:
+        """Calendar events, each in its current version with its history, by start time:
+        "when's my next appointment with Dr. Patel?" or "what's on for the wedding?".
+
+        `who` is someone taking part (organizer or attendee, in any version) and `topic` a
+        topic the event is about, each an id or a name resolved as `find` does; if one matches
+        more than one node, the candidates come back instead. `since` and `until` bound the
+        event's current start and work as in `statements`. Each event (CalendarEvent) has its
+        current title, start, end, location, and status (scheduled or cancelled). Every
+        version comes as a VERSION_OF edge from its episode, carrying that version's fields
+        and when it was made (changed_at), so a moved event shows where it was before.
+        """
+        with _reported():
+            return tools.events(who, topic, since, until)
+
     def schema() -> Schema:
         """The claims graph's live schema, for writing a `query`: its tables with their
         properties, the relationships between them, and the full-text indexes. Also every
@@ -101,6 +121,7 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server.add_tool(find, annotations=_READ_ONLY)
     server.add_tool(statements, annotations=_READ_ONLY)
     server.add_tool(timeline, annotations=_READ_ONLY)
+    server.add_tool(events, annotations=_READ_ONLY)
     server.add_tool(schema, annotations=_READ_ONLY)
     server.add_tool(query, annotations=_READ_ONLY)
     return server
