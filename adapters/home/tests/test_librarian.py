@@ -54,8 +54,11 @@ class Mailbox:
         subject: str = "Hello",
         replying_to: str | None = None,
         day: int | None = None,
+        labels: str | None = None,
     ) -> str:
-        """Store an email and return its episode id (also usable as its thread's id)."""
+        """Store an email and return its episode id (also usable as its thread's id).
+
+        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it."""
         self._sent += 1
         message_id = f"m{self._sent}@example.test"
         headers = [
@@ -70,6 +73,8 @@ class Mailbox:
             assert root is not None
             headers.append(f"In-Reply-To: <{root.thread_ref}>")
             headers.append(f"References: <{root.thread_ref}>")
+        if labels:
+            headers.append(f"X-Gmail-Labels: {labels}")
         raw = (
             "\r\n".join([*headers, 'Content-Type: text/plain; charset="utf-8"', "", body]) + "\r\n"
         ).encode()
@@ -100,17 +105,23 @@ def statement(quote: str, kind: str = "mentioned", speaker: str = "", summary: s
 @dataclass
 class ScriptedModel:
     """Replies to an extraction prompt by the scripted phrase found last in it: the episode
-    comes after its thread's earlier messages, so its own phrase is the last one."""
+    comes after its thread's earlier messages, so its own phrase is the last one. Replies to a
+    triage relevance check by the phrase found in it (unscripted mail is not relevant)."""
 
     replies: dict[str, list[dict]] = field(default_factory=dict)
+    relevance: dict[str, bool] = field(default_factory=dict)
     failing: set[str] = field(default_factory=set)
     answered: list[str] = field(default_factory=list)
+    judged: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.backend = FakeModelBackend.replying(self._reply)
 
     def says(self, phrase: str, *statements: dict) -> None:
         self.replies[phrase] = list(statements)
+
+    def judges(self, phrase: str, *, relevant: bool) -> None:
+        self.relevance[phrase] = relevant
 
     @property
     def calls(self) -> int:
@@ -121,6 +132,8 @@ class ScriptedModel:
         return [request.prompt for request in self.backend.requests]
 
     def _reply(self, request: ModelRequest) -> dict[str, Any]:
+        if "relevant" in request.schema["properties"]:
+            return self._judge(request)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
         if not present:
             return {"statements": []}
@@ -129,6 +142,16 @@ class ScriptedModel:
             raise ModelBackendError(f"scripted failure for {phrase!r}")
         self.answered.append(phrase)
         return {"statements": self.replies[phrase]}
+
+    def _judge(self, request: ModelRequest) -> dict[str, Any]:
+        present = [phrase for phrase in self.relevance if phrase in request.prompt]
+        if not present:
+            return {"relevant": False, "reason": "unscripted"}
+        (phrase,) = present
+        if phrase in self.failing:
+            raise ModelBackendError(f"scripted failure for {phrase!r}")
+        self.judged.append(phrase)
+        return {"relevant": self.relevance[phrase], "reason": "scripted"}
 
 
 class Librarian:
@@ -517,7 +540,7 @@ def test_pa_librarian_rebuild_runs_on_sonnet_at_medium_effort_and_prints_its_rep
 
     assert cli.main(["librarian", "rebuild"]) == 0
 
-    assert backends == [("claude-sonnet-5-5", "medium")]
+    assert set(backends) == {("claude-sonnet-5-5", "medium")}
     out = capsys.readouterr().out
     assert "published build" in out and "1 to claude-sonnet-5-5" in out
     assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
@@ -559,3 +582,104 @@ def current_build(librarian: Librarian) -> Path:
 
 def is_read_only(path: Path) -> bool:
     return stat.S_IMODE(path.stat().st_mode) & 0o222 == 0
+
+
+# Triage: mail is filtered by its Gmail category before extraction.
+
+
+@pytest.mark.parametrize("category", ["Promotions", "Social"])
+def test_promotions_and_social_mail_is_skipped_without_a_model_call(
+    librarian: Librarian, category: str
+):
+    librarian.mail.receive(
+        "50% off every sofa this weekend only!",
+        sender="Sofa Barn <deals@sofabarn.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says("50% off every sofa", statement("50% off every sofa this weekend only!"))
+    librarian.model.says("The tile arrives Friday", statement("The tile arrives Friday."))
+
+    report = librarian.rebuild()
+
+    assert [p for p in librarian.model.prompts if "sofa" in p] == []
+    assert quotes(librarian.call("statements")) == ["The tile arrives Friday."]
+    assert librarian.call("find", name="deals@sofabarn.example")["matches"] == []
+    assert report.episodes.triage.skipped_by_category == 1
+    assert report.episodes.extracted == 1
+
+
+def updates_from_a_clinic_and_a_digest(librarian: Librarian, category: str = "Updates") -> None:
+    mail, model = librarian.mail, librarian.model
+    mail.receive(
+        "Reminder: your appointment with Dr. Patel is Tuesday at 9:00.",
+        sender="Lakeside Clinic <reminders@lakeside.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    mail.receive(
+        "This week's digest: ten tips for spring cleaning.",
+        sender="Home Digest <news@homedigest.example>",
+        labels=f"Inbox,Category {category}",
+    )
+    model.judges("appointment with Dr. Patel", relevant=True)
+    model.judges("ten tips for spring cleaning", relevant=False)
+    model.says(
+        "appointment with Dr. Patel",
+        statement("your appointment with Dr. Patel is Tuesday at 9:00.", kind="reported_status"),
+    )
+    model.says("ten tips for spring cleaning", statement("ten tips for spring cleaning."))
+
+
+@pytest.mark.parametrize("category", ["Updates", "Forums"])
+def test_updates_and_forums_mail_is_extracted_only_when_the_relevance_check_says_it_matters(
+    librarian: Librarian, category: str
+):
+    updates_from_a_clinic_and_a_digest(librarian, category)
+
+    report = librarian.rebuild()
+
+    assert sorted(librarian.model.judged) == [
+        "appointment with Dr. Patel",
+        "ten tips for spring cleaning",
+    ]
+    assert librarian.model.answered == ["appointment with Dr. Patel"]
+    assert quotes(librarian.call("statements")) == [
+        "your appointment with Dr. Patel is Tuesday at 9:00."
+    ]
+    assert librarian.call("find", name="news@homedigest.example")["matches"] == []
+    assert (report.episodes.triage.relevant, report.episodes.triage.not_relevant) == (1, 1)
+    assert (report.episodes.extracted, report.episodes.skipped) == (1, 1)
+    assert report.model_calls["triage"] == {"claude-sonnet-5-5": 2}
+
+
+def test_a_rebuild_reuses_each_relevance_answer(librarian: Librarian):
+    updates_from_a_clinic_and_a_digest(librarian)
+    librarian.rebuild()
+    calls = librarian.model.calls
+
+    report = librarian.rebuild()
+
+    assert librarian.model.calls == calls
+    assert (report.cache["triage"].hits, report.cache["triage"].misses) == (2, 0)
+    assert (report.episodes.triage.relevant, report.episodes.triage.not_relevant) == (1, 1)
+    assert len(quotes(librarian.call("statements"))) == 1
+
+
+def test_primary_and_uncategorised_mail_is_extracted_without_a_relevance_check(
+    librarian: Librarian,
+):
+    mail, model = librarian.mail, librarian.model
+    for text, labels in (
+        ("The tile arrives Friday.", None),
+        ("The grout is in too.", "Inbox,Important,Category Personal"),
+        ("Sending the deposit tonight.", "Sent"),
+    ):
+        mail.receive(text, labels=labels)
+        model.says(text, statement(text))
+
+    report = librarian.rebuild()
+
+    assert librarian.model.judged == []
+    assert "triage" not in report.model_calls
+    assert len(quotes(librarian.call("statements"))) == 3
+    assert report.episodes.triage.primary == 3
