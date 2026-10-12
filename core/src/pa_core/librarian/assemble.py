@@ -10,7 +10,9 @@ This is where who said what is decided:
 - A statement is the owner's only if the episode is the owner's own (their sent mail, their
   note, their turns in a chat, an event they organized). In anyone else's episode, a
   statement that resolves to the owner is recorded as the sender's report (kind: reported
-  status) mentioning the owner, so no one can speak for the owner.
+  status) mentioning the owner, so no one can speak for the owner. Mail from the owner's
+  address is the owner's own only if it is sent mail (labelled `Sent`); received mail with a
+  forged owner `From:` has no speaker anyone can vouch for, so none of its statements are kept.
 - A statement whose quote is not in the episode's quotable texts (for a chat, one of the
   owner's turns; for a calendar event, its title and description) is dropped. Every statement
   from a chat is marked as told to the assistant.
@@ -53,6 +55,9 @@ from pa_core.owner import Owner
 # Whose words an episode is: an email's sender, the author of a note or a chat, or the
 # organizer of a calendar event.
 _SPEAKER_ROLES = frozenset({Role.SENDER, Role.AUTHOR, Role.ORGANIZER})
+
+# The label Gmail (and the synthetic corpus) puts on mail the owner sent.
+_SENT_LABEL = "sent"
 
 
 @dataclass
@@ -132,6 +137,8 @@ def assemble(
                     episode_ids=(eid,),
                 )
             )
+        if sender == people.owner_id and not _sent_by_owner(envelope):
+            sender = None  # a forged From: no one can speak for the owner
         if extraction is None:
             continue
         for position, statement in enumerate(extraction.statements):
@@ -220,6 +227,14 @@ def _attribute(
         speaker, kind = sender, StatementKind.REPORTED_STATUS
         mentioned.append(people.owner_id)
     return speaker, kind, [party for party in dict.fromkeys(mentioned) if party != speaker]
+
+
+def _sent_by_owner(envelope: Envelope) -> bool:
+    """Whether an episode whose sender is the owner's address is really the owner's: an email
+    must be sent mail; a note, a chat, or a calendar event is taken from its metadata."""
+    if envelope.kind != Kind.EMAIL:
+        return True
+    return any(label.strip().casefold() == _SENT_LABEL for label in envelope.labels)
 
 
 def _opening(

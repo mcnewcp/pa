@@ -76,7 +76,10 @@ class Mailbox:
     ) -> str:
         """Store an email and return its episode id (also usable as its thread's id).
 
-        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it."""
+        `labels` is the `X-Gmail-Labels` header, as a Takeout export writes it; mail from the
+        owner is labelled `Sent` unless it says otherwise."""
+        if labels is None and sender == ARGUS:
+            labels = "Sent"
         self._sent += 1
         message_id = f"m{self._sent}@example.test"
         headers = [
@@ -386,16 +389,18 @@ class Librarian:
         self.models = LibrarianModels()
         self.extensions_root = extensions_root
         self.backends: list[ModelChoice] = []
-        self.server = graph_server(self.data_root.graph, extensions_root=extensions_root)
+        self.server = graph_server(
+            self.data_root.graph, time_zone=CHICAGO, extensions_root=extensions_root
+        )
 
-    def rebuild(self) -> BuildReport:
+    def rebuild(self, owner: Owner = OWNER) -> BuildReport:
         def backend_for(choice: ModelChoice) -> FakeModelBackend:
             self.backends.append(choice)
             return self.model.backend
 
         return rebuild_graph(
             self.data_root,
-            OWNER,
+            owner,
             models=self.models,
             backend_for=backend_for,
             extensions_root=self.extensions_root,
@@ -533,6 +538,24 @@ def test_a_changed_prompt_re_extracts_every_episode(
 
     assert librarian.model.calls - calls == 4
     assert second.extractor_version != first.extractor_version
+
+
+def test_a_changed_owner_re_runs_triage_and_extraction(librarian: Librarian):
+    # The owner's name and addresses are in both prompts.
+    librarian.mail.receive("Your order shipped.", labels="Inbox,Category Updates")
+    librarian.model.judges("Your order shipped", relevant=True)
+    a_thread_of_three(librarian)
+    librarian.rebuild()
+
+    moved = Owner(
+        name="Argus McNevans",
+        email_addresses=("argus@example.com", "argus@work.example"),
+        other_names=("Gus",),
+    )
+    report = librarian.rebuild(moved)
+
+    assert (report.cache["triage"].hits, report.cache["triage"].misses) == (0, 1)
+    assert (report.cache["extraction"].hits, report.cache["extraction"].misses) == (0, 5)
 
 
 def test_a_changed_episode_re_extracts_only_itself_and_the_later_episodes_in_its_thread(
@@ -818,7 +841,7 @@ def test_pa_librarian_extensions_puts_the_pinned_extension_where_the_server_load
     assert cli.main(["librarian", "extensions"]) == 0
 
     assert str(path) in capsys.readouterr().out
-    graph_server(tmp_path / "graph")  # finds it there
+    graph_server(tmp_path / "graph", time_zone=CHICAGO)  # finds it there
 
 
 def test_pa_librarian_extensions_refuses_a_file_that_isnt_the_pinned_one(
@@ -845,6 +868,7 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
             **os.environ,
             "PA_DATA_DIR": str(librarian.data_root.path),
             "PA_LBUG_EXTENSIONS_DIR": str(extensions_root),
+            "PA_TIME_ZONE": "America/Chicago",
         },
     )
 
@@ -1150,6 +1174,8 @@ def test_query_answers_a_read_with_rows_whose_nodes_and_edges_are_in_the_graph(
         "MATCH (p:Person) RETURN p; MATCH (s:Statement) RETURN s",
         "match (p:Person) /* a comment */ set p.name = 'x'",
         "CALL CREATE_FTS_INDEX('Person', 'evil', ['name'])",
+        # No vector index is built, so vector search isn't offered.
+        "CALL QUERY_VECTOR_INDEX('Statement', 'statement_vec', [0.1, 0.2], 3) RETURN *",
     ],
 )
 def test_query_rejects_anything_but_one_read_statement_before_it_reaches_the_database(
@@ -1225,6 +1251,7 @@ def test_a_query_worker_over_its_memory_cap_is_killed_and_replaced(librarian: Li
     # A buffer pool too big to fill and a long timeout leave only the memory cap to stop it.
     librarian.server = graph_server(
         librarian.data_root.graph,
+        time_zone=CHICAGO,
         extensions_root=librarian.extensions_root,
         query_limits=Limits(
             timeout_seconds=60, memory_bytes=200 << 20, buffer_pool_bytes=4 << 30, max_rows=10
@@ -1637,6 +1664,29 @@ def test_mail_from_an_unknown_address_under_the_owners_name_is_not_the_owners(
     assert quotes(librarian.call("statements", who=impostor["id"])) == [
         "I promise to wire $500 today."
     ]
+
+
+def test_received_mail_forged_from_the_owners_address_is_not_the_owners(librarian: Librarian):
+    # The owner's own mail is sent mail; this arrived in the inbox with a forged From.
+    librarian.mail.receive(
+        "I promise to wire $500 to Kate today.", sender=ARGUS, to=KATE, labels="Inbox"
+    )
+    librarian.model.says(
+        "I promise to wire",
+        statement(
+            "I promise to wire $500 to Kate today.",
+            kind="committed",
+            opens=(commitment("wire $500", owed_by="Argus McNevans", owed_to="Kate Brennan"),),
+        ),
+    )
+
+    report = librarian.rebuild()
+
+    assert quotes(librarian.call("statements", who="argus@example.com")) == []
+    owed = librarian.call("open_loops", who="argus@example.com", direction="owed_by")
+    assert nodes(owed, "Commitment") == []
+    # No one can be trusted as its speaker, so its statement is not kept.
+    assert (report.statements.extracted, report.statements.kept) == (1, 0)
 
 
 def test_identification_shows_what_each_candidate_is_known_from(librarian: Librarian):
@@ -2230,6 +2280,20 @@ def test_events_can_be_limited_by_who_takes_part_by_topic_and_by_time(librarian:
     assert " about Annual physical (" in nothing["message"]
 
 
+def test_a_date_alone_is_the_whole_of_that_day_in_the_instances_time_zone(librarian: Librarian):
+    # 20:00 in Chicago on Oct 8 is already Oct 9 in UTC.
+    librarian.mail.event(
+        "Late shift", uid="late-shift", starts="2026-10-08T20:00", ends="2026-10-08T23:00"
+    )
+
+    librarian.rebuild()
+
+    assert event_titles(librarian.call("events", until="2026-10-08")) == ["Late shift"]
+    assert event_titles(librarian.call("events", since="2026-10-08")) == ["Late shift"]
+    assert event_titles(librarian.call("events", since="2026-10-09")) == []
+    assert event_titles(librarian.call("events", until="2026-10-07")) == []
+
+
 def test_a_topics_timeline_includes_its_calendar_events_at_their_time(librarian: Librarian):
     draw, _ = a_blood_draw_and_a_kitchen_walkthrough(librarian)
     librarian.mail.receive(
@@ -2500,3 +2564,84 @@ def test_a_to_do_in_the_owners_note_is_a_commitment_owed_to_themselves(librarian
     (to_do,) = nodes(owed, "Commitment")
     assert to_do["properties"]["what"] == "call North Star to book the knee appointment"
     assert owes_and_owed(owed, to_do["id"]) == ("Argus McNevans", "Argus McNevans")
+
+
+def many_to_dos_about_the_kitchen(librarian: Librarian, *, day: int, count: int = 24) -> None:
+    """The owner's note listing `count` open to-dos about the kitchen remodel."""
+    whats = [f"pick the paint for wall {n}" for n in range(1, count + 1)]
+    librarian.mail.note("Kitchen to-dos:\n" + "\n".join(whats), day=day)
+    librarian.model.says(
+        "Kitchen to-dos",
+        *(
+            statement(
+                what,
+                kind="committed",
+                topics=("Kitchen remodel",),
+                opens=(commitment(what, owed_by="Argus McNevans", owed_to="Argus McNevans"),),
+            )
+            for what in whats
+        ),
+    )
+
+
+def test_an_older_open_loop_on_a_busy_topic_can_still_be_closed(librarian: Librarian):
+    hinges = "order the cabinet hinges"
+    librarian.mail.note(f"Kitchen: {hinges}.", day=1)
+    librarian.model.says(
+        "Kitchen: order",
+        statement(
+            f"{hinges}.",
+            kind="committed",
+            topics=("Kitchen remodel",),
+            opens=(commitment(hinges, owed_by="Argus McNevans", owed_to="Argus McNevans"),),
+        ),
+    )
+    many_to_dos_about_the_kitchen(librarian, day=2)
+    librarian.mail.receive(
+        "I ordered the cabinet hinges for you today.", sender=RICK, subject="Hinges", day=3
+    )
+    librarian.model.says(
+        "I ordered the cabinet hinges",
+        statement("I ordered the cabinet hinges for you today.", topics=("Kitchen remodel",)),
+    )
+    librarian.model.decides("I ordered the cabinet hinges", hinges, "fulfills")
+
+    librarian.rebuild()
+
+    owed = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    whats = [n["properties"]["what"] for n in nodes(owed, "Commitment")]
+    assert len(whats) == 24
+    assert hinges not in whats
+    ((_, offered),) = [d for d in librarian.model.decided if "hinges" in d[0]]
+    assert hinges in offered
+    assert len(offered) <= 30
+
+
+def test_an_older_open_loop_on_the_same_thread_is_always_offered(librarian: Librarian):
+    asked = librarian.mail.receive("Could you send me the tile order?", sender=DAVE, day=1)
+    librarian.model.says(
+        "Could you send me the tile order",
+        statement(
+            "Could you send me the tile order?",
+            kind="asked",
+            topics=("Kitchen remodel",),
+            opens=(request(TILE_ORDER, owed_by="Argus McNevans", owed_to="David Kim"),),
+        ),
+    )
+    many_to_dos_about_the_kitchen(librarian, day=2, count=40)
+    librarian.mail.receive(
+        "Attached, as promised.", sender=ARGUS, to=DAVE, replying_to=asked, day=3
+    )
+    librarian.model.says(
+        "Attached, as promised",
+        statement("Attached, as promised.", topics=("Kitchen remodel",)),
+    )
+    librarian.model.decides("Attached, as promised", TILE_ORDER, "fulfills")
+
+    librarian.rebuild()
+
+    asked_of_owner = librarian.call("open_loops", who="Argus McNevans", direction="owed_by")
+    assert TILE_ORDER not in [n["properties"]["what"] for n in nodes(asked_of_owner, "Request")]
+    ((_, offered),) = [d for d in librarian.model.decided if d[0] == "Attached, as promised."]
+    assert TILE_ORDER in offered
+    assert len(offered) <= 30

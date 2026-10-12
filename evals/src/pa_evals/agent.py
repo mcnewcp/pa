@@ -35,27 +35,29 @@ __all__ = [
 
 @dataclass(frozen=True)
 class AgentRequest:
-    """One question for the agent, asked from `as_of` against the throwaway `data_root`."""
+    """One question for the assistant, asked from `as_of` against the throwaway
+    `data_root`."""
 
     question_id: str
     question: str
     as_of: datetime
-    """The agent's "now" for this question."""
+    """The assistant's "now" for this question."""
     data_root: DataRoot
-    """The throwaway data root the corpus was ingested into (read-only for the agent)."""
+    """The throwaway data root the corpus was ingested into (read-only for the assistant)."""
     owner: Owner
     graph: GraphAccess | None = None
-    """The claims graph the agent is given through the PA MCP server; None for files alone."""
+    """The claims graph the assistant is given through the PA MCP server; None for files
+    alone."""
 
 
 class AgentRunner(Protocol):
     def answer(self, request: AgentRequest) -> AgentAnswer:
-        """The agent's answer, citing evidence as `[ep:<episode_id>]`."""
+        """The assistant's answer, citing evidence as `[ep:<episode_id>]`."""
         ...
 
 
 class ClaudeAgentRunner:
-    """The real agent (`claude -p` in the agent project), asked at the question's as-of time."""
+    """The real assistant (`claude -p` in the agent project), asked at the question's as-of time."""
 
     def __init__(self, agent: ClaudeAgent) -> None:
         self._agent = agent
@@ -103,7 +105,7 @@ class ScriptedAgent:
 def _offered(graph: GraphAccess | None) -> frozenset[str]:
     if graph is None:
         return frozenset()
-    listed = asyncio.run(graph_server(graph.graph).list_tools())
+    listed = asyncio.run(graph_server(graph.graph, time_zone=graph.time_zone).list_tools())
     return frozenset(
         f"mcp__{PA_SERVER}__{tool.name}" for tool in listed if tool.name not in graph.hidden_tools
     )

@@ -5,6 +5,7 @@
     "email_addresses": ["argus@example.com"],
     "other_names": ["Gus"]
   },
+  "time_zone": "America/Chicago",
   "questions": [
     {
       "id": "hotel-block-deadline",

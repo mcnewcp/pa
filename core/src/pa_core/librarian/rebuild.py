@@ -236,7 +236,7 @@ class _Triager:
         return outcomes | _in_pool(jobs, workers, triage.STAGE)
 
     def _check(self, envelope: Envelope) -> triage.Outcome:
-        key = triage.cache_key(envelope, self.version)
+        key = triage.cache_key(envelope, self.version, self._owner)
         cached = self._cache.get(triage.STAGE, key)
         with self._lock:
             if cached is None:
@@ -322,7 +322,7 @@ class _Extractor:
         return _in_pool(work, workers, extraction.STAGE)
 
     def _extract(self, envelope: Envelope, context: Sequence[Envelope]) -> Extraction:
-        key = extraction.cache_key(envelope, context, self.version)
+        key = extraction.cache_key(envelope, context, self.version, self._owner)
         cached = self._cache.get(extraction.STAGE, key)
         with self._lock:
             if cached is None:

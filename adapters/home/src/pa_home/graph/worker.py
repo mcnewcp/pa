@@ -28,6 +28,7 @@ import threading
 import time
 import weakref
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import IO, Any, cast
 
@@ -68,8 +69,7 @@ class GuardedWorker:
             {
                 "graph": str(graph.path),
                 "fts_extension": str(fts_extension),
-                "timeout_ms": round(limits.timeout_seconds * 1000),
-                "buffer_pool_bytes": limits.buffer_pool_bytes,
+                "limits": asdict(limits),
             }
         )
         self._limits = limits
@@ -228,8 +228,7 @@ def _serve(config: dict[str, Any]) -> None:
     build = CurrentBuild(
         GraphDirectory(Path(config["graph"])),
         fts_extension=Path(config["fts_extension"]),
-        timeout_ms=config["timeout_ms"],
-        buffer_pool_bytes=config["buffer_pool_bytes"],
+        limits=Limits(**config["limits"]),
     )
     while (request := _receive(requests)) is not None:
         cypher, parameters, max_rows = request

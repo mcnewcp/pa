@@ -9,6 +9,7 @@
       "Gus"
     ]
   },
+  "time_zone": "America/Chicago",
   "questions": [
     {
       "id": "flight-confirmation",
@@ -276,5 +277,6 @@
       "evidence": [],
       "as_of": null
     }
-  ]
+  ],
+  "adversarial": []
 }

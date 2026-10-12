@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import anyio
 import pytest
@@ -29,6 +30,7 @@ SETTINGS = Path(".claude") / "settings.json"
 
 
 MCP_CONFIG = Path(".mcp.json")
+CHICAGO = ZoneInfo("America/Chicago")
 
 
 @pytest.fixture
@@ -48,6 +50,7 @@ def _render(instance: dict[str, Path], owner: Owner = OWNER) -> Path:
         l0=instance["l0"],
         scratch=instance["scratch"],
         graph=instance["graph"],
+        time_zone=CHICAGO,
     )
     return instance["target"]
 
@@ -154,6 +157,7 @@ def test_tools_hidden_from_a_rendering_are_denied_by_name_and_the_rest_of_the_po
         l0=instance["l0"],
         scratch=instance["scratch"],
         graph=instance["graph"],
+        time_zone=CHICAGO,
         hidden_tools={"timeline", "statements"},
     )
 
@@ -203,6 +207,9 @@ def test_the_source_project_names_no_owner_and_no_instance_path():
             assert value not in text, f"{path} names {value!r}"
         # The PA MCP server's `schema` tool carries the Cypher examples, so none go stale here.
         assert not re.search(r"\b(MATCH|RETURN)\b", text), f"{path} holds a Cypher example"
+        # Nothing engine-specific: the graph's engine and query language can change under it.
+        for engine_word in ("Cypher", "Ladybug", "lbug"):
+            assert engine_word.lower() not in text.lower(), f"{path} names {engine_word!r}"
     settings = json.loads((AGENT_PROJECT / SETTINGS).read_text())
     for value in _strings(settings):
         assert not value.startswith("/"), f"settings.json names an absolute path: {value!r}"
@@ -298,6 +305,7 @@ def owner_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PA_OWNER_NAME", "Argus McNevans")
     monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com")
     monkeypatch.setenv("PA_OWNER_OTHER_NAMES", "Gus")
+    monkeypatch.setenv("PA_TIME_ZONE", "America/Chicago")
 
 
 def _render_command(instance: dict[str, Path]) -> list[str]:
@@ -335,6 +343,19 @@ def test_the_render_command_points_the_pa_server_at_the_given_graph(instance, ow
 
     pa = json.loads((instance["target"] / MCP_CONFIG).read_text())["mcpServers"]["pa"]
     assert str(instance["graph"].resolve()) in pa["args"]
+    # Dates the assistant gives without an offset are read in the instance's time zone.
+    assert pa["args"][-2:] == ["--time-zone", "America/Chicago"]
+
+
+def test_the_render_command_with_a_graph_needs_the_instances_time_zone(
+    instance, owner_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.delenv("PA_TIME_ZONE")
+
+    assert main([*_render_command(instance), "--graph", str(instance["graph"])]) != 0
+
+    assert "PA_TIME_ZONE" in capsys.readouterr().err
+    assert not instance["target"].exists()
 
 
 def test_the_render_command_without_a_graph_declares_no_mcp_server(instance, owner_env):

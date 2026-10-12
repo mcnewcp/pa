@@ -19,7 +19,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from pa_core.envelope import Envelope, Kind
-from pa_core.librarian.extraction import render_episode
+from pa_core.librarian.extraction import owner_identity, render_episode
 from pa_core.librarian.ports import ModelChoice
 from pa_core.owner import Owner
 
@@ -126,16 +126,16 @@ def triage_version(choice: ModelChoice) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:12]
 
 
-def cache_key(envelope: Envelope, version: str) -> str:
-    """Keyed on the episode's content and the category it was checked under."""
-    parts = [version, envelope.content_hash, category(envelope)]
+def cache_key(envelope: Envelope, version: str, owner: Owner) -> str:
+    """Keyed on the episode's content, the category it was checked under, and the owner as the
+    prompt names them, so a changed owner configuration checks again."""
+    parts = [version, owner_identity(owner), envelope.content_hash, category(envelope)]
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
 def relevance_prompt(envelope: Envelope, owner: Owner) -> str:
-    owner_text = f"{owner.name} <{', '.join(owner.email_addresses)}>"
     return PROMPT.format(
-        owner=owner_text,
+        owner=owner_identity(owner),
         category=category(envelope).value.capitalize(),
         episode=render_episode(envelope),
     )

@@ -5,7 +5,9 @@
 # deployed commit (default options: --agent claude --judge model). The run builds its throwaway
 # data root on the VM's own disk, never the mounted store, with exchange capture off. The run
 # directory is copied back to evals/runs/ in this checkout, and the run fails if the VM's inbox
-# directory changed while it ran.
+# directory changed while it ran. The librarian's settings in this environment (PA_LIBRARIAN_*,
+# such as PA_LIBRARIAN_EXTRACTION_MODEL) are forwarded to the run, which builds its graph with
+# them.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -15,12 +17,21 @@ source "$(dirname "$0")/lib.sh"
 inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
 before=$(inbox_listing)
 
+mapfile -t forwarded < <(librarian_env)
+((${#forwarded[@]})) && log "forwarding ${forwarded[*]}"
+
 output=$(mktemp)
 trap 'rm -f "$output"' EXIT
-as_assistant "$PA_REPO_DIR" "$@" <<'EOF' | tee "$output"
+as_assistant "$PA_REPO_DIR" "${#forwarded[@]}" "${forwarded[@]}" "$@" <<'EOF' | tee "$output"
 set -euo pipefail
 cd "$1"
-shift
+# Then how many librarian settings come, the settings (NAME=value), and pa-eval's options.
+count=$2
+shift 2
+for setting in "${@:1:count}"; do
+  export "${setting?}"
+done
+shift "$count"
 # The run's throwaway data root and rendered projects go in TMPDIR: on the VM's disk, since
 # /tmp in the VM is in memory.
 export TMPDIR=$HOME/.cache/pa-eval

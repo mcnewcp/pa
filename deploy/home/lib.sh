@@ -79,6 +79,16 @@ as_assistant() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "bash -s --$args"
 }
 
+# librarian_env prints NAME=value for each librarian setting (PA_LIBRARIAN_*) in the
+# environment, one per line, sorted: what run-evals.sh forwards into the VM's eval run.
+librarian_env() {
+  local name
+  while read -r name; do
+    [[ $name == PA_LIBRARIAN_* ]] && printf '%s=%s\n' "$name" "${!name}"
+  done < <(compgen -e | sort)
+  return 0
+}
+
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
   [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"

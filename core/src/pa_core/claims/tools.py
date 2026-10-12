@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from datetime import date, datetime, time, timedelta, tzinfo
+from typing import Any, get_args
 
 from pydantic import Field
 
@@ -41,8 +41,12 @@ class QueryResult(Graph):
 
 
 class ClaimsTools:
-    def __init__(self, graph: ClaimsGraph) -> None:
+    """The tools over `graph`. A date or time without a UTC offset is read in `time_zone`, the
+    instance's (the owner's) time zone, so a date alone is that whole local day."""
+
+    def __init__(self, graph: ClaimsGraph, time_zone: tzinfo) -> None:
         self._graph = graph
+        self._zone = time_zone
 
     def find(self, name: str) -> ToolResult:
         found = self._graph.find(name.strip())
@@ -55,20 +59,13 @@ class ClaimsTools:
         since: str | None = None,
         until: str | None = None,
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
-        speaker = self._resolve(who, "who", SPEAKER_TYPES)
-        if isinstance(speaker, ToolResult):
-            return speaker
-        about = self._resolve(topic, "topic", TOPIC_TYPES)
-        if isinstance(about, ToolResult):
-            return about
-        graph = self._graph.statements(
-            speaker.id if speaker else None, about.id if about else None, since_at, until_at
-        )
+        asked = self._criteria(who, topic, since, until)
+        if isinstance(asked, ToolResult):
+            return asked
+        graph = self._graph.statements(asked.who_id, asked.topic_id, asked.since, asked.until)
         count = _count(graph, "Statement")
-        by = f" by {speaker.name}" if speaker else " by anyone"
-        span = f"{by}{f' about {about.name}' if about else ''}{_span(since, until)}"
+        by = f" by {asked.who.name}" if asked.who else " by anyone"
+        span = f"{by}{asked.about}{asked.span}"
         if count == 0:
             message = f"No statements{span}."
         else:
@@ -78,14 +75,12 @@ class ClaimsTools:
     def timeline(
         self, topic: str, since: str | None = None, until: str | None = None
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
-        about = self._resolve(topic, "topic", TOPIC_TYPES)
-        if isinstance(about, ToolResult):
-            return about
-        if about is None:
+        asked = self._criteria(None, topic, since, until)
+        if isinstance(asked, ToolResult):
+            return asked
+        if asked.topic is None:
             raise ToolInputError("timeline needs a topic: its id, or a name to find it by")
-        graph = self._graph.timeline(about.id, since_at, until_at)
+        graph = self._graph.timeline(asked.topic.id, asked.since, asked.until)
         counted = [
             _plural(count, noun)
             for count, noun in (
@@ -96,7 +91,7 @@ class ClaimsTools:
             )
             if count
         ]
-        span = f" about {about.name}{_span(since, until)}"
+        span = f"{asked.about}{asked.span}"
         if not counted:
             message = f"Nothing recorded{span}."
         else:
@@ -113,20 +108,13 @@ class ClaimsTools:
         since: str | None = None,
         until: str | None = None,
     ) -> ToolResult:
-        since_at = _parse_moment(since, "since", end_of_day=False)
-        until_at = _parse_moment(until, "until", end_of_day=True)
-        attendee = self._resolve(who, "who", SPEAKER_TYPES)
-        if isinstance(attendee, ToolResult):
-            return attendee
-        about = self._resolve(topic, "topic", TOPIC_TYPES)
-        if isinstance(about, ToolResult):
-            return about
-        graph = self._graph.events(
-            attendee.id if attendee else None, about.id if about else None, since_at, until_at
-        )
+        asked = self._criteria(who, topic, since, until)
+        if isinstance(asked, ToolResult):
+            return asked
+        graph = self._graph.events(asked.who_id, asked.topic_id, asked.since, asked.until)
         events = [node for node in graph.nodes if node.type == "CalendarEvent"]
-        with_who = f" with {attendee.name}" if attendee else ""
-        span = f"{with_who}{f' about {about.name}' if about else ''}{_span(since, until)}"
+        with_who = f" with {asked.who.name}" if asked.who else ""
+        span = f"{with_who}{asked.about}{asked.span}"
         if not events:
             message = f"No calendar events{span}."
         else:
@@ -136,7 +124,7 @@ class ClaimsTools:
                 message += f" {cancelled} of them cancelled."
         return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
 
-    def open_loops(self, who: str | None = None, direction: str | None = None) -> ToolResult:
+    def open_loops(self, who: str | None = None, direction: Direction | None = None) -> ToolResult:
         if direction is not None and direction not in _DIRECTIONS:
             raise ToolInputError(
                 f"direction must be 'owed_by' (what `who` owes) or 'owed_to' (what is owed to "
@@ -145,7 +133,7 @@ class ClaimsTools:
         party = self._resolve(who, "who", SPEAKER_TYPES)
         if isinstance(party, ToolResult):
             return party
-        graph = self._graph.open_loops(party.id if party else None, _DIRECTIONS.get(direction))
+        graph = self._graph.open_loops(party.id if party else None, direction)
         # The graph also holds the closed requests and promises open ones came from.
         requests, commitments = (
             sum(1 for n in graph.nodes if n.type == t and n.properties.get("status") == "open")
@@ -192,6 +180,21 @@ class ClaimsTools:
             message=message,
         )
 
+    def _criteria(
+        self, who: str | None, topic: str | None, since: str | None, until: str | None
+    ) -> _Criteria | ToolResult:
+        """What a domain query is asked for: `who` and `topic` resolved, and the span parsed;
+        or, if either name doesn't resolve to exactly one node, the result saying so."""
+        since_at = _parse_moment(since, "since", self._zone, end_of_day=False)
+        until_at = _parse_moment(until, "until", self._zone, end_of_day=True)
+        party = self._resolve(who, "who", SPEAKER_TYPES)
+        if isinstance(party, ToolResult):
+            return party
+        about = self._resolve(topic, "topic", TOPIC_TYPES)
+        if isinstance(about, ToolResult):
+            return about
+        return _Criteria(party, about, since_at, until_at, _span(since, until))
+
     def _resolve(
         self, name: str | None, argument: str, types: frozenset[str]
     ) -> _Resolved | ToolResult | None:
@@ -210,7 +213,7 @@ SPEAKER_TYPES = frozenset({"Person", "Organization"})
 """What a `who` argument may name."""
 TOPIC_TYPES = frozenset({"Topic"})
 """What a `topic` argument may name."""
-_DIRECTIONS: dict[str | None, Direction] = {"owed_by": "owed_by", "owed_to": "owed_to"}
+_DIRECTIONS: tuple[Direction, ...] = get_args(Direction.__value__)
 
 
 @dataclass(frozen=True)
@@ -218,6 +221,31 @@ class _Resolved:
     id: str
     name: str
     """For messages: its name and id."""
+
+
+@dataclass(frozen=True)
+class _Criteria:
+    """A domain query's `who`, `topic`, and span, as `_criteria` resolves and parses them."""
+
+    who: _Resolved | None
+    topic: _Resolved | None
+    since: datetime | None
+    until: datetime | None
+    span: str
+    """For messages: the span as given."""
+
+    @property
+    def who_id(self) -> str | None:
+        return self.who.id if self.who else None
+
+    @property
+    def topic_id(self) -> str | None:
+        return self.topic.id if self.topic else None
+
+    @property
+    def about(self) -> str:
+        """For messages: the topic, if one was given."""
+        return f" about {self.topic.name}" if self.topic else ""
 
 
 def _only(found: Found, types: frozenset[str]) -> Found:
@@ -280,11 +308,13 @@ def _span(since: str | None, until: str | None) -> str:
     return "".join(parts)
 
 
-def _parse_moment(value: str | None, name: str, *, end_of_day: bool) -> datetime | None:
-    """An ISO 8601 date or datetime as an aware datetime; a datetime without an offset is UTC.
+def _parse_moment(
+    value: str | None, name: str, zone: tzinfo, *, end_of_day: bool
+) -> datetime | None:
+    """An ISO 8601 date or datetime as an aware datetime; one without an offset is in `zone`.
 
-    A date alone is the start of that day in UTC; for an end (`until`), the start of the next
-    day, so the date's whole day is included.
+    A date alone is the start of that day in `zone`; for an end (`until`), the start of the
+    next day, so the date's whole local day is included.
     """
     if value is None or not value.strip():
         return None
@@ -294,11 +324,11 @@ def _parse_moment(value: str | None, name: str, *, end_of_day: bool) -> datetime
             day = date.fromisoformat(text)
             if end_of_day:
                 day += timedelta(days=1)
-            return datetime.combine(day, time(), tzinfo=UTC)
+            return datetime.combine(day, time(), tzinfo=zone)
         moment = datetime.fromisoformat(text)
     except ValueError as error:
         raise ToolInputError(
             f"{name} must be an ISO 8601 date (2026-10-01) or datetime "
             f"(2026-10-01T09:00:00-05:00); got {value!r}"
         ) from error
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=zone)

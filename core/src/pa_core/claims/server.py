@@ -8,13 +8,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Literal, cast
+from datetime import UTC, tzinfo
+from typing import Any, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from pa_core.claims.queries import ClaimsGraph, Schema
+from pa_core.claims.queries import ClaimsGraph, Direction, Schema
 from pa_core.claims.tools import ClaimsTools, QueryResult, ToolResult
 from pa_core.errors import PaError
 
@@ -24,16 +25,20 @@ by the librarian. It is an index; the episodes are the evidence. Every node and 
 ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
 open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
 `timeline` tells what happened about one. Calendar events keep every version, so `events`
-shows where a moved or cancelled event stands now and where it was before. `open_loops` tells
-what is still asked or promised, with due dates; whether one is overdue is yours to judge
-against now. Use `find` before concluding there is no record of someone or something."""
+shows where a moved or cancelled calendar event stands now and where it was before.
+`open_loops` tells what is still asked or promised, with due dates; whether one is overdue is
+yours to judge against now. Use `find` before concluding there is no record of someone or
+something.
+Dates and times given without a UTC offset are read in the owner's time zone, {time_zone}."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
-def create_server(graph: ClaimsGraph) -> MCPServer:
-    tools = ClaimsTools(graph)
-    server = MCPServer("pa", instructions=INSTRUCTIONS)
+def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
+    """The server over `graph`. `time_zone` is the instance's: a date or time the assistant
+    gives without a UTC offset is read in it. The server has no clock of its own."""
+    tools = ClaimsTools(graph, time_zone)
+    server = MCPServer("pa", instructions=INSTRUCTIONS.format(time_zone=time_zone))
 
     def find(name: str) -> ToolResult:
         """Find the people, organizations, and topics whose name, alias, email address, mail
@@ -61,8 +66,9 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         topic's id or name. Each is resolved as `find` does, and if it matches more than one,
         the candidates come back instead, to call again with one id. Leave `who` out for
         everyone's statements and `topic` out for statements about anything. `since` and
-        `until` are ISO 8601 dates or datetimes (UTC unless an offset is given); `since` is
-        inclusive, `until` is exclusive, and a date alone for `until` includes that whole day.
+        `until` are ISO 8601 dates or datetimes (in the owner's time zone unless an offset is
+        given); `since` is inclusive, `until` is exclusive, and a date alone for `until`
+        includes that whole day.
         Each statement comes with its speaker (SAID), the episode it is recorded in
         (RECORDED_IN), the topics it is about (ABOUT), whom it mentions (MENTIONS), its kind,
         summary, and a quote checked against the episode's body. A secondhand statement is one
@@ -87,9 +93,7 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         with _reported():
             return tools.timeline(topic, since, until)
 
-    def open_loops(
-        who: str | None = None, direction: Literal["owed_by", "owed_to"] | None = None
-    ) -> ToolResult:
+    def open_loops(who: str | None = None, direction: Direction | None = None) -> ToolResult:
         """The requests and commitments still open: "who still owes me what?", "what have I
         promised?", "who hasn't answered me?".
 
@@ -117,12 +121,13 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         "when's my next appointment with Dr. Patel?" or "what's on for the wedding?".
 
         `who` is someone taking part (organizer or attendee, in any version) and `topic` a
-        topic the event is about, each an id or a name resolved as `find` does; if one matches
-        more than one node, the candidates come back instead. `since` and `until` bound the
-        event's current start and work as in `statements`. Each event (CalendarEvent) has its
-        current title, start, end, location, and status (scheduled or cancelled). Every
-        version comes as a VERSION_OF edge from its episode, carrying that version's fields
-        and when it was made (changed_at), so a moved event shows where it was before.
+        topic the calendar event is about, each an id or a name resolved as `find` does; if one
+        matches more than one node, the candidates come back instead. `since` and `until` bound
+        the calendar event's current start and work as in `statements`. Each calendar event
+        (CalendarEvent) has its current title, start, end, location, and status (scheduled or
+        cancelled). Every version comes as a VERSION_OF edge from its episode, carrying that
+        version's fields and when it was made (changed_at), so a moved calendar event shows
+        where it was before.
         """
         with _reported():
             return tools.events(who, topic, since, until)
@@ -165,7 +170,7 @@ def tool_names() -> tuple[str, ...]:
 
     The names alone, with no graph behind them: for hiding some of the tools from a session.
     """
-    listed = asyncio.run(create_server(cast(ClaimsGraph, None)).list_tools())
+    listed = asyncio.run(create_server(cast(ClaimsGraph, None), time_zone=UTC).list_tools())
     return tuple(tool.name for tool in listed)
 
 

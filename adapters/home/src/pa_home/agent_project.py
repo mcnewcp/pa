@@ -15,6 +15,7 @@ import sys
 from collections.abc import Collection
 from pathlib import Path
 from string import Template
+from zoneinfo import ZoneInfo
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
@@ -43,6 +44,7 @@ def render_agent_project(
     l0: Path,
     scratch: Path,
     graph: Path | None = None,
+    time_zone: ZoneInfo | None = None,
     hidden_tools: Collection[str] = (),
     source: Path = AGENT_PROJECT,
     python: Path = Path(sys.executable),
@@ -51,7 +53,9 @@ def render_agent_project(
 
     `l0` is the store the assistant reads, and `scratch` the only directory it may write to.
     `graph` is the claims graph's directory, which the PA MCP server reads; with none, the
-    project declares no MCP server and the assistant has its files alone. `hidden_tools` names
+    project declares no MCP server and the assistant has its files alone. `time_zone` is the
+    instance's, which the server reads dates without an offset in; it is needed with `graph`.
+    `hidden_tools` names
     PA MCP server tools the assistant is not given: settings.json denies each one by name, which
     removes it from the session while the server and its other tools stay.
     `python` runs the project's hooks; the default, the interpreter rendering it, has the core
@@ -62,6 +66,10 @@ def render_agent_project(
         raise AgentProjectError(
             f"{target} is not empty. Render the agent project into a new or empty directory "
             "(delete an old rendered copy first)."
+        )
+    if graph is not None and time_zone is None:
+        raise AgentProjectError(
+            "The PA MCP server needs the instance's time zone to read dates in."
         )
     if hidden_tools and graph is None:
         raise AgentProjectError(
@@ -81,6 +89,7 @@ def render_agent_project(
         (target / _MCP_CONFIG).unlink()
     else:
         values["graph"] = str(graph)
+        values["time_zone"] = str(time_zone)
     for name in _TEMPLATES:
         path = target / name
         if not path.exists():

@@ -1,15 +1,16 @@
-"""Calendar events: one node per event, built from its episodes with no model call.
+"""Calendar events: one node per calendar event, built from its episodes with no model call.
 
-Each version of an event is its own episode, and every version of one event shares the event's
-reference (its UID, which is also the episode's `native_id` and `thread_ref`). The event's id
-comes from that reference. Each version links to the event with `VERSION_OF`, carrying that
-version's title, start, end, location, and status, and when it was made. The latest version,
-by its sequence number and then when it was made, is current, and its fields are the event's.
+Each version of a calendar event is its own episode, and every version of one calendar event
+shares its reference (its UID, which is also the episode's `native_id` and `thread_ref`). The
+calendar event's id comes from that reference. Each version links to the calendar event with
+`VERSION_OF`, carrying that version's title, start, end, location, and status, and when it was
+made. The latest version, by its sequence number and then when it was made, is current, and
+its fields are the calendar event's.
 
 Time, title, and attendees come from the envelope, status and location from the labelled
 lines the calendar normalizer writes at the top of the body, and the version's order from the
-raw payload, since the envelope doesn't carry it. The event is about the topics its versions'
-statements are about.
+raw payload, since the envelope doesn't carry it. The calendar event is about the topics its
+versions' statements are about.
 """
 
 from __future__ import annotations
@@ -51,12 +52,14 @@ class Version:
 
 
 def event_id(envelope: Envelope) -> str:
-    """The id of the event that a calendar episode is a version of, from its reference."""
+    """The id of the calendar event that a calendar episode is a version of, from its
+    reference."""
     return stable_id("calendar_event", envelope.calendar_event_ref or envelope.native_id)
 
 
 def read_versions(envelopes: Iterable[Envelope], l0: L0Store) -> dict[str, Version]:
-    """Every calendar episode among `envelopes` as a version of its event, by episode id."""
+    """Every calendar episode among `envelopes` as a version of its calendar event, by
+    episode id."""
     versions = {}
     for envelope in envelopes:
         if envelope.kind != Kind.CALENDAR_EVENT:
@@ -83,8 +86,8 @@ def read_versions(envelopes: Iterable[Envelope], l0: L0Store) -> dict[str, Versi
 def event_records(
     versions: Iterable[Version], about: Mapping[str, Sequence[str]]
 ) -> tuple[list[NodeRecord], list[EdgeRecord]]:
-    """Each event's node in its current version, its `VERSION_OF` edges, and its `ABOUT`
-    edges, from `about`: the topic ids each episode's statements are about."""
+    """Each calendar event's node in its current version, its `VERSION_OF` edges, and its
+    `ABOUT` edges, from `about`: the topic ids each episode's statements are about."""
     by_event: defaultdict[str, list[Version]] = defaultdict(list)
     for version in versions:
         by_event[version.event_id].append(version)

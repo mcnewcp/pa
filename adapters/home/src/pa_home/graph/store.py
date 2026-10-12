@@ -24,6 +24,7 @@ from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES, EdgeType, NodeType, Pr
 from pa_core.errors import PaError
 from pa_core.librarian.ports import PublishedBuild
 from pa_home.graph.layout import DATABASE_FILE, GraphDirectory
+from pa_home.graph.reader import string_literal
 
 KEEP_BUILDS = 3
 """Published builds kept, newest first; a reader part way through a call keeps working."""
@@ -96,7 +97,7 @@ class LadybugBuilder:
         db = lb.Database(str(path))
         conn = lb.Connection(db)
         try:
-            conn.execute(f"LOAD EXTENSION '{_literal(str(self._fts_extension))}'")
+            conn.execute(f"LOAD EXTENSION '{string_literal(str(self._fts_extension))}'")
             for node_type in NODE_TYPES:
                 conn.execute(_node_table(node_type))
             for edge_type in EDGE_TYPES:
@@ -278,7 +279,3 @@ def _fsync_dir(directory: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
-
-
-def _literal(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("'", "\\'")

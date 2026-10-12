@@ -9,7 +9,9 @@ It runs after topics, over the kept statements in time order.
   from the owner's own statement. Anyone may ask the owner something.
 - **Closing.** A statement's candidates are the loops still open, opened in an earlier
   episode, that share a party with it (its speaker, whom it mentions, or the episode's
-  participants) and a topic or the thread. With candidates, one model call decides what the
+  participants) and a topic or the thread. Every one from its thread is offered; those
+  sharing only a topic fill the rest of a bounded list, the most alike in words first, so an
+  old loop on a busy topic can still close. With candidates, one model call decides what the
   statement does to each: fulfills, declines, withdraws, accepts, supersedes, or nothing. A
   loop closed by anyone's statement in any thread records how (`CLOSES`). Accepting a request
   opens a commitment (`ACCEPTED_AS`): the one the statement makes, or else one like the
@@ -50,14 +52,15 @@ from pa_core.claims.schema import (
 from pa_core.librarian.extraction import LoopType
 from pa_core.librarian.ports import LibrarianCache, ModelChoice
 from pa_core.librarian.report import CacheCounts
+from pa_core.librarian.topics import content_words
 from pa_core.model_client import ModelClient
 
 STAGE = "loops"
 
 OPEN = "open"
 
-# Candidates offered to one call, the latest opened, so a prompt stays small.
-_MAX_CANDIDATES = 20
+# Candidates offered to one call, so a prompt stays bounded.
+_MAX_CANDIDATES = 30
 
 
 class Outcome(StrEnum):
@@ -219,16 +222,29 @@ class LoopResolver:
 
     def _candidates(self, statement: LoopStatement, about: frozenset[str]) -> list[_Loop]:
         """The loops still open from earlier episodes that share a party with the statement,
-        and a topic or its thread; the latest opened, oldest first."""
-        found = [
+        and its thread or a topic, at most `_MAX_CANDIDATES`, oldest first.
+
+        Every one from its thread comes first (the latest, should a thread hold more than
+        fit). Those sharing only a topic fill the rest, those sharing the most words with the
+        statement first, then the latest opened.
+        """
+        sharing = [
             loop
             for loop in self._loops
             if loop.status == OPEN
             and loop.opened_in != statement.episode_id
             and {loop.owed_by, loop.owed_to} & statement.parties
-            and (loop.topics & about or statement.thread_ref in loop.threads)
         ]
-        return found[-_MAX_CANDIDATES:]
+        in_thread = [loop for loop in sharing if statement.thread_ref in loop.threads]
+        chosen = set(in_thread[-_MAX_CANDIDATES:])
+        on_topic = [loop for loop in sharing if loop not in chosen and loop.topics & about]
+        wanted = content_words(f"{statement.summary} {statement.quote}")
+        alike = sorted(
+            enumerate(on_topic),
+            key=lambda item: (-len(wanted & content_words(item[1].what)), -item[0]),
+        )
+        chosen.update(loop for _, loop in alike[: _MAX_CANDIDATES - len(chosen)])
+        return [loop for loop in self._loops if loop in chosen]
 
     def _apply(
         self,

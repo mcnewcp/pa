@@ -96,6 +96,7 @@ def test_the_eval_set_keeps_the_questions_and_as_of_times_and_names_the_spec_own
     assert eval_set.owner.name == "Argus McNevans"
     assert eval_set.owner.email_addresses == ["argus@example.com", "argus.mcnevans@example.org"]
     assert eval_set.owner.other_names == ["Gus"]
+    assert eval_set.time_zone == "America/Chicago"
 
 
 def test_evidence_naming_an_event_not_in_the_spec_is_reported(

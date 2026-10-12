@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pa_core.errors import PaError
 from pa_core.exchange_capture import CAPTURE_VARS
@@ -41,6 +42,8 @@ class GraphAccess:
 
     graph: Path
     """The graph directory the server reads (its `current` build)."""
+    time_zone: ZoneInfo
+    """The instance's time zone, which the server reads dates without an offset in."""
     hidden_tools: AbstractSet[str] = frozenset()
     """The server's tools the session is not given, by name (`find`, `query`, ...)."""
 
@@ -166,6 +169,7 @@ class ClaudeAgent:
                 l0=l0,
                 scratch=scratch,
                 graph=graph.graph if graph else None,
+                time_zone=graph.time_zone if graph else None,
                 hidden_tools=graph.hidden_tools if graph else (),
                 source=self._project,
             )
