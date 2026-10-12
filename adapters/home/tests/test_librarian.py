@@ -3,9 +3,11 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import gc
 import os
 import stat
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -254,8 +256,13 @@ def extensions_root() -> Path:
 
 
 @pytest.fixture
-def librarian(tmp_path: Path, extensions_root: Path) -> Librarian:
-    return Librarian(tmp_path / "pa-data", extensions_root)
+def librarian(tmp_path: Path, extensions_root: Path) -> Iterator[Librarian]:
+    librarian = Librarian(tmp_path / "pa-data", extensions_root)
+    yield librarian
+    # Each open build reserves 8 TiB of address space, so a run of tests that leaves its
+    # readers to the garbage collector can run out of it. Collecting the server closes them.
+    del librarian.server
+    gc.collect()
 
 
 def test_a_firsthand_statement_is_the_senders_even_when_the_model_names_someone_else(
