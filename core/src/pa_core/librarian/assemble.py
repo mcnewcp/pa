@@ -2,7 +2,8 @@
 
 This is where who said what is decided. A firsthand statement's speaker is the episode's
 sender or author (the owner, for a daily note or a chat), from its metadata, whatever the model
-wrote; a statement whose quote is not in the episode's body is dropped.
+wrote; a statement whose quote is not in the episode's body (for a chat, in one of the owner's
+turns) is dropped. Every statement from a chat is marked as told to the assistant.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from dataclasses import dataclass, field
 
 from pa_core.claims.records import EdgeRecord, GraphRecords, NodeRecord, stable_id
 from pa_core.claims.schema import EPISODE, PARTICIPATED_IN, RECORDED_IN, SAID, STATEMENT
-from pa_core.envelope import Envelope, Role
+from pa_core.envelope import Envelope, Kind, Role
 from pa_core.l0 import episode_ref
 from pa_core.librarian.extraction import Extraction, quote_is_in
 from pa_core.librarian.people import People
@@ -36,9 +37,15 @@ class Assembled:
 
 
 def assemble(
-    episodes: Sequence[Envelope], extractions: Mapping[str, Extraction], owner: Owner
+    episodes: Sequence[Envelope],
+    extractions: Mapping[str, Extraction],
+    owner: Owner,
+    quotable: Mapping[str, Sequence[str]],
 ) -> Assembled:
-    """Records for `episodes` (in time order) and the statements extracted from each."""
+    """Records for `episodes` (in time order) and the statements extracted from each.
+
+    A statement is kept only if its quote is in one of its episode's `quotable` texts.
+    """
     people = People(owner)
     nodes: list[NodeRecord] = []
     edges: list[EdgeRecord] = []
@@ -74,7 +81,7 @@ def assemble(
             tally.extracted += 1
             if sender is None:
                 continue
-            if not quote_is_in(statement.quote, envelope.body):
+            if not any(quote_is_in(statement.quote, text) for text in quotable[eid]):
                 tally.dropped_quote_not_found += 1
                 continue
             tally.kept += 1
@@ -89,7 +96,7 @@ def assemble(
                         "quote": statement.quote,
                         "at": envelope.occurred_at.start,
                         "secondhand": False,
-                        "told_to_assistant": False,
+                        "told_to_assistant": envelope.kind == Kind.CHAT,
                         "episode_id": eid,
                         "l0_path": l0_path,
                     },

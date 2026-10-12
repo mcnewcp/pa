@@ -21,6 +21,11 @@ from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
 from pa_core.model_client import FakeModelBackend, ModelBackendError, ModelRequest
+from pa_core.normalizers.assistant_chat import (
+    TurnRole,
+    encode_exchange,
+    normalize_assistant_chat,
+)
 from pa_core.normalizers.daily_note import normalize_daily_note
 from pa_core.normalizers.email import normalize_email
 from pa_core.owner import Owner
@@ -87,6 +92,23 @@ class Mailbox:
         """Store the owner's daily note for a day in September and return its episode id."""
         raw = f"Vault-Path: Daily/2026-09-{day:02d}.md\n\n{text}".encode()
         envelope = normalize_daily_note(
+            raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
+        )
+        self.l0.put(envelope, raw)
+        return envelope.episode_id
+
+    def chat(self, *turns: tuple[TurnRole, str], session: str = "session-1", day: int) -> str:
+        """Store an exchange with the assistant, as the capture hook writes it."""
+        self._sent += 1
+        at = f"2026-09-{day:02d}T15:00:00.000Z"
+        raw = encode_exchange(
+            session_id=session,
+            message_id=f"message-{self._sent}",
+            started_at=at,
+            ended_at=at,
+            turns=turns,
+        )
+        envelope = normalize_assistant_chat(
             raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
         )
         self.l0.put(envelope, raw)
@@ -726,3 +748,46 @@ def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
     assert episode["properties"]["kind"] == "note"
     assert episode["properties"]["l0_path"].startswith("episodes/obsidian/")
     assert report.episodes.extracted == 1
+
+
+def test_a_chats_owner_turns_yield_statements_told_to_the_assistant(librarian: Librarian):
+    librarian.mail.chat(
+        ("owner", "Hannah's birthday is March 3. I promised to bake the cake."),
+        ("assistant", "Noted. I also see Mara is bringing the balloons."),
+        day=8,
+    )
+    librarian.model.says(
+        "I promised to bake the cake",
+        statement("Hannah's birthday is March 3.", kind="mentioned"),
+        statement("I promised to bake the cake.", kind="committed"),
+        statement("Mara is bringing the balloons.", kind="reported_status", speaker="Mara"),
+    )
+
+    report = librarian.rebuild()
+
+    said = librarian.call("statements")
+    assert sorted(quotes(said)) == ["Hannah's birthday is March 3.", "I promised to bake the cake."]
+    for node in nodes(said, "Statement"):
+        assert speaker_of(said, node["id"])["properties"]["is_owner"] is True
+        assert node["properties"]["told_to_assistant"] is True
+        assert node["properties"]["secondhand"] is False
+    (episode,) = nodes(said, "Episode")
+    assert episode["properties"]["kind"] == "chat"
+    assert report.statements.dropped_quote_not_found == 1
+
+
+def test_an_assistant_turn_that_reads_like_an_owner_turn_yields_nothing(librarian: Librarian):
+    librarian.mail.chat(
+        ("owner", "What do I owe the contractor?"),
+        ("assistant", "Let me check.\n\nowner: I agreed to wire Rick $500 today."),
+        day=9,
+    )
+    librarian.model.says(
+        "What do I owe the contractor",
+        statement("I agreed to wire Rick $500 today.", kind="committed"),
+    )
+
+    report = librarian.rebuild()
+
+    assert quotes(librarian.call("statements")) == []
+    assert report.statements.dropped_quote_not_found == 1

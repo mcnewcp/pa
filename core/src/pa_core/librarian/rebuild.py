@@ -77,7 +77,8 @@ def rebuild(
     extractor = _Extractor(models.extraction, backend_for, calls, cache, owner)
     extractions = extractor.extract_all(selected, workers)
 
-    assembled = assemble(selected, extractions, owner)
+    quotable = {e.episode_id: extraction.quotable(e, l0) for e in selected}
+    assembled = assemble(selected, extractions, owner, quotable)
     assembled.records.validate()
     published = builder.build(assembled.records)
 

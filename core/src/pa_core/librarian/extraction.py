@@ -18,7 +18,10 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from pa_core.envelope import Envelope, Kind, Role
+from pa_core.errors import PaError
+from pa_core.l0 import L0Store
 from pa_core.librarian.ports import ModelChoice
+from pa_core.normalizers.assistant_chat import owner_turns
 from pa_core.owner import Owner
 
 STAGE = "extraction"
@@ -211,6 +214,23 @@ _HEADERS = (
     (Role.CC, "Cc"),
     (Role.AUTHOR, "Author"),
 )
+
+
+def quotable(envelope: Envelope, l0: L0Store) -> list[str]:
+    """The texts an episode's quotes must come from: its body, or a chat's owner turns alone.
+
+    So nothing the assistant said in a chat can become a statement.
+    """
+    if envelope.kind != Kind.CHAT:
+        return [envelope.body]
+    raw = l0.get_raw(envelope.raw_ref)
+    if raw is None:
+        raise MissingPayloadError(f"{envelope.episode_id} has no raw payload at {envelope.raw_ref}")
+    return owner_turns(raw)
+
+
+class MissingPayloadError(PaError):
+    """An episode whose raw payload is not in L0."""
 
 
 def quote_is_in(quote: str, body: str) -> bool:
