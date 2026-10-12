@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match, Rows
+from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
 from pa_home.graph.guard import check_read_only
 from pa_home.graph.reader import CypherRunner, QueryRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
@@ -153,31 +154,53 @@ class Shaped:
 def shape(rows: list[Row]) -> Shaped:
     """Every node and relationship in `rows` as a graph with stable ids, in first-seen order.
 
-    LadybugDB's internal ids are used only to find each relationship's endpoints among the
-    nodes in the same result, and never leave this function.
+    Nodes and relationships are found anywhere in a row: in a column, in a list, or in a path.
+    In the shaped rows each is replaced by its stable id, and a path by `{"nodes": [ids],
+    "edges": [ids]}`. LadybugDB's internal ids are used only to find each relationship's
+    endpoints among the nodes in the same result, and never leave this function.
     """
     graph = _ShapedGraph({}, {})
     internal: dict[tuple[int, int], str] = {}
     for row in rows:
         for value in row.values():
-            if _is_node(value):
-                node = _node(value)
-                graph.nodes_by_id.setdefault(node.id, node)
-                internal[_internal_id(value["_ID"])] = node.id
-    shaped_rows = []
-    for row in rows:
-        shaped: dict[str, Any] = {}
-        for column, value in row.items():
-            if _is_node(value):
-                shaped[column] = value["id"]
-            elif _is_relationship(value):
-                edge = _edge(value, internal)
-                graph.edges_by_id.setdefault(edge.id, edge)
-                shaped[column] = edge.id
-            else:
-                shaped[column] = _plain(value)
-        shaped_rows.append(shaped)
+            _collect_nodes(value, graph, internal)
+    shaped_rows = [
+        {column: _shape_value(value, graph, internal) for column, value in row.items()}
+        for row in rows
+    ]
     return Shaped(graph=graph, rows=shaped_rows)
+
+
+def _collect_nodes(value: Any, graph: _ShapedGraph, internal: dict[tuple[int, int], str]) -> None:
+    if _is_node(value):
+        node = _node(value)
+        graph.nodes_by_id.setdefault(node.id, node)
+        internal[_internal_id(value["_ID"])] = node.id
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_nodes(item, graph, internal)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_nodes(item, graph, internal)
+
+
+def _shape_value(value: Any, graph: _ShapedGraph, internal: dict[tuple[int, int], str]) -> Any:
+    if _is_node(value):
+        return value["id"]
+    if _is_relationship(value):
+        edge = _edge(value, internal)
+        graph.edges_by_id.setdefault(edge.id, edge)
+        return edge.id
+    if _is_path(value):
+        return {
+            "nodes": [_shape_value(node, graph, internal) for node in value["_NODES"]],
+            "edges": [_shape_value(rel, graph, internal) for rel in value["_RELS"]],
+        }
+    if isinstance(value, dict):
+        return {key: _shape_value(item, graph, internal) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shape_value(item, graph, internal) for item in value]
+    return _plain(value)
 
 
 def _is_node(value: Any) -> bool:
@@ -188,16 +211,28 @@ def _is_relationship(value: Any) -> bool:
     return isinstance(value, dict) and "_SRC" in value and "_DST" in value
 
 
+def _is_path(value: Any) -> bool:
+    return isinstance(value, dict) and "_NODES" in value and "_RELS" in value
+
+
 def _internal_id(value: dict[str, int]) -> tuple[int, int]:
     return (value["table"], value["offset"])
 
 
+_DECLARED: dict[str, frozenset[str]] = {
+    declared.label: frozenset(declared.properties) for declared in (*NODE_TYPES, *EDGE_TYPES)
+}
+
+
 def _properties(value: dict[str, Any]) -> dict[str, Any]:
+    """The properties its type declares. A node in a path carries every node table's
+    properties, the others null, so the declaration decides which are its own."""
+    declared = _DECLARED.get(value["_LABEL"])
     hidden = {"id", "episode_ids", SEARCH_TEXT}
     return {
         key: _plain(item)
         for key, item in value.items()
-        if not key.startswith("_") and key not in hidden
+        if not key.startswith("_") and key not in hidden and (declared is None or key in declared)
     }
 
 

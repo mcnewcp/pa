@@ -3,6 +3,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 
 from __future__ import annotations
 
+import itertools
 import os
 import stat
 import sys
@@ -685,6 +686,36 @@ def test_a_query_worker_over_its_memory_cap_is_killed_and_replaced(librarian: Li
         {"n": 4}
     ]
     assert len(quotes(librarian.call("statements"))) == 6
+
+
+def test_query_unpacks_paths_into_the_graph(librarian: Librarian):
+    a_thread_of_three(librarian)
+    librarian.rebuild()
+
+    result = librarian.call(
+        "query",
+        cypher="MATCH p = (a:Person)-[* SHORTEST 1..4]-(b:Person) "
+        "WHERE a.name = 'Maria Alvarez' AND b.name = 'David Kim' "
+        "RETURN p, nodes(p) AS stops, length(p) AS hops",
+    )
+
+    (row,) = result["rows"]
+    assert row["hops"] == 4  # Maria -> her email -> Argus -> a tile email -> Dave
+    path = row["p"]
+    assert path["nodes"] == row["stops"]
+    assert [librarian_name(result, path["nodes"][i]) for i in (0, 2, 4)] == [
+        "Maria Alvarez",
+        "Argus McNevans",
+        "David Kim",
+    ]
+    assert {node["type"] for node in result["nodes"]} == {"Person", "Episode"}
+    assert sorted(node["id"] for node in result["nodes"]) == sorted(path["nodes"])
+    assert [edge["id"] for edge in result["edges"]] == path["edges"]
+    for edge, (here, there) in zip(result["edges"], itertools.pairwise(path["nodes"]), strict=True):
+        assert {edge["source"], edge["target"]} == {here, there}
+        assert edge["type"] == "PARTICIPATED_IN"
+    maria = next(n for n in result["nodes"] if n["id"] == path["nodes"][0])
+    assert set(maria["properties"]) == {"name", "aliases", "addresses", "is_owner"}
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:
