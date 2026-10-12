@@ -120,7 +120,7 @@ class LadybugClaimsGraph:
 
 
 @dataclass
-class _GraphBuilder:
+class _ShapedGraph:
     nodes_by_id: dict[str, GraphNode]
     edges_by_id: dict[str, GraphEdge]
 
@@ -130,7 +130,7 @@ class _GraphBuilder:
 
 @dataclass
 class Shaped:
-    graph: _GraphBuilder
+    graph: _ShapedGraph
     rows: list[dict[str, Any]]
     """The rows with each node or relationship replaced by its stable id."""
 
@@ -141,7 +141,7 @@ def shape(rows: list[Row]) -> Shaped:
     LadybugDB's internal ids are used only to find each relationship's endpoints among the
     nodes in the same result, and never leave this function.
     """
-    graph = _GraphBuilder({}, {})
+    graph = _ShapedGraph({}, {})
     internal: dict[tuple[int, int], str] = {}
     for row in rows:
         for value in row.values():
