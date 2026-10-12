@@ -65,14 +65,29 @@ def render_report(results: RunResults) -> str:
     lines += [f"| {_cell(name)} | {_score_cells(s)} |" for name, s in results.categories.items()]
     lines += [
         "",
+        "## Efficiency by category",
+        "",
+        "Medians over the answers that report them, and their total cost (n/a: none do).",
+        "",
+        "| Category | Median cost | Median turns | Median duration | Total cost |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {_cell(name)} | {_efficiency_cells(s)} |" for name, s in results.categories.items()
+    ]
+    lines += [
+        f"| Overall | {_efficiency_cells(overall)} |",
+        "",
         "## By question",
         "",
-        "| Question | Category | Status | Correct | Evidence recall | Citation validity |",
-        "|---|---|---|---|---|---|",
+        "| Question | Category | Status | Correct | Evidence recall | Citation validity "
+        "| Cost | Turns | Duration |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     lines += [
         f"| {_cell(q.id)} | {_cell(q.category)} | {q.status} | {_yes_no(q.correct)} | "
-        f"{format_score(q.evidence_recall)} | {format_score(q.citation_validity)} |"
+        f"{format_score(q.evidence_recall)} | {format_score(q.citation_validity)} | "
+        f"{format_cost(q.cost_usd)} | {format_turns(q.turns)} | {format_duration(q.duration_ms)} |"
         for q in results.questions
     ]
     lines += ["", "## Answers"]
@@ -91,6 +106,11 @@ def _answer_section(q: QuestionResult) -> list[str]:
         f"- Required evidence: {_ids(q.evidence)}",
         f"- Cited: {_ids(q.cited)}",
     ]
+    if (q.cost_usd, q.turns, q.duration_ms) != (None, None, None):
+        lines.append(
+            f"- Cost: {format_cost(q.cost_usd)}, {format_turns(q.turns)} turns, "
+            f"{format_duration(q.duration_ms)}"
+        )
     if q.unknown_citations:
         lines.append(f"- Not in L0: {_ids(q.unknown_citations)}")
     if q.irrelevant_citations:
@@ -112,9 +132,31 @@ def _score_cells(scores: Scores) -> str:
     )
 
 
+def _efficiency_cells(scores: Scores) -> str:
+    return (
+        f"{format_cost(scores.median_cost_usd)} | {format_turns(scores.median_turns)} | "
+        f"{format_duration(scores.median_duration_ms)} | {format_cost(scores.total_cost_usd)}"
+    )
+
+
 def format_score(value: float | None) -> str:
     """A score to two decimals, or n/a where it does not apply."""
     return "n/a" if value is None else f"{value:.2f}"
+
+
+def format_cost(usd: float | None) -> str:
+    """A cost in dollars to three decimals (an answer costs cents), or n/a if unknown."""
+    return "n/a" if usd is None else f"${usd:.3f}"
+
+
+def format_turns(turns: float | None) -> str:
+    """A number of turns, with a decimal only where a median falls between two."""
+    return "n/a" if turns is None else f"{turns:g}"
+
+
+def format_duration(ms: float | None) -> str:
+    """A duration in seconds to one decimal, or n/a if unknown."""
+    return "n/a" if ms is None else f"{ms / 1000:.1f} s"
 
 
 def _yes_no(value: bool | None) -> str:

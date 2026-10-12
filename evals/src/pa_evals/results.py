@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Literal
@@ -16,7 +17,9 @@ class QuestionResult(BaseModel):
 
     A failed question (the agent or the judge raised) has `status` "failed", the error, and
     whatever scores could still be worked out. A score is None where it does not apply: recall
-    for a question with no required evidence, validity for an answer with no citations.
+    for a question with no required evidence, validity for an answer with no citations. Cost,
+    turns, and duration are None where the agent didn't report them, and in results written
+    before they were recorded.
     """
 
     id: str
@@ -37,6 +40,10 @@ class QuestionResult(BaseModel):
     citation_validity: float | None = None
     correct: bool | None = None
     judge_reasoning: str | None = None
+    cost_usd: float | None = None
+    """What the agent's session cost, in US dollars at API prices."""
+    turns: int | None = None
+    duration_ms: int | None = None
 
 
 class Scores(BaseModel):
@@ -45,6 +52,10 @@ class Scores(BaseModel):
     Correctness is the share of questions judged correct, so a failed question counts as wrong.
     Evidence recall and citation validity are means over the questions where they apply; a
     question whose agent failed cited nothing, so its recall is 0.
+
+    Cost, turns, and duration are summarised over the answers that report them: the median of
+    each, and the total cost. They are None where no answer does, as in results written before
+    they were recorded.
     """
 
     questions: int
@@ -52,15 +63,24 @@ class Scores(BaseModel):
     correctness: float
     evidence_recall: float | None
     citation_validity: float | None
+    median_cost_usd: float | None = None
+    median_turns: float | None = None
+    median_duration_ms: float | None = None
+    total_cost_usd: float | None = None
 
     @classmethod
     def over(cls, results: Sequence[QuestionResult]) -> Scores:
+        costs = [r.cost_usd for r in results if r.cost_usd is not None]
         return cls(
             questions=len(results),
             failed=sum(r.status == "failed" for r in results),
             correctness=_share([r.correct is True for r in results]) or 0.0,
             evidence_recall=_mean([r.evidence_recall for r in results]),
             citation_validity=_mean([r.citation_validity for r in results]),
+            median_cost_usd=median(costs),
+            median_turns=median([r.turns for r in results]),
+            median_duration_ms=median([r.duration_ms for r in results]),
+            total_cost_usd=sum(costs) if costs else None,
         )
 
 
@@ -90,3 +110,9 @@ def _share(flags: Sequence[bool]) -> float | None:
 def _mean(values: Sequence[float | None]) -> float | None:
     present = [v for v in values if v is not None]
     return sum(present) / len(present) if present else None
+
+
+def median(values: Sequence[float | None]) -> float | None:
+    """The median of the values that are present, or None if none are."""
+    present = [v for v in values if v is not None]
+    return statistics.median(present) if present else None

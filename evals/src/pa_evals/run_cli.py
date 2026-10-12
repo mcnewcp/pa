@@ -15,12 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from pa_core.errors import PaError
 from pa_core.model_client import ModelClient
 from pa_evals import frozen
 from pa_evals.agent import (
+    AgentAnswer,
     AgentError,
     AgentRunner,
     ClaudeAgentRunner,
@@ -72,25 +73,47 @@ class Choice[T]:
 def _scripted_agent(args: argparse.Namespace) -> AgentRunner:
     if args.answers is None:
         raise ScriptedInputError("--agent scripted needs --answers FILE")
-    answers: dict[str, ScriptedAnswer] = {}
-    for question_id, answer in _read_script(args.answers).items():
-        if isinstance(answer, dict) and isinstance(answer.get("error"), str):
-            answers[question_id] = AgentError(answer["error"])
-        elif isinstance(answer, str):
-            answers[question_id] = answer
-        else:
-            raise ScriptedInputError(
-                f"{args.answers}: the answer to {question_id} must be text or "
-                '{"error": "message"}'
-            )
+    answers = {
+        question_id: _scripted_answer(args.answers, question_id, answer)
+        for question_id, answer in _read_script(args.answers).items()
+    }
     return ScriptedAgent(answers)
+
+
+def _scripted_answer(path: Path, question_id: str, answer: Any) -> ScriptedAnswer:
+    if isinstance(answer, str):
+        return answer
+    if isinstance(answer, dict) and isinstance(answer.get("error"), str):
+        return AgentError(answer["error"])
+    if isinstance(answer, dict) and isinstance(answer.get("answer"), str):
+        try:
+            scripted = _ScriptedFigures.model_validate(answer)
+        except ValidationError as error:
+            raise ScriptedInputError(f"{path}: the answer to {question_id}: {error}") from error
+        return AgentAnswer(scripted.answer, scripted.cost_usd, scripted.turns, scripted.duration_ms)
+    raise ScriptedInputError(
+        f"{path}: the answer to {question_id} must be text, "
+        '{"answer": "text", "cost_usd": 0.05, "turns": 4, "duration_ms": 9000} '
+        '(the figures optional), or {"error": "message"}'
+    )
+
+
+class _ScriptedFigures(BaseModel, extra="forbid"):
+    """A scripted answer with what it cost."""
+
+    answer: str
+    cost_usd: float | None = None
+    turns: int | None = None
+    duration_ms: int | None = None
 
 
 def _scripted_agent_options(run: argparse.ArgumentParser) -> None:
     run.add_argument(
         "--answers",
         type=Path,
-        help='For --agent scripted: JSON of question id to answer text or {"error": "..."}.',
+        help="For --agent scripted: JSON of question id to answer text, "
+        '{"answer": "...", "cost_usd": ..., "turns": ..., "duration_ms": ...}, '
+        'or {"error": "..."}.',
     )
 
 

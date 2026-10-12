@@ -218,3 +218,53 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     }
     assert results["as_of"] == load_eval_set(frozen.EVAL_SET).as_of.isoformat()
     assert [question["id"] for question in results["questions"]] == ["day-of-week"]
+
+
+def test_the_report_shows_each_answers_cost_turns_and_duration_and_sums_them_up_by_category(
+    tmp_path,
+):
+    answers = tmp_path / "answers.json"
+    answers.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": {
+                    "answer": f"It closes on Oct 9 [ep:{DEADLINE_EMAIL}].",
+                    "cost_usd": 0.0421,
+                    "turns": 6,
+                    "duration_ms": 18250,
+                },
+                "day-of-week": {
+                    "answer": "It's Saturday.",
+                    "cost_usd": 0.0105,
+                    "turns": 1,
+                    "duration_ms": 4000,
+                },
+                "swim-instructor": "I don't know.",
+            }
+        )
+    )
+    verdicts = tmp_path / "verdicts.json"
+    verdicts.write_text(json.dumps(VERDICTS))
+    runs = tmp_path / "runs"
+
+    pa_eval_run(
+        runs,
+        ["--agent", "scripted", "--answers", str(answers)],
+        *("--judge", "scripted", "--verdicts", str(verdicts)),
+        *("--only", "hotel-block-deadline", "--only", "swim-instructor", "--only", "day-of-week"),
+    )
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    [deadline, *_] = results["questions"]
+    assert (deadline["cost_usd"], deadline["turns"], deadline["duration_ms"]) == (0.0421, 6, 18250)
+    report = (run_dir / "report.md").read_text()
+    assert "| hotel-block-deadline | single_fact_recall | scored | yes | 1.00 | 1.00 | " in report
+    assert "| $0.042 | 6 | 18.2 s |" in report
+    assert "| swim-instructor | abstention | scored | yes | n/a | n/a | n/a | n/a | n/a |" in report
+    assert "## Efficiency by category" in report
+    assert "| single_fact_recall | $0.042 | 6 | 18.2 s | $0.042 |" in report
+    assert "| abstention | n/a | n/a | n/a | n/a |" in report
+    # Overall: the medians of the two measured answers, and their sum.
+    assert "| Overall | $0.026 | 3.5 | 11.1 s | $0.053 |" in report
+    assert "- Cost: $0.042, 6 turns, 18.2 s" in report

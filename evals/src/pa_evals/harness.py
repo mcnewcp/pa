@@ -105,11 +105,14 @@ def _ask(
         recall = 0.0 if question.evidence else None
         return result.model_copy(update={"error": f"agent: {answer}", "evidence_recall": recall})
 
-    cited = parse_citations(answer)
+    cited = parse_citations(answer.text)
     existing = [episode_id for episode_id in cited if episode_id in known]
     result = result.model_copy(
         update={
-            "answer": answer,
+            "answer": answer.text,
+            "cost_usd": answer.cost_usd,
+            "turns": answer.turns,
+            "duration_ms": answer.duration_ms,
             "cited": cited,
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
@@ -123,7 +126,7 @@ def _ask(
                 question=question.question,
                 expected_answer=question.expected_answer,
                 as_of=as_of,
-                answer=answer,
+                answer=answer.text,
                 cited_episodes=episodes,
             )
         )
