@@ -45,6 +45,10 @@ _S, _SS, _B, _T = (
 )
 
 PERSON = NodeType("Person", {"name": _S, "aliases": _SS, "addresses": _SS, "is_owner": _B})
+ORGANIZATION = NodeType(
+    "Organization", {"name": _S, "aliases": _SS, "domains": _SS, "addresses": _SS}
+)
+"""`addresses` are the organization's own (an appointments desk), where it writes as itself."""
 EPISODE = NodeType(
     "Episode",
     {
@@ -74,14 +78,33 @@ _EVENT_FIELDS = {"title": _S, "starts_at": _T, "ends_at": _T, "location": _S, "s
 CALENDAR_EVENT = NodeType("CalendarEvent", _EVENT_FIELDS)
 """In its current version. `status` is `scheduled` or `cancelled`."""
 
-SAID = EdgeType("SAID", (("Person", "Statement"),), {})
+SAID = EdgeType("SAID", (("Person", "Statement"), ("Organization", "Statement")), {})
 RECORDED_IN = EdgeType("RECORDED_IN", (("Statement", "Episode"),), {})
-PARTICIPATED_IN = EdgeType("PARTICIPATED_IN", (("Person", "Episode"),), {"role": _S})
+PARTICIPATED_IN = EdgeType(
+    "PARTICIPATED_IN", (("Person", "Episode"), ("Organization", "Episode")), {"role": _S}
+)
 ABOUT = EdgeType("ABOUT", (("Statement", "Topic"), ("CalendarEvent", "Topic")), {})
+MENTIONS = EdgeType("MENTIONS", (("Statement", "Person"), ("Statement", "Organization")), {})
+MEMBER_OF = EdgeType("MEMBER_OF", (("Person", "Organization"),), {})
 VERSION_OF = EdgeType(
     "VERSION_OF", (("Episode", "CalendarEvent"),), {**_EVENT_FIELDS, "changed_at": _T}
 )
 """A version of a calendar event: its fields in that version, and when it was made."""
 
-NODE_TYPES: tuple[NodeType, ...] = (PERSON, EPISODE, STATEMENT, TOPIC, CALENDAR_EVENT)
-EDGE_TYPES: tuple[EdgeType, ...] = (SAID, RECORDED_IN, PARTICIPATED_IN, ABOUT, VERSION_OF)
+NODE_TYPES: tuple[NodeType, ...] = (
+    PERSON,
+    ORGANIZATION,
+    EPISODE,
+    STATEMENT,
+    TOPIC,
+    CALENDAR_EVENT,
+)
+EDGE_TYPES: tuple[EdgeType, ...] = (
+    SAID,
+    RECORDED_IN,
+    PARTICIPATED_IN,
+    ABOUT,
+    MENTIONS,
+    MEMBER_OF,
+    VERSION_OF,
+)

@@ -34,11 +34,14 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
     server = MCPServer("pa", instructions=INSTRUCTIONS)
 
     def find(name: str) -> ToolResult:
-        """Find the people and topics whose name, alias, email address, or id matches `name`.
+        """Find the people, organizations, and topics whose name, alias, email address, mail
+        domain, or id matches `name`.
 
         Exact matches (any case) come first; only if there are none, full-text matches, best
-        first. When nothing matches, the message says so: that is not proof there is no
-        record, so try another spelling, a nickname, or an address.
+        first. Each match comes with its memberships (MEMBER_OF): the organizations a person
+        belongs to, or an organization's people. When nothing matches, the message says so:
+        that is not proof there is no record, so try another spelling, a nickname, or an
+        address.
         """
         with _reported():
             return tools.find(name)
@@ -52,14 +55,18 @@ def create_server(graph: ClaimsGraph) -> MCPServer:
         """What someone said, optionally about one topic: statements in time order, oldest
         first.
 
-        `who` is a person's id, or a name, alias, or address; `topic` is a topic's id or name.
-        Each is resolved as `find` does, and if it matches more than one, the candidates come
-        back instead, to call again with one id. Leave `who` out for everyone's statements and
-        `topic` out for statements about anything. `since` and `until` are ISO 8601 dates or
-        datetimes (UTC unless an offset is given); `since` is inclusive, `until` is exclusive,
-        and a date alone for `until` includes that whole day. Each statement comes with its
-        speaker (SAID), the episode it is recorded in (RECORDED_IN), the topics it is about
-        (ABOUT), its kind, summary, and a quote checked against the episode's body.
+        `who` is a person's or organization's id, or a name, alias, or address; `topic` is a
+        topic's id or name. Each is resolved as `find` does, and if it matches more than one,
+        the candidates come back instead, to call again with one id. Leave `who` out for
+        everyone's statements and `topic` out for statements about anything. `since` and
+        `until` are ISO 8601 dates or datetimes (UTC unless an offset is given); `since` is
+        inclusive, `until` is exclusive, and a date alone for `until` includes that whole day.
+        Each statement comes with its speaker (SAID), the episode it is recorded in
+        (RECORDED_IN), the topics it is about (ABOUT), whom it mentions (MENTIONS), its kind,
+        summary, and a quote checked against the episode's body. A secondhand statement is one
+        the episode's sender recounts ("Maria told me…"): say so when you cite it. Only the
+        owner's own episodes hold the owner's statements; anyone else's claim about the owner
+        is that person's report, mentioning the owner.
         """
         with _reported():
             return tools.statements(who, topic, since, until)
