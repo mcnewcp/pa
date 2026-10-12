@@ -37,7 +37,11 @@ class FullTextIndex:
         self.label, self.name, self.fields = label, name, fields
 
 
-FULL_TEXT_INDEXES = (FullTextIndex("Person", "person_fts", ("name", "aliases", "addresses")),)
+FULL_TEXT_INDEXES = (
+    FullTextIndex("Person", "person_fts", ("name", "aliases", "addresses")),
+    FullTextIndex("Topic", "topic_fts", ("name", "aliases", "description")),
+    FullTextIndex("Statement", "statement_fts", ("summary", "quote")),
+)
 
 _TYPES = {
     PropertyType.STRING: "STRING",

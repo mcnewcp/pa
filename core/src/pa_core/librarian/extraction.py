@@ -49,6 +49,13 @@ class ExtractedStatement(BaseModel):
     quote: str = Field(
         description="A short span copied exactly, word for word, from the email's body."
     )
+    topics: list[str] = Field(
+        default=[],
+        description=(
+            "The matters the statement is about, each named as the owner would ask about it: "
+            "coarse, such as 'the kitchen remodel', not 'the cabinet delivery'."
+        ),
+    )
 
 
 class Extraction(BaseModel):
@@ -76,6 +83,11 @@ For each statement give:
 - quote: a short span (a few words up to a sentence) copied exactly from {quotable}, not
   from the earlier {earlier}, that shows the statement. Copy it character for character; it is
   checked.
+- topics: the matters in the owner's life the statement is about, named the way the owner
+  would ask about them later ("what's happened with the kitchen remodel?"). Keep them coarse:
+  the kitchen remodel, not the cabinet delivery; Dave's wedding, not the wedding toast. A
+  topic is a matter that unfolds over time, never a person or an organization. Usually one;
+  none for small talk.
 
 An episode with nothing worth remembering (a bare acknowledgement) has no statements.
 

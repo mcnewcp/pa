@@ -4,6 +4,7 @@ model in, `rebuild`, then answers through an in-process MCP client and the build
 from __future__ import annotations
 
 import gc
+import json
 import os
 import stat
 import sys
@@ -18,7 +19,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 
 from pa_core.envelope import Envelope
-from pa_core.librarian import extraction
+from pa_core.librarian import extraction, topics
 from pa_core.librarian.ports import LibrarianModels, ModelChoice
 from pa_core.librarian.rebuild import LibrarianError
 from pa_core.librarian.report import BuildReport
@@ -127,12 +128,19 @@ class Mailbox:
         self.l0.replace_envelopes(changed)
 
 
-def statement(quote: str, kind: str = "mentioned", speaker: str = "", summary: str = "") -> dict:
+def statement(
+    quote: str,
+    kind: str = "mentioned",
+    speaker: str = "",
+    summary: str = "",
+    topics: tuple[str, ...] = (),
+) -> dict:
     return {
         "speaker": speaker or "the sender",
         "kind": kind,
         "summary": summary or f"Said: {quote}",
         "quote": quote,
+        "topics": list(topics),
     }
 
 
@@ -140,13 +148,18 @@ def statement(quote: str, kind: str = "mentioned", speaker: str = "", summary: s
 class ScriptedModel:
     """Replies to an extraction prompt by the scripted phrase found last in it: the episode
     comes after its thread's earlier messages, so its own phrase is the last one. Replies to a
-    triage relevance check by the phrase found in it (unscripted mail is not relevant)."""
+    triage relevance check by the phrase found in it (unscripted mail is not relevant).
+
+    Asked to place topic names, it places each as scripted with `places`; a name it has no
+    script for becomes a new topic of that name."""
 
     replies: dict[str, list[dict]] = field(default_factory=dict)
     relevance: dict[str, bool] = field(default_factory=dict)
     failing: set[str] = field(default_factory=set)
     answered: list[str] = field(default_factory=list)
     judged: list[str] = field(default_factory=list)
+    placements: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    placed: list[list[str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.backend = FakeModelBackend.replying(self._reply)
@@ -157,6 +170,15 @@ class ScriptedModel:
     def judges(self, phrase: str, *, relevant: bool) -> None:
         self.relevance[phrase] = relevant
 
+    def places(self, name: str, *, under: str = "", new: str = "", description: str = "") -> None:
+        """Script where the topic name `name` goes: `under` the existing topic of that name,
+        or into a `new` topic with `description`."""
+        self.placements[name.lower()] = (under, None) if under else (new or name, description)
+
+    @property
+    def topic_calls(self) -> int:
+        return len(self.placed)
+
     @property
     def calls(self) -> int:
         return len(self.backend.requests)
@@ -166,6 +188,8 @@ class ScriptedModel:
         return [request.prompt for request in self.backend.requests]
 
     def _reply(self, request: ModelRequest) -> dict[str, Any]:
+        if request.schema == topics.TopicPlacements.model_json_schema():
+            return self._place(request)
         if "relevant" in request.schema["properties"]:
             return self._judge(request)
         present = [phrase for phrase in self.replies if phrase in request.prompt]
@@ -186,6 +210,25 @@ class ScriptedModel:
             raise ModelBackendError(f"scripted failure for {phrase!r}")
         self.judged.append(phrase)
         return {"relevant": self.relevance[phrase], "reason": "scripted"}
+
+    def _place(self, request: ModelRequest) -> dict[str, Any]:
+        asked = json.loads(request.prompt.split("<topic_input>")[1].split("</topic_input>")[0])
+        names: list[str] = asked["names"]
+        if any(name in self.failing for name in names):
+            raise ModelBackendError(f"scripted failure placing {names}")
+        self.placed.append(names)
+        by_name = {c["name"]: c["id"] for c in asked["candidates"]}
+        placements = []
+        for name in names:
+            target, description = self.placements.get(name.lower(), (name, f"About {name}."))
+            if description is None:
+                assert target in by_name, f"{target!r} is not among the candidates {by_name}"
+                placements.append({"name": name, "topic": by_name[target]})
+            else:
+                placements.append(
+                    {"name": name, "topic": "new", "new_name": target, "description": description}
+                )
+        return {"placements": placements}
 
 
 class Librarian:
@@ -445,8 +488,8 @@ def test_a_published_build_is_its_database_file_alone_read_only_with_its_report_
     assert is_read_only(build) and is_read_only(build / "graph.lbdb")
     beside = build.parent / f"{report.build_id}.report.json"
     assert BuildReport.model_validate_json(beside.read_text()) == report
-    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4}
-    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8}
+    assert report.nodes == {"Person": 3, "Episode": 4, "Statement": 4, "Topic": 0}
+    assert report.edges == {"SAID": 4, "RECORDED_IN": 4, "PARTICIPATED_IN": 8, "ABOUT": 0}
 
 
 def test_only_the_last_few_builds_are_kept(librarian: Librarian):
@@ -603,12 +646,247 @@ def test_pa_mcp_serve_answers_over_stdio(librarian: Librarian, extensions_root: 
         # The initialize handshake, as Claude Code connects.
         async with Client(server, mode="legacy") as client:
             tools = await client.list_tools()
-            assert {tool.name for tool in tools.tools} == {"find", "statements"}
+            assert {tool.name for tool in tools.tools} == {"find", "statements", "timeline"}
             return (await client.call_tool("find", {"name": "dkim@example.net"})).structured_content
 
     found = anyio.run(go)
 
     assert found is not None and found["message"] == "1 match for 'dkim@example.net'."
+
+
+def test_timeline_returns_a_topics_statements_in_time_order_with_speakers_and_episodes(
+    librarian: Librarian,
+):
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The countertop is templated.", sender=MARIA, day=9)
+    mail.receive("Our pipes froze again.", day=5)
+    mail.receive("The tile arrives Friday.", day=3)
+    model.says(
+        "The countertop is templated",
+        statement("The countertop is templated.", topics=("Kitchen remodel",)),
+    )
+    model.says("Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",)))
+    model.says(
+        "The tile arrives Friday",
+        statement("The tile arrives Friday.", topics=("Kitchen remodel",)),
+    )
+    model.places("Kitchen remodel", new="Kitchen remodel", description="Redoing the kitchen.")
+
+    librarian.rebuild()
+    result = librarian.call("timeline", topic="kitchen remodel")
+
+    assert quotes(result) == ["The tile arrives Friday.", "The countertop is templated."]
+    speakers = [
+        librarian_name(result, speaker_of(result, s["id"])["id"])
+        for s in nodes(result, "Statement")
+    ]
+    assert speakers == ["David Kim", "Maria Alvarez"]
+    (topic,) = nodes(result, "Topic")
+    assert topic["properties"]["name"] == "Kitchen remodel"
+    assert topic["properties"]["description"] == "Redoing the kitchen."
+    statement_ids = {s["id"] for s in nodes(result, "Statement")}
+    about = [e for e in result["edges"] if e["type"] == "ABOUT"]
+    assert {(e["source"], e["target"]) for e in about} == {(s, topic["id"]) for s in statement_ids}
+    episode_ids = {e["id"] for e in nodes(result, "Episode")}
+    assert len(episode_ids) == 2
+    assert set(topic["episode_ids"]) == episode_ids
+    for item in [*result["nodes"], *result["edges"]]:
+        assert item["episode_ids"]
+    assert "2 statements about Kitchen remodel" in result["message"]
+
+
+def a_kitchen_remodel(librarian: Librarian) -> None:
+    """Three emails about one remodel under three names: the first makes the topic, the second
+    is placed under it by the model, the third names it by the alias the second left."""
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The tile arrives Friday.", day=3)
+    mail.receive("The cabinets ship Monday.", sender=MARIA, day=5)
+    mail.receive("The kitchen cabinets are in.", sender=RICK, day=7)
+    model.says(
+        "The tile arrives", statement("The tile arrives Friday.", topics=("Kitchen remodel",))
+    )
+    model.says(
+        "The cabinets ship", statement("The cabinets ship Monday.", topics=("kitchen cabinets",))
+    )
+    model.says(
+        "The kitchen cabinets are in",
+        statement("The kitchen cabinets are in.", topics=("Kitchen Cabinets",)),
+    )
+    model.places("Kitchen remodel", new="Kitchen remodel", description="Redoing the kitchen.")
+    model.places("kitchen cabinets", under="Kitchen remodel")
+
+
+def test_a_topic_name_is_placed_under_an_existing_topic_and_becomes_its_alias(
+    librarian: Librarian,
+):
+    a_kitchen_remodel(librarian)
+
+    report = librarian.rebuild()
+
+    result = librarian.call("timeline", topic="kitchen cabinets")
+    assert quotes(result) == [
+        "The tile arrives Friday.",
+        "The cabinets ship Monday.",
+        "The kitchen cabinets are in.",
+    ]
+    (topic,) = nodes(result, "Topic")
+    assert topic["properties"]["name"] == "Kitchen remodel"
+    assert topic["properties"]["aliases"] == ["kitchen cabinets"]
+    assert librarian.model.placed == [["Kitchen remodel"], ["kitchen cabinets"]]
+    assert report.model_calls["topics"] == {"claude-sonnet-5-5": 2}
+    assert report.nodes["Topic"] == 1 and report.edges["ABOUT"] == 3
+
+
+def test_topic_decisions_are_reused_on_a_rebuild_with_nothing_changed(librarian: Librarian):
+    a_kitchen_remodel(librarian)
+    first = librarian.rebuild()
+    before = librarian.call("timeline", topic="kitchen remodel")
+
+    second = librarian.rebuild()
+
+    assert librarian.call("timeline", topic="kitchen remodel") == before
+    assert librarian.model.topic_calls == 2
+    assert second.model_calls_by_model() == {}
+    assert (second.cache["topics"].hits, second.cache["topics"].misses) == (2, 0)
+    assert (first.cache["topics"].hits, first.cache["topics"].misses) == (0, 2)
+
+
+def two_kitchen_topics(librarian: Librarian) -> None:
+    mail, model = librarian.mail, librarian.model
+    mail.receive("The tile arrives Friday.", day=3)
+    mail.receive("The new fridge comes Tuesday.", sender=MARIA, day=4)
+    mail.receive("Our pipes froze again.", day=5)
+    model.says(
+        "The tile arrives", statement("The tile arrives Friday.", topics=("Kitchen remodel",))
+    )
+    model.says(
+        "The new fridge",
+        statement("The new fridge comes Tuesday.", topics=("Kitchen appliances",)),
+    )
+    model.says("Our pipes froze", statement("Our pipes froze again.", topics=("Frozen pipes",)))
+    librarian.rebuild()
+
+
+def test_an_ambiguous_topic_name_returns_the_candidates_instead_of_a_guess(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    result = librarian.call("timeline", topic="kitchen")
+
+    assert quotes(result) == []
+    candidates = {librarian_name(result, m["id"]) for m in result["matches"]}
+    assert candidates == {"Kitchen remodel", "Kitchen appliances"}
+    assert "candidate's id as `topic`" in result["message"]
+    (appliances,) = [
+        m["id"]
+        for m in result["matches"]
+        if librarian_name(result, m["id"]) == "Kitchen appliances"
+    ]
+    assert quotes(librarian.call("timeline", topic=appliances)) == ["The new fridge comes Tuesday."]
+
+
+def test_a_topic_argument_never_resolves_to_a_person(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    result = librarian.call("timeline", topic="Maria Alvarez")
+
+    assert result["matches"] == [] and result["nodes"] == []
+    assert "Nothing that `topic` can name matches 'Maria Alvarez'" in result["message"]
+
+
+def test_statements_can_be_limited_to_one_topic_and_carry_their_topics(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    about_the_remodel = librarian.call("statements", who=DAVE_ADDRESS, topic="kitchen remodel")
+    by_dave = librarian.call("statements", who=DAVE_ADDRESS)
+
+    assert quotes(about_the_remodel) == ["The tile arrives Friday."]
+    assert "about Kitchen remodel" in about_the_remodel["message"]
+    assert quotes(by_dave) == ["The tile arrives Friday.", "Our pipes froze again."]
+    topics_by_quote = {
+        s["properties"]["quote"]: librarian_name(by_dave, about["target"])
+        for s in nodes(by_dave, "Statement")
+        for about in by_dave["edges"]
+        if about["type"] == "ABOUT" and about["source"] == s["id"]
+    }
+    assert topics_by_quote == {
+        "The tile arrives Friday.": "Kitchen remodel",
+        "Our pipes froze again.": "Frozen pipes",
+    }
+
+
+def test_find_covers_topics_by_name_and_by_full_text(librarian: Librarian):
+    two_kitchen_topics(librarian)
+
+    by_name = librarian.call("find", name="frozen PIPES")
+    by_word = librarian.call("find", name="pipes")
+
+    for result, matched_on in ((by_name, "name"), (by_word, "full_text")):
+        (match,) = result["matches"]
+        assert (match["type"], match["matched_on"]) == ("Topic", matched_on)
+        assert librarian_name(result, match["id"]) == "Frozen pipes"
+        (topic,) = result["nodes"]
+        assert set(topic["properties"]) == {"name", "aliases", "description"}
+
+
+def test_a_timeline_can_be_limited_to_a_span_of_time(librarian: Librarian):
+    a_kitchen_remodel(librarian)
+    librarian.rebuild()
+
+    result = librarian.call(
+        "timeline", topic="kitchen remodel", since="2026-09-04", until="2026-09-06"
+    )
+
+    assert quotes(result) == ["The cabinets ship Monday."]
+
+
+def test_a_reply_is_placed_among_the_topics_its_thread_is_already_about(librarian: Librarian):
+    mail, model = librarian.mail, librarian.model
+    ask = mail.receive("Could you give the toast on Saturday?", subject="Saturday")
+    mail.receive("Happy to give the toast.", sender=ARGUS, to=DAVE, replying_to=ask)
+    model.says(
+        "Could you give the toast",
+        statement("Could you give the toast on Saturday?", topics=("Dave's wedding",)),
+    )
+    model.says("Happy to give", statement("Happy to give the toast.", topics=("The toast",)))
+    model.places("The toast", under="Dave's wedding")
+
+    librarian.rebuild()
+
+    assert quotes(librarian.call("timeline", topic="the toast")) == [
+        "Could you give the toast on Saturday?",
+        "Happy to give the toast.",
+    ]
+
+
+def test_a_failing_topic_call_publishes_nothing_and_a_rerun_keeps_the_decisions_made(
+    librarian: Librarian,
+):
+    a_kitchen_remodel(librarian)
+    librarian.model.failing.add("kitchen cabinets")
+
+    with pytest.raises(LibrarianError, match="nothing was published"):
+        librarian.rebuild()
+
+    assert not (librarian.data_root.graph / "current").exists()
+    librarian.model.failing.clear()
+    librarian.rebuild()
+    assert librarian.model.placed == [["Kitchen remodel"], ["kitchen cabinets"]]
+    assert len(quotes(librarian.call("timeline", topic="kitchen remodel"))) == 3
+
+
+def test_a_topic_named_only_by_a_dropped_statement_is_never_made(librarian: Librarian):
+    librarian.mail.receive("The tile arrives Friday.")
+    librarian.model.says(
+        "The tile arrives",
+        statement("The tile arrives Friday.", topics=("Kitchen remodel",)),
+        statement("Coy agreed to wire $500.", topics=("Wire transfer",)),
+    )
+
+    report = librarian.rebuild()
+
+    assert librarian.model.placed == [["Kitchen remodel"]]
+    assert report.nodes["Topic"] == 1
+    assert librarian.call("find", name="wire transfer")["matches"] == []
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:

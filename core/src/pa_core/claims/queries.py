@@ -61,11 +61,24 @@ class ClaimsGraph(Protocol):
     """The domain queries over the current build. Times are aware datetimes."""
 
     def find(self, name: str) -> Found:
-        """Nodes whose id, address, name, or alias is exactly `name` (any case), ranked by
-        kind of match. Only when there are none, full-text matches, best first."""
+        """People and topics whose id, address, name, or alias is exactly `name` (any case),
+        ranked by kind of match. Only when there are none, full-text matches, best first."""
         ...
 
-    def statements(self, who: str | None, since: datetime | None, until: datetime | None) -> Graph:
-        """Statements said by the node with id `who` (anyone's when None), from `since`
-        (inclusive) up to `until` (exclusive), in time order, with their speakers and episodes."""
+    def statements(
+        self,
+        who: str | None,
+        topic: str | None,
+        since: datetime | None,
+        until: datetime | None,
+    ) -> Graph:
+        """Statements said by the node with id `who` (anyone's when None) about the topic with
+        id `topic` (any when None), from `since` (inclusive) up to `until` (exclusive), in time
+        order, with their speakers, episodes, and topics."""
+        ...
+
+    def timeline(self, topic: str, since: datetime | None, until: datetime | None) -> Graph:
+        """What happened about the topic with id `topic`, from `since` (inclusive) up to
+        `until` (exclusive), in time order: its statements, with their speakers and
+        episodes."""
         ...
