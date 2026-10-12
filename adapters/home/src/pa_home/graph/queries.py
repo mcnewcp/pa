@@ -18,7 +18,7 @@ from typing import Any
 
 from pa_core.claims.queries import Found, Graph, GraphEdge, GraphNode, Match, Rows
 from pa_home.graph.guard import check_read_only
-from pa_home.graph.reader import CypherRunner, Row, RowCappedRunner
+from pa_home.graph.reader import CypherRunner, QueryRunner, Row
 from pa_home.graph.store import SEARCH_TEXT
 
 
@@ -90,14 +90,11 @@ DOMAIN_QUERIES: tuple[DomainQuery, ...] = (FIND_EXACT, FIND_FULL_TEXT, STATEMENT
 
 class LadybugClaimsGraph:
     """`ClaimsGraph` over LadybugDB: the domain queries run through `runner`, and the `query`
-    tool's open-ended queries through `query_runner`, at most `max_rows` rows each."""
+    tool's open-ended queries, once allowlisted, through `query_runner` under its limits."""
 
-    def __init__(
-        self, runner: CypherRunner, *, query_runner: RowCappedRunner, max_rows: int
-    ) -> None:
+    def __init__(self, runner: CypherRunner, *, query_runner: QueryRunner) -> None:
         self._runner = runner
         self._query_runner = query_runner
-        self._max_rows = max_rows
 
     def find(self, name: str) -> Found:
         key = " ".join(name.split()).lower()
@@ -127,7 +124,7 @@ class LadybugClaimsGraph:
 
     def query(self, text: str, parameters: Mapping[str, Any]) -> Rows:
         check_read_only(text)
-        fetched = self._query_runner.fetch(text, parameters, max_rows=self._max_rows)
+        fetched = self._query_runner.fetch(text, parameters)
         shaped = shape(fetched.rows)
         return Rows(
             columns=fetched.columns,

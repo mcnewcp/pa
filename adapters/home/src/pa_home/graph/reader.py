@@ -1,8 +1,9 @@
 """Running Cypher against the current build, read-only.
 
-`CypherRunner` is the seam the domain queries run through. `CurrentBuild` runs them in this
-process; a runner that sends them to a guarded worker process can replace it without changing
-the queries.
+`CypherRunner` is the seam the domain queries run through, and `QueryRunner` the one the
+`query` tool's open-ended queries run through. `CurrentBuild` runs Cypher in this process;
+`pa_home.graph.worker.GuardedWorker` runs it in a worker process under `Limits`, and is what
+the PA MCP server uses for both.
 """
 
 from __future__ import annotations
@@ -25,6 +26,20 @@ BUFFER_POOL_BYTES = 512 << 20
 QUERY_TIMEOUT_MS = 10_000
 
 
+@dataclass(frozen=True)
+class Limits:
+    """What one query may use before it is stopped."""
+
+    timeout_seconds: float
+    """LadybugDB interrupts the query after this long."""
+    memory_bytes: int
+    """The worker process is killed when its resident memory passes this."""
+    buffer_pool_bytes: int
+    """LadybugDB's page cache; a query needing more fails at once with "buffer pool is full"."""
+    max_rows: int | None = None
+    """Rows past this are not read, and the result says it was truncated."""
+
+
 class NoBuildError(PaError):
     """There is no published build to read yet."""
 
@@ -43,21 +58,22 @@ class Fetched:
     """True when the query had more rows than were fetched."""
 
 
-class RowCappedRunner(CypherRunner, Protocol):
-    def fetch(
-        self, cypher: str, parameters: Mapping[str, Any] | None = None, *, max_rows: int
-    ) -> Fetched:
-        """At most `max_rows` of the query's rows, and whether there were more."""
+class QueryRunner(Protocol):
+    @property
+    def limits(self) -> Limits: ...
+
+    def fetch(self, cypher: str, parameters: Mapping[str, Any] | None = None) -> Fetched:
+        """The query's rows, at most `limits.max_rows` of them, and whether there were more."""
         ...
 
 
 class _Open:
     """One build's read-only database, with the calls using it right now."""
 
-    def __init__(self, build: Path, fts_extension: Path) -> None:
+    def __init__(self, build: Path, fts_extension: Path, buffer_pool_bytes: int) -> None:
         self.build = build
         self.database = lb.Database(
-            str(build / DATABASE_FILE), read_only=True, buffer_pool_size=BUFFER_POOL_BYTES
+            str(build / DATABASE_FILE), read_only=True, buffer_pool_size=buffer_pool_bytes
         )
         connection = lb.Connection(self.database)
         try:
@@ -86,10 +102,12 @@ class CurrentBuild:
         *,
         fts_extension: Path,
         timeout_ms: int = QUERY_TIMEOUT_MS,
+        buffer_pool_bytes: int = BUFFER_POOL_BYTES,
     ) -> None:
         self._graph = graph
         self._fts_extension = fts_extension
         self._timeout_ms = timeout_ms
+        self._buffer_pool_bytes = buffer_pool_bytes
         self._lock = threading.Lock()
         self._open: _Open | None = None
 
@@ -142,7 +160,7 @@ class CurrentBuild:
         with self._lock:
             if self._open is None or self._open.build != build:
                 previous = self._open
-                self._open = _Open(build, self._fts_extension)
+                self._open = _Open(build, self._fts_extension, self._buffer_pool_bytes)
                 if previous is not None:
                     previous.retired = True
                     if previous.in_flight == 0:

@@ -27,6 +27,7 @@ from pa_home import cli
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.graph import extensions
+from pa_home.graph.reader import Limits
 from pa_home.librarian import rebuild_graph
 from pa_home.mcp_server import graph_server
 
@@ -634,6 +635,56 @@ def test_query_accepts_reads_that_mention_write_words_in_strings_comments_and_pr
     )
 
     assert result["rows"] == [{"delete people": 3}]
+
+
+def test_query_caps_its_rows_and_says_so(librarian: Librarian):
+    two_davids(librarian)
+
+    capped = librarian.call("query", cypher="UNWIND range(1, 5000) AS i RETURN i")
+    whole = librarian.call("query", cypher="UNWIND range(1, 200) AS i RETURN i")
+
+    assert [row["i"] for row in capped["rows"]] == list(range(1, 201))
+    assert capped["truncated"] is True
+    assert "Only the first 200 rows" in capped["message"]
+    assert len(whole["rows"]) == 200 and whole["truncated"] is False
+
+
+RUNAWAY = "MATCH p = (a:Person)-[*]-(b:Person) RETURN count(*)"
+"""Every walk of up to 30 hops between two people: it outgrows any memory or time limit."""
+
+
+def test_a_runaway_query_is_stopped_and_the_next_call_succeeds(librarian: Librarian):
+    a_thread_of_three(librarian)
+    two_davids(librarian)
+
+    message = librarian.call_failing("query", cypher=RUNAWAY)
+
+    assert "stopped" in message
+    assert librarian.call("query", cypher="MATCH (p:Person) RETURN count(*) AS n")["rows"] == [
+        {"n": 4}
+    ]
+    assert len(quotes(librarian.call("statements"))) == 6
+
+
+def test_a_query_worker_over_its_memory_cap_is_killed_and_replaced(librarian: Librarian):
+    a_thread_of_three(librarian)
+    two_davids(librarian)
+    # A buffer pool too big to fill and a long timeout leave only the memory cap to stop it.
+    librarian.server = graph_server(
+        librarian.data_root.graph,
+        extensions_root=librarian.extensions_root,
+        query_limits=Limits(
+            timeout_seconds=60, memory_bytes=200 << 20, buffer_pool_bytes=4 << 30, max_rows=10
+        ),
+    )
+
+    message = librarian.call_failing("query", cypher=RUNAWAY)
+
+    assert "stopped" in message and "200 MB of memory" in message
+    assert librarian.call("query", cypher="MATCH (p:Person) RETURN count(*) AS n")["rows"] == [
+        {"n": 4}
+    ]
+    assert len(quotes(librarian.call("statements"))) == 6
 
 
 def librarian_name(result: dict[str, Any], node_id: str) -> str:
