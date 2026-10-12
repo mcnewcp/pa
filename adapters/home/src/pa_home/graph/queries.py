@@ -2,11 +2,16 @@
 
 Each domain query is a Cypher string and a short rules note saying what it includes and
 excludes, and why. Code only binds parameters and shapes rows; what a query returns is decided
-by its Cypher alone, which is what `schema()` will show the assistant.
+by its Cypher alone, which is what `schema()` shows the assistant.
 
 To add a domain query: define a `DomainQuery`, add it to `DOMAIN_QUERIES`, and add the method
 that binds and shapes it to `LadybugClaimsGraph`. Queries return nodes and relationships with
 both endpoints in the same row, so `shape` can give every edge its endpoints' stable ids.
+`schema()` lists every query in `DOMAIN_QUERIES`, and a test runs each one through the `query`
+tool, so a domain query must also pass its allowlist (`pa_home.graph.guard`).
+
+The `query` tool's open-ended Cypher is checked against that allowlist here, before it is
+sent to the query worker, and shaped the same way, with paths unpacked.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from pa_core.claims.queries import (
     Schema,
 )
 from pa_core.claims.schema import EDGE_TYPES, NODE_TYPES
+from pa_core.errors import PaError
 from pa_home.graph import guard
 from pa_home.graph.live_schema import DIALECT_NOTES, LANGUAGE, live_indexes, live_tables
 from pa_home.graph.reader import CypherRunner, QueryRunner, Row
@@ -178,6 +184,10 @@ class LadybugClaimsGraph:
         )
 
 
+class UnshapeableRows(PaError):
+    """Rows that can't be shaped into a graph."""
+
+
 @dataclass
 class _ShapedGraph:
     nodes_by_id: dict[str, GraphNode]
@@ -293,9 +303,10 @@ def _edge(value: dict[str, Any], internal: dict[tuple[int, int], str]) -> GraphE
         source = internal[_internal_id(value["_SRC"])]
         target = internal[_internal_id(value["_DST"])]
     except KeyError:
-        raise ValueError(
-            f"a {value['_LABEL']} relationship came back without both of its nodes; "
-            "domain queries must return each relationship's endpoints too"
+        raise UnshapeableRows(
+            f"A {value['_LABEL']} relationship came back without both of its nodes, so its "
+            "ends have no ids: return each relationship with both of its nodes, or the whole "
+            "path."
         ) from None
     return GraphEdge(
         id=value["id"],

@@ -761,6 +761,17 @@ def test_schema_reads_the_live_schema_of_the_current_build_and_states_the_query_
     assert "COPY" in limits["rejected"]
 
 
+def test_query_explains_a_statement_it_cannot_run(librarian: Librarian):
+    two_davids(librarian)
+
+    misspelt = librarian.call_failing("query", cypher="MATCH (p:Persn) RETURN p")
+    without_ends = librarian.call_failing("query", cypher="MATCH ()-[said:SAID]->() RETURN said")
+
+    assert "LadybugDB" in misspelt and "Persn" in misspelt
+    assert "SAID" in without_ends and "both of its nodes" in without_ends
+    assert librarian.call("query", cypher="RETURN 1 AS one")["rows"] == [{"one": 1}]
+
+
 def librarian_name(result: dict[str, Any], node_id: str) -> str:
     return next(n["properties"]["name"] for n in result["nodes"] if n["id"] == node_id)
 
