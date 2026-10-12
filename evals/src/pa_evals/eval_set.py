@@ -76,6 +76,9 @@ class EvalSet(FrozenModel):
     """When the questions are asked from, unless a question overrides it."""
     owner: EvalOwner
     questions: list[EvalQuestion]
+    adversarial: list[str] = []
+    """The episode ids of the corpus's adversarial emails, which try to plant instructions or
+    claims about the owner. The injection checks run over them on every eval build's graph."""
 
     @model_validator(mode="after")
     def _unique_ids(self) -> EvalSet:

@@ -139,6 +139,49 @@ def test_rendered_without_a_graph_the_project_declares_no_mcp_server(tmp_path: P
     assert (target / "CLAUDE.md").is_file() and (target / SETTINGS).is_file()
 
 
+def test_tools_hidden_from_a_rendering_are_denied_by_name_and_the_rest_of_the_policy_stays(
+    instance,
+):
+    """How a configuration keeps some of the PA server's tools from the assistant: a deny rule
+    for one MCP tool removes it from the session, and the server's other tools stay."""
+    target = instance["target"]
+    whole = json.loads((_render(instance) / SETTINGS).read_text())
+    narrowed_target = target.with_name("narrowed")
+
+    render_agent_project(
+        narrowed_target,
+        owner=OWNER,
+        l0=instance["l0"],
+        scratch=instance["scratch"],
+        graph=instance["graph"],
+        hidden_tools={"timeline", "statements"},
+    )
+
+    narrowed = json.loads((narrowed_target / SETTINGS).read_text())
+    assert narrowed["permissions"]["deny"] == [
+        *whole["permissions"]["deny"],
+        "mcp__pa__statements",
+        "mcp__pa__timeline",
+    ]
+    assert "mcp__pa" in narrowed["permissions"]["allow"]
+    narrowed["permissions"]["deny"] = whole["permissions"]["deny"]
+    # The hook's path names each rendering's own directory; nothing else differs.
+    del narrowed["hooks"], whole["hooks"]
+    assert narrowed == whole
+    assert (narrowed_target / MCP_CONFIG).read_text() == (target / MCP_CONFIG).read_text()
+
+
+def test_hiding_tools_needs_the_graph_their_server_reads(instance):
+    with pytest.raises(AgentProjectError, match="graph"):
+        render_agent_project(
+            instance["target"],
+            owner=OWNER,
+            l0=instance["l0"],
+            scratch=instance["scratch"],
+            hidden_tools={"timeline"},
+        )
+
+
 def test_a_rendered_project_differs_from_the_source_only_where_instance_values_go(instance):
     target = _render(instance)
 

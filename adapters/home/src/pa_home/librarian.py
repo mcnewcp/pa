@@ -50,9 +50,13 @@ def rebuild_graph(
     models: LibrarianModels,
     backend_for: BackendFor,
     extensions_root: Path | None = None,
+    cache: Path | None = None,
     workers: int = DEFAULT_WORKERS,
 ) -> BuildReport:
-    """Rebuild the claims graph from L0 and publish it; the report is written beside the build."""
+    """Rebuild the claims graph from L0 and publish it; the report is written beside the build.
+
+    The librarian's cache is `cache`, or by default the data root's own.
+    """
     fts = extensions.ensure(extensions_root or extensions.extensions_dir(), extensions.FTS)
     graph = GraphDirectory(data_root.graph)
     report = rebuild(
@@ -60,7 +64,7 @@ def rebuild_graph(
         owner,
         models=models,
         backend_for=backend_for,
-        cache=FileCache(data_root.librarian_cache),
+        cache=FileCache(cache or data_root.librarian_cache),
         builder=LadybugBuilder(graph, fts_extension=fts),
         workers=workers,
     )

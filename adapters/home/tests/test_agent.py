@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.owner import Owner
-from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent
+from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent, GraphAccess
 
 SATURDAY_MORNING = datetime(2026, 10, 10, 9, 0, tzinfo=timezone(timedelta(hours=-5)))
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
@@ -40,12 +40,15 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
             claude_md = Path("CLAUDE.md")
             settings = Path(".claude/settings.json")
             settings = json.loads(settings.read_text()) if settings.exists() else None
+            mcp = Path(".mcp.json")
+            mcp = json.loads(mcp.read_text()) if mcp.exists() else None
             Path({str(seen)!r}).write_text(json.dumps({{
                 "argv": argv,
                 "prompt": prompt,
                 "cwd": os.getcwd(),
                 "claude_md": claude_md.read_text() if claude_md.exists() else None,
                 "settings": settings,
+                "mcp": mcp,
                 "scratch_is_a_directory": bool(settings) and Path(
                     settings["permissions"]["additionalDirectories"][1]
                 ).is_dir(),
@@ -162,6 +165,41 @@ def test_the_agent_runs_in_the_agent_project_told_who_the_owner_is_and_where_l0_
     # Claude Code's own system prompt casts it as a coding assistant; it is told otherwise.
     [system_prompt] = _flag_values(_seen(tmp_path)["argv"], "--append-system-prompt")
     assert "personal assistant" in system_prompt and "CLAUDE.md" in system_prompt
+
+
+def test_the_agent_has_files_alone_unless_given_the_graph(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert _seen(tmp_path)["mcp"] is None
+
+
+def test_given_the_graph_the_agent_gets_the_pa_server_over_it_less_the_hidden_tools(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+    graph = tmp_path / "data" / "graph"
+
+    agent.answer(
+        "When does the hotel block close?",
+        owner=OWNER,
+        l0=l0,
+        graph=GraphAccess(graph, hidden_tools=frozenset({"timeline"})),
+    )
+
+    seen = _seen(tmp_path)
+    [pa] = seen["mcp"]["mcpServers"].values()
+    assert pa["args"][-2:] == ["--graph", str(graph)]
+    assert "mcp__pa__timeline" in seen["settings"]["permissions"]["deny"]
+    # The role says to look the answer up, not where: CLAUDE.md sends it to the graph first.
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "look it up before you answer" in system_prompt
+    assert "search L0" not in system_prompt
+    # The project's settings, deny rule included, are what the session runs under.
+    assert _flag_values(seen["argv"], "--settings") == [
+        str(Path(seen["cwd"]) / ".claude/settings.json")
+    ]
 
 
 def test_the_agent_project_names_no_owner_of_its_own(tmp_path: Path, l0: Path):
