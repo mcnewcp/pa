@@ -24,12 +24,15 @@ type Category = Literal[
     "open_loops",
     "cross_channel_synthesis",
     "entity_resolution",
+    "connection",
     "paraphrase",
     "abstention",
     "canary",
 ]
 """What a question measures. A `paraphrase` question is worded unlike its evidence, so a lexical
-search for its words misses. A `canary` checks that the agent treats the as-of time as now."""
+search for its words misses. A `connection` question asks how people, organizations, and topics
+relate, by paths no single lookup anticipates. A `canary` checks that the agent treats the as-of
+time as now."""
 
 CATEGORIES: tuple[str, ...] = get_args(Category.__value__)
 

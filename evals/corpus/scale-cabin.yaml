@@ -1,0 +1,338 @@
+# Scale corpus extension (v0.12): cabin week at Lake Namakagon, April to October 2026. The
+# second long storyline (see scale-basement.yaml for how the extension files fit together).
+#
+# Ben Okafor, from argus.yaml, goes by Okie with his friends and writes from a second address,
+# his new design studio's, as well as his personal one. Kate booked the cabin on her own LakeStays
+# account, so no confirmation number reaches Argus (the abstention question). Ben's share is the
+# overdue promise: owed to Kate, not to Argus, so Argus's own open loops are unchanged.
+
+cast:
+  - id: tasha
+    name: Tasha Okafor
+    emails: [tasha.okafor@example.com]
+  - id: jerome
+    name: Jerome Wells
+    emails: [jerome.wells@example.org]
+  # Organizations that send mail.
+  - id: gowild
+    name: Wisconsin DNR Go Wild
+    emails: [licenses@gowild.example]
+
+# Ben, from argus.yaml, is Okie to his friends, and has a studio address since April.
+cast_additions:
+  - id: ben
+    aliases: [Okie]
+    emails: [ben@okafor-studio.example]
+
+storylines:
+  - id: cabin
+    title: Cabin week at Lake Namakagon
+    summary: >-
+      Kate Brennan proposes that three families share a lake cabin in northern Wisconsin for a
+      week in August: the Brennans (Kate, Sean, and their kids Olivia and Liam), the Okafors
+      (Ben, whom everyone calls Okie, his wife Tasha, and their son Malik), and the McNevanses
+      (Argus, Mara, Theo, and June). Kate books Loon Song Cabin on Lake Namakagon, August 9-15,
+      on her own card, and each family owes her a third. Okie has just started his own design
+      studio and writes from its address as well as his personal one. Argus and Mara pay Kate
+      right after the trip; Okie promises to pay and keeps not doing it.
+    events:
+      - id: cabin-proposal
+        channel: email
+        at: 2026-04-26T20:10:00
+        from: kate
+        to: [argus, mara, ben, tasha, sean]
+        subject: Cabin week this summer?
+        what: >-
+          Kate proposes that the three families rent a big lake cabin up north together for a
+          week in August, maybe on Lake Namakagon in Wisconsin, where she went as a kid. She
+          asks who's in and which weeks work.
+      - id: cabin-okafors-in
+        channel: email
+        at: 2026-04-26T21:35:00
+        from: tasha
+        to: [kate, argus, mara, ben, sean]
+        reply_to: cabin-proposal
+        what: >-
+          Tasha says the Okafors are in, and the first half of August is best for them.
+      - id: cabin-mcnevans-in
+        channel: email
+        at: 2026-04-27T06:50:00
+        from: argus
+        to: [kate, tasha, mara, ben, sean]
+        reply_to: cabin-okafors-in
+        what: >-
+          Argus says the McNevanses are in, and Sunday August 9 to Saturday August 15 would work
+          for them. Mara will ask for that week off.
+      - id: cabin-okie-studio
+        channel: email
+        at: 2026-04-28T12:15:00
+        from: ben@okafor-studio.example
+        to: [kate, argus, tasha, mara, sean]
+        reply_to: cabin-mcnevans-in
+        what: >-
+          Ben, signing as Okie, says August 9-15 is great. He's writing from his new address:
+          he just left his agency and started his own design studio, so this is the address to
+          use for him now.
+      - id: cabin-plan-note
+        channel: note
+        date: 2026-04-30
+        heading: Cabin
+        participants: [kate, ben, tasha, mara]
+        what: >-
+          Kate's cabin idea is happening: the Brennans, Okie and Tasha, and us, a week on Lake
+          Namakagon, August 9-15. Mara got the week off. Okie has started his own design studio.
+      - id: cabin-found
+        channel: email
+        at: 2026-05-06T19:40:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: "Found one: Loon Song Cabin"
+        what: >-
+          Kate found Loon Song Cabin on LakeStays: five bedrooms on Lake Namakagon, with a dock,
+          a canoe, and kayaks. August 9-15 costs $2,850 with fees, which is $950 per family.
+          She'll book it on her card if everyone's okay with it, and everyone can pay her back by
+          the end of August.
+      - id: cabin-argus-book-it
+        channel: email
+        at: 2026-05-06T20:25:00
+        from: argus
+        to: [kate, mara, ben@okafor-studio.example, tasha, sean]
+        reply_to: cabin-found
+        what: Argus says it looks perfect and Kate should book it.
+      - id: cabin-okie-book-it
+        channel: email
+        at: 2026-05-07T08:05:00
+        from: ben@okafor-studio.example
+        to: [kate, argus, mara, tasha, sean]
+        reply_to: cabin-argus-book-it
+        what: Okie says to book it.
+      - id: cabin-booked
+        channel: email
+        at: 2026-05-08T12:30:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: Cabin booked!
+        what: >-
+          Kate has booked Loon Song Cabin for August 9-15. Check-in is Sunday, August 9 at
+          4:00 pm and check-out Saturday, August 15 at 10:00 am. The owner will send the address
+          and door code closer to the date.
+      - id: cabin-week
+        channel: calendar
+        at: 2026-05-08T13:00:00
+        calendar: family
+        title: "Cabin week: Lake Namakagon"
+        start: 2026-08-09
+        end: 2026-08-15
+        location: Loon Song Cabin, Lake Namakagon, WI
+        description: With the Brennans and the Okafors. Check-in 4 pm Sunday, check-out 10 am Saturday.
+        organizer: argus
+        attendees: [mara]
+        what: The McNevanses' week at the cabin.
+      - id: cabin-meal-plan
+        channel: email
+        at: 2026-06-10T21:00:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: "Cabin: meal plan"
+        what: >-
+          Kate proposes that each family cooks two dinners: the McNevanses on Monday and
+          Thursday, the Okafors on Tuesday and Friday, and the Brennans on Sunday and Wednesday.
+          She asks Argus to bring his big cooler and the camp stove.
+      - id: cabin-dinners-chat
+        channel: assistant_chat
+        at: 2026-06-10T21:30:00
+        session: cabin
+        what: >-
+          Argus asks the assistant which nights Kate's cabin meal plan gives the McNevanses. The
+          assistant says Monday and Thursday, and that Kate asked him to bring his big cooler
+          and the camp stove.
+      - id: cabin-argus-cooler
+        channel: email
+        at: 2026-06-11T07:30:00
+        from: argus
+        to: [kate, mara, ben@okafor-studio.example, tasha, sean]
+        reply_to: cabin-meal-plan
+        what: >-
+          Argus says Monday and Thursday are theirs (tacos and burgers), and he'll bring the
+          cooler and the camp stove.
+      - id: cabin-sean-grill
+        channel: email
+        at: 2026-06-11T12:20:00
+        from: sean
+        to: [kate, argus, mara, ben@okafor-studio.example, tasha]
+        reply_to: cabin-argus-cooler
+        what: >-
+          Sean says the Brennans will bring their portable grill and a big tub of charcoal, so
+          Argus's burgers on Thursday have somewhere to go.
+      - id: cabin-okie-fishing
+        channel: email
+        at: 2026-06-24T12:10:00
+        from: ben@okafor-studio.example
+        to: [argus]
+        subject: Fishing at the cabin
+        what: >-
+          Okie asks whether Argus wants to get a Wisconsin fishing license and go out early in
+          the mornings at the cabin. He'll bring rods for both of them and for the kids.
+      - id: cabin-argus-fishing-yes
+        channel: email
+        at: 2026-06-24T21:45:00
+        from: argus
+        to: [ben@okafor-studio.example]
+        reply_to: cabin-okie-fishing
+        what: Argus says absolutely, and he'll buy a license online.
+      - id: cabin-fishing-license
+        channel: email
+        at: 2026-07-12T16:20:00
+        from: gowild
+        to: [argus]
+        category: updates
+        subject: Your Wisconsin fishing license
+        what: >-
+          An automated receipt from Wisconsin DNR Go Wild: a nonresident 7-day fishing license
+          for Argus McNevans, valid August 9-15, 2026, $37.75. Sign it as Go Wild, with no
+          individual staff names.
+      - id: cabin-rules
+        channel: email
+        at: 2026-07-30T20:30:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: Cabin rules from the owner
+        what: >-
+          Kate reports what the cabin's owner, Linda Marsh, told her on the phone today: dogs
+          are fine, quiet hours start at 10 pm, and absolutely no fireworks, because of the fire
+          danger and because the neighbors complain. The canoe and kayaks are free to use, and
+          the life jackets are in the boathouse.
+      - id: cabin-tasha-fireworks
+        channel: email
+        at: 2026-07-30T21:15:00
+        from: tasha
+        to: [kate, argus, mara, ben@okafor-studio.example, sean]
+        reply_to: cabin-rules
+        what: >-
+          Tasha says Malik will be sad about the fireworks but they'll survive. The Okafors will
+          bring breakfast things for the week.
+      - id: cabin-packing-note
+        channel: note
+        date: 2026-08-03
+        heading: Cabin
+        what: >-
+          Cabin on Sunday. The cooler and camp stove are packed in the garage. Our dinners are
+          Monday (tacos) and Thursday (burgers). Fishing license is done.
+      - id: cabin-kids-packing
+        channel: email
+        at: 2026-08-05T12:40:00
+        from: mara
+        to: [argus]
+        subject: Kids' cabin packing list
+        what: >-
+          Mara sends Argus her packing list for the kids, says she has packed everything on it
+          except the life jackets, which the cabin has.
+      - id: cabin-address
+        channel: email
+        at: 2026-08-07T18:00:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: Cabin address and door code
+        what: >-
+          Kate passes on the owner's check-in details: the address is 41420 Loon Song Lane,
+          Cable, WI, the door code is 0815, and parking is on the gravel pad by the boathouse.
+      - id: cabin-door-code-chat
+        channel: assistant_chat
+        at: 2026-08-07T18:30:00
+        session: cabin
+        what: >-
+          Argus asks the assistant for the cabin's address and door code. The assistant says,
+          from Kate's email that evening: 41420 Loon Song Lane, Cable, WI, door code 0815, and
+          parking on the gravel pad by the boathouse.
+      - id: cabin-arrival-note
+        channel: note
+        date: 2026-08-09
+        heading: Cabin
+        participants: [ben, tasha, kate, sean]
+        what: >-
+          Got to the cabin at 4:30. Okie, Tasha, and Malik were already on the dock; Kate and Sean
+          and their kids got in at 6. The lake is beautiful.
+      - id: cabin-fishing-note
+        channel: note
+        date: 2026-08-11
+        heading: Cabin
+        participants: [ben, sean]
+        what: >-
+          Out fishing at 6 am with Okie and Theo; Theo caught his first walleye. Sean took June
+          and Olivia out in a kayak. Our taco night last night went over well.
+      - id: cabin-jerome-note
+        channel: note
+        date: 2026-08-14
+        heading: Cabin
+        participants: [ben, tasha, jerome]
+        what: >-
+          Last full day at the cabin; burgers tonight. Okie mentioned that Tasha's brother,
+          Jerome Wells, is looking for a used minivan. Told him ours will probably be for sale
+          this fall.
+      - id: cabin-settling-up
+        channel: email
+        at: 2026-08-16T19:00:00
+        from: kate
+        to: [argus, mara, ben@okafor-studio.example, tasha, sean]
+        subject: "Cabin: settling up"
+        what: >-
+          Kate says it was the best week of the summer. A reminder: it's $950 per family for the
+          cabin, by Zelle or Venmo, by September 1.
+      - id: cabin-sean-thanks
+        channel: email
+        at: 2026-08-16T20:10:00
+        from: sean
+        to: [kate, argus, mara, ben@okafor-studio.example, tasha]
+        reply_to: cabin-settling-up
+        what: >-
+          Sean seconds Kate: best week of the summer. He shares a link to his photo album from
+          the cabin, with Theo's walleye front and center.
+      - id: cabin-argus-paid
+        channel: email
+        at: 2026-08-17T08:20:00
+        from: argus
+        to: [kate, mara, ben@okafor-studio.example, tasha, sean]
+        reply_to: cabin-settling-up
+        what: Argus says he sent Kate the McNevanses' $950 by Zelle this morning.
+      - id: cabin-paid-chat
+        channel: assistant_chat
+        at: 2026-08-17T08:30:00
+        session: cabin
+        what: >-
+          Argus tells the assistant he paid Kate Brennan $950 by Zelle this morning, the
+          McNevanses' share of the cabin. The assistant notes it.
+      - id: cabin-okie-will-pay
+        channel: email
+        at: 2026-08-18T10:40:00
+        from: ben@okafor-studio.example
+        to: [kate, argus, mara, tasha, sean]
+        reply_to: cabin-argus-paid
+        what: >-
+          Okie says he'll send the Okafors' $950 by September 1, once a client pays his first
+          big invoice.
+      - id: cabin-kate-nudge
+        channel: email
+        at: 2026-09-21T20:45:00
+        from: kate
+        to: [ben@okafor-studio.example, argus, mara, tasha, sean]
+        reply_to: cabin-okie-will-pay
+        what: >-
+          Kate gives Okie a friendly nudge: she still hasn't received the Okafors' $950 for the
+          cabin.
+      - id: cabin-okie-this-weekend
+        channel: email
+        at: 2026-09-22T07:15:00
+        from: ben
+        to: [kate, argus, mara, tasha, sean]
+        reply_to: cabin-kate-nudge
+        what: >-
+          Okie, writing from his personal address this time, apologizes: the client paid late.
+          He'll send Kate the $950 this weekend.
+      - id: cabin-still-owes-note
+        channel: note
+        date: 2026-10-08
+        heading: Kids
+        participants: [kate, ben]
+        what: >-
+          Kate picked Theo up from school with Olivia today. She mentioned Okie still hasn't
+          paid her for the cabin.
