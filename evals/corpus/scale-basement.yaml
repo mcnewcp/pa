@@ -116,7 +116,7 @@ storylines:
         reply_to: basement-dryright-scope
         what: >-
           Argus gives DryRight the claim number, GP-26-118734, with Great Plains Mutual, and
-          says no adjuster has been assigned yet.
+          says no adjuster has been assigned yet. He offers nothing more and promises nothing.
       - id: basement-denise-intro
         channel: email
         at: 2026-04-22T09:05:00
@@ -310,8 +310,9 @@ storylines:
         heading: Basement
         participants: [mara, hannah]
         what: >-
-          Birchwood's basement estimate is $9,800 against the insurance's $6,600 rebuild
-          allowance. Mara wants the vinyl plank floor instead of carpet. Going with Birchwood,
+          Birchwood's basement estimate is $9,800, against the $5,600 insurance is paying us for
+          the rebuild (its $6,600 allowance less the $1,000 deductible), so about $4,200 of it is
+          on us. Mara wants the vinyl plank floor instead of carpet. Going with Birchwood,
           starting June 22.
       - id: basement-birchwood-yes
         channel: email
@@ -509,6 +510,6 @@ storylines:
         to: [argus]
         subject: Our dehumidifiers?
         what: >-
-          Sean asks whether Argus still has the two dehumidifiers he brought over the night of
-          the flood in April. The Brennans' basement smells musty, and he'd like them back this
+          Sean asks whether Argus still has the two dehumidifiers he brought over the morning
+          after the flood in April. The Brennans' basement smells musty, and he'd like them back this
           week if Argus is done with them.
