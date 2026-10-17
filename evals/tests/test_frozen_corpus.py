@@ -88,7 +88,7 @@ def test_every_evidence_id_in_the_eval_set_exists_in_l0(ingested, eval_set: Eval
 
 def test_the_eval_set_is_exactly_what_the_questions_build_into(spec, eval_set: EvalSet):
     # Evidence ids are worked out from the spec and corpus, never typed by hand.
-    assert eval_set == build_eval_set(frozen.QUESTIONS, spec, frozen.PAYLOADS)
+    assert eval_set == build_eval_set([frozen.QUESTIONS], spec, [frozen.PAYLOADS])
 
 
 def test_the_eval_set_covers_every_category_with_at_least_two_questions(eval_set: EvalSet):

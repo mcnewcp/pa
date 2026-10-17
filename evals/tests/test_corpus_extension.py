@@ -22,7 +22,7 @@ from pa_core.model_client import (
     ModelRequest,
 )
 from pa_core.normalizers.assistant_chat import encode_exchange
-from pa_evals.corpus import generate_corpus
+from pa_evals.corpus import evidence_ids, generate_corpus
 from pa_evals.storyline import StorylineSpec, load_spec
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -132,6 +132,22 @@ def test_the_extension_ingests_beside_the_base_corpus(
     summary = ingest_corpora([base, corpus], spec, tmp_path / "pa-data")
 
     assert (summary.ingested, summary.quarantined) == (10 + 10 + len(spec.bulk_emails), 0)
+
+
+def test_evidence_ids_over_the_base_and_extension_corpora_name_the_episodes_ingest_creates(
+    tmp_path: Path, spec: StorylineSpec, corpus: Path
+) -> None:
+    base = tmp_path / "base"
+    generate_corpus(load_spec(SAMPLE_SPEC), fake_client(), base)
+    ingest_corpora([base, corpus], spec, tmp_path / "pa-data")
+    episodes = {e.episode_id for e in FilesystemL0(tmp_path / "pa-data" / "l0").envelopes()}
+
+    ids = evidence_ids(spec, base, corpus)
+
+    assert set(ids) == {event.id for event in spec.events}
+    assert set(ids.values()) == episodes
+    assert ids["wedding-hotel-block"].startswith("gmail_")  # from the base corpus
+    assert ids["nursery-injection"].startswith("gmail_")  # from the extension's
 
 
 def test_a_generated_chat_has_the_shape_the_capture_hook_writes(corpus: Path) -> None:
