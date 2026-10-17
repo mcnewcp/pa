@@ -9,6 +9,7 @@ import pytest
 from pa_core.catalog import CatalogEntry, SqliteCatalog
 from pa_core.normalizers import email as email_normalizer
 from pa_home.cli import main
+from pa_home.filesystem_l0 import FilesystemL0
 
 EMAIL_ID = "gmail_9ff7394d0df8584d"
 
@@ -47,7 +48,8 @@ def calendar_event(sequence: int = 0, start: str = "20261017T090000") -> bytes:
 
 
 def daily_note(text: str = "## Swim lessons\n\nMara prefers weekday evenings.\n") -> bytes:
-    return f"Vault-Path: Daily/2026-10-05.md\n\n{text}".encode()
+    header = "Vault-Path: Daily/2026-10-05.md\nCaptured-At: 2026-10-06T01:00:00-05:00\n"
+    return f"{header}\n{text}".encode()
 
 
 @pytest.fixture
@@ -304,6 +306,23 @@ def test_after_the_owner_changes_name_renormalize_lets_a_recaptured_note_ingest_
     capsys.readouterr()
     ingest(data_root, {"obsidian/2026-10-05.md": daily_note()})
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
+def test_a_note_ingested_before_capture_times_were_read_takes_its_capture_header_time(
+    data_root: Path,
+):
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note()})
+    l0 = FilesystemL0(data_root / "l0")
+    # Before ADR-0002 required Captured-At, a note's capture time was when ingest landed it.
+    [note] = l0.envelopes()
+    landed = datetime(2026, 10, 9, tzinfo=UTC)
+    l0.replace_envelopes([note.model_copy(update={"captured_at": landed})])
+
+    assert main(["renormalize"]) == 0
+
+    [after] = envelopes(data_root).values()
+    assert after["captured_at"] == "2026-10-06T06:00:00Z"
+    assert after["content_hash"] == note.content_hash
 
 
 def chat(reply: str = "Saturdays at 9:00 [ep:icloud_calendar_1a2b3c4d5e6f7a8b].") -> bytes:

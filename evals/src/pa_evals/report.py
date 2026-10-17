@@ -124,7 +124,7 @@ def _librarian_section(run: LibrarianRun, checks: InjectionChecks | None) -> lis
         f"- Extractor version: {run.extractor_version}",
         f"- Models: {', '.join(f'{stage} {model}' for stage, model in run.models.items())}",
         f"- Episodes: {episodes.extracted} extracted, {episodes.skipped} skipped by triage, "
-        f"of {episodes.in_l0} in L0",
+        f"{episodes.superseded} superseded by a later note version, of {episodes.in_l0} in L0",
         f"- Statements: {run.statements.kept} kept, "
         f"{run.statements.dropped_quote_not_found} dropped (quote not found)",
         f"- Built in {run.duration_seconds:.1f} s",

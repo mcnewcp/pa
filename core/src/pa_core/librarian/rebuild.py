@@ -2,6 +2,8 @@
 
 The stages:
 
+0. Versions: of a daily note's versions, only the latest by capture time is read (ADR-0002);
+   the earlier ones are superseded and left out.
 1. Triage: mail is kept or skipped by its Gmail category, with a cached relevance call for
    Updates and Forums (see `triage`). Daily notes, chats, and calendar events are always kept.
 2. Extraction: one model call per kept episode, with the earlier episodes of its thread
@@ -85,10 +87,11 @@ def rebuild(
     known_at = {eid: version.changed_at for eid, version in versions.items()}
     envelopes = sorted(loaded, key=lambda e: _time_order(e, known_at))
     handled = [envelope for envelope in envelopes if envelope.kind in _EXTRACTED_KINDS]
+    current = _latest_note_versions(handled)
 
     triager = _Triager(models.default, backend_for, calls, cache, owner)
-    outcomes = triager.triage_all(handled, workers)
-    selected = [envelope for envelope in handled if outcomes[envelope.episode_id].extracted]
+    outcomes = triager.triage_all(current, workers)
+    selected = [envelope for envelope in current if outcomes[envelope.episode_id].extracted]
 
     extractor = _Extractor(models.extraction, backend_for, calls, cache, owner)
     extractions = extractor.extract_all(selected, workers)
@@ -156,7 +159,8 @@ def rebuild(
         episodes=EpisodeCounts(
             in_l0=len(envelopes),
             extracted=len(extractions),
-            skipped=len(handled) - len(selected),
+            skipped=len(current) - len(selected),
+            superseded=len(handled) - len(current),
             not_extracted=len(envelopes) - len(handled),
             triage=_triage_counts(outcomes.values()),
         ),
@@ -184,6 +188,26 @@ _EXTRACTED_KINDS = frozenset({Kind.EMAIL, Kind.NOTE, Kind.CHAT, Kind.CALENDAR_EV
 def _time_order(envelope: Envelope, known_at: Mapping[str, datetime]) -> tuple[datetime, str]:
     eid = envelope.episode_id
     return (known_at.get(eid, envelope.occurred_at.start), eid)
+
+
+def _latest_note_versions(envelopes: Sequence[Envelope]) -> list[Envelope]:
+    """`envelopes` without the daily note versions a later version of the same note supersedes.
+
+    A note's versions share its vault path (`native_id`) and are ordered by when each was
+    captured, which ADR-0002 has the capture header record, then by episode id.
+    """
+    latest: dict[str, Envelope] = {}
+    for envelope in envelopes:
+        if envelope.kind is not Kind.NOTE:
+            continue
+        known = latest.get(envelope.native_id)
+        if known is None or _version_order(envelope) > _version_order(known):
+            latest[envelope.native_id] = envelope
+    return [e for e in envelopes if e.kind is not Kind.NOTE or latest[e.native_id] is e]
+
+
+def _version_order(envelope: Envelope) -> tuple[datetime, str]:
+    return (envelope.captured_at, envelope.episode_id)
 
 
 def _topics_by_episode(edges: Iterable[EdgeRecord]) -> dict[str, list[str]]:

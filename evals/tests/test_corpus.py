@@ -213,7 +213,6 @@ def test_evidence_ids_name_the_episodes_ingest_creates(
 ) -> None:
     ids = evidence_ids(spec, corpus)
     by_id = {episode.episode_id: episode for episode in episodes}
-    raw = FilesystemL0(tmp_path / "pa-data" / "l0").get_raw
 
     assert set(ids) == {event.id for event in spec.events}
     assert set(ids.values()) == set(by_id)
@@ -226,8 +225,9 @@ def test_evidence_ids_name_the_episodes_ingest_creates(
     assert ids["swim-note-saturdays"] == ids["wedding-note"]
     original, corrected = by_id[ids["swim-note-saturdays"]], by_id[ids["swim-note-correction"]]
     assert original.thread_ref == corrected.thread_ref == "Daily/2026-10-03.md"
-    assert b"Captured-At: 2026-10-04T01:00:00-05:00\n" in (raw(original.raw_ref) or b"")
-    assert b"Captured-At: 2026-10-04T08:00:00-05:00\n" in (raw(corrected.raw_ref) or b"")
+    # Each version is captured when the spec says, which orders them (ADR-0002).
+    assert original.captured_at == datetime(2026, 10, 4, 1, tzinfo=CHICAGO)
+    assert corrected.captured_at == datetime(2026, 10, 4, 8, tzinfo=CHICAGO)
 
 
 def test_the_model_is_asked_for_prose_about_what_happens(
