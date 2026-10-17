@@ -1,0 +1,16 @@
+{
+  "session_id": "4ac49fb5-c8a1-5e75-80df-f85e09a1f154",
+  "message_id": "400ca897-eb10-5760-97f7-59d873aa68ef",
+  "started_at": "2026-06-11T02:30:00.000Z",
+  "ended_at": "2026-06-11T02:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey which nights did kate put us down for cooking on the cabin meal plan"
+    },
+    {
+      "role": "assistant",
+      "text": "Monday and Thursday. Kate also asked you to bring your big cooler and the camp stove."
+    }
+  ]
+}

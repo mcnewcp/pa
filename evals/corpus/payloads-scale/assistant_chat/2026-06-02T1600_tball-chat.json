@@ -1,0 +1,16 @@
+{
+  "session_id": "fc984722-83af-57c8-bbe3-9c0bc4a74c4b",
+  "message_id": "e3dde5e5-dfb1-5a93-b8dc-187df63fd95e",
+  "started_at": "2026-06-02T21:00:00.000Z",
+  "ended_at": "2026-06-02T21:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey what time is theo's tball game tonight"
+    },
+    {
+      "role": "assistant",
+      "text": "6:00 pm at Minnehaha Park, Diamond 2."
+    }
+  ]
+}

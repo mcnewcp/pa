@@ -1,0 +1,16 @@
+{
+  "session_id": "ce635bd5-24ed-5c4f-ad29-ad0054434a3d",
+  "message_id": "72a6ed17-bb6e-51a4-ad27-95f2f36e619a",
+  "started_at": "2026-08-22T18:00:00.000Z",
+  "ended_at": "2026-08-22T18:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey what time does the block party start today"
+    },
+    {
+      "role": "assistant",
+      "text": "It starts at 4:00 pm on Linden Avenue. You told Gary you'd bring a pasta salad and $20."
+    }
+  ]
+}

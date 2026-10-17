@@ -1,0 +1,16 @@
+{
+  "session_id": "9c93cdac-26ca-5f6d-a0be-22a2d29bd5ac",
+  "message_id": "785d922c-f1e4-5d01-9862-2163658de5c5",
+  "started_at": "2026-10-12T01:15:00.000Z",
+  "ended_at": "2026-10-12T01:15:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey fyi i changed the garage door keypad code today, it's 7341 now"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it. The garage door keypad code is now 7341. I'll remember that."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//pa//synthetic corpus//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Family
+X-WR-TIMEZONE:America/Chicago
+BEGIN:VEVENT
+UID:kids-pre-k-open-house@corpus.pa.invalid
+SEQUENCE:0
+DTSTAMP:20260701T170000Z
+CREATED:20260701T170000Z
+LAST-MODIFIED:20260701T170000Z
+DTSTART;TZID=America/Chicago:20260827T173000
+DTEND;TZID=America/Chicago:20260827T183000
+SUMMARY:Little Acorns Pre-K open house (June)
+LOCATION:Little Acorns Preschool
+ORGANIZER;CN=Mara McNevans:mailto:mara@example.com
+ATTENDEE;CN=Argus McNevans:mailto:argus@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

@@ -1,0 +1,16 @@
+{
+  "session_id": "a40c445e-2490-5d14-9036-cc02b2da3c11",
+  "message_id": "86e53870-5927-5b4d-8134-7887e7bbfd06",
+  "started_at": "2026-07-15T02:40:00.000Z",
+  "ended_at": "2026-07-15T02:40:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey, for touch-ups later: basement walls are sherwin-williams agreeable gray, SW 7029, eggshell. there's a leftover gallon under the basement stairs. can you remember that"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it, I'll remember. Basement walls are Sherwin-Williams Agreeable Gray (SW 7029) in eggshell, and there's a leftover gallon under the basement stairs for touch-ups."
+    }
+  ]
+}

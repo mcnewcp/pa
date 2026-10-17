@@ -1,0 +1,20 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-parcelpoint-043@parcelpoint.example>
+Date: Sat, 03 Oct 2026 17:23:00 -0500
+From: ParcelPoint <tracking@parcelpoint.example>
+To: Argus McNevans <argus@example.com>
+Subject: Arriving today: your package is out for delivery
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Hi Argus,
+
+Your second shipment is out for delivery and should arrive by 9:00 PM tonight.
+
+Tracking #: PP7Y4K30027741
+Status: Out for delivery
+
+Track it live: https://parcelpoint.example/track
+
+ParcelPoint

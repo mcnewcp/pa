@@ -1,0 +1,16 @@
+{
+  "session_id": "66e6f983-1970-5a96-affa-134f369cbf5d",
+  "message_id": "763c9d05-0092-561a-a5dd-f9b5cc2204bc",
+  "started_at": "2026-09-18T02:15:00.000Z",
+  "ended_at": "2026-09-18T02:15:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey can you remember that the spare key for the sienna is in the drawer by the back door"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it. I'll remember the Sienna's spare key is in the drawer by the back door."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "session_id": "4ac49fb5-c8a1-5e75-80df-f85e09a1f154",
+  "message_id": "e8b41f1f-cac1-5db1-a917-f52cc5fb1a04",
+  "started_at": "2026-08-17T13:30:00.000Z",
+  "ended_at": "2026-08-17T13:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "fyi i zelled kate $950 this morning for our share of the cabin"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it. I've noted that you paid Kate Brennan $950 by Zelle this morning for the McNevanses' share of the cabin."
+    }
+  ]
+}
