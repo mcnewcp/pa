@@ -105,7 +105,7 @@ def calendar_event(
 
 
 def daily_note(day: str = "2026-10-05", text: str = "## Swim lessons\n\nMara prefers weekdays.\n"):
-    return f"Vault-Path: Daily/{day}.md\n\n{text}".encode()
+    return f"Vault-Path: Daily/{day}.md\nCaptured-At: {day}T23:00:00-05:00\n\n{text}".encode()
 
 
 def ingest_a_bit_of_everything(data_root: Path) -> None:

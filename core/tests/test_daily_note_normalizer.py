@@ -68,6 +68,12 @@ def test_the_vault_path_is_the_native_id_and_thread_and_with_the_note_text_makes
 CORRECTED = NOTE.replace(b"weekday evenings work best", b"Saturday mornings work best")
 
 
+def test_captured_at_is_when_the_capture_header_says_the_note_was_captured():
+    envelope = normalize()
+
+    assert envelope.captured_at == datetime(2026, 10, 6, 6, 0, tzinfo=UTC)
+
+
 def test_a_corrected_note_is_a_new_version_in_the_same_thread():
     original = normalize()
     correction = normalize(CORRECTED)
@@ -79,7 +85,7 @@ def test_a_corrected_note_is_a_new_version_in_the_same_thread():
 
 def test_a_recapture_of_the_same_note_is_the_same_episode_with_the_same_content():
     first = normalize()
-    second = normalize_daily_note(NOTE, captured_at=datetime(2026, 10, 9, tzinfo=UTC), owner=OWNER)
+    second = normalize(NOTE.replace(b"2026-10-06T01:00:00-05:00", b"2026-10-09T00:00:00Z"))
 
     assert second.episode_id == first.episode_id
     assert second.content_hash == first.content_hash
@@ -99,13 +105,27 @@ NOTE_TEXT = NOTE[NOTE.index(b"## Swim") :]
     [
         (NOTE_TEXT, "no capture header"),
         (b"Vault-Path: Daily/2026-10-05.md\n", "no capture header"),
+        (NOTE.replace(b"Captured-At: 2026-10-06T01:00:00-05:00\n", b""), "no Captured-At"),
+        (NOTE.replace(b"-05:00", b""), "not a time with a UTC offset"),
+        (NOTE.replace(b"2026-10-06T01:00", b"last night"), "not a time with a UTC offset"),
         (NOTE.replace(b"Vault-Path:", b"Captured-By:"), "no Vault-Path"),
         (NOTE.replace(b"Daily/2026-10-05.md", b""), "no Vault-Path"),
         (NOTE.replace(b"2026-10-05", b"Swim plans"), "no date in its name"),
         (NOTE.replace(b"2026-10-05", b"2026-13-05"), "no date in its name"),
         (NOTE.replace(b"Theo", "Th\xe9o".encode("latin-1")), "not UTF-8"),
     ],
-    ids=["no-header", "header-only", "no-path", "empty-path", "undated", "bad-date", "not-utf8"],
+    ids=[
+        "no-header",
+        "header-only",
+        "no-capture-time",
+        "capture-time-without-offset",
+        "capture-time-unreadable",
+        "no-path",
+        "empty-path",
+        "undated",
+        "bad-date",
+        "not-utf8",
+    ],
 )
 def test_a_note_without_a_readable_capture_header_or_dated_path_is_malformed(
     raw: bytes, reason: str

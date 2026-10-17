@@ -12,11 +12,12 @@ import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from pa_core.owner import Owner
-from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent
+from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent, GraphAccess
 
 SATURDAY_MORNING = datetime(2026, 10, 10, 9, 0, tzinfo=timezone(timedelta(hours=-5)))
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
@@ -40,12 +41,15 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
             claude_md = Path("CLAUDE.md")
             settings = Path(".claude/settings.json")
             settings = json.loads(settings.read_text()) if settings.exists() else None
+            mcp = Path(".mcp.json")
+            mcp = json.loads(mcp.read_text()) if mcp.exists() else None
             Path({str(seen)!r}).write_text(json.dumps({{
                 "argv": argv,
                 "prompt": prompt,
                 "cwd": os.getcwd(),
                 "claude_md": claude_md.read_text() if claude_md.exists() else None,
                 "settings": settings,
+                "mcp": mcp,
                 "scratch_is_a_directory": bool(settings) and Path(
                     settings["permissions"]["additionalDirectories"][1]
                 ).is_dir(),
@@ -57,7 +61,8 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
         + textwrap.dedent(
             """\
             print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": reply}))
+                              "result": reply, "total_cost_usd": 0.0421, "num_turns": 6,
+                              "duration_ms": 18250}))
             """
         )
     )
@@ -92,7 +97,29 @@ def test_the_agents_answer_is_returned(tmp_path: Path, l0: Path):
 
     answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
-    assert answer == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+    assert answer.text == "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
+
+
+def test_the_answer_carries_the_sessions_cost_turns_and_duration(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert (answer.cost_usd, answer.turns, answer.duration_ms) == (0.0421, 6, 18250)
+
+
+def test_an_answer_without_usage_figures_has_none(tmp_path: Path, l0: Path):
+    body = """\
+        print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                          "result": reply}))
+        sys.exit(0)
+        """
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path, body)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert answer.text.startswith("The hotel block closes")
+    assert (answer.cost_usd, answer.turns, answer.duration_ms) == (None, None, None)
 
 
 def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0: Path):
@@ -139,6 +166,43 @@ def test_the_agent_runs_in_the_agent_project_told_who_the_owner_is_and_where_l0_
     # Claude Code's own system prompt casts it as a coding assistant; it is told otherwise.
     [system_prompt] = _flag_values(_seen(tmp_path)["argv"], "--append-system-prompt")
     assert "personal assistant" in system_prompt and "CLAUDE.md" in system_prompt
+
+
+def test_the_agent_has_files_alone_unless_given_the_graph(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert _seen(tmp_path)["mcp"] is None
+
+
+def test_given_the_graph_the_agent_gets_the_pa_server_over_it_less_the_hidden_tools(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+    graph = tmp_path / "data" / "graph"
+
+    agent.answer(
+        "When does the hotel block close?",
+        owner=OWNER,
+        l0=l0,
+        graph=GraphAccess(
+            graph, time_zone=ZoneInfo("America/Chicago"), hidden_tools=frozenset({"timeline"})
+        ),
+    )
+
+    seen = _seen(tmp_path)
+    [pa] = seen["mcp"]["mcpServers"].values()
+    assert pa["args"][-4:] == ["--graph", str(graph), "--time-zone", "America/Chicago"]
+    assert "mcp__pa__timeline" in seen["settings"]["permissions"]["deny"]
+    # The role says to look the answer up, not where: CLAUDE.md sends it to the graph first.
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "look it up before you answer" in system_prompt
+    assert "search L0" not in system_prompt
+    # The project's settings, deny rule included, are what the session runs under.
+    assert _flag_values(seen["argv"], "--settings") == [
+        str(Path(seen["cwd"]) / ".claude/settings.json")
+    ]
 
 
 def test_the_agent_project_names_no_owner_of_its_own(tmp_path: Path, l0: Path):

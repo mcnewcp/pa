@@ -492,7 +492,8 @@ def test_a_malformed_calendar_is_quarantined_with_a_reason(data_root: Path):
 
 
 def daily_note(text: str = "## Swim lessons\n\nMara prefers weekday evenings.\n") -> bytes:
-    return f"Vault-Path: Daily/2026-10-05.md\n\n{text}".encode()
+    header = "Vault-Path: Daily/2026-10-05.md\nCaptured-At: 2026-10-06T01:00:00-05:00\n"
+    return f"{header}\n{text}".encode()
 
 
 def note_episodes(data_root: Path) -> list[dict[str, Any]]:

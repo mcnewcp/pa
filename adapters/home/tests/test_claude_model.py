@@ -64,6 +64,39 @@ def test_the_structured_output_of_claude_print_mode_is_returned(tmp_path: Path):
     assert echo == Echo(prompt="Say hello to Argus.", schema_title="Echo")
 
 
+class Flags(BaseModel):
+    model: str | None
+    effort: str | None
+
+
+_ECHO_FLAGS = """\
+print(json.dumps({
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": "",
+    "structured_output": {"model": args.get("--model"), "effort": args.get("--effort")},
+}))
+"""
+
+
+def test_the_configured_model_and_effort_are_passed_to_claude(tmp_path: Path):
+    claude = _fake_claude(tmp_path, _ECHO_FLAGS)
+    backend = ClaudeCliBackend(model="claude-sonnet-5-5", effort="medium", executable=str(claude))
+
+    flags = ModelClient(backend).generate("Which flags?", Flags)
+
+    assert flags == Flags(model="claude-sonnet-5-5", effort="medium")
+
+
+def test_without_an_effort_claude_chooses_its_own(tmp_path: Path):
+    claude = _fake_claude(tmp_path, _ECHO_FLAGS)
+
+    flags = ModelClient(ClaudeCliBackend(executable=str(claude))).generate("Which flags?", Flags)
+
+    assert flags == Flags(model=None, effort=None)
+
+
 def test_a_failed_claude_call_is_a_backend_error_with_the_reason(tmp_path: Path):
     claude = _fake_claude(
         tmp_path,

@@ -1,0 +1,16 @@
+{
+  "session_id": "4d6f5d33-8f8a-520d-bdaa-46623a669710",
+  "message_id": "fc580c45-9434-5344-9e58-42dc72914b92",
+  "started_at": "2026-05-06T02:10:00.000Z",
+  "ended_at": "2026-05-06T02:10:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "did the estimate come in yet? how much is insurance actually paying for the basement"
+    },
+    {
+      "role": "assistant",
+      "text": "Yes, Denise Hart sent it this morning. Great Plains will pay DryRight $3,400 directly. You and Mara get $5,600, which is the $6,600 rebuild allowance minus the $1,000 deductible."
+    }
+  ]
+}

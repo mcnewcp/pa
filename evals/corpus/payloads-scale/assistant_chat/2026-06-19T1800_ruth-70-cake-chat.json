@@ -1,0 +1,16 @@
+{
+  "session_id": "37483682-dd5a-5a2c-8703-6c15ab561666",
+  "message_id": "5268a17f-667a-5e80-a9f7-4bfd8ca4cde6",
+  "started_at": "2026-06-19T23:00:00.000Z",
+  "ended_at": "2026-06-19T23:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey when am i picking up the cake for mom's bday again?"
+    },
+    {
+      "role": "assistant",
+      "text": "Tomorrow, Saturday, June 20, at 3:00 pm at Sunrise Bakery."
+    }
+  ]
+}

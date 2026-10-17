@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Checks the store's mounts from inside the PA VM: L0 is readable where the rendered agent
-# project says it is and unwritable even by root, and the VM's inbox directory is the only part
-# of the data root it can see or write; on the devbox, that inbox directory is a filesystem of its
-# own that nothing written into it can run from. Exits non-zero if any check fails.
+# Checks the store's mounts from inside the PA VM: L0 and the claims graph are readable where the
+# rendered agent project says they are and unwritable even by root, and the VM's inbox directory is
+# the only part of the data root it can write; on the devbox, that inbox directory is a filesystem
+# of its own that nothing written into it can run from, and the VM is shared exactly those three
+# directories. Exits non-zero if any check fails.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -46,6 +47,47 @@ for user in "$PA_USER" root; do
   fi
 done
 
+echo "In $PA_VM, the claims graph is readable where the rendered agent project says:"
+if incus exec "$PA_VM" -- grep -qF "\"$PA_VM_GRAPH\"" "$PA_VM_PROJECT/.mcp.json" 2>/dev/null; then
+  pass "$PA_VM_PROJECT/.mcp.json points the PA MCP server at $PA_VM_GRAPH"
+else
+  fail "$PA_VM_PROJECT/.mcp.json doesn't name $PA_VM_GRAPH (run update.sh)"
+fi
+build=$PA_VM_GRAPH/current/graph.lbdb
+if [[ -L $PA_GRAPH/current ]]; then
+  if in_vm_as "$PA_USER" head -c 1 "$build"; then
+    pass "$PA_USER reads the current build at $PA_VM_GRAPH/current"
+  else
+    fail "$PA_USER can't read $build"
+  fi
+else
+  build=""
+  printf '  SKIP  %s\n' "no build is published yet: run pa librarian rebuild on the devbox"
+fi
+
+echo "In $PA_VM, the claims graph can't be written, even as root:"
+for user in "$PA_USER" root; do
+  if in_vm_as "$user" touch "$PA_VM_GRAPH/.write-check"; then
+    fail "$user created a file in $PA_VM_GRAPH"
+    incus exec "$PA_VM" -- rm -f "$PA_VM_GRAPH/.write-check"
+  else
+    pass "$user can't create a file in $PA_VM_GRAPH"
+  fi
+  [[ -n $build ]] || continue
+  if in_vm_as "$user" touch "$PA_VM_GRAPH/current/.write-check"; then
+    fail "$user created a file in the current build"
+    incus exec "$PA_VM" -- rm -f "$PA_VM_GRAPH/current/.write-check"
+  else
+    pass "$user can't create a file in the current build"
+  fi
+  # shellcheck disable=SC2016 # $1 is expanded by the shell in the VM
+  if in_vm_as "$user" sh -c ': >>"$1"' sh "$build"; then
+    fail "$user opened the current build for writing"
+  else
+    pass "$user can't change the current build"
+  fi
+done
+
 echo "In $PA_VM, the inbox directory is writable, and it reaches the devbox:"
 probe=.store-check-$$
 if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
@@ -75,21 +117,22 @@ else
   fail "$PA_CHAT_INBOX isn't a mount of its own (run install-chat-inbox.sh)"
 fi
 
-echo "Nothing else of the data root is visible in $PA_VM:"
-expected=$(printf '%s\n' "$PA_CHAT_INBOX" "$PA_L0" | sort)
-shared=$(incus query "/1.0/instances/$PA_VM" |
-  python3 -c 'import json, sys
-for device in json.load(sys.stdin)["expanded_devices"].values():
-    if device.get("type") == "disk" and device.get("source", "").startswith("/"):
-        print(device["source"])' | sort)
-if [[ $shared == "$expected" ]]; then
-  pass "the VM's only host directories are L0 and inbox/assistant_chat"
+echo "The VM is shared L0, the inbox directory and the claims graph, and nothing else:"
+problems=$(incus query "/1.0/instances/$PA_VM" | store_share_problems)
+if [[ -z $problems ]]; then
+  pass "the devbox shares L0 and the graph read-only, inbox/assistant_chat, and nothing else"
 else
-  fail "the VM shares other host directories:"$'\n'"$shared"
+  while read -r problem; do fail "$problem"; done <<<"$problems"
 fi
+expected=$(
+  for entry in "${PA_SHARES[@]}"; do
+    IFS='|' read -r _ _ path _ <<<"$entry"
+    echo "$path"
+  done | sort
+)
 mounts=$(incus exec "$PA_VM" -- findmnt -rn -t virtiofs -o TARGET | sort)
-if [[ $mounts == "$(printf '%s\n' "$PA_VM_CHAT_INBOX" "$PA_VM_L0" | sort)" ]]; then
-  pass "the VM mounts only $PA_VM_L0 and $PA_VM_CHAT_INBOX"
+if [[ $mounts == "$expected" ]]; then
+  pass "the VM mounts only $(paste -sd ' ' <<<"$expected")"
 else
   fail "the VM mounts other shares:"$'\n'"$mounts"
 fi

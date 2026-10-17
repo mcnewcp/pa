@@ -1,0 +1,16 @@
+{
+  "session_id": "4d6f5d33-8f8a-520d-bdaa-46623a669710",
+  "message_id": "b3ebc4e5-68c5-5158-a092-c1bdb6ce14c0",
+  "started_at": "2026-04-23T02:00:00.000Z",
+  "ended_at": "2026-04-23T02:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey when's the insurance adjuster coming again? forgot"
+    },
+    {
+      "role": "assistant",
+      "text": "Denise Hart from Great Plains Mutual is coming to inspect on Tuesday, April 28 at 10:00 am. Mara will be home for it."
+    }
+  ]
+}

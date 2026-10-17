@@ -1,0 +1,16 @@
+{
+  "session_id": "519fab74-a8eb-5a04-86e4-59c1fbcde24e",
+  "message_id": "5f8090c3-3461-59a0-88f8-c92c7e27d3d7",
+  "started_at": "2026-05-23T14:00:00.000Z",
+  "ended_at": "2026-05-23T14:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey what time does june's party start today"
+    },
+    {
+      "role": "assistant",
+      "text": "2:00 pm, at home. It goes until 4:00."
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-northern-power-007@northernpower.example>
+Date: Mon, 05 Oct 2026 12:34:00 -0500
+From: Northern Power & Light <billing@northernpower.example>
+To: Argus McNevans <argus@example.com>
+Subject: Your Northern Power & Light bill is ready
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Hello Argus,
+
+Your monthly statement is now available.
+
+Amount due: $112.47
+Due date: October 26, 2026
+
+View and pay your bill: https://northernpower.example/myaccount
+
+If you're enrolled in AutoPay, no action is needed.
+
+Thank you for being a Northern Power & Light customer.

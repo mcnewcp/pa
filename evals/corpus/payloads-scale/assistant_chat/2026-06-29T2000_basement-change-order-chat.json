@@ -1,0 +1,24 @@
+{
+  "session_id": "4d6f5d33-8f8a-520d-bdaa-46623a669710",
+  "message_id": "0897e65d-4878-58f8-891e-67e4dd9beb71",
+  "started_at": "2026-06-30T01:00:00.000Z",
+  "ended_at": "2026-06-30T01:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "got an email from birchwood about a change order, what was that about?"
+    },
+    {
+      "role": "assistant",
+      "text": "Hannah's crew found mold behind the utility room drywall. Removing it adds $2,300 to the job, and the finish date moves to Friday, July 10."
+    },
+    {
+      "role": "owner",
+      "text": "oh right, yeah i already approved that one"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it, you've already approved it. Nothing else to do on the change order."
+    }
+  ]
+}

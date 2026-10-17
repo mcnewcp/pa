@@ -24,17 +24,24 @@ def add_eval_set_command(commands: Any) -> None:
     build.add_argument(
         "--questions",
         type=Path,
-        default=frozen.QUESTIONS,
-        help="Questions YAML (default: %(default)s).",
+        nargs="+",
+        default=[frozen.QUESTIONS],
+        help="Questions YAML files, sharing one as-of time (default: %(default)s).",
     )
     build.add_argument(
-        "--spec", type=Path, default=frozen.SPEC, help="Storyline spec (default: %(default)s)."
+        "--spec",
+        type=Path,
+        nargs="+",
+        default=[frozen.SPEC],
+        help="The storyline spec, then any extension files that add to it (default: %(default)s).",
     )
     build.add_argument(
         "--corpus",
         type=Path,
-        default=frozen.PAYLOADS,
-        help="The corpus generated from the spec (default: %(default)s).",
+        nargs="+",
+        default=[frozen.PAYLOADS],
+        help="The corpus generated from the spec: for an extended spec, the base corpus and the "
+        "extension's (default: %(default)s).",
     )
     build.add_argument(
         "--out", type=Path, default=frozen.EVAL_SET, help="Eval set JSON (default: %(default)s)."
@@ -43,7 +50,8 @@ def add_eval_set_command(commands: Any) -> None:
 
 
 def _build(args: argparse.Namespace) -> int:
-    eval_set = build_eval_set(args.questions, load_spec(args.spec), args.corpus)
+    base, *extensions = args.spec
+    eval_set = build_eval_set(args.questions, load_spec(base, *extensions), args.corpus)
     args.out.write_text(eval_set.model_dump_json(indent=2) + "\n", encoding="utf-8")
     print(f"wrote {len(eval_set.questions)} questions to {args.out}")
     return 0

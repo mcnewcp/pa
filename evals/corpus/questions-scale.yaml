@@ -1,0 +1,218 @@
+# The scale corpus's new questions (v0.12), in Argus's voice, over the corpus generated from
+# argus.yaml plus the scale-*.yaml extension. The scale eval set is these together with the 25
+# questions in questions.yaml, whose answers the extension leaves unchanged.
+#
+# Evidence names spec event ids, as in questions.yaml; the episode ids are worked out once the
+# extension has been generated and frozen. Events from argus.yaml may be evidence too.
+#
+# As of Wednesday, October 14, 2026 at 8 pm Central, the same as-of time as the Argus questions.
+
+as_of: 2026-10-14T20:00:00-05:00
+
+questions:
+  # Timeline narrative -----------------------------------------------------------------------
+  - id: basement-timeline
+    category: timeline_narrative
+    question: Walk me through the basement flood and the insurance claim.
+    expected_answer: >-
+      Overnight April 18-19 a storm flooded the finished basement with about two inches of
+      water because the old sump pump never turned on; Sean Brennan brought dehumidifiers and
+      recommended DryRight Restoration. April 20: Argus filed a claim with Great Plains Mutual
+      (GP-26-118734); the plumber found the pump's float switch stuck, and DryRight began the
+      dry-out (done April 24, when the plumber also put in a new pump with battery backup for
+      $1,280, which insurance didn't cover). April 28: the adjuster, Denise Hart, inspected
+      with Mara. May 5: her estimate, under the water backup endorsement ($10,000 limit, $1,000
+      deductible): $3,400 to DryRight directly and $5,600 to Argus and Mara. Birchwood
+      Remodeling (Hannah Lee) quoted $9,800 with vinyl plank flooring and rebuilt the basement
+      from June 22; mold found behind the utility room wall added $2,300 and pushed the finish
+      to July 10 ($12,100 in all). Great Plains approved a $2,300 mold supplement on July 21
+      and closed the claim on August 4, having paid $11,300. Out of pocket: about $5,480
+      ($4,200 to Birchwood beyond insurance, plus the $1,280 pump).
+    evidence:
+      - basement-flood-note
+      - basement-claim-ack
+      - basement-estimate
+      - basement-birchwood-estimate
+      - basement-mold-change-order
+      - basement-finished-note
+      - basement-mold-supplement
+      - basement-claim-closed
+
+  - id: cabin-timeline
+    category: timeline_narrative
+    question: How did the cabin week come together, and where do things stand now?
+    expected_answer: >-
+      April 26: Kate Brennan proposed that the Brennans, the Okafors, and the McNevanses share a
+      lake cabin in August; everyone was in, and they settled on August 9-15. May 6-8: Kate found
+      and booked Loon Song Cabin on Lake Namakagon through LakeStays on her card, $2,850, or $950
+      per family. In June she split up the dinners (the McNevanses cooked Monday and Thursday,
+      and Argus brought the cooler and camp stove), and on July 30 she passed on the owner's
+      rules, including no fireworks. The trip was August 9-15 (Theo caught his first walleye).
+      August 16: Kate asked each family for $950 by September 1. Argus paid on August 17. Okie
+      (Ben Okafor) said he'd pay by September 1, didn't, said on September 22 he'd pay "this
+      weekend", and as of October 8 still hadn't.
+    evidence:
+      - cabin-proposal
+      - cabin-found
+      - cabin-booked
+      - cabin-settling-up
+      - cabin-argus-paid
+      - cabin-okie-will-pay
+      - cabin-okie-this-weekend
+      - cabin-still-owes-note
+
+  - id: van-timeline
+    category: timeline_narrative
+    question: What's happened with the van this year?
+    expected_answer: >-
+      April 23: a recall notice for the 2016 Odyssey's sliding door latch. May 14: Lakes Honda
+      did the recall repair and an oil change (128,400 miles) and warned that the transmission
+      shudders and will likely need a $4,000-5,000 replacement. July 20: after a bad shudder on
+      the freeway, Argus and Mara decided to replace it before winter. August 6-7: they
+      test-drove and put a $500 deposit on a used 2022 Toyota Sienna XLE at Northland Toyota
+      ($36,500, from Megan Doyle), for pickup September 17. They offered the Odyssey to Jerome
+      Wells on August 24 for $9,500; he test-drove it and offered $9,000, which they accepted.
+      They picked up the Sienna on September 17, and Jerome picked up the Odyssey on September
+      19 with a $9,000 cashier's check.
+    evidence:
+      - van-recall-notice
+      - van-service-summary
+      - van-decision-note
+      - van-sienna-offer
+      - van-sienna-pickup-set
+      - van-deal
+      - van-sold-note
+
+  # Attribution ------------------------------------------------------------------------------
+  - id: no-fireworks
+    category: attribution
+    question: Who said we couldn't have fireworks at the cabin?
+    expected_answer: >-
+      The cabin's owner, Linda Marsh, secondhand: she told Kate Brennan on the phone, and Kate
+      passed it on in her July 30 email about the cabin rules (no fireworks because of the fire
+      danger and because the neighbors complain). Argus never heard from Linda directly.
+    evidence: [cabin-rules]
+
+  - id: vinyl-plank-idea
+    category: attribution
+    question: Whose idea was the vinyl plank floor in the basement?
+    expected_answer: >-
+      Hannah Lee's, of Birchwood Remodeling: her May 19 estimate suggested luxury vinyl plank
+      instead of carpet because it survives another flood and carpet doesn't. Mara then wanted
+      it (May 20), and Argus accepted the estimate with it on May 21.
+    evidence: [basement-birchwood-estimate, basement-decision-note]
+
+  # Open loops and commitments ---------------------------------------------------------------
+  - id: cabin-money
+    category: open_loops
+    question: Has everyone paid Kate back for the cabin?
+    expected_answer: >-
+      No. Argus paid the McNevanses' $950 on August 17, but Okie (Ben Okafor) still owes the
+      Okafors' $950. He promised it by September 1, missed that, told Kate on September 22 he'd
+      send it "this weekend", and as of October 8 Kate said he still hadn't paid. It's overdue.
+    evidence:
+      - cabin-settling-up
+      - cabin-argus-paid
+      - cabin-okie-will-pay
+      - cabin-kate-nudge
+      - cabin-okie-this-weekend
+      - cabin-still-owes-note
+
+  - id: never-answered
+    category: open_loops
+    question: Is there anyone who asked me for something and never heard back?
+    expected_answer: >-
+      Sean Brennan. On September 14 he asked whether Argus still had the two dehumidifiers he
+      lent the night of the April flood, and asked for them back that week; nothing shows Argus
+      replied or returned them (as of June 1 they were still in the garage). The suspicious
+      emails asking for money or passwords don't count, and Ben's Austin request got a reply.
+    evidence: [basement-sean-dehumidifiers, basement-dehumidifier-note]
+
+  - id: plumber-invoice
+    category: open_loops
+    question: Did the insurance adjuster ever get the plumber's invoice she asked for?
+    expected_answer: >-
+      Yes, but from Mara, not Argus. Denise Hart (Great Plains Mutual) asked for it on April 22,
+      and Argus said he'd send it once he had it. The plumber left the paper invoice with Mara,
+      and Mara emailed Denise a photo of it on April 27 while Argus was in Denver; Denise
+      confirmed that afternoon that she had it.
+    evidence:
+      - basement-denise-intro
+      - basement-argus-will-send-invoice
+      - basement-mara-sends-invoice
+      - basement-denise-got-invoice
+
+  # Entity resolution ------------------------------------------------------------------------
+  - id: okie-addresses
+    category: entity_resolution
+    question: Which email addresses does Okie write to me from?
+    expected_answer: >-
+      Okie is Ben Okafor. Two addresses: his personal ben.okafor@example.com (for example the
+      Austin trip email on September 17 and his September 22 reply about the cabin money) and
+      ben@okafor-studio.example, his new design studio's address, which he has used since April
+      28 (the cabin planning, the fishing invite, the website favor).
+    evidence: [ben-austin-trip, cabin-okie-studio, cabin-okie-this-weekend]
+
+  - id: plumber-diagnosis
+    category: entity_resolution
+    question: What did the plumber say was wrong with our sump pump?
+    expected_answer: >-
+      That it was the original pump from when the house was built, about 15 years old, and its
+      float switch had stuck, so it never turned on during the April storm. He came April 20,
+      replaced it on April 24 with a new pump plus a battery backup ($1,280), and his invoice
+      says the old pump failed because the float switch stuck. Nothing captured gives his name.
+    evidence: [basement-plumber-note, basement-pump-note, basement-mara-sends-invoice]
+
+  # Connection -------------------------------------------------------------------------------
+  - id: hannah-lee
+    category: connection
+    question: How do I know Hannah Lee?
+    expected_answer: >-
+      She's with Birchwood Remodeling. A coworker of Mara's recommended Birchwood after the
+      April flood, and Hannah rebuilt the basement (estimate May 19, work June 22 to July 10,
+      including the mold change order, $12,100). In September she quoted the kitchen remodel
+      ($44,900 with the island sink), and as of October 13 Argus and Mara are leaning toward
+      Birchwood for the kitchen.
+    evidence:
+      - basement-birchwood-estimate
+      - basement-finished-note
+      - birchwood-quote
+      - kitchen-note-birchwood
+
+  - id: flood-and-cabin
+    category: connection
+    question: Who outside our family was part of both the basement flood and the cabin trip?
+    expected_answer: >-
+      Sean Brennan, Kate's husband (Olivia's dad). The morning after the April flood he brought
+      two dehumidifiers and a wet-vac and recommended DryRight Restoration, and in September he
+      asked for the dehumidifiers back. He and Kate and their kids shared the cabin on Lake
+      Namakagon in August.
+    evidence: [basement-flood-note, cabin-fishing-note, basement-sean-dehumidifiers]
+
+  - id: van-buyer
+    category: connection
+    question: Who bought our old van, and how do we know them?
+    expected_answer: >-
+      Jerome Wells, Tasha Okafor's brother (Tasha is Okie's wife). Okie mentioned at the cabin
+      on August 14 that Jerome needed a used minivan; Argus offered him the Odyssey on August
+      24, they agreed on $9,000, and Jerome picked it up on September 19 with a cashier's check.
+    evidence: [cabin-jerome-note, van-jerome-offer, van-deal, van-sold-note]
+
+  # Told only to the assistant -----------------------------------------------------------------
+  - id: basement-paint
+    category: single_fact_recall
+    question: What paint color did we use on the basement walls?
+    expected_answer: >-
+      Sherwin-Williams Agreeable Gray (SW 7029), in eggshell. Argus told the assistant on July 14,
+      and said there's a leftover gallon under the basement stairs. It isn't anywhere else.
+    evidence: [basement-paint-chat]
+
+  # Abstention -------------------------------------------------------------------------------
+  - id: cabin-confirmation
+    category: abstention
+    question: What's the confirmation number for the cabin rental?
+    expected_answer: >-
+      Unknown. Kate booked Loon Song Cabin on her own LakeStays account, and her emails give the
+      dates, check-in and check-out times, the address, and the door code, but no confirmation
+      number. The LakeStays emails in Argus's inbox are only marketing.
+    evidence: []

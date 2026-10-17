@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from pa_evals import frozen
-from pa_evals.agent import AgentRequest
+from pa_evals.agent import AgentAnswer, AgentRequest
 from pa_evals.corpus import payload_path
 from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
 from pa_evals.harness import run_eval
@@ -46,12 +46,12 @@ def harness_l0(eval_set: EvalSet) -> tuple[IngestCounts, dict[str, str]]:
     episodes: dict[str, str] = {}
 
     class ListingAgent:
-        def answer(self, request: AgentRequest) -> str:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
             l0 = request.data_root.l0
             for envelope in FilesystemL0(l0).envelopes():
                 files = sorted(l0.rglob(f"{envelope.episode_id}.*"))
                 episodes[envelope.episode_id] = "\n".join(p.read_text("utf-8") for p in files)
-            return "answer"
+            return AgentAnswer("answer")
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
@@ -88,13 +88,14 @@ def test_every_evidence_id_in_the_eval_set_exists_in_l0(ingested, eval_set: Eval
 
 def test_the_eval_set_is_exactly_what_the_questions_build_into(spec, eval_set: EvalSet):
     # Evidence ids are worked out from the spec and corpus, never typed by hand.
-    assert eval_set == build_eval_set(frozen.QUESTIONS, spec, frozen.PAYLOADS)
+    assert eval_set == build_eval_set([frozen.QUESTIONS], spec, [frozen.PAYLOADS])
 
 
 def test_the_eval_set_covers_every_category_with_at_least_two_questions(eval_set: EvalSet):
     counts = Counter(question.category for question in eval_set.questions)
 
-    measured = [category for category in CATEGORIES if category != "canary"]
+    # Connection questions arrived with the scale corpus; the Argus set has none.
+    measured = [category for category in CATEGORIES if category not in {"canary", "connection"}]
     assert len(measured) == 9
     assert {category: counts[category] for category in measured if counts[category] < 2} == {}
     assert 1 <= counts["canary"] <= 2

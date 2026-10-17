@@ -26,9 +26,11 @@ PA_CHAT_INBOX_SIZE=1G
 # What it's mounted with, so nothing the VM writes there runs, runs setuid, or acts as a device.
 PA_CHAT_INBOX_FLAGS=(nosuid nodev noexec)
 
-# Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
+# Where the VM sees the store: L0 and the claims graph read-only, and its own inbox directory,
+# its only way back.
 PA_VM_L0=/srv/pa/l0
 PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
+PA_VM_GRAPH=/srv/pa/graph
 # The VM's copy of owner.env, and the agent project rendered from it.
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
@@ -36,6 +38,23 @@ PA_VM_SCRATCH=/home/assistant/scratch
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
+
+# The claims graph's builds and its `current` pointer, on the devbox.
+PA_GRAPH=$PA_DATA_ROOT/graph
+
+# The store's shares into the VM, and nothing else of the data root: each one's Incus device,
+# its directory on the devbox, where the VM mounts it, and whether it's read-only.
+PA_SHARES=(
+  "pa-l0|$PA_L0|$PA_VM_L0|true"
+  "pa-chat-inbox|$PA_CHAT_INBOX|$PA_VM_CHAT_INBOX|false"
+  "pa-graph|$PA_GRAPH|$PA_VM_GRAPH|true"
+)
+# Ladybug Explorer on the devbox (install-explorer.sh): our image, a container of that name
+# bound to localhost on this port, and `tailscale serve` on the same port on the tailnet.
+PA_EXPLORER=pa-explorer
+PA_EXPLORER_IMAGE=pa-explorer:local
+PA_EXPLORER_PORT=18000
+PA_EXPLORER_LOCAL_URL=http://127.0.0.1:$PA_EXPLORER_PORT
 
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
@@ -60,6 +79,16 @@ as_assistant() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "bash -s --$args"
 }
 
+# librarian_env prints NAME=value for each librarian setting (PA_LIBRARIAN_*) in the
+# environment, one per line, sorted: what run-evals.sh forwards into the VM's eval run.
+librarian_env() {
+  local name
+  while read -r name; do
+    [[ $name == PA_LIBRARIAN_* ]] && printf '%s=%s\n' "$name" "${!name}"
+  done < <(compgen -e | sort)
+  return 0
+}
+
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
   [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
@@ -75,8 +104,57 @@ chat_inbox_missing_flags() {
   done
 }
 
+# store_share_problems reads the VM as `incus query /1.0/instances/$PA_VM` prints it, and prints
+# each way its host directories differ from PA_SHARES, one per line: a share that's missing, at
+# another path, or writable when it should be read-only, and any other host directory shared.
+# It prints nothing when they match.
+store_share_problems() {
+  python3 -c '
+import json, sys
+expected = {}
+for share in sys.argv[1:]:
+    _, source, path, readonly = share.split("|")
+    expected[source] = (path, readonly == "true")
+devices = json.load(sys.stdin)["expanded_devices"].values()
+shared = {
+    d["source"]: d for d in devices if d.get("type") == "disk" and d.get("source", "").startswith("/")
+}
+for source, (path, readonly) in expected.items():
+    device = shared.pop(source, None)
+    if device is None:
+        print(f"{source} isn'"'"'t shared")
+        continue
+    at = device.get("path")
+    if at != path:
+        print(f"{source} is shared at {at}, not {path}")
+    if readonly and device.get("readonly", "false").lower() not in ("true", "1", "yes", "on"):
+        print(f"{source} is shared writable")
+for source, device in shared.items():
+    at = device.get("path")
+    print(f"{source} is shared too, at {at}")
+' "${PA_SHARES[@]}"
+}
+
 # rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.
 rc_unit() { incus exec "$PA_VM" -- systemctl "$@" "$PA_VM_RC_UNIT"; }
+
+# tailnet_name prints the devbox's name on the tailnet, such as devbox.example.ts.net.
+tailnet_name() {
+  tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
+}
+
+# explorer_tailnet_url prints the explorer's address on the tailnet.
+explorer_tailnet_url() { echo "http://$(tailnet_name):$PA_EXPLORER_PORT"; }
+
+# explorer_served: tailscale serve forwards the explorer's port on the tailnet to the explorer.
+explorer_served() {
+  tailscale serve status --json 2>/dev/null | python3 -c '
+import json, sys
+host, url = sys.argv[1:]
+web = json.load(sys.stdin).get("Web", {}).get(host, {})
+sys.exit(0 if web.get("Handlers", {}).get("/", {}).get("Proxy") == url else 1)
+' "$(tailnet_name):$PA_EXPLORER_PORT" "$PA_EXPLORER_LOCAL_URL"
+}
 
 # wait_for_agent waits until the VM's Incus agent answers, after a start or a restore.
 wait_for_agent() {

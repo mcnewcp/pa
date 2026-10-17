@@ -1,0 +1,1950 @@
+# Scale corpus extension (v0.12): everyday life from mid-April to mid-October 2026, around the
+# two long storylines (see scale-basement.yaml for how the extension files fit together):
+# replacing the van, the kids' school year and summer, Argus's spring soccer season, Mara's late
+# shifts, family and friends, the house, and the daily notes of an ordinary half-year.
+#
+# Kept clear of what the Argus questions ask about: nothing here is about swim lessons, the
+# kitchen remodel, Argus's knee or blood work, Austin, or Dave's wedding; no calendar event lands
+# on or after October 15; and every request Argus makes or accepts is closed before the as-of
+# time.
+
+cast:
+  - id: nell
+    name: Nell McNevans
+    emails: [nell.mcnevans@example.com]
+  - id: carol
+    name: Carol Lindgren
+    emails: [carol.lindgren@example.net]
+  - id: gary
+    name: Gary Lindqvist
+    emails: [gary.lindqvist@example.com]
+  - id: marco
+    name: Marco Ruiz
+    emails: [marco.ruiz@example.com]
+  - id: greer
+    name: Rachel Greer
+    emails: [rgreer@lakehills.example]
+  - id: osei
+    name: Paul Osei
+    emails: [posei@lakehills.example]
+  - id: dana
+    name: Dana Whitfield
+    emails: [dana.whitfield@example.com]
+  - id: megan
+    name: Megan Doyle
+    emails: [megan.doyle@northlandtoyota.example]
+  # Organizations that send mail.
+  - id: lake-hills
+    name: Lake Hills Elementary
+    emails: [office@lakehills.example]
+  - id: little-acorns
+    name: Little Acorns Preschool
+    emails: [office@littleacornspreschool.example]
+  - id: nature-camp
+    name: Minnehaha Nature Camp
+    emails: [registrar@minnehahanaturecamp.example]
+  - id: mpls-parks
+    name: Minneapolis Parks Youth Sports
+    emails: [youthsports@mplsparks.example]
+  - id: bright-smiles
+    name: Bright Smiles Pediatric Dentistry
+    emails: [frontdesk@brightsmilespeds.example]
+  - id: lakes-honda
+    name: Lakes Honda Service
+    emails: [service@lakeshonda.example]
+  - id: northland
+    name: Northland Toyota
+    emails: [delivery@northlandtoyota.example]
+  - id: sunrise-bakery
+    name: Sunrise Bakery
+    emails: [orders@sunrisebakery.example]
+  - id: polar
+    name: Polar Heating & Air
+    emails: [schedule@polarheatingair.example]
+  - id: clearflow
+    name: ClearFlow Gutters
+    emails: [hello@clearflowgutters.example]
+
+storylines:
+  # ---------------------------------------------------------------------------------------------
+  - id: van
+    title: Replacing the minivan
+    summary: >-
+      Argus and Mara McNevans's 2016 Honda Odyssey gets a recall repair in May, when the
+      dealership warns that its transmission is starting to fail. Over the summer they decide to
+      replace it: they buy a used 2022 Toyota Sienna from Northland Toyota, and sell the Odyssey
+      to Jerome Wells, the brother of their friend Tasha Okafor (Okie's wife).
+    events:
+      - id: van-recall-notice
+        channel: email
+        at: 2026-04-23T11:00:00
+        from: lakes-honda
+        to: [argus]
+        category: updates
+        subject: "Safety recall: your 2016 Odyssey"
+        what: >-
+          A recall notice from Lakes Honda Service: Argus's 2016 Honda Odyssey is part of a
+          safety recall for the power sliding door latch, which can fail to latch. The repair is
+          free; call or email to book it. Sign it as Lakes Honda Service, with no individual
+          staff names.
+      - id: van-book-recall
+        channel: email
+        at: 2026-05-04T08:15:00
+        from: argus
+        to: [lakes-honda]
+        subject: Recall repair and oil change
+        what: >-
+          Argus asks to book the sliding door recall repair for his 2016 Odyssey, together with
+          an oil change. A weekday morning drop-off works best.
+      - id: van-recall-booked
+        channel: email
+        at: 2026-05-05T09:40:00
+        from: lakes-honda
+        to: [argus]
+        reply_to: van-book-recall
+        what: >-
+          Lakes Honda books Thursday, May 14 at 7:30 am for the recall repair and an oil change,
+          about three hours. Sign it as Lakes Honda Service, with no individual staff names.
+      - id: van-service
+        channel: calendar
+        at: 2026-05-05T09:50:00
+        calendar: personal
+        title: "Van: recall repair + oil change (Lakes Honda)"
+        start: 2026-05-14T07:30:00
+        end: 2026-05-14T10:30:00
+        location: Lakes Honda
+        organizer: argus
+        what: The van's recall repair and oil change.
+      - id: van-service-reminder
+        channel: email
+        at: 2026-05-13T10:00:00
+        from: lakes-honda
+        to: [argus]
+        category: updates
+        subject: "Reminder: your service appointment tomorrow"
+        what: >-
+          An automated reminder from Lakes Honda Service: the 2016 Odyssey's appointment is
+          tomorrow, Thursday May 14, at 7:30 am. Sign it as Lakes Honda Service, with no
+          individual staff names.
+      - id: van-service-summary
+        channel: email
+        at: 2026-05-14T10:50:00
+        from: lakes-honda
+        to: [argus]
+        category: updates
+        subject: "Your service summary: 2016 Odyssey"
+        what: >-
+          Lakes Honda's service summary: the sliding door recall repair and the oil change are
+          done, at 128,400 miles. The technician noted dark transmission fluid and a shudder
+          from the transmission at low speeds; it will likely need replacing eventually, which
+          typically runs $4,000 to $5,000. Sign it as Lakes Honda Service, with no individual
+          staff names.
+      - id: van-transmission-note
+        channel: note
+        date: 2026-05-14
+        heading: Van
+        what: >-
+          Van's recall repair is done. Lakes Honda says the transmission shudders and will
+          probably need replacing at some point, $4,000 to $5,000. At 128,000 miles, maybe it's
+          time to replace the van this fall instead.
+      - id: van-decision-note
+        channel: note
+        date: 2026-07-20
+        heading: Van
+        participants: [mara]
+        what: >-
+          The van shuddered badly on the freeway today. Mara and Argus agree: replace it before
+          winter. Looking at a used Toyota Sienna.
+      - id: van-oil-reminder
+        channel: email
+        at: 2026-08-03T09:30:00
+        from: lakes-honda
+        to: [argus]
+        category: updates
+        subject: "Your Odyssey is due for an oil change"
+        what: >-
+          An automated note from Lakes Honda Service that the 2016 Odyssey is due for its next
+          oil change, with a link to book online. Sign it as Lakes Honda Service, with no
+          individual staff names.
+      - id: van-test-drive
+        channel: calendar
+        at: 2026-08-04T12:00:00
+        calendar: personal
+        title: "Test drive: Sienna (Northland Toyota)"
+        start: 2026-08-06T17:30:00
+        end: 2026-08-06T18:30:00
+        location: Northland Toyota
+        organizer: argus
+        attendees: [mara]
+        what: Argus and Mara test-drive a used Sienna.
+      - id: van-sienna-offer
+        channel: email
+        at: 2026-08-06T20:00:00
+        from: megan
+        to: [argus]
+        cc: [mara]
+        subject: The Sienna you drove tonight
+        what: >-
+          Megan Doyle, a sales consultant at Northland Toyota, thanks Argus and Mara for the
+          test drive. The 2022 Sienna XLE has 28,000 miles and is $36,500. She can hold it with
+          a $500 deposit.
+      - id: van-sienna-deposit
+        channel: email
+        at: 2026-08-07T07:45:00
+        from: argus
+        to: [megan]
+        cc: [mara]
+        reply_to: van-sienna-offer
+        what: >-
+          Argus says they'll take the Sienna and he paid the $500 deposit online. They'd like to
+          pick it up around the middle of September, after they're back from vacation and have
+          sold their old van.
+      - id: van-sienna-pickup-set
+        channel: email
+        at: 2026-08-07T10:30:00
+        from: megan
+        to: [argus]
+        cc: [mara]
+        reply_to: van-sienna-deposit
+        what: >-
+          Megan confirms the deposit and sets the pickup for Thursday, September 17 at 5:00 pm.
+      - id: van-sienna-pickup
+        channel: calendar
+        at: 2026-08-07T10:45:00
+        calendar: family
+        title: Pick up the Sienna (Northland Toyota)
+        start: 2026-09-17T17:00:00
+        end: 2026-09-17T18:00:00
+        location: Northland Toyota
+        organizer: argus
+        attendees: [mara]
+        what: Argus and Mara pick up their new van.
+      - id: van-jerome-offer
+        channel: email
+        at: 2026-08-24T20:20:00
+        from: argus
+        to: [jerome]
+        subject: Our Odyssey
+        what: >-
+          Argus writes to Jerome Wells: Okie mentioned at the cabin that Jerome is looking for a
+          minivan. Theirs is a 2016 Honda Odyssey with 131,000 miles; to be upfront, the
+          transmission shudders and will need work eventually. They're asking $9,500, and Jerome
+          is welcome to come see it.
+      - id: van-mileage-chat
+        channel: assistant_chat
+        at: 2026-08-24T20:35:00
+        what: >-
+          Argus tells the assistant he has offered the old Odyssey to Jerome Wells for $9,500,
+          with 131,000 miles on it. The assistant notes it.
+      - id: van-jerome-test-drive-ask
+        channel: email
+        at: 2026-08-24T21:50:00
+        from: jerome
+        to: [argus]
+        reply_to: van-jerome-offer
+        what: >-
+          Jerome thanks Argus for being upfront and asks to test drive the van on Wednesday,
+          August 26 at 6:00 pm.
+      - id: van-jerome-drive-yes
+        channel: email
+        at: 2026-08-24T22:05:00
+        from: argus
+        to: [jerome]
+        reply_to: van-jerome-test-drive-ask
+        what: Argus says Wednesday at 6:00 works, and the van will be in the driveway.
+      - id: van-jerome-drive
+        channel: calendar
+        at: 2026-08-24T22:00:00
+        calendar: personal
+        title: Jerome test drives the Odyssey
+        start: 2026-08-26T18:00:00
+        end: 2026-08-26T19:00:00
+        location: Home
+        organizer: argus
+        attendees: [jerome]
+        what: Jerome test drives the old van.
+      - id: van-jerome-counter
+        channel: email
+        at: 2026-08-27T12:30:00
+        from: jerome
+        to: [argus]
+        reply_to: van-jerome-test-drive-ask
+        what: >-
+          Jerome had his mechanic look at the van. Given the transmission, he offers $9,000, and
+          he can take it whenever Argus has his new van.
+      - id: van-deal
+        channel: email
+        at: 2026-08-27T19:45:00
+        from: argus
+        to: [jerome]
+        reply_to: van-jerome-counter
+        what: >-
+          Argus accepts $9,000. Their new van arrives Thursday, September 17, so Jerome could
+          pick up the Odyssey on Saturday, September 19 at 2:00 pm.
+      - id: van-jerome-confirms
+        channel: email
+        at: 2026-08-28T08:10:00
+        from: jerome
+        to: [argus]
+        reply_to: van-deal
+        what: >-
+          Jerome says Saturday, September 19 at 2:00 pm works, and he'll bring a cashier's
+          check.
+      - id: van-jerome-pickup
+        channel: calendar
+        at: 2026-08-28T08:30:00
+        calendar: personal
+        title: Jerome picks up the Odyssey
+        start: 2026-09-19T14:00:00
+        end: 2026-09-19T15:00:00
+        location: Home
+        organizer: argus
+        attendees: [jerome]
+        what: Jerome buys and picks up the old van.
+      - id: van-sienna-ready
+        channel: email
+        at: 2026-09-15T14:00:00
+        from: megan
+        to: [argus]
+        cc: [mara]
+        reply_to: van-sienna-pickup-set
+        what: >-
+          Megan says the Sienna has been detailed and is ready for pickup on Thursday at
+          5:00 pm, as planned. Bring a driver's license and proof of insurance.
+      - id: van-purchase-summary
+        channel: email
+        at: 2026-09-17T18:15:00
+        from: northland
+        to: [argus]
+        category: updates
+        subject: "Welcome to Northland Toyota: your purchase summary"
+        what: >-
+          An automated purchase summary from Northland Toyota: 2022 Toyota Sienna XLE, $36,500,
+          $500 deposit applied, plates and registration handed over at pickup. The first free
+          maintenance visit is at 5,000 miles. Sign it as Northland Toyota, with no individual
+          staff names.
+      - id: van-sienna-note
+        channel: note
+        date: 2026-09-17
+        heading: Van
+        participants: [mara]
+        what: >-
+          Picked up the Sienna after work. The kids fought over the third row the whole way home.
+      - id: van-spare-key-chat
+        channel: assistant_chat
+        at: 2026-09-17T21:15:00
+        what: >-
+          Argus tells the assistant to remember that the Sienna's spare key is in the drawer by
+          the back door. The assistant says it will remember.
+      - id: van-sold-note
+        channel: note
+        date: 2026-09-19
+        heading: Van
+        participants: [jerome]
+        what: >-
+          Jerome picked up the Odyssey at 2 with a $9,000 cashier's check, and Argus signed over
+          the title. Told him about the transmission one more time. Switched the insurance to the
+          Sienna. The old van is gone.
+      - id: van-jerome-thanks
+        channel: email
+        at: 2026-09-21T19:00:00
+        from: jerome
+        to: [argus]
+        subject: The van
+        what: >-
+          Jerome thanks Argus: the van is running fine so far, and his kids love the sliding
+          doors.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: kids
+    title: Theo and June's school year and summer
+    summary: >-
+      Theo McNevans (7) finishes first grade at Lake Hills Elementary with Ms. Rachel Greer,
+      spends part of the summer at Minnehaha Nature Camp and playing T-ball, and starts second
+      grade with Mr. Paul Osei. June (4) is at Little Acorns Preschool and moves up to its pre-K
+      room in the fall.
+    events:
+      - id: kids-conference-invite
+        channel: email
+        at: 2026-04-16T15:30:00
+        from: greer
+        to: [argus, mara]
+        subject: Spring conference for Theo
+        what: >-
+          Ms. Greer, Theo's first-grade teacher, offers a spring conference slot on Thursday,
+          April 23 at 4:15 pm and asks whether it works.
+      - id: kids-conference-yes
+        channel: email
+        at: 2026-04-16T20:40:00
+        from: argus
+        to: [greer]
+        cc: [mara]
+        reply_to: kids-conference-invite
+        what: Argus says 4:15 on Thursday the 23rd works, and both he and Mara will come.
+      - id: kids-conference
+        channel: calendar
+        at: 2026-04-16T20:45:00
+        calendar: family
+        title: "Theo's conference: Ms. Greer"
+        start: 2026-04-23T16:15:00
+        end: 2026-04-23T16:35:00
+        location: Lake Hills Elementary
+        organizer: argus
+        attendees: [mara]
+        what: Theo's spring parent-teacher conference.
+      - id: kids-conference-note
+        channel: note
+        date: 2026-04-23
+        heading: Theo
+        participants: [greer, mara]
+        what: >-
+          Conference with Ms. Greer: Theo reads above grade level and is kind to the younger
+          kids at recess. He's working on his handwriting. She suggests a summer reading log.
+      - id: kids-camp-plan
+        channel: email
+        at: 2026-05-04T13:00:00
+        from: mara
+        to: [argus]
+        subject: Summer camp for Theo
+        what: >-
+          Mara says Minnehaha Nature Camp registration opens Wednesday morning, May 6. Theo wants
+          the weeks of June 22, July 13, and July 27; June will do Little Acorns' summer program
+          as usual. She asks Argus to register Theo Wednesday morning, since she's working.
+      - id: kids-camp-will-register
+        channel: email
+        at: 2026-05-04T17:20:00
+        from: argus
+        to: [mara]
+        reply_to: kids-camp-plan
+        what: Argus says he'll register Theo first thing Wednesday morning.
+      - id: kids-camp-confirmation
+        channel: email
+        at: 2026-05-06T07:12:00
+        from: nature-camp
+        to: [argus]
+        category: updates
+        subject: "Registration confirmed: Theo McNevans"
+        what: >-
+          An automated registration confirmation from Minnehaha Nature Camp: Theo McNevans is
+          registered for three weeks, June 22-26, July 13-17, and July 27-31, 9:00 am to 3:00 pm,
+          $1,035 in total, paid. Sign it as Minnehaha Nature Camp, with no individual staff
+          names.
+      - {id: kids-camp-week-1, channel: calendar, at: 2026-05-06T07:20:00, calendar: family,
+         title: Nature camp (Theo), start: 2026-06-22, end: 2026-06-26,
+         location: Minnehaha Nature Camp, organizer: argus, attendees: [mara],
+         what: Theo's first week of nature camp.}
+      - {id: kids-camp-week-2, channel: calendar, at: 2026-05-06T07:21:00, calendar: family,
+         title: Nature camp (Theo), start: 2026-07-13, end: 2026-07-17,
+         location: Minnehaha Nature Camp, organizer: argus, attendees: [mara],
+         what: Theo's second week of nature camp.}
+      - {id: kids-camp-week-3, channel: calendar, at: 2026-05-06T07:22:00, calendar: family,
+         title: Nature camp (Theo), start: 2026-07-27, end: 2026-07-31,
+         location: Minnehaha Nature Camp, organizer: argus, attendees: [mara],
+         what: Theo's third week of nature camp.}
+      - id: kids-tball-registration
+        channel: email
+        at: 2026-05-13T19:05:00
+        from: mpls-parks
+        to: [argus]
+        category: updates
+        subject: "You're registered: Youth T-ball, Minnehaha Park"
+        what: >-
+          An automated confirmation from Minneapolis Parks Youth Sports: Theo McNevans is
+          registered for youth T-ball at Minnehaha Park, Tuesdays at 6:00 pm from June 2 to
+          July 21, $55, paid. His coach will be in touch. Sign it as Minneapolis Parks Youth
+          Sports, with no individual staff names.
+      - id: kids-field-day-ask
+        channel: email
+        at: 2026-05-20T14:10:00
+        from: greer
+        to: [argus, mara]
+        subject: Field day volunteers
+        what: >-
+          Ms. Greer says field day is Friday, June 5, and she needs parent volunteers to run
+          activity stations from 9:00 to 11:30 am.
+      - id: kids-field-day-volunteer
+        channel: email
+        at: 2026-05-20T21:00:00
+        from: argus
+        to: [greer]
+        reply_to: kids-field-day-ask
+        what: Argus says he can volunteer for the whole morning of field day.
+      - id: kids-field-day-thanks
+        channel: email
+        at: 2026-05-21T07:40:00
+        from: greer
+        to: [argus]
+        reply_to: kids-field-day-volunteer
+        what: >-
+          Ms. Greer thanks Argus and puts him on the sack race station. Volunteers check in at
+          the gym at 8:45.
+      - id: kids-field-day
+        channel: calendar
+        at: 2026-05-21T07:50:00
+        calendar: personal
+        title: Field day volunteer (sack races)
+        start: 2026-06-05T08:45:00
+        end: 2026-06-05T11:30:00
+        location: Lake Hills Elementary
+        organizer: argus
+        what: Argus volunteers at Theo's field day.
+      - {id: june-birthday, channel: calendar, at: 2026-05-01T20:00:00, calendar: family,
+         title: "June's 4th birthday party", start: 2026-05-23T14:00:00,
+         end: 2026-05-23T16:00:00, location: Home, organizer: mara, attendees: [argus],
+         what: June's fourth birthday party at home.}
+      - id: june-birthday-chat
+        channel: assistant_chat
+        at: 2026-05-23T09:00:00
+        what: >-
+          Argus asks the assistant what time June's birthday party starts today. The assistant
+          says 2:00 pm, at home, until 4:00.
+      - id: june-birthday-note
+        channel: note
+        date: 2026-05-23
+        heading: June
+        participants: [mara]
+        what: >-
+          June's 4th birthday party: eight preschoolers, a unicorn cake, and a pinata that took
+          twenty minutes to break. June declared it the best day ever.
+      - id: kids-tball-olivia
+        channel: email
+        at: 2026-05-29T12:15:00
+        from: kate
+        to: [argus, mara]
+        subject: Olivia's a Blue Jay too!
+        what: >-
+          Kate says Olivia got put on the Blue Jays T-ball team with Theo, and the kids are
+          beside themselves.
+      - id: kids-tball-olivia-reply
+        channel: email
+        at: 2026-05-29T18:40:00
+        from: mara
+        to: [kate]
+        cc: [argus]
+        reply_to: kids-tball-olivia
+        what: Mara says Theo cheered when he heard, and it'll be fun to sit together at games.
+      - id: kids-tball-welcome
+        channel: email
+        at: 2026-05-27T20:30:00
+        from: dana
+        to: [argus, mara]
+        subject: "Blue Jays T-ball: welcome!"
+        what: >-
+          Dana Whitfield, the volunteer coach of Theo's T-ball team, the Blue Jays, welcomes the
+          families. Games are Tuesdays at 6:00 pm at Minnehaha Park, Diamond 2, June 2 to July
+          21. She has a snack sign-up and has put the McNevanses down for June 23; she asks them
+          to say if that doesn't work.
+      - id: kids-tball-snacks-ok
+        channel: email
+        at: 2026-05-27T21:15:00
+        from: argus
+        to: [dana]
+        cc: [mara]
+        reply_to: kids-tball-welcome
+        what: Argus says June 23 works and they'll bring the snacks.
+      - {id: tball-jun-02, channel: calendar, at: 2026-05-27T21:30:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-06-02T18:00:00,
+         end: 2026-06-02T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jun-09, channel: calendar, at: 2026-05-27T21:31:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-06-09T18:00:00,
+         end: 2026-06-09T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jun-16, channel: calendar, at: 2026-05-27T21:32:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-06-16T18:00:00,
+         end: 2026-06-16T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jun-23, channel: calendar, at: 2026-05-27T21:33:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-06-23T18:00:00,
+         end: 2026-06-23T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jun-30, channel: calendar, at: 2026-05-27T21:34:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-06-30T18:00:00,
+         end: 2026-06-30T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jul-07, channel: calendar, at: 2026-05-27T21:35:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-07-07T18:00:00,
+         end: 2026-07-07T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jul-14, channel: calendar, at: 2026-05-27T21:36:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-07-14T18:00:00,
+         end: 2026-07-14T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - {id: tball-jul-21, channel: calendar, at: 2026-05-27T21:37:00,
+         calendar: family, title: "T-ball: Theo's game", start: 2026-07-21T18:00:00,
+         end: 2026-07-21T19:00:00, location: "Minnehaha Park, Diamond 2", organizer: argus,
+         attendees: [mara], what: Theo has a T-ball game.}
+      - id: tball-chat
+        channel: assistant_chat
+        at: 2026-06-02T16:00:00
+        what: >-
+          Argus asks the assistant what time Theo's T-ball game is tonight. The assistant says
+          6:00 pm at Minnehaha Park, Diamond 2.
+      - id: kids-field-day-note
+        channel: note
+        date: 2026-06-05
+        heading: Theo
+        participants: [kate]
+        what: >-
+          Field day. Argus ran the sack races all morning. Theo and Olivia won the three-legged
+          race, and Theo came home with grass stains on everything.
+      - id: kids-last-day
+        channel: email
+        at: 2026-06-09T15:00:00
+        from: greer
+        to: [argus, mara]
+        subject: Last day and thank you
+        what: >-
+          Ms. Greer reminds families that Thursday, June 11 is the last day of school, with
+          early release at 12:30 pm, and thanks them for a wonderful year with the class.
+      - id: kids-last-day-note
+        channel: note
+        date: 2026-06-11
+        heading: Theo
+        what: >-
+          Theo's last day of first grade. Started his summer reading log tonight with two
+          chapters of a dragon book.
+      - id: kids-tball-photos
+        channel: email
+        at: 2026-06-09T19:45:00
+        from: dana
+        to: [argus, mara]
+        subject: Team photos next Tuesday
+        what: >-
+          Coach Dana says team photos are before next Tuesday's game, June 16; players should be
+          at Diamond 2 by 5:40 pm in their Blue Jays shirts.
+      - id: kids-dentist-reminder
+        channel: email
+        at: 2026-06-15T09:00:00
+        from: bright-smiles
+        to: [argus]
+        category: updates
+        subject: "Reminder: Theo and June's cleanings"
+        what: >-
+          An automated reminder from Bright Smiles Pediatric Dentistry: cleanings for Theo
+          McNevans at 8:00 am and June McNevans at 8:30 am on Tuesday, June 30. Reply to
+          reschedule. Sign it as Bright Smiles Pediatric Dentistry, with no individual staff
+          names.
+      - id: kids-dentist
+        channel: calendar
+        at: 2026-06-15T09:10:00
+        calendar: family
+        title: "Dentist: Theo 8:00, June 8:30"
+        start: 2026-06-30T08:00:00
+        end: 2026-06-30T09:00:00
+        location: Bright Smiles Pediatric Dentistry
+        organizer: argus
+        what: The kids' dental cleanings.
+      - id: kids-camp-start-note
+        channel: note
+        date: 2026-06-22
+        heading: Theo
+        what: >-
+          Theo's first day of nature camp: he caught a frog, let it go, and talked about it all
+          through dinner.
+      - id: kids-snack-note
+        channel: note
+        date: 2026-06-23
+        heading: Theo
+        what: >-
+          Our T-ball snack night: brought orange slices and juice boxes for the Blue Jays. Theo
+          hit a double.
+      - id: kids-dentist-note
+        channel: note
+        date: 2026-06-30
+        heading: Kids
+        what: >-
+          Dentist this morning: no cavities for either kid. June was brave and got a sticker for
+          it.
+      - id: kids-pre-k
+        channel: email
+        at: 2026-07-01T11:30:00
+        from: little-acorns
+        to: [argus, mara]
+        subject: "June's move to Pre-K"
+        what: >-
+          Little Acorns Preschool says June moves up to the Pre-K room in September, where her
+          teacher will be Ms. Ana Torres. There is a Pre-K open house on Thursday, August 27 from
+          5:30 to 6:30 pm. Sign it as the Little Acorns office, with no individual staff names
+          besides Ms. Torres.
+      - id: kids-pre-k-open-house
+        channel: calendar
+        at: 2026-07-01T12:00:00
+        calendar: family
+        title: Little Acorns Pre-K open house (June)
+        start: 2026-08-27T17:30:00
+        end: 2026-08-27T18:30:00
+        location: Little Acorns Preschool
+        organizer: mara
+        attendees: [argus]
+        what: June's Pre-K open house.
+      - id: kids-tball-rainout
+        channel: email
+        at: 2026-07-06T18:00:00
+        from: dana
+        to: [argus, mara]
+        subject: Tomorrow's game is off
+        what: >-
+          Coach Dana says tomorrow's game, Tuesday July 7, is cancelled because of the heat
+          advisory. See everyone on the 14th.
+      - id: tball-jul-07-cancelled
+        channel: calendar_update
+        at: 2026-07-06T18:15:00
+        updates: tball-jul-07
+        status: cancelled
+        what: The July 7 T-ball game is cancelled for the heat.
+      - id: kids-camp-week-2-note
+        channel: note
+        date: 2026-07-17
+        heading: Theo
+        what: >-
+          End of Theo's second camp week. They built a shelter out of branches, and he wants to
+          build one in the backyard.
+      - id: kids-camp-pickup
+        channel: email
+        at: 2026-07-29T12:00:00
+        from: mara
+        to: [argus]
+        subject: Camp pickup Friday
+        what: >-
+          Mara says she'll pick Theo up from his last day of camp on Friday at 1:00, since camp
+          lets out early that day and her shift doesn't start until 3:00.
+      - id: kids-tball-last-note
+        channel: note
+        date: 2026-07-21
+        heading: Theo
+        participants: [dana]
+        what: >-
+          Last T-ball game of the season. Coach Dana handed out trophies and Theo hasn't put his
+          down since.
+      - id: kids-tball-thanks
+        channel: email
+        at: 2026-07-22T09:30:00
+        from: dana
+        to: [argus, mara]
+        subject: Thanks for a great season
+        what: >-
+          Coach Dana thanks the Blue Jays families for a great season and shares a link to the
+          team photos.
+      - id: kids-second-grade
+        channel: email
+        at: 2026-08-20T10:00:00
+        from: lake-hills
+        to: [argus, mara]
+        subject: "Theo's second-grade class"
+        what: >-
+          Lake Hills Elementary says Theo McNevans is in Mr. Paul Osei's second-grade class.
+          School starts Tuesday, September 8 at 8:10 am, and the supply list is on the school
+          website. Sign it as the Lake Hills Elementary office, with no individual staff names
+          besides Mr. Osei.
+      - {id: kids-first-day, channel: calendar, at: 2026-08-20T10:30:00, calendar: family,
+         title: "First day of second grade (Theo)", start: 2026-09-08,
+         location: Lake Hills Elementary, organizer: mara, attendees: [argus],
+         what: Theo's first day of second grade.}
+      - id: kids-open-house-note
+        channel: note
+        date: 2026-08-27
+        heading: June
+        participants: [mara]
+        what: >-
+          Pre-K open house at Little Acorns. June met Ms. Torres and introduced her to the class
+          turtle, which June says is named Sprinkles.
+      - id: kids-supplies
+        channel: email
+        at: 2026-09-04T12:30:00
+        from: mara
+        to: [argus]
+        subject: Theo's school supplies
+        what: >-
+          Mara says she picked up everything on Theo's second-grade supply list at Target, so
+          that's done; the receipt is on the fridge.
+      - id: kids-first-day-chat
+        channel: assistant_chat
+        at: 2026-09-01T07:30:00
+        what: >-
+          Argus asks the assistant when Theo's first day of school is. The assistant says
+          Tuesday, September 8 at 8:10 am, in Mr. Paul Osei's second-grade class.
+      - id: kids-pre-k-first-week
+        channel: email
+        at: 2026-09-11T16:20:00
+        from: little-acorns
+        to: [argus, mara]
+        subject: "June's first week in Pre-K"
+        what: >-
+          A note from Ms. Ana Torres at Little Acorns: June had a wonderful first week in Pre-K,
+          made friends with everyone at the art table, and loves helping feed the class turtle.
+      - id: kids-first-day-note
+        channel: note
+        date: 2026-09-08
+        heading: Theo
+        what: >-
+          Theo's first day of second grade. He says Mr. Osei is funny and has a class lizard
+          named Gus, which Theo finds hilarious.
+      - id: kids-curriculum-night-invite
+        channel: email
+        at: 2026-09-23T15:45:00
+        from: osei
+        to: [argus, mara]
+        subject: Curriculum night
+        what: >-
+          Mr. Osei invites second-grade families to curriculum night on Tuesday, September 29
+          from 6:00 to 7:00 pm in his classroom.
+      - id: kids-curriculum-night-yes
+        channel: email
+        at: 2026-09-23T20:00:00
+        from: argus
+        to: [osei]
+        cc: [mara]
+        reply_to: kids-curriculum-night-invite
+        what: Argus says he and Mara will both be there.
+      - id: kids-curriculum-night
+        channel: calendar
+        at: 2026-09-23T20:05:00
+        calendar: family
+        title: "Curriculum night: Mr. Osei"
+        start: 2026-09-29T18:00:00
+        end: 2026-09-29T19:00:00
+        location: Lake Hills Elementary
+        organizer: argus
+        attendees: [mara]
+        what: Theo's second-grade curriculum night.
+      - id: kids-curriculum-night-chat
+        channel: assistant_chat
+        at: 2026-09-29T17:00:00
+        what: >-
+          Argus asks the assistant what time curriculum night is tonight. The assistant says
+          6:00 to 7:00 pm in Mr. Osei's classroom at Lake Hills Elementary.
+      - id: kids-curriculum-night-note
+        channel: note
+        date: 2026-09-30
+        heading: Theo
+        participants: [osei, mara]
+        what: >-
+          Curriculum night last night. Mr. Osei sends spelling lists home on Mondays, with a
+          test on Fridays, and the class is doing a unit on Minnesota animals.
+      - id: kids-playdate-ask
+        channel: email
+        at: 2026-09-02T18:30:00
+        from: kate
+        to: [argus, mara]
+        subject: Playdate Saturday?
+        what: >-
+          Kate asks whether Theo can come over to play with Olivia on Saturday afternoon,
+          September 5, from 1:00 to 4:00 pm.
+      - id: kids-playdate-yes
+        channel: email
+        at: 2026-09-02T19:10:00
+        from: argus
+        to: [kate]
+        cc: [mara]
+        reply_to: kids-playdate-ask
+        what: Argus says yes, Theo would love to, and he'll drop him off at 1:00.
+      - id: kids-osei-update
+        channel: email
+        at: 2026-10-02T15:10:00
+        from: osei
+        to: [argus, mara]
+        subject: Second grade this week
+        what: >-
+          Mr. Osei thanks the families who came to curriculum night and shares the week's news:
+          the class started its Minnesota animals unit with loons and moose.
+      - id: kids-pre-k-note
+        channel: note
+        date: 2026-10-09
+        heading: June
+        what: >-
+          June's Pre-K class had a pumpkin patch field trip. She picked the smallest pumpkin
+          there and named it Gerald.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: soccer-spring
+    title: Argus's spring soccer season
+    summary: >-
+      Argus plays Saturday morning rec soccer with Riverside FC; Marco Ruiz is the team captain.
+      The spring season runs from late April to mid-June.
+    events:
+      - id: soccer-spring-schedule
+        channel: email
+        at: 2026-04-15T19:00:00
+        from: marco
+        to: [argus]
+        subject: Riverside FC spring season
+        what: >-
+          Marco, the Riverside FC captain, sends the spring schedule: Saturdays at 8:30 am at
+          Riverside Park, Field 3, from April 25 to June 13. Spring dues are $60, due by
+          April 25.
+      - id: soccer-spring-dues
+        channel: email
+        at: 2026-04-15T21:10:00
+        from: argus
+        to: [marco]
+        reply_to: soccer-spring-schedule
+        what: Argus says he's in for the spring and just sent the $60 dues by Venmo.
+      - {id: soccer-apr-25, channel: calendar, at: 2026-04-15T21:20:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-04-25T08:30:00,
+         end: 2026-04-25T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-may-02, channel: calendar, at: 2026-04-15T21:21:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-05-02T08:30:00,
+         end: 2026-05-02T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-may-09, channel: calendar, at: 2026-04-15T21:22:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-05-09T08:30:00,
+         end: 2026-05-09T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-may-16, channel: calendar, at: 2026-04-15T21:23:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-05-16T08:30:00,
+         end: 2026-05-16T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-may-23, channel: calendar, at: 2026-04-15T21:24:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-05-23T08:30:00,
+         end: 2026-05-23T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-may-30, channel: calendar, at: 2026-04-15T21:25:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-05-30T08:30:00,
+         end: 2026-05-30T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-jun-06, channel: calendar, at: 2026-04-15T21:26:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-06-06T08:30:00,
+         end: 2026-06-06T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - {id: soccer-jun-13, channel: calendar, at: 2026-04-15T21:27:00,
+         calendar: personal, title: "Soccer: Riverside FC game", start: 2026-06-13T08:30:00,
+         end: 2026-06-13T10:00:00, location: "Riverside Park, Field 3", organizer: argus,
+         what: Argus has a soccer game.}
+      - id: soccer-first-game-note
+        channel: note
+        date: 2026-04-25
+        heading: Soccer
+        participants: [marco]
+        what: First game of the spring season. Riverside FC won 3-1 and Marco scored twice.
+      - id: soccer-rainout
+        channel: email
+        at: 2026-05-15T17:30:00
+        from: marco
+        to: [argus]
+        subject: Tomorrow's game is cancelled
+        what: >-
+          Marco says tomorrow's game, Saturday May 16, is cancelled: the city closed the fields
+          after this week's rain.
+      - id: soccer-may-16-cancelled
+        channel: calendar_update
+        at: 2026-05-15T17:45:00
+        updates: soccer-may-16
+        status: cancelled
+        what: The May 16 game is cancelled; the fields are closed.
+      - id: soccer-bbq-invite
+        channel: email
+        at: 2026-06-01T19:20:00
+        from: marco
+        to: [argus]
+        subject: End-of-season BBQ
+        what: >-
+          Marco invites the team and their families to an end-of-season barbecue at his house
+          after the last game, Saturday June 13 at noon. Bring a side.
+      - id: soccer-bbq-yes
+        channel: email
+        at: 2026-06-02T07:30:00
+        from: argus
+        to: [marco]
+        reply_to: soccer-bbq-invite
+        what: Argus says the McNevanses will all come, bringing chips and salsa.
+      - id: soccer-bbq
+        channel: calendar
+        at: 2026-06-02T07:40:00
+        calendar: family
+        title: Riverside FC end-of-season BBQ
+        start: 2026-06-13T12:00:00
+        end: 2026-06-13T15:00:00
+        location: Marco's house
+        organizer: argus
+        attendees: [mara]
+        what: The soccer team's barbecue.
+      - id: soccer-bbq-note
+        channel: note
+        date: 2026-06-13
+        heading: Soccer
+        participants: [marco, mara]
+        what: >-
+          Last game of the spring season (a 2-2 tie), then Marco's barbecue. Brought the chips
+          and salsa. Theo and June played tag with the other kids for three hours.
+      - id: soccer-fall-dues
+        channel: email
+        at: 2026-08-10T19:00:00
+        from: marco
+        to: [argus]
+        subject: Fall season
+        what: >-
+          Marco says the fall season starts Saturday, September 12, with the schedule to follow.
+          Fall dues are $90, due by September 1.
+      - id: soccer-fall-dues-paid
+        channel: email
+        at: 2026-08-11T07:25:00
+        from: argus
+        to: [marco]
+        reply_to: soccer-fall-dues
+        what: Argus says he's in for the fall and sent the $90 by Venmo.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: mara-shifts
+    title: Mara's late shifts
+    summary: >-
+      Mara McNevans, a hospitalist, works late shifts on Mondays, Wednesdays, and Fridays, posted
+      to her work calendar a month at a time.
+    events:
+      # May's shifts, posted 2026-04-25.
+      - {id: shift-may-01, channel: calendar, at: 2026-04-25T07:30:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-01T15:00:00,
+         end: 2026-05-01T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-04, channel: calendar, at: 2026-04-25T07:31:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-04T15:00:00,
+         end: 2026-05-04T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-06, channel: calendar, at: 2026-04-25T07:32:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-06T15:00:00,
+         end: 2026-05-06T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-08, channel: calendar, at: 2026-04-25T07:33:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-08T15:00:00,
+         end: 2026-05-08T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-11, channel: calendar, at: 2026-04-25T07:34:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-11T15:00:00,
+         end: 2026-05-11T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-13, channel: calendar, at: 2026-04-25T07:35:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-13T15:00:00,
+         end: 2026-05-13T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-15, channel: calendar, at: 2026-04-25T07:36:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-15T15:00:00,
+         end: 2026-05-15T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-18, channel: calendar, at: 2026-04-25T07:37:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-18T15:00:00,
+         end: 2026-05-18T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-20, channel: calendar, at: 2026-04-25T07:38:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-20T15:00:00,
+         end: 2026-05-20T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-22, channel: calendar, at: 2026-04-25T07:39:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-22T15:00:00,
+         end: 2026-05-22T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-27, channel: calendar, at: 2026-04-25T07:40:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-27T15:00:00,
+         end: 2026-05-27T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-may-29, channel: calendar, at: 2026-04-25T07:41:00,
+         calendar: mara-work, title: Late shift, start: 2026-05-29T15:00:00,
+         end: 2026-05-29T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      # June's shifts, posted 2026-05-25.
+      - {id: shift-jun-01, channel: calendar, at: 2026-05-25T07:30:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-01T15:00:00,
+         end: 2026-06-01T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-03, channel: calendar, at: 2026-05-25T07:31:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-03T15:00:00,
+         end: 2026-06-03T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-05, channel: calendar, at: 2026-05-25T07:32:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-05T15:00:00,
+         end: 2026-06-05T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-08, channel: calendar, at: 2026-05-25T07:33:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-08T15:00:00,
+         end: 2026-06-08T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-10, channel: calendar, at: 2026-05-25T07:34:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-10T15:00:00,
+         end: 2026-06-10T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-12, channel: calendar, at: 2026-05-25T07:35:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-12T15:00:00,
+         end: 2026-06-12T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-15, channel: calendar, at: 2026-05-25T07:36:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-15T15:00:00,
+         end: 2026-06-15T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-17, channel: calendar, at: 2026-05-25T07:37:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-17T15:00:00,
+         end: 2026-06-17T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-19, channel: calendar, at: 2026-05-25T07:38:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-19T15:00:00,
+         end: 2026-06-19T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-22, channel: calendar, at: 2026-05-25T07:39:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-22T15:00:00,
+         end: 2026-06-22T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-24, channel: calendar, at: 2026-05-25T07:40:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-24T15:00:00,
+         end: 2026-06-24T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-26, channel: calendar, at: 2026-05-25T07:41:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-26T15:00:00,
+         end: 2026-06-26T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jun-29, channel: calendar, at: 2026-05-25T07:42:00,
+         calendar: mara-work, title: Late shift, start: 2026-06-29T15:00:00,
+         end: 2026-06-29T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      # July's shifts, posted 2026-06-24.
+      - {id: shift-jul-01, channel: calendar, at: 2026-06-24T07:30:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-01T15:00:00,
+         end: 2026-07-01T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-03, channel: calendar, at: 2026-06-24T07:31:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-03T15:00:00,
+         end: 2026-07-03T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-06, channel: calendar, at: 2026-06-24T07:32:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-06T15:00:00,
+         end: 2026-07-06T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-08, channel: calendar, at: 2026-06-24T07:33:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-08T15:00:00,
+         end: 2026-07-08T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-10, channel: calendar, at: 2026-06-24T07:34:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-10T15:00:00,
+         end: 2026-07-10T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-13, channel: calendar, at: 2026-06-24T07:35:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-13T15:00:00,
+         end: 2026-07-13T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-15, channel: calendar, at: 2026-06-24T07:36:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-15T15:00:00,
+         end: 2026-07-15T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-17, channel: calendar, at: 2026-06-24T07:37:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-17T15:00:00,
+         end: 2026-07-17T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-20, channel: calendar, at: 2026-06-24T07:38:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-20T15:00:00,
+         end: 2026-07-20T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-22, channel: calendar, at: 2026-06-24T07:39:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-22T15:00:00,
+         end: 2026-07-22T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-24, channel: calendar, at: 2026-06-24T07:40:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-24T15:00:00,
+         end: 2026-07-24T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-27, channel: calendar, at: 2026-06-24T07:41:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-27T15:00:00,
+         end: 2026-07-27T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-29, channel: calendar, at: 2026-06-24T07:42:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-29T15:00:00,
+         end: 2026-07-29T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-jul-31, channel: calendar, at: 2026-06-24T07:43:00,
+         calendar: mara-work, title: Late shift, start: 2026-07-31T15:00:00,
+         end: 2026-07-31T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      # August's shifts, posted 2026-07-27.
+      - {id: shift-aug-03, channel: calendar, at: 2026-07-27T07:30:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-03T15:00:00,
+         end: 2026-08-03T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-05, channel: calendar, at: 2026-07-27T07:31:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-05T15:00:00,
+         end: 2026-08-05T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-07, channel: calendar, at: 2026-07-27T07:32:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-07T15:00:00,
+         end: 2026-08-07T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-17, channel: calendar, at: 2026-07-27T07:33:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-17T15:00:00,
+         end: 2026-08-17T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-19, channel: calendar, at: 2026-07-27T07:34:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-19T15:00:00,
+         end: 2026-08-19T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-21, channel: calendar, at: 2026-07-27T07:35:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-21T15:00:00,
+         end: 2026-08-21T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-24, channel: calendar, at: 2026-07-27T07:36:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-24T15:00:00,
+         end: 2026-08-24T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-26, channel: calendar, at: 2026-07-27T07:37:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-26T15:00:00,
+         end: 2026-08-26T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-28, channel: calendar, at: 2026-07-27T07:38:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-28T15:00:00,
+         end: 2026-08-28T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+      - {id: shift-aug-31, channel: calendar, at: 2026-07-27T07:39:00,
+         calendar: mara-work, title: Late shift, start: 2026-08-31T15:00:00,
+         end: 2026-08-31T23:30:00, location: St. Luke's Hospital, organizer: mara,
+         what: Mara works a late shift.}
+
+  # ---------------------------------------------------------------------------------------------
+  - id: family-friends
+    title: Family and friends
+    summary: >-
+      Argus's sister Nell McNevans plans a surprise lunch for their mother Ruth's 70th birthday;
+      Mara's mother Carol Lindgren has the kids for a sleepover; Argus goes to a Twins game with
+      his friend Dave; Okie and Tasha Okafor's son Malik turns 7; and the neighbors on Linden
+      Avenue, organized by Gary Lindqvist, hold their block party.
+    events:
+      - id: work-trip
+        channel: calendar
+        at: 2026-04-16T09:00:00
+        calendar: personal
+        title: "Work trip: Denver"
+        start: 2026-04-27
+        end: 2026-04-29
+        location: Denver, CO
+        organizer: argus
+        what: Argus is in Denver for a work conference.
+      - id: carol-denver-help
+        channel: email
+        at: 2026-04-24T12:00:00
+        from: mara
+        to: [argus]
+        subject: Mom's staying while you're in Denver
+        what: >-
+          Mara says her mom, Carol, will stay with them Monday to Wednesday while Argus is in
+          Denver, to help with the kids around Mara's work.
+      - id: work-denver-note
+        channel: note
+        date: 2026-04-28
+        heading: Work
+        what: >-
+          Second day of the conference in Denver. Good session on data pipelines; dinner with
+          the team. Mara handled the insurance inspection at home.
+      - id: mara-july-shifts
+        channel: email
+        at: 2026-06-24T08:00:00
+        from: mara
+        to: [argus]
+        subject: July shifts are up
+        what: >-
+          Mara says her July late shifts are on her work calendar: the usual Mondays,
+          Wednesdays, and Fridays, including Friday the 3rd.
+      - id: ruth-70-plan
+        channel: email
+        at: 2026-05-02T10:30:00
+        from: nell
+        to: [argus]
+        subject: "Mom's 70th: surprise lunch?"
+        what: >-
+          Nell, Argus's sister in Chicago, proposes a surprise lunch for their mom Ruth's 70th
+          birthday on Sunday, June 21, which is also Father's Day, at Mom and Dad's house in
+          Rochester. Dad is in on it. She asks Argus to order the cake from Sunrise Bakery in
+          Rochester, since he's closer.
+      - id: ruth-70-cake-yes
+        channel: email
+        at: 2026-05-02T20:00:00
+        from: argus
+        to: [nell]
+        reply_to: ruth-70-plan
+        what: >-
+          Argus loves the idea. He'll order a lemon cake, Mom's favorite, from Sunrise Bakery.
+      - id: ruth-70-note
+        channel: note
+        date: 2026-05-03
+        heading: Family
+        participants: [nell]
+        what: >-
+          Nell is planning a surprise lunch for Mom's 70th on June 21 in Rochester; Dad's in on
+          it. Argus is ordering the cake.
+      - id: ruth-70-cake-order
+        channel: email
+        at: 2026-06-08T13:15:00
+        from: sunrise-bakery
+        to: [argus]
+        category: updates
+        subject: "Order confirmed: custom cake"
+        what: >-
+          An automated order confirmation from Sunrise Bakery: one 9-inch lemon cake reading
+          "Happy 70th, Ruth", pickup Saturday, June 20 at 3:00 pm, $64 paid. Sign it as Sunrise
+          Bakery, with no individual staff names.
+      - id: ruth-70-details
+        channel: email
+        at: 2026-06-15T19:30:00
+        from: nell
+        to: [argus, mara]
+        subject: "Mom's 70th: final plan"
+        what: >-
+          Nell's final plan: everyone arrives at Mom and Dad's by 11:30 am on Sunday, June 21;
+          Mom thinks it's just a Father's Day lunch. Nell flies in Saturday.
+      - id: ruth-70-cake-ready
+        channel: email
+        at: 2026-06-15T21:00:00
+        from: argus
+        to: [nell, mara]
+        reply_to: ruth-70-details
+        what: Argus says the cake is ordered and he'll pick it up Saturday afternoon.
+      - id: ruth-70
+        channel: calendar
+        at: 2026-06-15T21:10:00
+        calendar: family
+        title: "Mom's 70th (surprise lunch)"
+        start: 2026-06-21T11:30:00
+        end: 2026-06-21T15:00:00
+        location: Mom and Dad's, Rochester
+        organizer: argus
+        attendees: [mara, nell]
+        what: The surprise lunch for Ruth's 70th birthday.
+      - id: ruth-70-cake-chat
+        channel: assistant_chat
+        at: 2026-06-19T18:00:00
+        what: >-
+          Argus asks the assistant when he's picking up the cake for his mom's birthday. The
+          assistant says Saturday, June 20 at 3:00 pm at Sunrise Bakery.
+      - id: ruth-70-cake-note
+        channel: note
+        date: 2026-06-20
+        heading: Family
+        what: >-
+          Picked up Mom's cake from Sunrise Bakery; it's hidden in our cooler for tomorrow. Nell
+          landed this afternoon.
+      - id: ruth-70-party-note
+        channel: note
+        date: 2026-06-21
+        heading: Family
+        participants: [nell, mara]
+        what: >-
+          Mom's 70th: she was completely surprised and cried when she saw Nell. The lemon cake
+          was a hit. Happy Father's Day to Dad, and to Argus: the kids made him a card.
+      - id: ruth-70-photos
+        channel: email
+        at: 2026-06-23T08:45:00
+        from: nell
+        to: [argus, mara]
+        subject: Photos from Sunday
+        what: >-
+          Nell shares a link to her photos from Mom's birthday and says Mom has called her twice
+          to talk about it.
+      - id: ruth-70-photos-thanks
+        channel: email
+        at: 2026-06-23T12:10:00
+        from: argus
+        to: [nell, mara]
+        reply_to: ruth-70-photos
+        what: Argus thanks Nell for pulling it all off; the photos are great.
+      - id: malik-party-invite
+        channel: email
+        at: 2026-07-02T13:00:00
+        from: tasha
+        to: [argus, mara]
+        subject: "Malik's 7th birthday"
+        what: >-
+          Tasha invites Theo to Malik's 7th birthday party on Sunday, July 19 from 2:00 to
+          4:00 pm at the Okafors' house.
+      - id: malik-party-yes
+        channel: email
+        at: 2026-07-03T08:30:00
+        from: mara
+        to: [tasha]
+        cc: [argus]
+        reply_to: malik-party-invite
+        what: Mara says Theo will be there and is very excited.
+      - id: okie-launch-invite
+        channel: email
+        at: 2026-07-14T10:30:00
+        from: ben@okafor-studio.example
+        to: [argus]
+        subject: Studio launch drinks Thursday
+        what: >-
+          Okie invites Argus to drinks at a brewery on Thursday, July 16 at 6:00 pm, to
+          celebrate his studio's first two months.
+      - id: okie-launch-regrets
+        channel: email
+        at: 2026-07-14T20:50:00
+        from: argus
+        to: [ben@okafor-studio.example]
+        reply_to: okie-launch-invite
+        what: >-
+          Argus says congratulations, but he can't make Thursday because of a work dinner that
+          night.
+      - id: malik-party
+        channel: calendar
+        at: 2026-07-03T08:40:00
+        calendar: family
+        title: "Malik's 7th birthday (Theo)"
+        start: 2026-07-19T14:00:00
+        end: 2026-07-19T16:00:00
+        location: The Okafors' house
+        organizer: mara
+        attendees: [argus]
+        what: Theo goes to Malik's birthday party.
+      - id: carol-sleepover-ask
+        channel: email
+        at: 2026-07-08T10:00:00
+        from: carol
+        to: [argus, mara]
+        subject: Sleepover?
+        what: >-
+          Carol, Mara's mother, asks whether she and Jim can have Theo and June for a sleepover:
+          pick them up Saturday, July 18 at 4:00 pm and bring them back Sunday by noon.
+      - id: carol-sleepover-yes
+        channel: email
+        at: 2026-07-08T12:30:00
+        from: mara
+        to: [carol]
+        cc: [argus]
+        reply_to: carol-sleepover-ask
+        what: Mara says yes, the kids will be thrilled.
+      - id: carol-sleepover
+        channel: calendar
+        at: 2026-07-08T12:40:00
+        calendar: family
+        title: "Kids' sleepover at Grandma and Grandpa's"
+        start: 2026-07-18T16:00:00
+        end: 2026-07-19T12:00:00
+        location: Carol and Jim's
+        organizer: mara
+        attendees: [argus, carol]
+        what: The kids sleep over at Mara's parents'.
+      - id: malik-party-thanks
+        channel: email
+        at: 2026-07-20T09:15:00
+        from: tasha
+        to: [argus, mara]
+        subject: Thanks for coming!
+        what: >-
+          Tasha thanks the McNevanses for coming to Malik's party and says Malik hasn't stopped
+          talking about the water balloon fight.
+      - id: carol-sleepover-note
+        channel: note
+        date: 2026-07-18
+        heading: Family
+        participants: [carol, mara]
+        what: >-
+          Carol picked the kids up at 4. Mara and Argus had a quiet date night: dinner out and a
+          movie, home by 10.
+      - id: malik-party-note
+        channel: note
+        date: 2026-07-19
+        heading: Family
+        participants: [carol, tasha, ben]
+        what: >-
+          Kids back from Carol's at noon, then Theo went to Malik's party. Okie ran a water
+          balloon fight that soaked every kid and most of the parents.
+      - id: twins-invite
+        channel: email
+        at: 2026-07-09T12:45:00
+        from: dave
+        to: [argus]
+        subject: Twins Thursday the 23rd?
+        what: >-
+          Dave has two tickets for the Twins game on Thursday, July 23 at 7:10 pm and asks if
+          Argus wants to come.
+      - id: twins-yes
+        channel: email
+        at: 2026-07-09T13:20:00
+        from: argus
+        to: [dave]
+        reply_to: twins-invite
+        what: Argus says he's in.
+      - id: twins-game
+        channel: calendar
+        at: 2026-07-09T13:30:00
+        calendar: personal
+        title: Twins game with Dave
+        start: 2026-07-23T19:10:00
+        end: 2026-07-23T22:00:00
+        location: Target Field
+        organizer: argus
+        attendees: [dave]
+        what: Argus goes to a Twins game with Dave.
+      - id: twins-chat
+        channel: assistant_chat
+        at: 2026-07-23T16:30:00
+        what: >-
+          Argus asks the assistant what time the Twins game starts tonight. The assistant says
+          7:10 pm at Target Field.
+      - id: twins-note
+        channel: note
+        date: 2026-07-23
+        heading: Twins game
+        participants: [dave]
+        what: Went to the Twins game with Dave. Twins won 5-3 on a walk-off double.
+      - id: block-party-invite
+        channel: email
+        at: 2026-07-20T18:00:00
+        from: gary
+        to: [argus, mara]
+        subject: Linden Avenue block party, Aug 22
+        what: >-
+          Gary Lindqvist, a neighbor, announces the annual Linden Avenue block party on
+          Saturday, August 22 from 4:00 to 9:00 pm. It's a potluck, so each house brings a dish,
+          plus $20 per house for the street permit and a bounce house. He asks who's coming.
+      - id: block-party-yes
+        channel: email
+        at: 2026-07-21T07:05:00
+        from: argus
+        to: [gary]
+        cc: [mara]
+        reply_to: block-party-invite
+        what: >-
+          Argus says the McNevanses are in. They'll bring a big pasta salad, and he'll give Gary
+          the $20 at the party.
+      - id: block-party-thanks
+        channel: email
+        at: 2026-07-21T09:00:00
+        from: gary
+        to: [argus]
+        reply_to: block-party-yes
+        what: Gary says great, and cash at the party is perfect.
+      - id: block-party
+        channel: calendar
+        at: 2026-07-21T07:15:00
+        calendar: family
+        title: Linden Avenue block party
+        start: 2026-08-22T16:00:00
+        end: 2026-08-22T21:00:00
+        location: Linden Avenue
+        organizer: argus
+        attendees: [mara]
+        what: The neighborhood block party.
+      - id: block-party-chat
+        channel: assistant_chat
+        at: 2026-08-22T13:00:00
+        what: >-
+          Argus asks the assistant what time the block party starts. The assistant says 4:00 pm
+          on Linden Avenue, and that the McNevanses said they'd bring a pasta salad and $20 for
+          Gary.
+      - id: block-party-wrapup
+        channel: email
+        at: 2026-08-23T10:00:00
+        from: gary
+        to: [argus, mara]
+        subject: Thanks, neighbors!
+        what: >-
+          Gary thanks everyone for a great block party: the permit and bounce house are paid for
+          with what everyone chipped in, and the leftover money goes to next year's party.
+      - id: carol-dinner-invite
+        channel: email
+        at: 2026-09-01T09:00:00
+        from: carol
+        to: [argus, mara]
+        subject: Sunday dinner?
+        what: >-
+          Carol invites the family to dinner at her and Jim's on Sunday, September 6 at
+          5:00 pm, before school starts.
+      - id: carol-dinner-yes
+        channel: email
+        at: 2026-09-01T12:45:00
+        from: argus
+        to: [carol]
+        cc: [mara]
+        reply_to: carol-dinner-invite
+        what: Argus says they'll be there and will bring an apple crisp.
+      - id: halloween-costumes
+        channel: email
+        at: 2026-10-07T18:20:00
+        from: mara
+        to: [argus]
+        subject: Halloween costumes, done
+        what: >-
+          Mara says she bought the kids' Halloween costumes at the store today: a T-rex for Theo
+          and a bumblebee for June. Both fit.
+      - id: nell-mom-thanks
+        channel: email
+        at: 2026-08-30T11:00:00
+        from: nell
+        to: [argus]
+        subject: Mom's still talking about it
+        what: >-
+          Nell says Mom is still telling everyone at church about her surprise party, and asks
+          how the cabin was.
+      - id: nell-cabin-reply
+        channel: email
+        at: 2026-08-30T19:30:00
+        from: argus
+        to: [nell]
+        reply_to: nell-mom-thanks
+        what: >-
+          Argus says the cabin was great: Theo caught his first walleye, and June learned to
+          paddle a kayak, sort of.
+      - id: block-party-note
+        channel: note
+        date: 2026-08-22
+        heading: Neighborhood
+        participants: [gary, mara]
+        what: >-
+          Block party. Gave Gary our $20. The pasta salad was gone by 6. The kids stayed in the
+          bounce house until it got dark.
+      - id: okie-site-ask
+        channel: email
+        at: 2026-05-18T11:30:00
+        from: ben@okafor-studio.example
+        to: [argus]
+        subject: "Favor: look at my studio site?"
+        what: >-
+          Okie asks Argus to look over his new design studio's website before it launches and
+          tell him if anything is confusing, by Friday if he can.
+      - id: okie-site-feedback
+        channel: email
+        at: 2026-05-20T21:30:00
+        from: argus
+        to: [ben@okafor-studio.example]
+        reply_to: okie-site-ask
+        what: >-
+          Argus looked through the site: it looks great, but the contact page link is broken on
+          his phone.
+      - id: okie-site-fixed
+        channel: email
+        at: 2026-05-21T08:45:00
+        from: ben@okafor-studio.example
+        to: [argus]
+        reply_to: okie-site-feedback
+        what: Okie fixed the contact link, thanks Argus, and says the site launches Monday.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: house
+    title: House and yard
+    summary: >-
+      Upkeep of the McNevanses' house: an air conditioning tune-up in the spring, Argus's
+      vegetable garden, and gutter cleaning in the fall.
+    events:
+      - id: house-ac-reminder
+        channel: email
+        at: 2026-05-01T09:00:00
+        from: polar
+        to: [argus]
+        category: updates
+        subject: "Your AC tune-up: Thursday, May 7"
+        what: >-
+          An automated appointment confirmation from Polar Heating & Air: an air conditioning
+          tune-up on Thursday, May 7, with a technician arriving between 9:00 and 11:00 am,
+          $129. Sign it as Polar Heating & Air, with no individual staff names.
+      - id: house-ac
+        channel: calendar
+        at: 2026-05-01T09:15:00
+        calendar: personal
+        title: AC tune-up (Polar)
+        start: 2026-05-07T09:00:00
+        end: 2026-05-07T11:00:00
+        location: Home
+        organizer: argus
+        what: The air conditioning tune-up.
+      - id: house-ac-note
+        channel: note
+        date: 2026-05-07
+        heading: House
+        what: >-
+          AC tune-up done, $129. The technician said the system is in good shape and replaced
+          the filter.
+      - id: house-filter-chat
+        channel: assistant_chat
+        at: 2026-05-07T12:30:00
+        what: >-
+          Argus tells the assistant to remember that the furnace and AC filter size is
+          16x25x1, and that the technician said to change it every three months. The assistant
+          says it will remember.
+      - id: house-garden-note
+        channel: note
+        date: 2026-05-16
+        heading: Garden
+        what: >-
+          Soccer was rained out, so the garden got planted instead: six tomato plants, two
+          zucchini, peppers, and a row of beans. Theo and June each got their own sunflower.
+      - id: house-gutters-ask
+        channel: email
+        at: 2026-09-01T12:00:00
+        from: argus
+        to: [clearflow]
+        subject: Gutter cleaning
+        what: >-
+          Argus asks ClearFlow Gutters for a price to clean the gutters on a two-story house
+          this fall, and when they could come.
+      - id: house-gutters-quote
+        channel: email
+        at: 2026-09-02T10:15:00
+        from: clearflow
+        to: [argus]
+        reply_to: house-gutters-ask
+        what: >-
+          ClearFlow quotes $180 to clean the gutters and downspouts, and offers Friday,
+          September 25 between 9:00 and 11:00 am. Sign it as ClearFlow Gutters, with no
+          individual staff names.
+      - id: house-gutters-book
+        channel: email
+        at: 2026-09-02T12:30:00
+        from: argus
+        to: [clearflow]
+        reply_to: house-gutters-quote
+        what: Argus books Friday, September 25.
+      - id: house-gutters
+        channel: calendar
+        at: 2026-09-02T12:35:00
+        calendar: personal
+        title: Gutter cleaning (ClearFlow)
+        start: 2026-09-25T09:00:00
+        end: 2026-09-25T11:00:00
+        location: Home
+        organizer: argus
+        what: The gutters are cleaned.
+      - id: house-gutters-note
+        channel: note
+        date: 2026-09-25
+        heading: House
+        what: Gutters cleaned this morning, $180, paid on the spot. They were full of maple seeds.
+      - id: house-garage-code-chat
+        channel: assistant_chat
+        at: 2026-10-11T20:15:00
+        what: >-
+          Argus tells the assistant that he changed the garage door keypad code to 7341 today.
+          The assistant says it will remember.
+
+  # ---------------------------------------------------------------------------------------------
+  - id: everyday
+    title: Everyday family life
+    summary: >-
+      The ordinary days of Argus McNevans's family: weekends, meals, the kids growing up, the
+      garden, and the seasons in Minneapolis.
+    events:
+      - id: everyday-apr-16
+        channel: note
+        date: 2026-04-16
+        heading: Kids
+        what: >-
+          June is deep in her 'why' phase: why is the sky, why do worms, why is Tuesday. Theo
+          explained gravity to her at dinner, mostly wrong.
+      - id: everyday-apr-18
+        channel: note
+        date: 2026-04-18
+        heading: Weekend
+        what: >-
+          Rainy Saturday: board games and a blanket fort. Storm warnings for tonight.
+      - id: everyday-apr-21
+        channel: note
+        date: 2026-04-21
+        heading: Kids
+        what: >-
+          Theo finished his first chapter book on his own and read the last page out loud to all of
+          us.
+      - id: everyday-may-01
+        channel: note
+        date: 2026-05-01
+        heading: Dinner
+        what: >-
+          Tried a new chickpea curry. Theo ate the rice; June ate the naan; Mara and Argus ate the
+          curry.
+      - id: everyday-may-10
+        channel: note
+        date: 2026-05-10
+        heading: Mother's Day
+        what: >-
+          Mother's Day: the kids and Argus made Mara pancakes and she got breakfast in bed. June's
+          card says 'MOM' with the M backwards.
+      - id: everyday-may-17
+        channel: note
+        date: 2026-05-17
+        heading: Weekend
+        what: >-
+          Como Zoo with the kids. June loved the giraffes; Theo wanted to stay at the gorillas all
+          day.
+      - id: everyday-may-25
+        channel: note
+        date: 2026-05-25
+        heading: Memorial Day
+        what: >-
+          Neighborhood Memorial Day parade in the morning, then grilled brats for lunch.
+      - id: everyday-may-30
+        channel: note
+        date: 2026-05-30
+        heading: Theo
+        what: >-
+          Theo rode his bike without training wheels for the first time, all the way down the block.
+      - id: everyday-jun-07
+        channel: note
+        date: 2026-06-07
+        heading: Garden
+        what: >-
+          First radishes from the garden. Nobody but Argus will eat them.
+      - id: everyday-jun-14
+        channel: note
+        date: 2026-06-14
+        heading: Weekend
+        what: >-
+          Farmers market in the morning; June got her face painted as a tiger. Lazy afternoon.
+      - id: everyday-jun-17
+        channel: note
+        date: 2026-06-17
+        heading: June
+        what: >-
+          June finally figured out how to pump her legs on the swing and would not get off.
+      - id: everyday-jun-27
+        channel: note
+        date: 2026-06-27
+        heading: Weekend
+        what: >-
+          Picnic at Minnehaha Falls. The kids threw sticks off the bridge for an hour.
+      - id: everyday-jul-04
+        channel: note
+        date: 2026-07-04
+        heading: Fourth of July
+        what: >-
+          Watched the fireworks over the river from the hill. June covered her ears and still wanted
+          to stay.
+      - id: everyday-jul-08
+        channel: note
+        date: 2026-07-08
+        heading: Theo
+        what: >-
+          Theo lost a front tooth at dinner, in a corn cob. The tooth fairy pays a dollar in this
+          house.
+      - id: everyday-jul-12
+        channel: note
+        date: 2026-07-12
+        heading: Garden
+        what: >-
+          Tomatoes are flowering and the basil is out of control. Made pesto.
+      - id: everyday-jul-26
+        channel: note
+        date: 2026-07-26
+        heading: Weekend
+        what: >-
+          Concert at the Lake Harriet bandshell. June danced the whole time; Theo counted sailboats.
+      - id: everyday-jul-31
+        channel: note
+        date: 2026-07-31
+        heading: Theo
+        what: >-
+          Last day of nature camp for the summer. Theo came home with a bird's nest and a lot of
+          opinions about owls.
+      - id: everyday-aug-01
+        channel: note
+        date: 2026-08-01
+        heading: Weekend
+        what: >-
+          Family bike ride around Lake Nokomis, June in the trailer. Ice cream after.
+      - id: everyday-aug-08
+        channel: note
+        date: 2026-08-08
+        heading: Weekend
+        what: >-
+          Packed the car for the cabin tomorrow. Everything fits if nobody breathes.
+      - id: everyday-aug-16
+        channel: note
+        date: 2026-08-16
+        heading: Home
+        what: >-
+          First day home from the cabin. A mountain of laundry; the kids already miss the lake.
+      - id: everyday-aug-18
+        channel: note
+        date: 2026-08-18
+        heading: Garden
+        what: >-
+          Tomato glut. Gave a big bag to Gary next door and made sauce with the rest.
+      - id: everyday-aug-29
+        channel: note
+        date: 2026-08-29
+        heading: State Fair
+        what: >-
+          State Fair: Sweet Martha's cookies, the giant slide with Theo, and June asleep in the
+          wagon by 2.
+      - id: everyday-sep-02
+        channel: note
+        date: 2026-09-02
+        heading: Work
+        what: >-
+          Long week at work: the quarterly release went out tonight. Home late; Mara put the kids
+          down.
+      - id: everyday-sep-05
+        channel: note
+        date: 2026-09-05
+        heading: Weekend
+        what: >-
+          Theo spent the afternoon at Olivia's. June and Argus went to the library and came back
+          with eleven books.
+      - id: everyday-sep-06
+        channel: note
+        date: 2026-09-06
+        heading: Weekend
+        what: >-
+          Dinner at Carol and Jim's; we brought an apple crisp. Jim taught Theo to play cribbage.
+      - id: everyday-sep-07
+        channel: note
+        date: 2026-09-07
+        heading: Labor Day
+        what: >-
+          Last grill of the summer. Theo is a little nervous about second grade; June is mostly
+          excited about her new backpack.
+      - id: everyday-sep-12
+        channel: note
+        date: 2026-09-12
+        heading: Weekend
+        what: >-
+          Afternoon at the apple orchard. Came home with a peck of Honeycrisp and two tired kids.
+      - id: everyday-sep-13
+        channel: note
+        date: 2026-09-13
+        heading: Weekend
+        what: >-
+          Pancake Sunday. Made apple crisp with the orchard apples.
+      - id: everyday-sep-20
+        channel: note
+        date: 2026-09-20
+        heading: Weekend
+        what: >-
+          Slow Sunday. Theo built a Lego city across the living room floor.
+      - id: everyday-sep-22
+        channel: note
+        date: 2026-09-22
+        heading: June
+        what: >-
+          June asked where the moon goes in the daytime. Got out the flashlight and an orange to
+          explain.
+      - id: everyday-sep-27
+        channel: note
+        date: 2026-09-27
+        heading: Weekend
+        what: >-
+          Family bike ride along the river; the leaves are just starting to turn.
+      - id: everyday-oct-02
+        channel: note
+        date: 2026-10-02
+        heading: Weekend
+        what: >-
+          Pizza and a movie night. June fell asleep before the end, as usual.
+      - id: everyday-oct-04
+        channel: note
+        date: 2026-10-04
+        heading: Weekend
+        what: >-
+          Bought pumpkins at the corner stand. Carving them closer to Halloween.
+      - id: everyday-oct-06
+        channel: note
+        date: 2026-10-06
+        heading: Theo
+        what: >-
+          Theo got 10 out of 10 on his spelling test and wants it on the fridge.
+      - id: everyday-oct-10
+        channel: note
+        date: 2026-10-10
+        heading: Weekend
+        what: >-
+          Raked leaves in the afternoon; the kids jumped in the pile more than they helped.
+      - id: everyday-oct-11
+        channel: note
+        date: 2026-10-11
+        heading: Dinner
+        what: >-
+          First chili of the fall. Frost in the forecast, so brought in the last of the peppers.
+      - id: everyday-oct-12
+        channel: note
+        date: 2026-10-12
+        heading: Kids
+        what: >-
+          Mara worked late; the kids and Argus made tacos and read two chapters of the dragon book.

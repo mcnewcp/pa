@@ -1,0 +1,16 @@
+{
+  "session_id": "b3ba739a-0299-504a-bf91-87b4e96fb085",
+  "message_id": "069b8783-9f46-5792-b4d6-2868eb3b58d6",
+  "started_at": "2026-07-23T21:30:00.000Z",
+  "ended_at": "2026-07-23T21:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey what time does the twins game start tonight"
+    },
+    {
+      "role": "assistant",
+      "text": "7:10 pm at Target Field."
+    }
+  ]
+}

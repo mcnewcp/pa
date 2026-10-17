@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -13,11 +13,21 @@ from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
-from pa_evals.agent import AgentRequest, AgentRunner
+from pa_evals import injection
+from pa_evals.agent import AgentRequest, AgentRunner, GraphAccess
 from pa_evals.citations import parse_citations
+from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.judge import Judge, JudgeRequest
-from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores
+from pa_evals.librarian import EvalLibrarian
+from pa_evals.results import (
+    IngestCounts,
+    InjectionChecks,
+    LibrarianRun,
+    QuestionResult,
+    RunResults,
+    Scores,
+)
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -28,26 +38,42 @@ class CorpusCopyError(PaError):
     """A corpus directory that cannot be copied into the inbox."""
 
 
+class NoLibrarianError(PaError):
+    """A configuration with the claims graph, asked with no librarian to build it."""
+
+
 def run_eval(
-    corpus: Path,
+    corpus: Path | Sequence[Path],
     eval_set: EvalSet,
     agent: AgentRunner,
     judge: Judge,
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
+    configuration: Configuration = DEFAULT_CONFIGURATION,
+    librarian: EvalLibrarian | None = None,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
-    one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
+    one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
+    several directories (the scale corpus: Argus's payloads and the extension's) is their
+    union; a payload path in more than one of them is refused. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
-    agent or judge raises is recorded as failed and the run goes on. `setup` describes the run
-    (for example which agent runner and judge) and is carried into the results as is.
+    assistant or judge raises is recorded as failed and the run goes on.
+
+    `configuration` says what the assistant is given. One with the claims graph has
+    `librarian` build it from the ingested L0 before any question is asked, and gives the
+    assistant the PA MCP server over it. `setup` describes the run (for example which agent
+    runner and judge) and is carried into the results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    if configuration.graph and librarian is None:
+        raise NoLibrarianError(
+            f"the {configuration.name} configuration needs a librarian to build its graph"
+        )
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
@@ -57,9 +83,24 @@ def run_eval(
             # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
             known = {entry.episode_id for entry in catalog.entries()}
+        graph: GraphAccess | None = None
+        build: LibrarianRun | None = None
+        checks: InjectionChecks | None = None
+        if configuration.graph and librarian is not None:
+            injection.require_in_l0(eval_set.adversarial, known)
+            build = LibrarianRun.of(librarian.build(data_root, owner))
+            checked = injection.check_graph(
+                data_root.graph, eval_set.adversarial, extensions_root=librarian.extensions_root
+            )
+            checks = InjectionChecks(adversarial_episodes=eval_set.adversarial, checks=checked)
+            graph = GraphAccess(
+                data_root.graph,
+                time_zone=eval_set.zone,
+                hidden_tools=configuration.hidden_tools(),
+            )
 
         def ask(question: EvalQuestion) -> QuestionResult:
-            return _ask(question, eval_set, data_root, owner, store, known, agent, judge)
+            return _ask(question, eval_set, data_root, graph, owner, store, known, agent, judge)
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
@@ -68,7 +109,10 @@ def run_eval(
     for result in questions:
         categories.setdefault(result.category, []).append(result)
     return RunResults(
+        configuration=configuration.name,
         setup=dict(setup or {}),
+        librarian=build,
+        injection_checks=checks,
         as_of=eval_set.as_of,
         ingest=IngestCounts(
             ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
@@ -83,6 +127,7 @@ def _ask(
     question: EvalQuestion,
     eval_set: EvalSet,
     data_root: DataRoot,
+    graph: GraphAccess | None,
     owner: Owner,
     store: L0Store,
     known: set[str],
@@ -99,17 +144,20 @@ def _ask(
         evidence=question.evidence,
         status="failed",
     )
-    request = AgentRequest(question.id, question.question, as_of, data_root, owner)
+    request = AgentRequest(question.id, question.question, as_of, data_root, owner, graph)
     answer = _attempt(lambda: agent.answer(request))
     if isinstance(answer, _Failure):
         recall = 0.0 if question.evidence else None
         return result.model_copy(update={"error": f"agent: {answer}", "evidence_recall": recall})
 
-    cited = parse_citations(answer)
+    cited = parse_citations(answer.text)
     existing = [episode_id for episode_id in cited if episode_id in known]
     result = result.model_copy(
         update={
-            "answer": answer,
+            "answer": answer.text,
+            "cost_usd": answer.cost_usd,
+            "turns": answer.turns,
+            "duration_ms": answer.duration_ms,
             "cited": cited,
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
@@ -123,7 +171,7 @@ def _ask(
                 question=question.question,
                 expected_answer=question.expected_answer,
                 as_of=as_of,
-                answer=answer,
+                answer=answer.text,
                 cited_episodes=episodes,
             )
         )
@@ -168,14 +216,20 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
         return _Failure(error)
 
 
-def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
-    if not corpus.is_dir():
-        raise CorpusCopyError(f"corpus directory not found: {corpus}")
+def _copy_into_inbox(corpus: Path | Sequence[Path], inbox: Path) -> None:
+    directories = [corpus] if isinstance(corpus, Path) else list(corpus)
     inbox.mkdir(parents=True)
-    for payload in sorted(corpus.rglob("*")):
-        relative = payload.relative_to(corpus)
-        if not payload.is_file() or is_hidden(relative):
-            continue
-        target = inbox / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(payload, target)
+    for directory in directories:
+        if not directory.is_dir():
+            raise CorpusCopyError(f"corpus directory not found: {directory}")
+        for payload in sorted(directory.rglob("*")):
+            relative = payload.relative_to(directory)
+            if not payload.is_file() or is_hidden(relative):
+                continue
+            target = inbox / relative
+            if target.exists():
+                raise CorpusCopyError(
+                    f"{relative.as_posix()} is in more than one of the corpus's directories"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(payload, target)

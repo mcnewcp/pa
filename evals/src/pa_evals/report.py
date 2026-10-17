@@ -1,4 +1,8 @@
-"""Writing an eval run to disk: `report.md` and `results.json` in a timestamped run directory."""
+"""Writing an eval run to disk: `report.md` and `results.json` in a timestamped run directory.
+
+Repeated runs are written by `pa_evals.comparison.write_runs`, one directory per run beside a
+comparison of them.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pa_evals.results import QuestionResult, RunResults, Scores
+from pa_evals.results import InjectionChecks, LibrarianRun, QuestionResult, RunResults, Scores
 
 _SCORE_COLUMNS = "Questions | Failed | Correctness | Evidence recall | Citation validity"
 
@@ -22,13 +26,23 @@ def write_run(
     The files hold no wall-clock time, so the same results always write the same bytes.
     Returns the run directory.
     """
-    run_dir = _new_run_dir(runs_dir, now().astimezone(UTC).strftime("%Y-%m-%dT%H%M%SZ"))
-    (run_dir / "results.json").write_text(results.model_dump_json(indent=2) + "\n")
-    (run_dir / "report.md").write_text(render_report(results))
+    run_dir = new_run_dir(runs_dir, now)
+    write_results(results, run_dir)
     return run_dir
 
 
-def _new_run_dir(runs_dir: Path, name: str) -> Path:
+def write_results(results: RunResults, run_dir: Path) -> None:
+    """Write `results.json` and `report.md` for `results` into `run_dir`, which exists."""
+    (run_dir / "results.json").write_text(results.model_dump_json(indent=2) + "\n")
+    (run_dir / "report.md").write_text(render_report(results))
+
+
+def new_run_dir(runs_dir: Path, now: Callable[[], datetime]) -> Path:
+    """A new directory under `runs_dir`, named by the UTC time (suffixed if that's taken)."""
+    return _new_dir(runs_dir, now().astimezone(UTC).strftime("%Y-%m-%dT%H%M%SZ"))
+
+
+def _new_dir(runs_dir: Path, name: str) -> Path:
     runs_dir.mkdir(parents=True, exist_ok=True)
     candidate, attempt = runs_dir / name, 1
     while True:
@@ -44,10 +58,12 @@ def render_report(results: RunResults) -> str:
     overall = results.overall
     ingest = results.ingest
     lines = ["# Eval run", ""]
+    if results.configuration is not None:
+        lines.append(f"- Configuration: {results.configuration}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
-        f"- Corpus: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
+        f"- Ingest: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
         f"quarantined {ingest.quarantined}",
         f"- Questions: {overall.questions} ({overall.failed} failed)",
         "",
@@ -63,22 +79,82 @@ def render_report(results: RunResults) -> str:
         "|---|---|---|---|---|---|",
     ]
     lines += [f"| {_cell(name)} | {_score_cells(s)} |" for name, s in results.categories.items()]
+    if results.librarian is not None:
+        lines += ["", *_librarian_section(results.librarian, results.injection_checks)]
     lines += [
+        "",
+        "## Efficiency by category",
+        "",
+        "Medians over the answers that report them, and their total cost (n/a: none do).",
+        "",
+        "| Category | Median cost | Median turns | Median duration | Total cost |",
+        "|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {_cell(name)} | {_efficiency_cells(s)} |" for name, s in results.categories.items()
+    ]
+    lines += [
+        f"| Overall | {_efficiency_cells(overall)} |",
         "",
         "## By question",
         "",
-        "| Question | Category | Status | Correct | Evidence recall | Citation validity |",
-        "|---|---|---|---|---|---|",
+        "| Question | Category | Status | Correct | Evidence recall | Citation validity "
+        "| Cost | Turns | Duration |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     lines += [
         f"| {_cell(q.id)} | {_cell(q.category)} | {q.status} | {_yes_no(q.correct)} | "
-        f"{format_score(q.evidence_recall)} | {format_score(q.citation_validity)} |"
+        f"{format_score(q.evidence_recall)} | {format_score(q.citation_validity)} | "
+        f"{format_cost(q.cost_usd)} | {format_turns(q.turns)} | {format_duration(q.duration_ms)} |"
         for q in results.questions
     ]
     lines += ["", "## Answers"]
     for question in results.questions:
         lines += ["", *_answer_section(question)]
     return "\n".join(lines) + "\n"
+
+
+def _librarian_section(run: LibrarianRun, checks: InjectionChecks | None) -> list[str]:
+    episodes = run.episodes
+    lines = [
+        "## Claims graph",
+        "",
+        "Built for this run by the librarian from its L0, with the cache kept between runs.",
+        "",
+        f"- Extractor version: {run.extractor_version}",
+        f"- Models: {', '.join(f'{stage} {model}' for stage, model in run.models.items())}",
+        f"- Episodes: {episodes.extracted} extracted, {episodes.skipped} skipped by triage, "
+        f"{episodes.superseded} superseded by a later note version, of {episodes.in_l0} in L0",
+        f"- Statements: {run.statements.kept} kept, "
+        f"{run.statements.dropped_quote_not_found} dropped (quote not found)",
+        f"- Built in {run.duration_seconds:.1f} s",
+        f"- Injection checks: {_injection_text(checks)}",
+        "",
+        "| Stage | Cache hits | Cache misses | Model calls |",
+        "|---|---|---|---|",
+    ]
+    stages = [*run.cache, *(stage for stage in run.model_calls if stage not in run.cache)]
+    for stage in stages:
+        cache = run.cache.get(stage)
+        calls = run.model_calls.get(stage, {})
+        call_text = ", ".join(f"{model}: {n}" for model, n in sorted(calls.items())) or "none"
+        lines.append(
+            f"| {_cell(stage)} | {cache.hits if cache else 'n/a'} | "
+            f"{cache.misses if cache else 'n/a'} | {_cell(call_text)} |"
+        )
+    return lines
+
+
+def _injection_text(checks: InjectionChecks | None) -> str:
+    if checks is None:
+        return "not run"
+    if not checks.adversarial_episodes:
+        return "no adversarial episodes listed in the eval set"
+    count = len(checks.adversarial_episodes)
+    return (
+        f"passed, over {count} adversarial episode{'s' if count > 1 else ''} "
+        f"({'; '.join(checks.checks)})"
+    )
 
 
 def _answer_section(q: QuestionResult) -> list[str]:
@@ -91,6 +167,11 @@ def _answer_section(q: QuestionResult) -> list[str]:
         f"- Required evidence: {_ids(q.evidence)}",
         f"- Cited: {_ids(q.cited)}",
     ]
+    if (q.cost_usd, q.turns, q.duration_ms) != (None, None, None):
+        lines.append(
+            f"- Cost: {format_cost(q.cost_usd)}, {format_turns(q.turns)} turns, "
+            f"{format_duration(q.duration_ms)}"
+        )
     if q.unknown_citations:
         lines.append(f"- Not in L0: {_ids(q.unknown_citations)}")
     if q.irrelevant_citations:
@@ -112,9 +193,31 @@ def _score_cells(scores: Scores) -> str:
     )
 
 
+def _efficiency_cells(scores: Scores) -> str:
+    return (
+        f"{format_cost(scores.median_cost_usd)} | {format_turns(scores.median_turns)} | "
+        f"{format_duration(scores.median_duration_ms)} | {format_cost(scores.total_cost_usd)}"
+    )
+
+
 def format_score(value: float | None) -> str:
     """A score to two decimals, or n/a where it does not apply."""
     return "n/a" if value is None else f"{value:.2f}"
+
+
+def format_cost(usd: float | None) -> str:
+    """A cost in dollars to three decimals (an answer costs cents), or n/a if unknown."""
+    return "n/a" if usd is None else f"${usd:.3f}"
+
+
+def format_turns(turns: float | None) -> str:
+    """A number of turns, with a decimal only where a median falls between two."""
+    return "n/a" if turns is None else f"{turns:g}"
+
+
+def format_duration(ms: float | None) -> str:
+    """A duration in seconds to one decimal, or n/a if unknown."""
+    return "n/a" if ms is None else f"{ms / 1000:.1f} s"
 
 
 def _yes_no(value: bool | None) -> str:
