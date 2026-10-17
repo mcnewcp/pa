@@ -31,6 +31,8 @@ class EpisodeCounts(BaseModel):
     """Episodes whose statements are in the graph, from the cache or a model call."""
     skipped: int = 0
     """Mail that triage left out of the graph."""
+    superseded: int = 0
+    """Daily note versions left out because a later version of the same note supersedes them."""
     not_extracted: int = 0
     """Episodes left out because no stage handles their kind yet."""
     triage: TriageCounts = TriageCounts()
@@ -76,7 +78,8 @@ class BuildReport(BaseModel):
                 f"published build {self.build_id} in {self.duration_seconds:.1f} s "
                 f"(extractor {self.extractor_version})",
                 f"episodes: {self.episodes.extracted} extracted, {self.episodes.skipped} "
-                f"skipped by triage, of {self.episodes.in_l0} in L0",
+                f"skipped by triage, {self.episodes.superseded} superseded by a later note "
+                f"version, of {self.episodes.in_l0} in L0",
                 f"triage: {_counts(self.episodes.triage.model_dump())}",
                 f"cache: {cache_text}",
                 f"model calls: {call_text}",

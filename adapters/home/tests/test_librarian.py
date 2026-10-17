@@ -1893,6 +1893,30 @@ def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
     assert report.episodes.extracted == 1
 
 
+@pytest.mark.parametrize("corrected_first", [False, True], ids=["in-order", "correction-first"])
+def test_a_corrected_note_yields_statements_only_from_its_latest_version(
+    librarian: Librarian, corrected_first: bool
+):
+    # Either version may have the lower episode id, so each takes a turn at being latest.
+    deadlines = ["Swim registration closes Oct 9.", "Swim registration closes Oct 16."]
+    first, latest = reversed(deadlines) if corrected_first else deadlines
+    librarian.mail.note(first, day=5, captured="2026-09-06T01:00")
+    librarian.mail.note(latest, day=5, captured="2026-09-06T08:10")
+    librarian.mail.note("Mara starts nights on Monday.", day=6)
+    for text in [*deadlines, "Mara starts nights on Monday."]:
+        librarian.model.says(text, statement(text, kind="reported_status"))
+
+    report = librarian.rebuild()
+
+    assert sorted(quotes(librarian.call("statements", who="argus@example.com"))) == sorted(
+        [latest, "Mara starts nights on Monday."]
+    )
+    assert report.episodes.superseded == 1
+    assert report.episodes.extracted == 2
+    assert report.episodes.in_l0 == 3
+    assert "1 superseded by a later note version" in report.summary()
+
+
 def test_a_chats_owner_turns_yield_statements_told_to_the_assistant(librarian: Librarian):
     librarian.mail.chat(
         ("owner", "Hannah's birthday is March 3. I promised to bake the cake."),
