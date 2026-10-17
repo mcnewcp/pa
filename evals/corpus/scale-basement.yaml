@@ -1,0 +1,514 @@
+# Scale corpus extension (v0.12): the basement flood and insurance claim, April to September
+# 2026. One of the two long storylines the scale corpus adds to argus.yaml; the other is in
+# scale-cabin.yaml. Everyday life, the bulk mail, and the adversarial emails are in the other
+# scale-*.yaml files beside this one. They are loaded together:
+#   uv run pa-eval corpus generate evals/corpus/argus.yaml evals/corpus/scale-*.yaml OUT
+#
+# Ground truth for evals/corpus/questions-scale.yaml. Nothing here touches an Argus thread or an
+# Argus daily-note day, and every loop the owner is party to is closed by the as-of time, except
+# Sean's unanswered request for his dehumidifiers back (the unanswered-request question).
+#
+# "The plumber" is never named anywhere in the corpus: he is known only by his role.
+
+cast:
+  - id: sean
+    name: Sean Brennan
+    emails: [sean.brennan@example.com]
+  - id: denise
+    name: Denise Hart
+    emails: [denise.hart@greatplainsmutual.example]
+  # Organizations that send mail.
+  - id: great-plains
+    name: Great Plains Mutual Claims
+    emails: [claims@greatplainsmutual.example]
+  - id: dryright
+    name: DryRight Restoration
+    emails: [office@dryrightrestoration.example]
+  - id: buildright
+    name: BuildRight Supply
+    emails: [orders@buildrightsupply.example]
+
+storylines:
+  - id: basement
+    title: The basement flood and insurance claim
+    summary: >-
+      A storm in April floods Argus and Mara McNevans's finished basement when the old sump pump
+      fails. Their friend Sean Brennan (Kate's husband) helps that night and recommends DryRight
+      Restoration for the dry-out. A plumber, never named, replaces the pump. Great Plains Mutual
+      covers the damage under the homeowner's policy's water backup endorsement, with Denise
+      Hart as the adjuster. Hannah Lee of Birchwood Remodeling rebuilds the basement in June and
+      July, finding mold on the way, which a supplement to the claim covers. The claim closes in
+      August.
+    events:
+      - id: basement-flood-note
+        channel: note
+        date: 2026-04-19
+        heading: Basement
+        participants: [mara, sean]
+        what: >-
+          Big storm overnight. Woke up to about two inches of water across the finished
+          basement: the sump pump never kicked on. Sean Brennan came over at 7 am with two of
+          his dehumidifiers and a wet-vac, and helped Argus pull the furniture out. Sean
+          recommended DryRight Restoration, which dried out the Brennans' basement a few years
+          ago. Argus called DryRight and a plumber; the plumber is coming tomorrow morning.
+      - id: basement-claim-report
+        channel: email
+        at: 2026-04-20T07:50:00
+        from: argus
+        to: [great-plains]
+        subject: "Water damage claim, policy HO-5520391"
+        what: >-
+          Argus reports water damage under homeowner's policy HO-5520391. Overnight on
+          April 18-19 the sump pump failed in a storm and about two inches of water covered the
+          finished basement; the carpet and the bottom of the drywall are soaked. DryRight
+          Restoration is starting the dry-out today. He asks what the next steps are.
+      - id: basement-claim-ack
+        channel: email
+        at: 2026-04-20T08:25:00
+        from: great-plains
+        to: [argus]
+        category: updates
+        subject: "Claim GP-26-118734 received"
+        what: >-
+          An automated message from Great Plains Mutual: a water damage claim has been opened
+          on policy HO-5520391, claim number GP-26-118734. An adjuster will contact Argus within
+          two business days. Keep receipts for emergency repairs. Sign it as Great Plains Mutual
+          Claims, with no individual staff names.
+      - id: basement-plumber-note
+        channel: note
+        date: 2026-04-20
+        heading: Basement
+        participants: [mara]
+        what: >-
+          The plumber came at 8 am. He said the sump pump is the original one from when the
+          house was built, about 15 years old, and its float switch had stuck, so the pump never
+          turned on. He'll come back Friday to put in a new pump with a battery backup. DryRight
+          came at 1 pm: they pulled up the carpet and pad, cut the drywall two feet up, and set
+          up three fans and two dehumidifiers. Their equipment stays about four days.
+      - id: basement-dryout
+        channel: calendar
+        at: 2026-04-20T09:00:00
+        calendar: family
+        title: "DryRight: water extraction"
+        start: 2026-04-20T13:00:00
+        end: 2026-04-20T16:00:00
+        location: Home
+        organizer: argus
+        attendees: [mara]
+        what: DryRight's crew extracts the water and sets up the drying equipment.
+      - id: basement-dryright-scope
+        channel: email
+        at: 2026-04-21T10:15:00
+        from: dryright
+        to: [argus]
+        subject: "Drying plan: McNevans basement"
+        what: >-
+          DryRight confirms its drying equipment is running in the basement and that a
+          technician will check moisture readings each day. It expects to pick the equipment up
+          on Friday, April 24. DryRight bills the insurance company directly, and asks Argus for
+          his claim number. Sign it as the DryRight Restoration office, with no individual staff
+          names.
+      - id: basement-dryright-claim-number
+        channel: email
+        at: 2026-04-21T12:30:00
+        from: argus
+        to: [dryright]
+        reply_to: basement-dryright-scope
+        what: >-
+          Argus gives DryRight the claim number, GP-26-118734, with Great Plains Mutual, and
+          says no adjuster has been assigned yet.
+      - id: basement-denise-intro
+        channel: email
+        at: 2026-04-22T09:05:00
+        from: denise
+        to: [argus]
+        subject: "Claim GP-26-118734: inspection"
+        what: >-
+          Denise Hart introduces herself as the Great Plains Mutual adjuster on claim
+          GP-26-118734. She would like to inspect the basement on Tuesday, April 28 at 10:00 am.
+          Before then, she asks Argus to send photos of the damage and the plumber's invoice,
+          since it should state what caused the failure.
+      - id: basement-argus-will-send-invoice
+        channel: email
+        at: 2026-04-22T20:30:00
+        from: argus
+        to: [denise]
+        reply_to: basement-denise-intro
+        what: >-
+          Argus says Tuesday at 10 works and attaches photos of the damage. The plumber is
+          replacing the pump on Friday, and Argus will send Denise his invoice once he has it.
+          He mentions that he'll be away for work that week, so Mara will be home for the
+          inspection.
+      - id: basement-inspection
+        channel: calendar
+        at: 2026-04-22T20:40:00
+        calendar: family
+        title: "Insurance inspection: Denise Hart (Great Plains)"
+        start: 2026-04-28T10:00:00
+        end: 2026-04-28T11:00:00
+        location: Home
+        description: Mara is home for it; Argus is in Denver.
+        organizer: argus
+        attendees: [mara, denise]
+        what: The adjuster inspects the basement.
+      - id: basement-inspection-chat
+        channel: assistant_chat
+        at: 2026-04-22T21:00:00
+        session: basement-claim
+        what: >-
+          Argus asks the assistant when the insurance adjuster is coming. The assistant says
+          Denise Hart of Great Plains Mutual is inspecting on Tuesday, April 28 at 10:00 am, and
+          that Mara will be home for it.
+      - id: basement-pump-note
+        channel: note
+        date: 2026-04-24
+        heading: Basement
+        participants: [mara]
+        what: >-
+          The plumber put in the new sump pump this morning, with a battery backup: $1,280. He
+          left the paper invoice with Mara. DryRight picked up their fans and dehumidifiers this
+          afternoon; the walls read dry.
+      - id: basement-dryright-done
+        channel: email
+        at: 2026-04-24T16:30:00
+        from: dryright
+        to: [argus]
+        reply_to: basement-dryright-claim-number
+        what: >-
+          DryRight says the basement reads dry and the equipment was picked up today. It has sent
+          its $3,400 invoice to Great Plains Mutual for claim GP-26-118734. Sign it as the
+          DryRight Restoration office, with no individual staff names.
+      - id: basement-mara-sends-invoice
+        channel: email
+        at: 2026-04-27T07:45:00
+        from: mara
+        to: [denise]
+        cc: [argus]
+        subject: "Claim GP-26-118734: plumber's invoice"
+        what: >-
+          Mara introduces herself as Argus's wife and sends Denise a photo of the plumber's
+          invoice for the new sump pump and battery backup ($1,280). The invoice says the old
+          pump failed because its float switch stuck. Mara will be home for Tuesday's
+          inspection, since Argus is away for work.
+      - id: basement-denise-got-invoice
+        channel: email
+        at: 2026-04-27T14:20:00
+        from: denise
+        to: [mara]
+        cc: [argus]
+        reply_to: basement-mara-sends-invoice
+        what: >-
+          Denise thanks Mara: she has the plumber's invoice, which is everything she needed
+          before the inspection. She'll see Mara on Tuesday at 10.
+      - id: basement-inspection-report
+        channel: email
+        at: 2026-04-28T18:05:00
+        from: mara
+        to: [argus]
+        subject: Inspection today
+        what: >-
+          Mara tells Argus how the inspection went. Denise told her the damage falls under the
+          policy's water backup endorsement, which has a $10,000 limit and a $1,000 deductible,
+          and that the carpet can't be saved and will have to be replaced. Denise said she'd
+          send a written estimate within a week.
+      - id: basement-inspection-chat-followup
+        channel: assistant_chat
+        at: 2026-04-28T21:30:00
+        session: basement-claim
+        what: >-
+          Argus, away in Denver, asks how the inspection went. The assistant passes on Mara's
+          email from that evening: Denise said the damage falls under the water backup
+          endorsement ($10,000 limit, $1,000 deductible), the carpet has to be replaced, and a
+          written estimate is coming within a week.
+      - id: basement-estimate
+        channel: email
+        at: 2026-05-05T11:00:00
+        from: denise
+        to: [argus]
+        cc: [mara]
+        reply_to: basement-argus-will-send-invoice
+        what: >-
+          Denise sends the claim estimate. DryRight's dry-out, $3,400, is paid to DryRight
+          directly. The rebuild (drywall, flooring, baseboards, and paint) is allowed at $6,600,
+          which brings the claim to the endorsement's $10,000 limit. After the $1,000
+          deductible, Great Plains will pay Argus and Mara $5,600. The new sump pump is
+          maintenance and isn't covered. Payment goes out in five to seven business days.
+      - id: basement-deductible-chat
+        channel: assistant_chat
+        at: 2026-05-05T21:10:00
+        session: basement-claim
+        what: >-
+          Argus asks the assistant how much the insurance is paying for the basement. The
+          assistant says that, per Denise Hart's estimate that morning, Great Plains pays
+          DryRight $3,400 directly and pays Argus and Mara $5,600: the $6,600 rebuild allowance
+          less the $1,000 deductible.
+      - id: basement-birchwood-ask
+        channel: email
+        at: 2026-05-11T12:40:00
+        from: argus
+        to: [hannah]
+        subject: Basement rebuild after water damage
+        what: >-
+          Argus says a coworker of Mara's recommended Birchwood Remodeling. Their finished
+          basement flooded in April and has been dried out; he asks for an estimate to rebuild
+          it: new lower drywall, flooring, baseboards, and paint. Insurance is covering part of
+          it.
+      - id: basement-birchwood-visit-reply
+        channel: email
+        at: 2026-05-12T08:30:00
+        from: hannah
+        to: [argus]
+        reply_to: basement-birchwood-ask
+        what: >-
+          Hannah Lee of Birchwood Remodeling offers to come measure the basement on Thursday,
+          May 14 at 5:30 pm.
+      - id: basement-payment-issued
+        channel: email
+        at: 2026-05-12T10:15:00
+        from: great-plains
+        to: [argus]
+        category: updates
+        subject: "Payment issued: claim GP-26-118734"
+        what: >-
+          An automated message from Great Plains Mutual: a check for $5,600 has been mailed to
+          Argus and Mara McNevans for claim GP-26-118734, and a separate payment of $3,400 has
+          been issued to DryRight Restoration. Sign it as Great Plains Mutual Claims, with no
+          individual staff names.
+      - id: basement-hannah-visit-chat
+        channel: assistant_chat
+        at: 2026-05-12T12:05:00
+        session: basement-claim
+        what: >-
+          Argus asks the assistant when Hannah from Birchwood is coming to look at the basement.
+          The assistant says Thursday, May 14 at 5:30 pm.
+      - id: basement-birchwood-visit
+        channel: calendar
+        at: 2026-05-12T08:45:00
+        calendar: family
+        title: "Basement estimate: Hannah Lee (Birchwood)"
+        start: 2026-05-14T17:30:00
+        end: 2026-05-14T18:30:00
+        location: Home
+        organizer: argus
+        attendees: [hannah, mara]
+        what: Hannah measures the basement for an estimate.
+      - id: basement-birchwood-estimate
+        channel: email
+        at: 2026-05-19T10:20:00
+        from: hannah
+        to: [argus]
+        cc: [mara]
+        subject: "Birchwood estimate: basement rebuild"
+        what: >-
+          Hannah sends Birchwood's estimate: $9,800 for new drywall four feet up, paint,
+          baseboards, and flooring. She suggests luxury vinyl plank instead of carpet, since it
+          comes through another flood and carpet doesn't. The work takes about two weeks, and
+          Birchwood can start Monday, June 22.
+      - id: basement-decision-note
+        channel: note
+        date: 2026-05-20
+        heading: Basement
+        participants: [mara, hannah]
+        what: >-
+          Birchwood's basement estimate is $9,800 against the insurance's $6,600 rebuild
+          allowance. Mara wants the vinyl plank floor instead of carpet. Going with Birchwood,
+          starting June 22.
+      - id: basement-birchwood-yes
+        channel: email
+        at: 2026-05-21T07:55:00
+        from: argus
+        to: [hannah]
+        cc: [mara]
+        reply_to: basement-birchwood-estimate
+        what: >-
+          Argus accepts the estimate, vinyl plank floor included, and says a June 22 start
+          works. He asks how much the deposit is.
+      - id: basement-birchwood-deposit
+        channel: email
+        at: 2026-05-22T09:10:00
+        from: hannah
+        to: [argus]
+        cc: [mara]
+        reply_to: basement-birchwood-yes
+        what: >-
+          Hannah says the deposit is 30%, $2,940, paid by check or online. The start is
+          confirmed for Monday, June 22, for about two weeks.
+      - id: basement-rebuild
+        channel: calendar
+        at: 2026-05-22T19:00:00
+        calendar: family
+        title: "Birchwood: basement rebuild"
+        start: 2026-06-22
+        end: 2026-07-03
+        location: Home
+        organizer: argus
+        attendees: [hannah, mara]
+        what: Birchwood rebuilds the basement.
+      - id: basement-deposit-paid
+        channel: email
+        at: 2026-05-26T20:15:00
+        from: argus
+        to: [hannah]
+        reply_to: basement-birchwood-deposit
+        what: Argus tells Hannah he paid the $2,940 deposit online today.
+      - id: basement-dehumidifier-order
+        channel: email
+        at: 2026-05-28T13:30:00
+        from: buildright
+        to: [argus]
+        category: updates
+        subject: "Order confirmed: BR-2209417"
+        what: >-
+          An automated order confirmation from BuildRight Supply, order BR-2209417: one 50-pint
+          dehumidifier with a built-in pump, $279, delivering Monday, June 1. Sign it as
+          BuildRight Supply, with no individual staff names.
+      - id: basement-dehumidifier-note
+        channel: note
+        date: 2026-06-01
+        heading: Basement
+        what: >-
+          Our own dehumidifier came today and is set up in the basement, draining into the
+          sump. Sean's two dehumidifiers are still in our garage.
+      - id: basement-mold-change-order
+        channel: email
+        at: 2026-06-29T15:40:00
+        from: hannah
+        to: [argus]
+        cc: [mara]
+        subject: "Change order: mold behind the utility room wall"
+        what: >-
+          Hannah reports that her crew found mold on the back of the drywall in the utility
+          room. Removing and treating it adds $2,300. She needs Argus's approval to go ahead;
+          work in that room is paused, and the finish date moves to Friday, July 10.
+      - id: basement-mold-approved
+        channel: email
+        at: 2026-06-29T19:20:00
+        from: argus
+        to: [hannah]
+        cc: [mara]
+        reply_to: basement-mold-change-order
+        what: >-
+          Argus approves the $2,300 mold change order and tells Hannah to go ahead. He'll ask
+          the insurance company to cover it.
+      - id: basement-change-order-chat
+        channel: assistant_chat
+        at: 2026-06-29T20:00:00
+        session: basement-claim
+        what: >-
+          Argus asks the assistant what Birchwood's change order was about. The assistant says
+          Hannah's crew found mold behind the utility room drywall; removing it adds $2,300 and
+          moves the finish date to Friday, July 10. Argus says he already approved it.
+      - id: basement-rebuild-extended
+        channel: calendar_update
+        at: 2026-06-29T19:30:00
+        updates: basement-rebuild
+        end: 2026-07-10
+        what: The basement rebuild now runs through Friday, July 10.
+      - id: basement-mold-claim
+        channel: email
+        at: 2026-06-30T08:15:00
+        from: argus
+        to: [denise]
+        subject: "Claim GP-26-118734: mold found during the rebuild"
+        what: >-
+          Argus tells Denise that the contractor rebuilding the basement found mold behind the
+          utility room drywall, and removing it adds $2,300. He attaches Birchwood's change order
+          and asks whether the mold work can be added to the claim.
+      - id: basement-denise-called
+        channel: email
+        at: 2026-07-07T17:50:00
+        from: mara
+        to: [argus]
+        subject: Denise called about the mold
+        what: >-
+          Mara tells Argus that Denise Hart called her today about the mold. Denise said mold
+          from a covered water loss is covered under a separate $5,000 mold limit, outside the
+          $10,000 water backup limit, and that she needs Birchwood's final invoice and photos of
+          the mold before she can approve it.
+      - id: basement-finished-note
+        channel: note
+        date: 2026-07-10
+        heading: Basement
+        participants: [hannah, mara]
+        what: >-
+          Birchwood finished the basement today: vinyl plank floor, new drywall, paint, and
+          baseboards. It looks better than before the flood. Hannah's final invoice is $12,100
+          ($9,800 plus the $2,300 mold work); paid the balance of $9,160. Sent the invoice and
+          the mold photos to Denise tonight.
+      - id: basement-final-invoice-to-denise
+        channel: email
+        at: 2026-07-10T21:05:00
+        from: argus
+        to: [denise]
+        reply_to: basement-mold-claim
+        what: >-
+          Argus sends Denise Birchwood's final invoice, $12,100 including the $2,300 mold
+          removal, and photos of the mold, as she asked Mara on the phone.
+      - id: basement-paint-chat
+        channel: assistant_chat
+        at: 2026-07-14T21:40:00
+        session: basement-paint
+        what: >-
+          Argus tells the assistant to remember, for touch-ups, that the basement walls are
+          painted Sherwin-Williams Agreeable Gray (SW 7029) in eggshell, and that there's a
+          leftover gallon under the basement stairs. The assistant says it will remember.
+      - id: basement-floor-warranty
+        channel: email
+        at: 2026-07-13T11:00:00
+        from: hannah
+        to: [argus]
+        cc: [mara]
+        subject: "Your basement floor: warranty"
+        what: >-
+          Hannah thanks Argus and Mara for their business. The vinyl plank floor carries a
+          25-year residential warranty, which Birchwood has already registered in their name.
+          Spare planks are on the shelf in the utility room.
+      - id: basement-mold-supplement
+        channel: email
+        at: 2026-07-21T13:30:00
+        from: denise
+        to: [argus]
+        reply_to: basement-final-invoice-to-denise
+        what: >-
+          Denise approves a $2,300 supplement on claim GP-26-118734 for the mold removal, under
+          the policy's separate mold limit. Payment goes out in five to seven business days.
+      - id: basement-supplement-paid
+        channel: email
+        at: 2026-07-23T10:05:00
+        from: great-plains
+        to: [argus]
+        category: updates
+        subject: "Payment issued: claim GP-26-118734 supplement"
+        what: >-
+          An automated message from Great Plains Mutual: a supplemental check for $2,300 has
+          been mailed to Argus and Mara McNevans for claim GP-26-118734. Sign it as Great Plains
+          Mutual Claims, with no individual staff names.
+      - id: basement-claim-closed
+        channel: email
+        at: 2026-08-04T09:00:00
+        from: great-plains
+        to: [argus]
+        category: updates
+        subject: "Claim GP-26-118734 closed"
+        what: >-
+          An automated message from Great Plains Mutual: claim GP-26-118734 is closed. In total
+          it paid $11,300: $5,600 and $2,300 to Argus and Mara McNevans, and $3,400 to DryRight
+          Restoration. Sign it as Great Plains Mutual Claims, with no individual staff names.
+      - id: basement-closed-note
+        channel: note
+        date: 2026-08-04
+        heading: Basement
+        what: >-
+          The insurance claim is closed. Insurance paid $11,300 in all ($3,400 of it straight
+          to DryRight). Out of our own pocket: $4,200 to Birchwood beyond what insurance covered,
+          plus $1,280 for the sump pump.
+      - id: basement-sean-dehumidifiers
+        channel: email
+        at: 2026-09-14T19:30:00
+        from: sean
+        to: [argus]
+        subject: Our dehumidifiers?
+        what: >-
+          Sean asks whether Argus still has the two dehumidifiers he brought over the night of
+          the flood in April. The Brennans' basement smells musty, and he'd like them back this
+          week if Argus is done with them.
