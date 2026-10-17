@@ -1,0 +1,16 @@
+{
+  "session_id": "4d6f5d33-8f8a-520d-bdaa-46623a669710",
+  "message_id": "19018a74-056b-5e08-b6eb-6c00e4dd067d",
+  "started_at": "2026-05-12T17:05:00.000Z",
+  "ended_at": "2026-05-12T17:05:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "when's hannah from birchwood coming to look at the basement?"
+    },
+    {
+      "role": "assistant",
+      "text": "Hannah Lee from Birchwood Remodeling is coming Thursday, May 14 at 5:30 pm."
+    }
+  ]
+}

@@ -97,6 +97,7 @@ Don't chat during an eval run: the run fails if the inbox changes while it runs,
 deploy/home/run-evals.sh                               # --agent claude --judge model
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet
 deploy/home/run-evals.sh --agent claude --judge model --corpus argus --runs 3   # run-1/ to run-3/ and comparison.md
+deploy/home/run-evals.sh --agent claude --judge model --corpus scale --runs 3   # the scale corpus and its 40 questions
 deploy/home/run-evals.sh --agent claude --judge model --configuration graph-plus-files   # or query-only; default files-alone
 PA_LIBRARIAN_EXTRACTION_MODEL=claude-opus-5-5 deploy/home/run-evals.sh --agent claude --judge model --configuration graph-plus-files
 uv run pa-eval compare evals/baselines/v0.11 evals/runs/<run>                  # side by side, on the devbox

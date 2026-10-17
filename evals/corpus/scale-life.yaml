@@ -707,8 +707,8 @@ storylines:
         to: [argus]
         subject: Camp pickup Friday
         what: >-
-          Mara says she'll pick Theo up from his last day of camp on Friday at 3:00, since her
-          shift doesn't start until later.
+          Mara says she'll pick Theo up from his last day of camp on Friday at 1:00, since camp
+          lets out early that day and her shift doesn't start until 3:00.
       - id: kids-tball-last-note
         channel: note
         date: 2026-07-21

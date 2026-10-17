@@ -166,22 +166,23 @@ def payload_path(spec: StorylineSpec, event: Event) -> str:
     return f"{source}/{stem}{payload_extension(source)}"
 
 
-def evidence_ids(spec: StorylineSpec, corpus_dir: Path) -> dict[str, str]:
+def evidence_ids(spec: StorylineSpec, *corpus_dirs: Path) -> dict[str, str]:
     """The episode id of every spec event, by event id, as ingest will assign it.
 
     Ids are worked out by ingest's own normalizers from the payload each event is in, so they
     always match. A daily note's id depends on its prose, so this reads the generated corpus.
+    For an extended spec, give the base corpus and the extension's: each payload is read from
+    the first of `corpus_dirs` that has it.
     """
     ids: dict[str, str] = {}
     captured_at = dt.datetime.now(dt.UTC)
     for event in spec.events:
         path = payload_path(spec, event)
-        try:
-            raw = (corpus_dir / path).read_bytes()
-        except OSError:
-            raise GeneratedCorpusError(
-                f"event {event.id}: its payload {path} is not in {corpus_dir}"
-            ) from None
+        found = [corpus / path for corpus in corpus_dirs if (corpus / path).is_file()]
+        if not found:
+            searched = ", ".join(str(corpus) for corpus in corpus_dirs)
+            raise GeneratedCorpusError(f"event {event.id}: its payload {path} is not in {searched}")
+        raw = found[0].read_bytes()
         normalize = inbox_normalizer(PurePosixPath(path), spec.owner_identity)
         ids[event.id] = normalize(raw, captured_at=captured_at).episode_id
     return ids

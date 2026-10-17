@@ -1,0 +1,23 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-lakeshore-bank-026@lakeshorebank.example>
+Date: Sun, 23 Aug 2026 08:02:00 -0500
+From: Lakeshore Bank <alerts@lakeshorebank.example>
+To: Argus McNevans <argus@example.com>
+Subject: Card transaction alert
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hello Argus,
+
+A transaction was made with your debit card.
+
+Card: ****7716
+Merchant: SUNRISE FUEL #22
+Amount: $48.37
+Date: August 23, 2026, 7:58 AM
+
+If you don't recognize this transaction, call us right away at the number on =
+the back of your card.
+
+Lakeshore Bank Alerts

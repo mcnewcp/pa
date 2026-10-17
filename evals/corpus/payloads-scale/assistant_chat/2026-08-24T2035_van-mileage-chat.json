@@ -1,0 +1,16 @@
+{
+  "session_id": "e310c72b-24b5-515e-8c92-d69a5cf1f765",
+  "message_id": "64e8ba2b-045e-5b9c-a5f5-857df36f9a39",
+  "started_at": "2026-08-25T01:35:00.000Z",
+  "ended_at": "2026-08-25T01:35:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey, offered the old odyssey to jerome wells tonight. $9,500, it's at 131k miles. can you keep track of that"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it. I've noted that you offered the Odyssey to Jerome Wells for $9,500 with 131,000 miles on it."
+    }
+  ]
+}

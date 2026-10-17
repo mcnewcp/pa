@@ -1,0 +1,21 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-parcelpoint-009@parcelpoint.example>
+Date: Wed, 20 May 2026 18:15:00 -0500
+From: ParcelPoint <tracking@parcelpoint.example>
+To: Argus McNevans <argus@example.com>
+Subject: Delivered: your package has arrived
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Your package was delivered.
+
+Tracking #: PP7381 0042 9915
+Delivered: Wednesday, May 20, 2026 at 6:11 PM
+Left at: Front door
+
+View delivery photo: parcelpoint.example/track
+
+Not where you expected? Let us know within 48 hours.
+
+ParcelPoint

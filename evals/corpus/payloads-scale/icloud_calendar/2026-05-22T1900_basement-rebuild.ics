@@ -1,0 +1,22 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//pa//synthetic corpus//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Family
+X-WR-TIMEZONE:America/Chicago
+BEGIN:VEVENT
+UID:basement-rebuild@corpus.pa.invalid
+SEQUENCE:0
+DTSTAMP:20260523T000000Z
+CREATED:20260523T000000Z
+LAST-MODIFIED:20260523T000000Z
+DTSTART;VALUE=DATE:20260622
+DTEND;VALUE=DATE:20260704
+SUMMARY:Birchwood: basement rebuild
+LOCATION:Home
+ORGANIZER;CN=Argus McNevans:mailto:argus@example.com
+ATTENDEE;CN=Hannah Lee:mailto:hannah@birchwoodremodeling.example
+ATTENDEE;CN=Mara McNevans:mailto:mara@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

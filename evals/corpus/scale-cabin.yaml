@@ -153,8 +153,8 @@ storylines:
         to: [kate, mara, ben@okafor-studio.example, tasha, sean]
         reply_to: cabin-meal-plan
         what: >-
-          Argus says Monday and Thursday are theirs (tacos and burgers), and he'll bring the
-          cooler and the camp stove.
+          Argus says Monday and Thursday are theirs: tacos on Monday and burgers on Thursday.
+          He'll bring the cooler and the camp stove.
       - id: cabin-sean-grill
         channel: email
         at: 2026-06-11T12:20:00
@@ -318,7 +318,7 @@ storylines:
         reply_to: cabin-okie-will-pay
         what: >-
           Kate gives Okie a friendly nudge: she still hasn't received the Okafors' $950 for the
-          cabin.
+          cabin, which he'd said would come by September 1, and she'd like it soon.
       - id: cabin-okie-this-weekend
         channel: email
         at: 2026-09-22T07:15:00

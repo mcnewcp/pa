@@ -232,6 +232,35 @@ def test_run_chooses_the_argus_corpus_and_its_eval_set_by_default_or_by_name(tmp
     assert [question["id"] for question in results["questions"]] == ["day-of-week"]
 
 
+def test_run_by_name_asks_the_scale_corpus_with_its_own_eval_set(tmp_path):
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
+    verdicts = tmp_path / "verdicts.json"
+    verdict = {"correct": True, "reasoning": "Wednesday.", "relevant_citations": []}
+    verdicts.write_text(json.dumps({"day-of-week": verdict}))
+    runs = tmp_path / "runs"
+
+    status = main(
+        [
+            "run",
+            *["--corpus", "scale"],
+            *["--runs-dir", str(runs), "--only", "day-of-week"],
+            *["--agent", "scripted", "--answers", str(answers)],
+            *["--judge", "scripted", "--verdicts", str(verdicts)],
+        ]
+    )
+
+    assert status == 0
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["setup"]["corpus"] == "scale"
+    # The scale corpus is the union of Argus's payloads and the extension's.
+    payloads = [p for d in (frozen.PAYLOADS, frozen.SCALE_PAYLOADS) for p in d.rglob("*")]
+    assert results["ingest"]["ingested"] == len([p for p in payloads if p.is_file()])
+    assert results["ingest"]["ingested"] > 1100
+    assert results["ingest"]["quarantined"] == 0
+
+
 def test_a_corpus_directory_needs_its_eval_set(tmp_path, scripts, capsys):
     args = ["run", "--corpus", str(CORPUS), "--runs-dir", str(tmp_path / "runs"), *scripts]
 
@@ -246,7 +275,7 @@ def test_an_unknown_corpus_name_is_refused(tmp_path, scripts, capsys):
 
     assert main(args) == 1
 
-    assert "atlantis is neither a corpus (argus) nor a directory" in capsys.readouterr().err
+    assert "atlantis is neither a corpus (argus, scale) nor a directory" in capsys.readouterr().err
 
 
 def test_the_report_shows_each_answers_cost_turns_and_duration_and_sums_them_up_by_category(

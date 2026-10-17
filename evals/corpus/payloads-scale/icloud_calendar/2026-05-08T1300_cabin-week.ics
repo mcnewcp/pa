@@ -1,0 +1,23 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//pa//synthetic corpus//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Family
+X-WR-TIMEZONE:America/Chicago
+BEGIN:VEVENT
+UID:cabin-week@corpus.pa.invalid
+SEQUENCE:0
+DTSTAMP:20260508T180000Z
+CREATED:20260508T180000Z
+LAST-MODIFIED:20260508T180000Z
+DTSTART;VALUE=DATE:20260809
+DTEND;VALUE=DATE:20260816
+SUMMARY:Cabin week: Lake Namakagon
+LOCATION:Loon Song Cabin\, Lake Namakagon\, WI
+DESCRIPTION:With the Brennans and the Okafors. Check-in 4 pm Sunday\, check
+ -out 10 am Saturday.
+ORGANIZER;CN=Argus McNevans:mailto:argus@example.com
+ATTENDEE;CN=Mara McNevans:mailto:mara@example.com
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

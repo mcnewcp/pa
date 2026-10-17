@@ -347,8 +347,8 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _corpus(corpus: str, eval_set: Path | None) -> tuple[Path, Path]:
-    """The payload directory and eval set for `--corpus` (a name or a directory)."""
+def _corpus(corpus: str, eval_set: Path | None) -> tuple[tuple[Path, ...], Path]:
+    """The payload directories and eval set for `--corpus` (a name or a directory)."""
     if corpus in frozen.CORPORA:
         named = frozen.CORPORA[corpus]
         return named.payloads, eval_set or named.eval_set
@@ -358,7 +358,7 @@ def _corpus(corpus: str, eval_set: Path | None) -> tuple[Path, Path]:
         )
     if eval_set is None:
         raise CorpusChoiceError("--corpus DIR needs --eval-set FILE")
-    return Path(corpus), eval_set
+    return (Path(corpus),), eval_set
 
 
 class CorpusChoiceError(PaError):
