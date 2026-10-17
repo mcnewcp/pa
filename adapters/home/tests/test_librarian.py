@@ -103,9 +103,17 @@ class Mailbox:
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
-    def note(self, text: str, *, day: int) -> str:
-        """Store the owner's daily note for a day in September and return its episode id."""
-        raw = f"Vault-Path: Daily/2026-09-{day:02d}.md\n\n{text}".encode()
+    def note(self, text: str, *, day: int, captured: str | None = None) -> str:
+        """Store the owner's daily note for a day in September and return its episode id.
+
+        `captured` is when this version was captured, in America/Chicago; by default the
+        night of its day."""
+        captured_at = datetime.fromisoformat(captured or f"2026-09-{day:02d}T23:00")
+        header = (
+            f"Vault-Path: Daily/2026-09-{day:02d}.md\n"
+            f"Captured-At: {captured_at.replace(tzinfo=CHICAGO).isoformat()}\n"
+        )
+        raw = f"{header}\n{text}".encode()
         envelope = normalize_daily_note(
             raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
         )

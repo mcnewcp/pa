@@ -64,7 +64,8 @@ def _rebuild(store: L0Store, owner: Owner, old: Envelope) -> Envelope:
     raw = store.get_raw(old.raw_ref)
     if raw is None:
         raise RenormalizeError(f"raw payload {old.raw_ref} is missing")
-    # The capture time is not in the raw payload, so it carries over from the old envelope.
+    # Most raw payloads don't record their capture time, so it carries over from the old
+    # envelope. A daily note's capture header does (ADR-0002), and the normalizer reads it.
     new = normalizer_for(old.source, owner)(raw, captured_at=old.captured_at)
     if new.episode_id != old.episode_id:
         raise RenormalizeError(f"raw payload {old.raw_ref} now normalizes to {new.episode_id}")
