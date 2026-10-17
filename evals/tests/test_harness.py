@@ -1,4 +1,5 @@
 import contextlib
+import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 
 from pa_evals.agent import AgentAnswer, AgentRequest, AgentTimeoutError, ScriptedAgent
 from pa_evals.eval_set import EvalSet, load_eval_set
-from pa_evals.harness import run_eval
+from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.judge import ScriptedJudge, Verdict
 from pa_evals.results import RunResults
 
@@ -197,6 +198,40 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     assert seen["hotel-block-deadline"] == (eval_set.as_of, "Argus McNevans", all_episodes)
     assert seen["day-of-week"][0] == datetime.fromisoformat("2026-10-10T09:00:00-05:00")
     assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+
+
+def split_corpus(tmp_path: Path) -> tuple[Path, Path]:
+    """The fixture corpus split in two: its email in one directory, the rest in another."""
+    mail, rest = tmp_path / "mail", tmp_path / "rest"
+    shutil.copytree(CORPUS / "gmail", mail / "gmail")
+    for source in ("icloud_calendar", "obsidian"):
+        shutil.copytree(CORPUS / source, rest / source)
+    return mail, rest
+
+
+def test_a_corpus_in_several_directories_is_ingested_as_their_union(eval_set, tmp_path):
+    eval_set = eval_set.only("hotel-block-deadline")
+    seen: list[str] = []
+
+    class LookingAgent:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
+            seen.extend(sorted(p.stem for p in request.data_root.l0.glob("episodes/*/*/*.json")))
+            return AgentAnswer("Oct 9.")
+
+    corpus = split_corpus(tmp_path)
+    verdicts = {"hotel-block-deadline": correct()}
+    results = run_eval(corpus, eval_set, LookingAgent(), ScriptedJudge(verdicts))
+
+    assert seen == sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
+    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+
+
+def test_a_payload_in_two_of_a_corpuss_directories_is_refused(eval_set, tmp_path):
+    mail, rest = split_corpus(tmp_path)
+    shutil.copytree(CORPUS / "gmail", rest / "gmail")
+
+    with pytest.raises(CorpusCopyError, match=r"gmail/reply_with_cc\.eml"):
+        run_eval((mail, rest), eval_set, ScriptedAgent({}), ScriptedJudge({}))
 
 
 def test_questions_run_concurrently_up_to_the_limit(eval_set):

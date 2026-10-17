@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -43,7 +43,7 @@ class NoLibrarianError(PaError):
 
 
 def run_eval(
-    corpus: Path,
+    corpus: Path | Sequence[Path],
     eval_set: EvalSet,
     agent: AgentRunner,
     judge: Judge,
@@ -56,7 +56,9 @@ def run_eval(
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
-    one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
+    one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
+    several directories (the scale corpus: Argus's payloads and the extension's) is their
+    union; a payload path in more than one of them is refused. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
     assistant or judge raises is recorded as failed and the run goes on.
@@ -214,14 +216,20 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
         return _Failure(error)
 
 
-def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
-    if not corpus.is_dir():
-        raise CorpusCopyError(f"corpus directory not found: {corpus}")
+def _copy_into_inbox(corpus: Path | Sequence[Path], inbox: Path) -> None:
+    directories = [corpus] if isinstance(corpus, Path) else list(corpus)
     inbox.mkdir(parents=True)
-    for payload in sorted(corpus.rglob("*")):
-        relative = payload.relative_to(corpus)
-        if not payload.is_file() or is_hidden(relative):
-            continue
-        target = inbox / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(payload, target)
+    for directory in directories:
+        if not directory.is_dir():
+            raise CorpusCopyError(f"corpus directory not found: {directory}")
+        for payload in sorted(directory.rglob("*")):
+            relative = payload.relative_to(directory)
+            if not payload.is_file() or is_hidden(relative):
+                continue
+            target = inbox / relative
+            if target.exists():
+                raise CorpusCopyError(
+                    f"{relative.as_posix()} is in more than one of the corpus's directories"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(payload, target)
