@@ -103,9 +103,17 @@ class Mailbox:
         self.l0.put(envelope, raw)
         return envelope.episode_id
 
-    def note(self, text: str, *, day: int) -> str:
-        """Store the owner's daily note for a day in September and return its episode id."""
-        raw = f"Vault-Path: Daily/2026-09-{day:02d}.md\n\n{text}".encode()
+    def note(self, text: str, *, day: int, captured: str | None = None) -> str:
+        """Store the owner's daily note for a day in September and return its episode id.
+
+        `captured` is when this version was captured, in America/Chicago; by default the
+        night of its day."""
+        captured_at = datetime.fromisoformat(captured or f"2026-09-{day:02d}T23:00")
+        header = (
+            f"Vault-Path: Daily/2026-09-{day:02d}.md\n"
+            f"Captured-At: {captured_at.replace(tzinfo=CHICAGO).isoformat()}\n"
+        )
+        raw = f"{header}\n{text}".encode()
         envelope = normalize_daily_note(
             raw, captured_at=datetime(2026, 10, 1, tzinfo=UTC), owner=OWNER
         )
@@ -1883,6 +1891,30 @@ def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
     assert episode["properties"]["kind"] == "note"
     assert episode["properties"]["l0_path"].startswith("episodes/obsidian/")
     assert report.episodes.extracted == 1
+
+
+@pytest.mark.parametrize("corrected_first", [False, True], ids=["in-order", "correction-first"])
+def test_a_corrected_note_yields_statements_only_from_its_latest_version(
+    librarian: Librarian, corrected_first: bool
+):
+    # Either version may have the lower episode id, so each takes a turn at being latest.
+    deadlines = ["Swim registration closes Oct 9.", "Swim registration closes Oct 16."]
+    first, latest = reversed(deadlines) if corrected_first else deadlines
+    librarian.mail.note(first, day=5, captured="2026-09-06T01:00")
+    librarian.mail.note(latest, day=5, captured="2026-09-06T08:10")
+    librarian.mail.note("Mara starts nights on Monday.", day=6)
+    for text in [*deadlines, "Mara starts nights on Monday."]:
+        librarian.model.says(text, statement(text, kind="reported_status"))
+
+    report = librarian.rebuild()
+
+    assert sorted(quotes(librarian.call("statements", who="argus@example.com"))) == sorted(
+        [latest, "Mara starts nights on Monday."]
+    )
+    assert report.episodes.superseded == 1
+    assert report.episodes.extracted == 2
+    assert report.episodes.in_l0 == 3
+    assert "1 superseded by a later note version" in report.summary()
 
 
 def test_a_chats_owner_turns_yield_statements_told_to_the_assistant(librarian: Librarian):
