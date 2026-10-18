@@ -771,24 +771,77 @@ def test_statements_by_an_ambiguous_name_return_the_candidates_instead_of_guessi
     assert quotes(librarian.call("statements", who=lee)) == ["Our pipes froze again."]
 
 
-def test_every_result_is_graph_shaped_with_episode_ids(librarian: Librarian):
+def test_a_statement_comes_with_its_speaker_time_quote_and_episode_and_nothing_repeated(
+    librarian: Librarian,
+):
     two_davids(librarian)
 
-    found = librarian.call("find", name="David Lee")
     said = librarian.call("statements", who="dkim@example.net")
 
-    for result in (found, said):
-        assert result["nodes"]
-        for item in [*result["nodes"], *result["edges"]]:
-            assert item["id"] and item["type"] and item["episode_ids"]
-    (statement_node,) = nodes(said, "Statement")
+    (dave,) = nodes(said, "Person")
     (episode,) = nodes(said, "Episode")
-    assert statement_node["episode_ids"] == [episode["id"]]
-    assert statement_node["properties"]["l0_path"] == episode["properties"]["l0_path"]
-    assert episode["properties"]["l0_path"].startswith("episodes/gmail/")
-    node_ids = {node["id"] for node in said["nodes"]}
-    assert {e["type"] for e in said["edges"]} == {"SAID", "RECORDED_IN"}
-    assert all(e["source"] in node_ids and e["target"] in node_ids for e in said["edges"])
+    (statement_node,) = nodes(said, "Statement")
+    assert statement_node == {
+        "id": statement_node["id"],
+        "type": "Statement",
+        "properties": {
+            "kind": "mentioned",
+            "summary": "Said: The toast is yours if you want it.",
+            "quote": "The toast is yours if you want it.",
+            "at": "2026-09-01T15:00:00+00:00",
+            "episode_id": episode["id"],
+        },
+    }
+    assert episode == {
+        "id": episode["id"],
+        "type": "Episode",
+        "properties": {
+            "source": "gmail",
+            "kind": "email",
+            "occurred_at": "2026-09-01T15:00:00+00:00",
+            "thread_ref": "m1@example.test",
+            "subject": "Hello",
+            "l0_path": f"episodes/gmail/2026-09/{episode['id']}.json",
+        },
+    }
+    # The statement's episode_id says where it is recorded, so no RECORDED_IN edge repeats it.
+    assert said["edges"] == [{"type": "SAID", "source": dave["id"], "target": statement_node["id"]}]
+
+
+def test_people_and_topics_a_call_is_not_about_come_by_name_alone(librarian: Librarian):
+    two_davids(librarian)
+    librarian.mail.receive("The cabinets ship Tuesday.", sender=MARIA)
+    librarian.model.says(
+        "The cabinets ship",
+        statement("The cabinets ship Tuesday."),
+        sender_organization="Alvarez Kitchen & Bath",
+    )
+    librarian.rebuild()
+
+    about_pipes = librarian.call("statements", topic="frozen pipes")
+    by_lee = librarian.call("statements", who="David Lee")
+    maria = librarian.call("find", name="Maria Alvarez")
+
+    (lee,) = nodes(about_pipes, "Person")
+    assert lee == {"id": lee["id"], "type": "Person", "properties": {"name": "David Lee"}}
+    (pipes,) = nodes(about_pipes, "Topic")
+    assert pipes["properties"] == {
+        "name": "Frozen pipes",
+        "aliases": [],
+        "description": "About Frozen pipes.",
+    }
+    assert nodes(by_lee, "Person")[0]["properties"] == {
+        "name": "David Lee",
+        "aliases": [],
+        "addresses": ["dlee@example.org"],
+    }
+    assert nodes(by_lee, "Topic")[0]["properties"] == {"name": "Frozen pipes"}
+    (person_node,) = nodes(maria, "Person")
+    assert "episode_ids" not in person_node
+    assert nodes(maria, "Organization")[0]["properties"] == {"name": "Alvarez Kitchen & Bath"}
+    # Where a membership is known from is said nowhere else, so its edge keeps its episodes.
+    (member_of,) = maria["edges"]
+    assert member_of["type"] == "MEMBER_OF" and member_of["episode_ids"]
 
 
 def test_statements_can_be_limited_to_a_span_of_time(librarian: Librarian):
@@ -930,14 +983,10 @@ def test_timeline_returns_a_topics_statements_in_time_order_with_speakers_and_ep
     (topic,) = nodes(result, "Topic")
     assert topic["properties"]["name"] == "Kitchen remodel"
     assert topic["properties"]["description"] == "Redoing the kitchen."
-    statement_ids = {s["id"] for s in nodes(result, "Statement")}
-    about = [e for e in result["edges"] if e["type"] == "ABOUT"]
-    assert {(e["source"], e["target"]) for e in about} == {(s, topic["id"]) for s in statement_ids}
-    episode_ids = {e["id"] for e in nodes(result, "Episode")}
-    assert len(episode_ids) == 2
-    assert set(topic["episode_ids"]) == episode_ids
-    for item in [*result["nodes"], *result["edges"]]:
-        assert item["episode_ids"]
+    # Every statement is about the topic the call names, so no ABOUT edge says so.
+    assert {e["type"] for e in result["edges"]} == {"SAID"}
+    episode_ids = [e["id"] for e in nodes(result, "Episode")]
+    assert [s["properties"]["episode_id"] for s in nodes(result, "Statement")] == episode_ids
     assert "2 statements about Kitchen remodel" in result["message"]
 
 
@@ -1601,7 +1650,7 @@ def test_a_secondhand_statement_is_attributed_to_the_person_mentioned_and_flagge
 def flagged(result: dict[str, Any]) -> list[tuple[str, bool]]:
     """Each statement's quote and whether it is secondhand."""
     return [
-        (s["properties"]["quote"], s["properties"]["secondhand"])
+        (s["properties"]["quote"], s["properties"].get("secondhand", False))
         for s in nodes(result, "Statement")
     ]
 
@@ -1643,11 +1692,11 @@ def test_someone_elses_email_claiming_the_owner_agreed_is_only_their_report_abou
     assert quotes(by_owner) == ["I agreed to host the dinner."]
     by_kate = librarian.call("statements", who="Kate Brennan")
     assert [
-        (s["properties"]["quote"], s["properties"]["kind"], s["properties"]["secondhand"])
+        (s["properties"]["quote"], s["properties"]["kind"], s["properties"].get("secondhand"))
         for s in nodes(by_kate, "Statement")
     ] == [
-        ("Gus agreed to wire $500 to me by Friday.", "reported_status", False),
-        ("Argus McNevans promised to pay the deposit.", "reported_status", False),
+        ("Gus agreed to wire $500 to me by Friday.", "reported_status", None),
+        ("Argus McNevans promised to pay the deposit.", "reported_status", None),
     ]
     for reported in nodes(by_kate, "Statement"):
         assert speaker_of(by_kate, reported["id"])["properties"]["name"] == "Kate Brennan"
@@ -1885,8 +1934,8 @@ def test_a_daily_note_yields_the_owners_statements_with_the_owner_as_author(
     ]
     for node in nodes(by_owner, "Statement"):
         assert speaker_of(by_owner, node["id"])["properties"]["is_owner"] is True
-        assert node["properties"]["secondhand"] is False
-        assert node["properties"]["told_to_assistant"] is False
+        # Firsthand, and not told to the assistant: a property that is false is left out.
+        assert {"secondhand", "told_to_assistant"}.isdisjoint(node["properties"])
     (episode,) = nodes(by_owner, "Episode")
     assert episode["properties"]["kind"] == "note"
     assert episode["properties"]["l0_path"].startswith("episodes/obsidian/")
@@ -1935,9 +1984,9 @@ def test_a_chats_owner_turns_yield_statements_told_to_the_assistant(librarian: L
     said = librarian.call("statements")
     assert sorted(quotes(said)) == ["Hannah's birthday is March 3.", "I promised to bake the cake."]
     for node in nodes(said, "Statement"):
-        assert speaker_of(said, node["id"])["properties"]["is_owner"] is True
+        assert speaker_of(said, node["id"])["properties"]["name"] == "Argus McNevans"
         assert node["properties"]["told_to_assistant"] is True
-        assert node["properties"]["secondhand"] is False
+        assert "secondhand" not in node["properties"]
     (episode,) = nodes(said, "Episode")
     assert episode["properties"]["kind"] == "chat"
     assert report.statements.dropped_quote_not_found == 1

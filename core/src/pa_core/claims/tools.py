@@ -3,7 +3,7 @@ domain queries of a `ClaimsGraph`."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any, get_args
@@ -11,6 +11,7 @@ from typing import Any, get_args
 from pydantic import Field
 
 from pa_core.claims.queries import ClaimsGraph, Direction, Found, Graph, Match, Rows, Schema
+from pa_core.claims.results import BUDGET, CompactGraph, fit
 from pa_core.errors import PaError
 
 
@@ -18,8 +19,9 @@ class ToolInputError(PaError):
     """A tool argument the tool can't use, such as a malformed date."""
 
 
-class ToolResult(Graph):
-    """Every tool's result: a graph, a plain message, and any name matches."""
+class ToolResult(CompactGraph):
+    """The result of `find` and every domain tool: a graph in the compact encoding
+    (`pa_core.claims.results`), a plain message, and any name matches."""
 
     message: str = Field(description="What the result holds, or why it is empty, in words.")
     matches: list[Match] = Field(
@@ -70,7 +72,14 @@ class ClaimsTools:
             message = f"No statements{span}."
         else:
             message = f"{_plural(count, 'statement')}{span}, oldest first."
-        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+        return _result(
+            graph,
+            message,
+            asked.subjects,
+            topic=asked.topic_id,
+            anchors=_ids(graph, "Statement"),
+            cut=_resume(graph, asked, "statements"),
+        )
 
     def timeline(
         self, topic: str, since: str | None = None, until: str | None = None
@@ -99,7 +108,14 @@ class ClaimsTools:
                 [", ".join(counted[:-1]), counted[-1]] if counted[1:] else counted
             )
             message = f"{listed}{span}, oldest first."
-        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+        return _result(
+            graph,
+            message,
+            asked.subjects,
+            topic=asked.topic_id,
+            anchors=_ids(graph, "Statement", "CalendarEvent"),
+            cut=_resume(graph, asked, "statements and calendar events"),
+        )
 
     def events(
         self,
@@ -122,7 +138,14 @@ class ClaimsTools:
             cancelled = sum(1 for node in events if node.properties.get("status") == "cancelled")
             if cancelled:
                 message += f" {cancelled} of them cancelled."
-        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+        return _result(
+            graph,
+            message,
+            asked.subjects,
+            topic=asked.topic_id,
+            anchors=_ids(graph, "CalendarEvent"),
+            cut=_resume(graph, asked, "calendar events"),
+        )
 
     def open_loops(self, who: str | None = None, direction: Direction | None = None) -> ToolResult:
         if direction is not None and direction not in _DIRECTIONS:
@@ -155,7 +178,21 @@ class ClaimsTools:
                 f"{_plural(commitments, 'open commitment')}{whose}, oldest first. Nothing is "
                 "marked overdue: compare each due date with now."
             )
-        return ToolResult(nodes=graph.nodes, edges=graph.edges, message=message)
+        open_loops = [
+            node.id
+            for node in graph.nodes
+            if node.type in ("Request", "Commitment") and node.properties.get("status") == "open"
+        ]
+        return _result(
+            graph,
+            message,
+            [party.id] if party else [],
+            anchors=open_loops,
+            cut=lambda kept, _: (
+                f"{_TOO_MUCH} only the first {kept} open requests and commitments, oldest first. "
+                "Narrow it with `who` and `direction`."
+            ),
+        )
 
     def schema(self) -> Schema:
         return self._graph.schema()
@@ -243,6 +280,11 @@ class _Criteria:
         return self.topic.id if self.topic else None
 
     @property
+    def subjects(self) -> list[str]:
+        """The ids of the nodes the call names."""
+        return [resolved.id for resolved in (self.who, self.topic) if resolved]
+
+    @property
     def about(self) -> str:
         """For messages: the topic, if one was given."""
         return f" about {self.topic.name}" if self.topic else ""
@@ -254,6 +296,70 @@ def _only(found: Found, types: frozenset[str]) -> Found:
     kept = {match.id for match in matches}
     nodes = [node for node in found.graph.nodes if node.id in kept]
     return Found(matches=matches, graph=Graph(nodes=nodes))
+
+
+type _Cut = Callable[[int, str], str]
+"""What a result cut to its first `kept` items adds to its message, given the id of the first
+item left out: that it was cut, and how to get the rest."""
+
+_TOO_MUCH = " That is more than one result can hold, so here are"
+_NOTE_ROOM = 400
+"""Room kept in the budget for a cut result's note, and a message's last words."""
+
+
+def _result(
+    graph: Graph,
+    message: str,
+    subjects: list[str],
+    *,
+    anchors: list[str],
+    cut: _Cut,
+    topic: str | None = None,
+    matches: list[Match] | None = None,
+) -> ToolResult:
+    """`graph` as a tool result in the compact encoding, within the budget: if all of it
+    doesn't fit, the items of as many of `anchors` as fit, in order, with `cut`'s note.
+    `subjects` are the ids of the nodes the call is about, and `topic` the topic it is limited
+    to."""
+    matches = matches or []
+    room = BUDGET - len(ToolResult(message=message).model_dump_json())
+    room -= _NOTE_ROOM
+    beside = {match.id: len(match.model_dump_json()) + 1 for match in matches}
+    while True:
+        encoded, kept = fit(graph, anchors, room, subjects, topic, beside)
+        note = cut(kept, anchors[kept]) if kept < len(anchors) else ""
+        present = {node.id for node in encoded.nodes}
+        result = ToolResult(
+            nodes=encoded.nodes,
+            edges=encoded.edges,
+            message=message + note,
+            matches=[match for match in matches if match.id in present],
+        )
+        over = len(result.model_dump_json()) + _NOTE_ROOM - BUDGET
+        if over <= 0 or kept == 0:
+            return result
+        room -= over
+
+
+def _ids(graph: Graph, *node_types: str) -> list[str]:
+    return [node.id for node in graph.nodes if node.type in node_types]
+
+
+def _resume(graph: Graph, asked: _Criteria, items: str) -> _Cut:
+    """The note for a time-ordered result cut short: call again from the first item left
+    out, a statement (`at`) or a calendar event (`starts_at`)."""
+
+    def note(kept: int, left_out: str) -> str:
+        node = graph.node(left_out)
+        properties = node.properties if node else {}
+        start = properties.get("at") or properties.get("starts_at")
+        until = " and the same `until`" if asked.until else ""
+        return (
+            f"{_TOO_MUCH} only the first {kept} {items}, oldest first. For the rest, call "
+            f"again with since={start}{until}."
+        )
+
+    return note
 
 
 def _count(graph: Graph, node_type: str) -> int:
@@ -276,8 +382,17 @@ def _found_result(name: str, found: Found) -> ToolResult:
         message = f"1 match for {name!r}."
     else:
         message = f"{count} candidates match {name!r}, best first."
-    return ToolResult(
-        nodes=found.graph.nodes, edges=found.graph.edges, matches=found.matches, message=message
+    subjects = [match.id for match in found.matches]
+    return _result(
+        found.graph,
+        message,
+        subjects,
+        anchors=subjects,
+        matches=found.matches,
+        cut=lambda kept, _: (
+            f"{_TOO_MUCH} only the first {kept} matches, best first. Give a fuller name, an "
+            "email address, or an id."
+        ),
     )
 
 
