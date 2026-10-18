@@ -7,9 +7,9 @@ description: How to answer from the claims graph, the PA MCP server's tools (`mc
 
 The claims graph is an **index** over L0, built by the librarian: people and organizations,
 topics, statements (who said what, when, with a quote checked against the episode), requests
-and commitments with how each one closed, and calendar events with every version. Every node
-and edge carries the ids of the episodes it came from. L0 stays the **evidence**: the graph
-tells you where to look and what was said; the episodes are what you cite.
+and commitments with how each one closed, and calendar events with every version. Everything in
+it points back to the episodes it came from. L0 stays the **evidence**: the graph tells you
+where to look and what was said; the episodes are what you cite.
 
 ## Graph first, then files
 
@@ -20,7 +20,8 @@ tells you where to look and what was said; the episodes are what you cite.
    takes many searches.
 2. **Then open the episodes** the graph points to when you need more than a statement's
    quote: the full wording, the surrounding thread, details the extraction left out. A
-   statement carries its episode's id and L0 path: open that file with Read.
+   statement names its episode in `episode_id`; that Episode node in the same result holds the
+   L0 path: open that file with Read.
 3. **Then search L0** for what the graph leaves out: bulk mail that triage skipped
    (promotions, social notifications, most updates and newsletters), anything that isn't a
    claim by someone (an attachment's details, a message's exact layout), and anything the
@@ -40,6 +41,20 @@ tells you where to look and what was said; the episodes are what you cite.
    query's own text in the query language, with its rules. Adapt the nearest domain query
    rather than writing one from scratch, then run it with `query`. If `query` reports an
    error, a stop, or `truncated`, narrow the query and try again.
+
+## Reading a result
+
+Results are compact, so read what is left out as said elsewhere:
+
+- A person, organization or topic the call isn't about comes by id and name alone. `find` it
+  for aliases, addresses or a description.
+- A statement's episode is its `episode_id`; there is no RECORDED_IN edge. A call limited to
+  one topic has no ABOUT edges to it: everything in the result is about it.
+- `secondhand`, `told_to_assistant` and `is_owner` appear only when true.
+- A result too big for one reply is **cut**, and its message says so: it holds the first
+  items, and says how to get the rest (call again with the `since` it gives, or narrow with
+  `who` and `direction`, or a fuller name). Page on until you have what the question needs
+  before you answer from part of it.
 
 ## No record
 
@@ -61,5 +76,5 @@ last name alone, and an email address, and search L0. Say what you tried.
 ## Citing
 
 Cite as CLAUDE.md says, `[ep:<episode_id>]`, using the episode ids the graph returns: a
-statement's `RECORDED_IN` episode, and the episode ids every node and edge carries. Cite the
-episodes, never the graph's own ids.
+statement's `episode_id`, and the `episode_ids` a node or edge carries. Cite the episodes,
+never the graph's own ids.

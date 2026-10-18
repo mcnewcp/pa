@@ -9,27 +9,33 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, tzinfo
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from pa_core.claims.queries import ClaimsGraph, Direction, Schema
 from pa_core.claims.tools import ClaimsTools, QueryResult, ToolResult
 from pa_core.errors import PaError
 
 INSTRUCTIONS = """\
-The claims graph: who said what, about which topic, and when, derived from the episodes in L0
-by the librarian. It is an index; the episodes are the evidence. Every node and edge carries the
-ids of the episodes it came from, and statements carry their episode's L0 path, so cite and
-open them. Topics are the matters the owner asks about by name (a kitchen remodel, a wedding);
-`timeline` tells what happened about one. Calendar events keep every version, so `events`
-shows where a moved or cancelled calendar event stands now and where it was before.
-`open_loops` tells what is still asked or promised, with due dates; whether one is overdue is
-yours to judge against now. Use `find` before concluding there is no record of someone or
-something.
+The claims graph: who said what, about which topic, and when, derived from the episodes in L0 by
+the librarian. It is an index; the episodes are the evidence. Each statement names the episode
+it is recorded in (`episode_id`), whose Episode node holds its L0 path, so cite and open them;
+other nodes and edges carry `episode_ids` where those say more. A person, organization, or topic
+the call isn't about comes by its id and name alone: `find` it for the rest. A result too big
+for one reply is cut, and its message says so and how to get the rest. Topics are the matters
+the owner asks about by name (a kitchen remodel, a wedding); `timeline` tells what happened
+about one. Calendar events keep every version, so `events` shows where a moved or cancelled
+calendar event stands now and where it was before. `open_loops` tells what is still asked or
+promised, with due dates; whether one is overdue is yours to judge against now. Use `find`
+before concluding there is no record of someone or something.
 Dates and times given without a UTC offset are read in the owner's time zone, {time_zone}."""
+
+Reply = Annotated[CallToolResult, ToolResult]
+"""What `find` and the domain tools reply: a `ToolResult`, as structured content and as compact
+JSON text beside it, for a client that reads the text."""
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
@@ -40,7 +46,7 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
     tools = ClaimsTools(graph, time_zone)
     server = MCPServer("pa", instructions=INSTRUCTIONS.format(time_zone=time_zone))
 
-    def find(name: str) -> ToolResult:
+    def find(name: str) -> Reply:
         """Find the people, organizations, and topics whose name, alias, email address, mail
         domain, or id matches `name`.
 
@@ -51,14 +57,14 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         address.
         """
         with _reported():
-            return tools.find(name)
+            return _reply(tools.find(name))
 
     def statements(
         who: str | None = None,
         topic: str | None = None,
         since: str | None = None,
         until: str | None = None,
-    ) -> ToolResult:
+    ) -> Reply:
         """What someone said, optionally about one topic: statements in time order, oldest
         first.
 
@@ -69,31 +75,32 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         `until` are ISO 8601 dates or datetimes (in the owner's time zone unless an offset is
         given); `since` is inclusive, `until` is exclusive, and a date alone for `until`
         includes that whole day.
-        Each statement comes with its speaker (SAID), the episode it is recorded in
-        (RECORDED_IN), the topics it is about (ABOUT), whom it mentions (MENTIONS), its kind,
-        summary, and a quote checked against the episode's body. A secondhand statement is one
-        the episode's sender recounts ("Maria told me…"): say so when you cite it. Only the
+        Each statement comes with its speaker (SAID), the episode it is recorded in (its
+        `episode_id`, and the Episode node), the other topics it is about (ABOUT), whom it
+        mentions (MENTIONS), its kind, summary, and a quote checked against the episode's body.
+        A secondhand statement (`secondhand`, given only when true) is one the episode's sender
+        recounts ("Maria told me…"): say so when you cite it. Only the
         owner's own episodes hold the owner's statements; anyone else's claim about the owner
         is that person's report, mentioning the owner.
         """
         with _reported():
-            return tools.statements(who, topic, since, until)
+            return _reply(tools.statements(who, topic, since, until))
 
-    def timeline(topic: str, since: str | None = None, until: str | None = None) -> ToolResult:
+    def timeline(topic: str, since: str | None = None, until: str | None = None) -> Reply:
         """What has happened about a topic, in time order, oldest first: "what's happened with
         the kitchen remodel?" in one call.
 
         `topic` is a topic's id or name, resolved as `find` does; if it matches more than one
         topic, the candidates come back instead, to call again with one id. `since` and
         `until` work as in `statements`. Each statement about the topic comes with its speaker
-        (SAID), its episode (RECORDED_IN), and the topic (ABOUT). Each calendar event about it
+        (SAID) and its episode (`episode_id`, and the Episode node). Each calendar event about it
         (CalendarEvent, by its current start) comes with its versions (VERSION_OF); use
         `events` for who takes part.
         """
         with _reported():
-            return tools.timeline(topic, since, until)
+            return _reply(tools.timeline(topic, since, until))
 
-    def open_loops(who: str | None = None, direction: Direction | None = None) -> ToolResult:
+    def open_loops(who: str | None = None, direction: Direction | None = None) -> Reply:
         """The requests and commitments still open: "who still owes me what?", "what have I
         promised?", "who hasn't answered me?".
 
@@ -109,14 +116,14 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         date with now. A closed loop, and how it closed, is in `timeline`.
         """
         with _reported():
-            return tools.open_loops(who, direction)
+            return _reply(tools.open_loops(who, direction))
 
     def events(
         who: str | None = None,
         topic: str | None = None,
         since: str | None = None,
         until: str | None = None,
-    ) -> ToolResult:
+    ) -> Reply:
         """Calendar events, each in its current version with its history, by start time:
         "when's my next appointment with Dr. Patel?" or "what's on for the wedding?".
 
@@ -130,7 +137,7 @@ def create_server(graph: ClaimsGraph, *, time_zone: tzinfo) -> MCPServer:
         where it was before.
         """
         with _reported():
-            return tools.events(who, topic, since, until)
+            return _reply(tools.events(who, topic, since, until))
 
     def schema() -> Schema:
         """The claims graph's live schema, for writing a `query`: its tables with their
@@ -172,6 +179,16 @@ def tool_names() -> tuple[str, ...]:
     """
     listed = asyncio.run(create_server(cast(ClaimsGraph, None), time_zone=UTC).list_tools())
     return tuple(tool.name for tool in listed)
+
+
+def _reply(result: ToolResult) -> CallToolResult:
+    """`result` as the tool's reply. The SDK's own text would be indented JSON, a third larger,
+    and a client may read the text rather than the structured content, so the budget
+    (`pa_core.claims.results.BUDGET`) holds for both only when the text is compact too."""
+    return CallToolResult(
+        content=[TextContent(type="text", text=result.model_dump_json())],
+        structured_content=result.model_dump(mode="json"),
+    )
 
 
 @contextmanager
