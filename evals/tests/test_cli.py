@@ -9,9 +9,12 @@ import pytest
 from pa_evals import frozen
 from pa_evals.cli import main
 from pa_evals.eval_set import load_eval_set
+from pa_evals.report import render_report
+from pa_evals.results import RunResults
 from pa_evals.run_cli import DEFAULT_RUNS_DIR
 
 FIXTURES = Path(__file__).parent / "fixtures"
+BASELINES = Path(__file__).parents[1] / "baselines"
 CORPUS = FIXTURES / "corpus"
 EVAL_SET = FIXTURES / "eval_set.json"
 
@@ -75,6 +78,7 @@ def test_run_writes_a_report_and_results_into_a_timestamped_run_directory(
     assert results["categories"]["cross_channel_synthesis"]["evidence_recall"] == 0.5
     assert results["categories"]["cross_channel_synthesis"]["citation_validity"] == 0.5
     assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
+        "corpus": str(CORPUS),
         "agent": "scripted",
         "judge": "scripted",
     }
@@ -191,7 +195,8 @@ def test_the_report_says_which_commit_the_run_ran_from(tmp_path, scripts):
     assert f"- Commit: {commit}\n" in (run_dir / "report.md").read_text()
 
 
-def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
+@pytest.mark.parametrize("corpus", [[], ["--corpus", "argus"]], ids=["default", "by name"])
+def test_run_chooses_the_argus_corpus_and_its_eval_set_by_default_or_by_name(tmp_path, corpus):
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
     verdicts = tmp_path / "verdicts.json"
@@ -202,6 +207,7 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     status = main(
         [
             "run",
+            *corpus,
             *["--runs-dir", str(runs), "--only", "day-of-week"],
             *["--agent", "scripted", "--answers", str(answers)],
             *["--judge", "scripted", "--verdicts", str(verdicts)],
@@ -211,6 +217,8 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     assert status == 0
     [run_dir] = runs.iterdir()
     results = json.loads((run_dir / "results.json").read_text())
+    assert results["setup"]["corpus"] == "argus"
+    assert "- Corpus: argus\n" in (run_dir / "report.md").read_text()
     assert results["ingest"] == {
         "ingested": len([path for path in frozen.PAYLOADS.rglob("*") if path.is_file()]),
         "unchanged": 0,
@@ -218,3 +226,239 @@ def test_run_defaults_to_the_frozen_corpus_and_eval_set(tmp_path):
     }
     assert results["as_of"] == load_eval_set(frozen.EVAL_SET).as_of.isoformat()
     assert [question["id"] for question in results["questions"]] == ["day-of-week"]
+
+
+def test_run_by_name_asks_the_scale_corpus_with_its_own_eval_set(tmp_path):
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"day-of-week": "It's Wednesday."}))
+    verdicts = tmp_path / "verdicts.json"
+    verdict = {"correct": True, "reasoning": "Wednesday.", "relevant_citations": []}
+    verdicts.write_text(json.dumps({"day-of-week": verdict}))
+    runs = tmp_path / "runs"
+
+    status = main(
+        [
+            "run",
+            *["--corpus", "scale"],
+            *["--runs-dir", str(runs), "--only", "day-of-week"],
+            *["--agent", "scripted", "--answers", str(answers)],
+            *["--judge", "scripted", "--verdicts", str(verdicts)],
+        ]
+    )
+
+    assert status == 0
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["setup"]["corpus"] == "scale"
+    # The scale corpus is the union of Argus's payloads and the extension's.
+    payloads = [p for d in (frozen.PAYLOADS, frozen.SCALE_PAYLOADS) for p in d.rglob("*")]
+    assert results["ingest"]["ingested"] == len([p for p in payloads if p.is_file()])
+    assert results["ingest"]["ingested"] > 1100
+    assert results["ingest"]["quarantined"] == 0
+
+
+def test_a_corpus_directory_needs_its_eval_set(tmp_path, scripts, capsys):
+    args = ["run", "--corpus", str(CORPUS), "--runs-dir", str(tmp_path / "runs"), *scripts]
+
+    assert main(args) == 1
+
+    assert "--corpus DIR needs --eval-set FILE" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+
+
+def test_an_unknown_corpus_name_is_refused(tmp_path, scripts, capsys):
+    args = ["run", "--corpus", "atlantis", "--runs-dir", str(tmp_path / "runs"), *scripts]
+
+    assert main(args) == 1
+
+    assert "atlantis is neither a corpus (argus, scale) nor a directory" in capsys.readouterr().err
+
+
+def test_the_report_shows_each_answers_cost_turns_and_duration_and_sums_them_up_by_category(
+    tmp_path,
+):
+    answers = tmp_path / "answers.json"
+    answers.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": {
+                    "answer": f"It closes on Oct 9 [ep:{DEADLINE_EMAIL}].",
+                    "cost_usd": 0.0421,
+                    "turns": 6,
+                    "duration_ms": 18250,
+                },
+                "day-of-week": {
+                    "answer": "It's Saturday.",
+                    "cost_usd": 0.0105,
+                    "turns": 1,
+                    "duration_ms": 4000,
+                },
+                "swim-instructor": "I don't know.",
+            }
+        )
+    )
+    verdicts = tmp_path / "verdicts.json"
+    verdicts.write_text(json.dumps(VERDICTS))
+    runs = tmp_path / "runs"
+
+    pa_eval_run(
+        runs,
+        ["--agent", "scripted", "--answers", str(answers)],
+        *("--judge", "scripted", "--verdicts", str(verdicts)),
+        *("--only", "hotel-block-deadline", "--only", "swim-instructor", "--only", "day-of-week"),
+    )
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    [deadline, *_] = results["questions"]
+    assert (deadline["cost_usd"], deadline["turns"], deadline["duration_ms"]) == (0.0421, 6, 18250)
+    report = (run_dir / "report.md").read_text()
+    assert "| hotel-block-deadline | single_fact_recall | scored | yes | 1.00 | 1.00 | " in report
+    assert "| $0.042 | 6 | 18.2 s |" in report
+    assert "| swim-instructor | abstention | scored | yes | n/a | n/a | n/a | n/a | n/a |" in report
+    assert "## Efficiency by category" in report
+    assert "| single_fact_recall | $0.042 | 6 | 18.2 s | $0.042 |" in report
+    assert "| abstention | n/a | n/a | n/a | n/a |" in report
+    # Overall: the medians of the two measured answers, and their sum.
+    assert "| Overall | $0.026 | 3.5 | 11.1 s | $0.053 |" in report
+    assert "- Cost: $0.042, 6 turns, 18.2 s" in report
+
+
+def repeated_scripts(tmp_path: Path, name: str, deadline: list[bool], canary: list[bool]):
+    """Scripts for `--runs len(deadline)`: per run, whether each of two questions is right."""
+
+    def verdict(right: bool) -> dict:
+        return {"correct": right, "reasoning": "ok" if right else "no", "relevant_citations": []}
+
+    answers = tmp_path / f"{name}-answers.json"
+    answers.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": [
+                    {"answer": "Oct 9.", "cost_usd": 0.1, "turns": 4, "duration_ms": 10000},
+                    {"answer": "Oct 8.", "cost_usd": 0.2, "turns": 8, "duration_ms": 30000},
+                    {"answer": "Oct 9.", "cost_usd": 0.3, "turns": 12, "duration_ms": 50000},
+                ][: len(deadline)],
+                "day-of-week": "It's Saturday.",
+            }
+        )
+    )
+    verdicts = tmp_path / f"{name}-verdicts.json"
+    verdicts.write_text(
+        json.dumps(
+            {
+                "hotel-block-deadline": [verdict(right) for right in deadline],
+                "day-of-week": [verdict(right) for right in canary],
+            }
+        )
+    )
+    only = ["--only", "hotel-block-deadline", "--only", "day-of-week"]
+    return [
+        *("--agent", "scripted", "--answers", str(answers)),
+        *("--judge", "scripted", "--verdicts", str(verdicts)),
+        *only,
+    ]
+
+
+def test_a_run_of_n_repeats_writes_each_run_and_a_comparison_of_them(tmp_path, capsys):
+    runs = tmp_path / "runs"
+    scripts = repeated_scripts(tmp_path, "a", [True, False, True], [True, True, True])
+
+    assert pa_eval_run(runs, scripts, "--runs", "3") == 0
+
+    [run_dir] = runs.iterdir()
+    assert sorted(p.name for p in run_dir.iterdir()) == [
+        "comparison.md",
+        "run-1",
+        "run-2",
+        "run-3",
+    ]
+    second = json.loads((run_dir / "run-2" / "results.json").read_text())
+    assert second["configuration"] == "files-alone"
+    assert second["questions"][0]["answer"] == "Oct 8."
+    assert second["questions"][0]["correct"] is False
+    assert (run_dir / "run-2" / "report.md").exists()
+    comparison = (run_dir / "comparison.md").read_text()
+    assert "| Category | files-alone |" in comparison
+    assert "| single_fact_recall | 0.67 (0.00 to 1.00) |" in comparison
+    assert "| canary | 1.00 (1.00 to 1.00) |" in comparison
+    assert "| Overall | 0.83 (0.50 to 1.00) |" in comparison
+    # Medians over every answer in every run that reports them.
+    assert "| single_fact_recall | $0.200, 8 turns, 30.0 s |" in comparison
+    assert "| canary | n/a |" in comparison
+    assert f"comparison: {run_dir / 'comparison.md'}" in capsys.readouterr().out
+
+
+def test_compare_marks_only_the_differences_larger_than_the_spread(tmp_path, capsys):
+    pa_eval_run(
+        tmp_path / "a",
+        repeated_scripts(tmp_path, "a", [True, False, True], [True, True, True]),
+        *("--runs", "3"),
+    )
+    pa_eval_run(
+        tmp_path / "b",
+        repeated_scripts(tmp_path, "b", [True, True, True], [False, False, False]),
+        *("--runs", "3"),
+    )
+    [first] = (tmp_path / "a").iterdir()
+    [second] = (tmp_path / "b").iterdir()
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert f"| Category | {first} | {second} | {second} vs {first} |" in comparison
+    # Better by 0.33, but the first's runs spread from 0 to 1: it doesn't count.
+    assert "| single_fact_recall | 0.67 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | +0.33 |" in (
+        comparison
+    )
+    # Worse by 1.00 with no spread on either side: it counts.
+    assert "| canary | 1.00 (1.00 to 1.00) | 0.00 (0.00 to 0.00) | -1.00 (counts) |" in (comparison)
+    assert "| Overall | 0.83 (0.50 to 1.00) | 0.50 (0.50 to 0.50) | -0.33 |" in comparison
+    assert f"- {first}: 3 runs (configuration files-alone)" in comparison
+
+
+def test_the_committed_baselines_load_in_a_comparison_without_efficiency_figures(capsys):
+    v010 = BASELINES / "v0.10"
+    v011 = BASELINES / "v0.11"
+
+    assert main(["compare", str(v010), str(v011)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert f"- {v010}: 1 run\n" in comparison
+    # A single run has no spread, so no difference counts, however large.
+    assert "| Overall | 0.90 (0.90 to 0.90) | 0.96 (0.96 to 0.96) | +0.06 |" in comparison
+    assert "| entity_resolution | 0.50 (0.50 to 0.50) | 0.50 (0.50 to 0.50) | +0.00 |" in (
+        comparison
+    )
+    # v0.10 asked no paraphrase questions.
+    assert "| paraphrase | n/a | 1.00 (1.00 to 1.00) | n/a |" in comparison
+    assert "| Overall | n/a | n/a |" in comparison
+
+
+def test_the_v0_12_graph_runs_still_load_in_a_comparison_with_files_alone(capsys):
+    files_alone = BASELINES / "v0.12" / "scale-files-alone"
+    graph = BASELINES / "v0.12" / "scale-graph-plus-files-sonnet"
+
+    assert main(["compare", str(files_alone), str(graph)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert f"- {graph}: 3 runs (configuration graph-plus-files)" in comparison
+    assert "| Overall | 0.94 (0.93 to 0.95) | 0.89 (0.88 to 0.93) | -0.05 (counts) |" in comparison
+
+
+@pytest.mark.parametrize("baseline", ["v0.10", "v0.10/extended", "v0.11"])
+def test_each_committed_baseline_still_renders_as_a_report(baseline):
+    results = RunResults.model_validate_json((BASELINES / baseline / "results.json").read_text())
+
+    report = render_report(results)
+
+    assert results.configuration is None
+    assert results.questions[0].cost_usd is None
+    assert "| Overall | n/a | n/a | n/a | n/a |" in report
+
+
+def test_compare_says_when_a_directory_holds_no_runs(tmp_path, capsys):
+    assert main(["compare", str(tmp_path)]) == 1
+
+    assert f"no eval results in {tmp_path}" in capsys.readouterr().err

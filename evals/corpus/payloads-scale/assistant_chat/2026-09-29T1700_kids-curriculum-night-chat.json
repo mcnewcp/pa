@@ -1,0 +1,16 @@
+{
+  "session_id": "8dad823b-229e-5673-a153-3a4afffdde8f",
+  "message_id": "de661745-490d-5ff8-9ef3-7e3bb40492f4",
+  "started_at": "2026-09-29T22:00:00.000Z",
+  "ended_at": "2026-09-29T22:00:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey what time is curriculum night tonight?"
+    },
+    {
+      "role": "assistant",
+      "text": "It's 6:00 to 7:00 pm in Mr. Osei's classroom at Lake Hills Elementary."
+    }
+  ]
+}

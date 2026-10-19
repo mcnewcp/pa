@@ -1,0 +1,25 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-cloudvault-008@cloudvault.example>
+Date: Sat, 26 Sep 2026 16:42:00 -0500
+From: CloudVault <account@cloudvault.example>
+To: Argus McNevans <argus@example.com>
+Subject: Your CloudVault storage is 92% full
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hi Argus,
+
+You're using 13.8 GB of your 15 GB free CloudVault storage.
+
+When you run out of space, new photos and files won't back up, and you may no=
+t be able to send or receive some attachments.
+
+You can:
+- Free up space by deleting large files: https://cloudvault.example/storage
+- Upgrade to CloudVault Plus (200 GB) for $2.99/month: https://cloudvault.exa=
+mple/upgrade
+
+The CloudVault Team
+
+This is a service message about your CloudVault account.

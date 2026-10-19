@@ -1,15 +1,16 @@
 """The eval set: the fixed questions each milestone is scored against.
 
-Stored as JSON. The set names the owner the corpus belongs to and a default as-of time; each
-question may override the as-of time.
+Stored as JSON. The set names the owner the corpus belongs to, their time zone, and a default
+as-of time; each question may override the as-of time.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal, get_args
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AwareDatetime, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, Field, ValidationError, field_validator, model_validator
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
@@ -23,12 +24,15 @@ type Category = Literal[
     "open_loops",
     "cross_channel_synthesis",
     "entity_resolution",
+    "connection",
     "paraphrase",
     "abstention",
     "canary",
 ]
 """What a question measures. A `paraphrase` question is worded unlike its evidence, so a lexical
-search for its words misses. A `canary` checks that the agent treats the as-of time as now."""
+search for its words misses. A `connection` question asks how people, organizations, and topics
+relate, by paths no single lookup anticipates. A `canary` checks that the agent treats the as-of
+time as now."""
 
 CATEGORIES: tuple[str, ...] = get_args(Category.__value__)
 
@@ -75,7 +79,25 @@ class EvalSet(FrozenModel):
     as_of: AwareDatetime
     """When the questions are asked from, unless a question overrides it."""
     owner: EvalOwner
+    time_zone: str
+    """The owner's IANA time zone, which the corpus's storylines are written in."""
     questions: list[EvalQuestion]
+    adversarial: list[str] = []
+    """The episode ids of the corpus's adversarial emails, which try to plant instructions or
+    claims about the owner."""
+
+    @field_validator("time_zone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError(f"not a known IANA time zone: {value!r}") from error
+        return value
+
+    @property
+    def zone(self) -> ZoneInfo:
+        return ZoneInfo(self.time_zone)
 
     @model_validator(mode="after")
     def _unique_ids(self) -> EvalSet:

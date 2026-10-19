@@ -51,7 +51,7 @@ Where input that cannot become an episode is kept: malformed payloads, files in 
 _Avoid_: Dead letter, rejects
 
 **Daily note**:
-The owner's single Obsidian note for one day, with topics organized under headings. Finished, and captured, once the day is over.
+The owner's single Obsidian note for one day, with topics organized under headings. Finished, and captured, once the day is over. A correction captured later is a new version of it; the latest version by capture time supersedes the earlier ones.
 _Avoid_: Journal, log
 
 **Catalog**:
@@ -135,6 +135,10 @@ _Avoid_: Scenario, script
 **Eval set**:
 The fixed questions, with expected answers and required evidence episodes, that each milestone is scored against.
 _Avoid_: Test suite, benchmark
+
+**Eval configuration**:
+What the assistant is given besides L0's files in an eval run. Files alone, with nothing besides, is the only one so far.
+_Avoid_: Mode, variant, arm
 
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".

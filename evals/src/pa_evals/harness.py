@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from pa_core.l0 import L0Store
 from pa_core.owner import Owner
 from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import parse_citations
+from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.judge import Judge, JudgeRequest
 from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores
@@ -29,22 +30,28 @@ class CorpusCopyError(PaError):
 
 
 def run_eval(
-    corpus: Path,
+    corpus: Path | Sequence[Path],
     eval_set: EvalSet,
     agent: AgentRunner,
     judge: Judge,
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
+    configuration: Configuration = DEFAULT_CONFIGURATION,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
-    one directory per source (ADR-0004). It is copied into the inbox as it is. The data root is
+    one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
+    several directories (the scale corpus: Argus's payloads and the extension's) is their
+    union; a payload path in more than one of them is refused. The data root is
     created in the system temporary directory, never the configured `PA_DATA_DIR`, and deleted
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
-    agent or judge raises is recorded as failed and the run goes on. `setup` describes the run
-    (for example which agent runner and judge) and is carried into the results as is.
+    assistant or judge raises is recorded as failed and the run goes on.
+
+    `configuration` says what the assistant is given, and is recorded in the results. `setup`
+    describes the run (for example which agent runner and judge) and is carried into the
+    results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
@@ -68,6 +75,7 @@ def run_eval(
     for result in questions:
         categories.setdefault(result.category, []).append(result)
     return RunResults(
+        configuration=configuration.name,
         setup=dict(setup or {}),
         as_of=eval_set.as_of,
         ingest=IngestCounts(
@@ -105,11 +113,14 @@ def _ask(
         recall = 0.0 if question.evidence else None
         return result.model_copy(update={"error": f"agent: {answer}", "evidence_recall": recall})
 
-    cited = parse_citations(answer)
+    cited = parse_citations(answer.text)
     existing = [episode_id for episode_id in cited if episode_id in known]
     result = result.model_copy(
         update={
-            "answer": answer,
+            "answer": answer.text,
+            "cost_usd": answer.cost_usd,
+            "turns": answer.turns,
+            "duration_ms": answer.duration_ms,
             "cited": cited,
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
@@ -123,7 +134,7 @@ def _ask(
                 question=question.question,
                 expected_answer=question.expected_answer,
                 as_of=as_of,
-                answer=answer,
+                answer=answer.text,
                 cited_episodes=episodes,
             )
         )
@@ -168,14 +179,20 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
         return _Failure(error)
 
 
-def _copy_into_inbox(corpus: Path, inbox: Path) -> None:
-    if not corpus.is_dir():
-        raise CorpusCopyError(f"corpus directory not found: {corpus}")
+def _copy_into_inbox(corpus: Path | Sequence[Path], inbox: Path) -> None:
+    directories = [corpus] if isinstance(corpus, Path) else list(corpus)
     inbox.mkdir(parents=True)
-    for payload in sorted(corpus.rglob("*")):
-        relative = payload.relative_to(corpus)
-        if not payload.is_file() or is_hidden(relative):
-            continue
-        target = inbox / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(payload, target)
+    for directory in directories:
+        if not directory.is_dir():
+            raise CorpusCopyError(f"corpus directory not found: {directory}")
+        for payload in sorted(directory.rglob("*")):
+            relative = payload.relative_to(directory)
+            if not payload.is_file() or is_hidden(relative):
+                continue
+            target = inbox / relative
+            if target.exists():
+                raise CorpusCopyError(
+                    f"{relative.as_posix()} is in more than one of the corpus's directories"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(payload, target)

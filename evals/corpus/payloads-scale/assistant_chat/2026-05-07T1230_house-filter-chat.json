@@ -1,0 +1,16 @@
+{
+  "session_id": "4231c6e6-02b4-564f-915e-9613abd07fa7",
+  "message_id": "0e4d60c4-4bed-5827-af3d-8166061f5495",
+  "started_at": "2026-05-07T17:30:00.000Z",
+  "ended_at": "2026-05-07T17:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey can you remember the furnace/AC filter size for me? it's 16x25x1. and the tech said to change it every 3 months"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it. I'll remember the furnace and AC filter is 16x25x1, and that the technician said to change it every three months."
+    }
+  ]
+}

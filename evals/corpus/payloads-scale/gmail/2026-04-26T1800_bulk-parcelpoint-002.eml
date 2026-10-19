@@ -1,0 +1,23 @@
+X-Gmail-Labels: Inbox,Category Updates
+Message-ID: <bulk-parcelpoint-002@parcelpoint.example>
+Date: Sun, 26 Apr 2026 18:00:00 -0500
+From: ParcelPoint <tracking@parcelpoint.example>
+To: Argus McNevans <argus@example.com>
+Subject: Out for delivery: your package arrives today
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Good news, Argus!
+
+Your package is on the truck and should arrive today by 9:00 PM.
+
+Tracking number: PP7731 0045 2286
+Shipped from: Columbus, OH
+Service: ParcelPoint Ground
+
+No signature required. We'll send a photo once it's delivered.
+
+Track or update delivery instructions: parcelpoint.example/track
+
+ParcelPoint

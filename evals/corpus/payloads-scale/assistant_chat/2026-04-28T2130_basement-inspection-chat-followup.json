@@ -1,0 +1,16 @@
+{
+  "session_id": "4d6f5d33-8f8a-520d-bdaa-46623a669710",
+  "message_id": "d5b9e2f9-9982-5e6f-925c-b0fa43d3a067",
+  "started_at": "2026-04-29T02:30:00.000Z",
+  "ended_at": "2026-04-29T02:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey still in denver, how'd the inspection go today?"
+    },
+    {
+      "role": "assistant",
+      "text": "Mara emailed this evening with an update. Denise said the damage falls under the water backup endorsement, which has a $10,000 limit and a $1,000 deductible. The carpet has to be replaced. Denise will send a written estimate within a week."
+    }
+  ]
+}

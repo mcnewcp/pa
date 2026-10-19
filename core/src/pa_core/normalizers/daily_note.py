@@ -16,7 +16,9 @@ EXTENSION = ".md"
 
 
 def normalize_daily_note(raw: bytes, *, captured_at: datetime, owner: Owner) -> Envelope:
-    path, note = _split_capture(raw)
+    """The note's envelope. Its `captured_at` is the capture header's `Captured-At`, not the
+    `captured_at` given, because ingest may land a day's versions out of order (ADR-0002)."""
+    path, captured_at, note = _split_capture(raw)
     start = datetime.combine(_day(path), time(), tzinfo=UTC)
     # Each distinct text of a note is its own version, so a correction is a new episode.
     eid = episode_id(Source.OBSIDIAN, path, hashlib.sha256(note).hexdigest())
@@ -35,13 +37,15 @@ def normalize_daily_note(raw: bytes, *, captured_at: datetime, owner: Owner) -> 
 
 
 # A captured note is the note file's bytes behind a capture header: `Name: value` lines, then
-# a blank line. The header records what the file alone does not say, such as its vault path.
+# a blank line. The header records what the file alone does not say: its vault path, and when
+# it was captured, which orders a day's versions.
 _HEADER_END = re.compile(rb"\r?\n\r?\n")
 _HEADER_LINE = re.compile(r"([A-Za-z0-9-]+):(.*)")
 
 
-def _split_capture(raw: bytes) -> tuple[str, bytes]:
-    """The note's vault path from the capture header, and the note's own bytes after it."""
+def _split_capture(raw: bytes) -> tuple[str, datetime, bytes]:
+    """The note's vault path and capture time from its capture header, and the note's own
+    bytes after it."""
     end = _HEADER_END.search(raw)
     if end is None:
         raise MalformedPayloadError("daily note has no capture header")
@@ -54,7 +58,21 @@ def _split_capture(raw: bytes) -> tuple[str, bytes]:
     path = fields.get("vault-path")
     if not path:
         raise MalformedPayloadError("daily note has no Vault-Path in its capture header")
-    return path, raw[end.end() :]
+    return path, _captured_at(fields.get("captured-at")), raw[end.end() :]
+
+
+def _captured_at(value: str | None) -> datetime:
+    if not value:
+        raise MalformedPayloadError("daily note has no Captured-At in its capture header")
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        moment = None
+    if moment is None or moment.utcoffset() is None:
+        raise MalformedPayloadError(
+            f"daily note's Captured-At is not a time with a UTC offset ({value!r})"
+        )
+    return moment.astimezone(UTC)
 
 
 # Daily notes are named for their day, which may sit among other words (`2026-10-05 Monday`).

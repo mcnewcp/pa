@@ -1,13 +1,14 @@
 import contextlib
+import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from pa_evals.agent import AgentRequest, AgentTimeoutError, ScriptedAgent
+from pa_evals.agent import AgentAnswer, AgentRequest, AgentTimeoutError, ScriptedAgent
 from pa_evals.eval_set import EvalSet, load_eval_set
-from pa_evals.harness import run_eval
+from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.judge import ScriptedJudge, Verdict
 from pa_evals.results import RunResults
 
@@ -184,10 +185,10 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     seen: dict[str, tuple] = {}
 
     class LookingAgent:
-        def answer(self, request: AgentRequest) -> str:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
             episodes = sorted(p.stem for p in request.data_root.l0.glob("episodes/*/*/*.json"))
             seen[request.question_id] = (request.as_of, request.owner.name, episodes)
-            return "Saturday."
+            return AgentAnswer("Saturday.")
 
     verdicts = {"hotel-block-deadline": correct(), "day-of-week": correct()}
 
@@ -199,6 +200,40 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
 
 
+def split_corpus(tmp_path: Path) -> tuple[Path, Path]:
+    """The fixture corpus split in two: its email in one directory, the rest in another."""
+    mail, rest = tmp_path / "mail", tmp_path / "rest"
+    shutil.copytree(CORPUS / "gmail", mail / "gmail")
+    for source in ("icloud_calendar", "obsidian"):
+        shutil.copytree(CORPUS / source, rest / source)
+    return mail, rest
+
+
+def test_a_corpus_in_several_directories_is_ingested_as_their_union(eval_set, tmp_path):
+    eval_set = eval_set.only("hotel-block-deadline")
+    seen: list[str] = []
+
+    class LookingAgent:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
+            seen.extend(sorted(p.stem for p in request.data_root.l0.glob("episodes/*/*/*.json")))
+            return AgentAnswer("Oct 9.")
+
+    corpus = split_corpus(tmp_path)
+    verdicts = {"hotel-block-deadline": correct()}
+    results = run_eval(corpus, eval_set, LookingAgent(), ScriptedJudge(verdicts))
+
+    assert seen == sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
+    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+
+
+def test_a_payload_in_two_of_a_corpuss_directories_is_refused(eval_set, tmp_path):
+    mail, rest = split_corpus(tmp_path)
+    shutil.copytree(CORPUS / "gmail", rest / "gmail")
+
+    with pytest.raises(CorpusCopyError, match=r"gmail/reply_with_cc\.eml"):
+        run_eval((mail, rest), eval_set, ScriptedAgent({}), ScriptedJudge({}))
+
+
 def test_questions_run_concurrently_up_to_the_limit(eval_set):
     # An even number of questions, so every pair of workers meets at the barrier.
     eval_set = eval_set.only(*[q.id for q in eval_set.questions[:4]])
@@ -207,7 +242,7 @@ def test_questions_run_concurrently_up_to_the_limit(eval_set):
     both_running = threading.Barrier(2, timeout=5)
 
     class SlowAgent:
-        def answer(self, request: AgentRequest) -> str:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
             nonlocal running, peak
             with lock:
                 running += 1
@@ -216,7 +251,7 @@ def test_questions_run_concurrently_up_to_the_limit(eval_set):
                 both_running.wait()
             with lock:
                 running -= 1
-            return "answer"
+            return AgentAnswer("answer")
 
     verdicts = {q.id: correct() for q in eval_set.questions}
 
@@ -234,9 +269,9 @@ def test_each_run_uses_a_fresh_throwaway_data_root_outside_pa_data_dir(
     roots: list[Path] = []
 
     class RecordingAgent:
-        def answer(self, request: AgentRequest) -> str:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
             roots.append(request.data_root.path)
-            return "answer"
+            return AgentAnswer("answer")
 
     eval_set = eval_set.only("hotel-block-deadline")
     run_eval(CORPUS, eval_set, RecordingAgent(), ScriptedJudge({}))
@@ -248,3 +283,47 @@ def test_each_run_uses_a_fresh_throwaway_data_root_outside_pa_data_dir(
     assert not second.exists()
     assert not first.is_relative_to(configured)
     assert list(configured.iterdir()) == []
+
+
+def test_each_answer_records_its_cost_turns_and_duration(eval_set):
+    eval_set = eval_set.only("hotel-block-deadline", "who-asked-about-hotel")
+    answers = {
+        "hotel-block-deadline": AgentAnswer("Oct 9.", cost_usd=0.04, turns=6, duration_ms=18000),
+        "who-asked-about-hotel": AgentTimeoutError("no answer within 300 s"),
+    }
+    verdicts = {"hotel-block-deadline": correct()}
+
+    measured, timed_out = run(eval_set, answers, verdicts).questions
+
+    assert (measured.cost_usd, measured.turns, measured.duration_ms) == (0.04, 6, 18000)
+    assert (timed_out.cost_usd, timed_out.turns, timed_out.duration_ms) == (None, None, None)
+
+
+def test_cost_turns_and_duration_are_summarised_per_category_over_measured_answers(eval_set):
+    answers = {
+        "hotel-block-deadline": AgentAnswer("Oct 9.", cost_usd=0.10, turns=4, duration_ms=10000),
+        "swim-lessons-plan": AgentAnswer("Sat.", cost_usd=0.30, turns=12, duration_ms=50000),
+        "who-asked-about-hotel": AgentAnswer("You.", cost_usd=0.20, turns=8, duration_ms=30000),
+        "swim-instructor": AgentAnswer("Unknown.", cost_usd=0.05, turns=3, duration_ms=9000),
+        "day-of-week": AgentTimeoutError("no answer within 300 s"),
+    }
+    verdicts = {q.id: correct() for q in eval_set.questions}
+
+    results = run(eval_set, answers, verdicts)
+
+    attribution = results.categories["attribution"]
+    assert (attribution.median_cost_usd, attribution.median_turns) == (0.20, 8)
+    assert (attribution.median_duration_ms, attribution.total_cost_usd) == (30000, 0.20)
+    # The timed-out canary has nothing to summarise.
+    canary = results.categories["canary"]
+    assert (canary.median_cost_usd, canary.median_turns, canary.median_duration_ms) == (
+        None,
+        None,
+        None,
+    )
+    assert canary.total_cost_usd is None
+    # Overall, over the four measured answers: medians of the middle two, and the sum.
+    assert results.overall.median_cost_usd == pytest.approx(0.15)
+    assert results.overall.median_turns == 6
+    assert results.overall.median_duration_ms == 20000
+    assert results.overall.total_cost_usd == pytest.approx(0.65)

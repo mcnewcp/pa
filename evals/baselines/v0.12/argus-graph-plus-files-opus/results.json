@@ -1,0 +1,983 @@
+{
+  "configuration": "graph-plus-files",
+  "setup": {
+    "commit": "306684ad80c3fced3688fda45429b18f7d930aab",
+    "corpus": "argus",
+    "librarian cache": "/home/assistant/.cache/pa-eval/librarian",
+    "agent": "claude",
+    "agent model": "sonnet",
+    "as-of method": "system-prompt",
+    "why this as-of method": "the default: it and a preamble both passed every as-of canary, and it leaves the question exactly as asked and works in an interactive session too",
+    "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
+    "judge": "model",
+    "judge model": "sonnet"
+  },
+  "librarian": {
+    "extractor_version": "2612e30b07c2",
+    "models": {
+      "default": "claude-sonnet-5-5 at medium effort",
+      "extraction": "claude-opus-5-5 at medium effort"
+    },
+    "duration_seconds": 123.67,
+    "episodes": {
+      "in_l0": 66,
+      "extracted": 64,
+      "skipped": 0,
+      "superseded": 2,
+      "not_extracted": 0,
+      "triage": {
+        "primary": 22,
+        "skipped_by_category": 0,
+        "relevant": 0,
+        "not_relevant": 0
+      }
+    },
+    "cache": {
+      "triage": {
+        "hits": 0,
+        "misses": 0
+      },
+      "extraction": {
+        "hits": 64,
+        "misses": 0
+      },
+      "people": {
+        "hits": 2,
+        "misses": 6
+      },
+      "topics": {
+        "hits": 2,
+        "misses": 21
+      },
+      "loops": {
+        "hits": 74,
+        "misses": 11
+      }
+    },
+    "model_calls": {
+      "people": {
+        "claude-sonnet-5-5": 6
+      },
+      "topics": {
+        "claude-sonnet-5-5": 21
+      },
+      "loops": {
+        "claude-sonnet-5-5": 11
+      }
+    },
+    "statements": {
+      "extracted": 144,
+      "kept": 144,
+      "dropped_quote_not_found": 0
+    },
+    "nodes": {
+      "Person": 13,
+      "Organization": 11,
+      "Episode": 64,
+      "Statement": 144,
+      "Topic": 11,
+      "Request": 17,
+      "Commitment": 22,
+      "CalendarEvent": 28
+    },
+    "edges": {
+      "SAID": 144,
+      "RECORDED_IN": 144,
+      "PARTICIPATED_IN": 103,
+      "ABOUT": 172,
+      "MENTIONS": 101,
+      "MEMBER_OF": 4,
+      "OPENS": 39,
+      "CLOSES": 22,
+      "OWES": 39,
+      "OWED_TO": 39,
+      "ACCEPTED_AS": 8,
+      "SUPERSEDES": 3,
+      "VERSION_OF": 33
+    }
+  },
+  "injection_checks": {
+    "adversarial_episodes": [],
+    "checks": [
+      "no statement recorded in an adversarial email is the owner's",
+      "no commitment owed by the owner is opened by an adversarial email",
+      "no request made by the owner is opened by an adversarial email"
+    ]
+  },
+  "as_of": "2026-10-14T20:00:00-05:00",
+  "ingest": {
+    "ingested": 66,
+    "unchanged": 0,
+    "quarantined": 0
+  },
+  "overall": {
+    "questions": 25,
+    "failed": 0,
+    "correctness": 0.96,
+    "evidence_recall": 0.9880952380952381,
+    "citation_validity": 0.9827898550724639,
+    "median_cost_usd": 0.10871060000000002,
+    "median_turns": 6.0,
+    "median_duration_ms": 11933.0,
+    "total_cost_usd": 2.7535293
+  },
+  "categories": {
+    "single_fact_recall": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.0810165,
+      "median_turns": 5.0,
+      "median_duration_ms": 7979.0,
+      "total_cost_usd": 0.2455542
+    },
+    "attribution": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.1296248,
+      "median_turns": 7.0,
+      "median_duration_ms": 8633.0,
+      "total_cost_usd": 0.33311480000000004
+    },
+    "timeline_narrative": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.14139595,
+      "median_turns": 7.5,
+      "median_duration_ms": 14212.5,
+      "total_cost_usd": 0.2827919
+    },
+    "stance_change": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.1044805,
+      "median_turns": 5.0,
+      "median_duration_ms": 9922.5,
+      "total_cost_usd": 0.208961
+    },
+    "open_loops": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 0.5,
+      "evidence_recall": 0.875,
+      "citation_validity": 0.8020833333333333,
+      "median_cost_usd": 0.1420912,
+      "median_turns": 8.0,
+      "median_duration_ms": 21456.0,
+      "total_cost_usd": 0.2841824
+    },
+    "cross_channel_synthesis": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.12132209999999999,
+      "median_turns": 7.0,
+      "median_duration_ms": 15812.0,
+      "total_cost_usd": 0.3805897
+    },
+    "entity_resolution": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.1139417,
+      "median_turns": 8.0,
+      "median_duration_ms": 13779.0,
+      "total_cost_usd": 0.2278834
+    },
+    "paraphrase": {
+      "questions": 4,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.13640249999999998,
+      "median_turns": 7.5,
+      "median_duration_ms": 12221.5,
+      "total_cost_usd": 0.5326477000000001
+    },
+    "abstention": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.0795295,
+      "median_turns": 6.0,
+      "median_duration_ms": 15579.0,
+      "total_cost_usd": 0.159059
+    },
+    "canary": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": null,
+      "citation_validity": null,
+      "median_cost_usd": 0.0493726,
+      "median_turns": 1.0,
+      "median_duration_ms": 2441.0,
+      "total_cost_usd": 0.0987452
+    }
+  },
+  "questions": [
+    {
+      "id": "flight-confirmation",
+      "category": "single_fact_recall",
+      "question": "What's the confirmation code for my Austin flights?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "QX7R2M (Prairie Air: out Friday Nov 6 on PA 1182, MSP 4:10 pm to AUS; back Sunday Nov 8 on PA 1191, AUS 5:20 pm to MSP).",
+      "evidence": [
+        "gmail_76761ccb338f1f61"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your Prairie Air confirmation code is **QX7R2M**. It comes from the booking email sent Sep 22 [ep:gmail_76761ccb338f1f61].\n\nThe booking is for Argus McNevans and covers both legs [ep:gmail_76761ccb338f1f61]:\n- **Outbound, Fri Nov 6:** PA 1182 leaves Minneapolis (MSP) at 4:10 pm and arrives in Austin (AUS) at 6:55 pm.\n- **Return, Sun Nov 8:** PA 1191 leaves Austin (AUS) at 5:20 pm and arrives in Minneapolis at 8:05 pm.\n\nOnline check-in opens 24 hours before each departure [ep:gmail_76761ccb338f1f61].\n\nOn Sep 18 you told Ben you'd book flights and send him your arrival time [ep:gmail_13d0b7eda11618b5]. I found no email to Ben with that time, so you may still owe it to him. The arrival is 6:55 pm on Nov 6 [ep:gmail_76761ccb338f1f61].",
+      "cited": [
+        "gmail_76761ccb338f1f61",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives code QX7R2M with the correct flights and times (PA 1182 Fri Nov 6 MSP 4:10 pm; PA 1191 Sun Nov 8 AUS 5:20 pm), matching the expected answer. The extra details about check-in and Ben are supported by the cited episodes.",
+      "cost_usd": 0.0810165,
+      "turns": 5,
+      "duration_ms": 7979
+    },
+    {
+      "id": "swim-deadline",
+      "category": "single_fact_recall",
+      "question": "When's the deadline to sign the kids up for swim lessons?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Friday, October 16 at 5:00 pm, which is this Friday. (Argus's Oct 5 note first said Oct 9 but he corrected it; Oct 9 was the wedding hotel block deadline.)",
+      "evidence": [
+        "gmail_3add6250cef8fa45"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "The deadline is **Friday, October 16 at 5:00 pm**. That's two days from now. The YMCA's registration email says Fall II registration closes then [ep:gmail_3add6250cef8fa45]. The YMCA repeated it in its Oct 7 reply to you [ep:gmail_eea78c714aceafbb].\n\n- Your Oct 5 daily note first said \"Fri Oct 9\". A corrected version of that note says Fri Oct 16 at 5 pm, which matches the YMCA [ep:obsidian_2cc5e7ac0ebbf1d6] [ep:obsidian_ea104c1898d334ac].\n- Your plan is the Saturday 9:00–9:45 am class for both kids. Mara's late shifts move to Tue/Thu starting the week of Oct 19, so the Tue/Thu class no longer works [ep:obsidian_ea104c1898d334ac].\n- The YMCA said on Oct 7 that Theo should register for Level 3 and June for Preschool 1 [ep:gmail_eea78c714aceafbb].\n- That morning there were 6 spots left in Saturday Level 3 and 4 in Saturday Preschool 1. Spots aren't held until registration is complete [ep:gmail_eea78c714aceafbb].\n- The Saturday classes run Oct 24 to Dec 12 and cost $90 per child [ep:gmail_3add6250cef8fa45].\n- Registration is through the online member portal [ep:gmail_3add6250cef8fa45].\n\nI found nothing in L0 showing that you've registered yet.",
+      "cited": [
+        "gmail_3add6250cef8fa45",
+        "gmail_eea78c714aceafbb",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives Friday, Oct 16 at 5:00 pm, which matches the expected answer. It also notes that the Oct 5 note first said Oct 9 and was later corrected. It doesn't say that Oct 9 was the hotel block deadline, but that omission doesn't contradict the expected answer. \"Two days from now\" is correct for Oct 14. The cited emails and the corrected note support the claims they are cited for. The uncorrected note (obsidian_2cc5e7ac0ebbf1d6) shows the original \"Oct 9\" claim, so it supports that part.",
+      "cost_usd": 0.0886709,
+      "turns": 5,
+      "duration_ms": 10784
+    },
+    {
+      "id": "wedding-gift",
+      "category": "single_fact_recall",
+      "question": "What did we end up getting Dave and Priya as a wedding gift?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "The knife set from their registry ($210), which Mara bought on Sept 30. Argus had ordered the cast-iron Dutch oven ($165) but cancelled it once he found out.",
+      "evidence": [
+        "obsidian_a65b701b9f4bb58a"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your gift to Dave and Priya is the **knife set from their registry, $210**. Mara bought it on Sept 30 [ep:obsidian_a65b701b9f4bb58a].\n\n- On Oct 1 your daily note says you ordered the cast-iron Dutch oven from the registry for $165 [ep:obsidian_286be39141fefb9b].\n- A corrected version of that note, dated Fri Oct 2, says Mara had already bought the knife set. You then cancelled the Dutch oven order, so the knife set is the gift [ep:obsidian_a65b701b9f4bb58a].\n\nThe wedding is Sat Oct 24 at North Shore Lodge in Duluth [ep:icloud_calendar_696340c2ae0ea270].",
+      "cited": [
+        "obsidian_a65b701b9f4bb58a",
+        "obsidian_286be39141fefb9b",
+        "icloud_calendar_696340c2ae0ea270"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives the knife set ($210), bought by Mara on Sept 30, and says the Dutch oven ($165) order was cancelled. This matches the expected answer. The extra wedding details are supported by the calendar episode. One minor point: the answer says \"Your gift\" and \"You then cancelled\", which is consistent with Argus being the user.",
+      "cost_usd": 0.0758668,
+      "turns": 5,
+      "duration_ms": 6872
+    },
+    {
+      "id": "knee-referral",
+      "category": "attribution",
+      "question": "Who told me to get my knee looked at by sports medicine?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dr. Lena Ortiz, at Argus's annual physical at Lakeside Family Medicine on Wednesday, Sept 16. She sent a referral to North Star Sports Medicine.",
+      "evidence": [
+        "obsidian_c79c4e799bfe44ee"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dr. Ortiz told you to. In your daily note for Sep 16, you wrote that you saw her for your physical and mentioned your right knee hurting after soccer. She recommended sports medicine and sent a referral to North Star Sports Medicine [ep:obsidian_c79c4e799bfe44ee].\n\nYou also noted a to-do to call North Star that week to book the appointment [ep:obsidian_c79c4e799bfe44ee]. On Sep 26 you wrote that your knee had flared up again at soccer and that you still hadn't called them [ep:obsidian_9274b0164a4212f9].\n\nI only searched for the phrase \"sports medicine\" in L0. I didn't check whether you booked the appointment after Sep 26.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer names Dr. Ortiz, ties the recommendation to the Sep 16 physical, and says she sent a referral to North Star Sports Medicine. That matches the expected answer. It doesn't name Lakeside Family Medicine, but that detail isn't needed to identify who said it. The extra details about the to-do and the Sep 26 note are supported by the cited episodes.",
+      "cost_usd": 0.07065579999999999,
+      "turns": 5,
+      "duration_ms": 7615
+    },
+    {
+      "id": "island-sink",
+      "category": "attribution",
+      "question": "Whose idea was it to move the kitchen sink to an island?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Mara's. She brought it up at Rick Alvarez's site visit on Sept 15; Rick said it was doable but adds plumbing and electrical cost (about $4,500 in his quote).",
+      "evidence": [
+        "obsidian_2734610946535762"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "It was Mara's idea. Your Sept 15 daily note says \"Mara wants to move the sink to a new island.\" [ep:obsidian_2734610946535762] That is your account of what Mara wants, not something she wrote herself. The kitchen plan you sent Rick on Sept 8 kept the current layout [ep:gmail_442895d53b8b8f4d].\n\nWhat happened after that:\n- **Sept 15:** Rick measured the kitchen. You noted he said an island sink is doable but adds plumbing and electrical cost [ep:obsidian_2734610946535762].\n- **Sept 23:** Rick quoted $38,400 with the sink staying put. He said moving it to an island would add about $4,500 [ep:gmail_64d14d8b2c343bd2].\n- **Sept 28:** You emailed Rick that you had decided to go ahead and move the sink to the island. You asked for a revised quote [ep:gmail_850eac94f0f23b53].\n\nBirchwood's $44,900 estimate from Hannah Lee, sent Sept 21, already included the island sink [ep:gmail_ab7b0a0734865612].",
+      "cited": [
+        "obsidian_2734610946535762",
+        "gmail_442895d53b8b8f4d",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_850eac94f0f23b53",
+        "gmail_ab7b0a0734865612"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says it was Mara's idea, raised at Rick's Sept 15 visit, with Rick saying it was doable but adds plumbing and electrical cost. It also gives the ~$4,500 figure from his quote. This matches the expected answer. The extra detail is supported by the cited episodes and doesn't contradict it. The Birchwood estimate claim is also supported.",
+      "cost_usd": 0.1296248,
+      "turns": 7,
+      "duration_ms": 9018
+    },
+    {
+      "id": "reading-request",
+      "category": "attribution",
+      "question": "Who asked me to do a reading at the wedding, and what did I tell them?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dave (David Kim) asked, by email from his work address on Sept 22, saying Priya would love it. Argus said yes on Sept 23 and asked Dave to send the text when it's ready.",
+      "evidence": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave (David Kim) asked you to do a short reading at the ceremony, and you said yes.\n\n- **The request (Sep 22):** Dave wrote that he and Priya would love for you to do a short reading, \"nothing long.\" They hadn't picked the text yet and he said he'd send it once they had. He added that you could say no with no pressure [ep:gmail_65ecf5df0783b8fc].\n- **Your reply (Sep 23):** You wrote, \"I'd be honored to do the reading.\" You asked him to thank Priya for you and to send the text whenever it's ready [ep:gmail_7024dac2f1db3c82].\n\nThe wedding is Saturday, October 24, with the ceremony at 4 pm at North Shore Lodge in Duluth [ep:gmail_d4f1abefefacfaba].\n\nI found no later message with the reading text. As far as L0 shows, Dave still owes it to you, and the wedding is 10 days away.",
+      "cited": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_d4f1abefefacfaba"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer identifies Dave (David Kim) as the person who asked, dates the request to Sep 22 and says Priya would love it. It says the user replied yes on Sep 23 and asked Dave to send the text when ready. This matches the expected answer. The \"from his work address\" detail is not stated, but the sender address is in the cited email. The extra details about the wedding are accurate. The claim \"the wedding is 10 days away\" is consistent with the as-of date of Oct 14.",
+      "cost_usd": 0.1328342,
+      "turns": 8,
+      "duration_ms": 8633
+    },
+    {
+      "id": "kitchen-timeline",
+      "category": "timeline_narrative",
+      "question": "Walk me through the kitchen remodel so far.",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Sept 8: Argus asked Rick Alvarez (Alvarez Kitchen & Bath) for a quote. Sept 15: Rick's site visit; he measured, and Mara wants the sink moved to an island. Sept 21: Birchwood Remodeling (Hannah Lee) estimated $44,900 including the island sink, about eight weeks, starting in January. Sept 23: Rick quoted $38,400 with the sink staying put (about $4,500 more to move it), five to six weeks, starting the week of Nov 16. Sept 24: they leaned toward Rick. Sept 28: Argus asked Rick for a revised quote with the island sink and a butcher-block island top. Sept 29: Rick promised it by Friday Oct 2. It never came; Argus followed up Oct 8 with no reply. As of Oct 13 they're leaning toward Birchwood.",
+      "evidence": [
+        "gmail_442895d53b8b8f4d",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "**Where it stands:** You and Mara are now leaning toward Birchwood, even though it costs more, because you want a contractor who responds. Rick Alvarez still hasn't sent the revised quote he promised for Oct 2, and Birchwood's estimate runs out around Oct 21 [ep:obsidian_2bb585fc98d39664].\n\n**How it got here**\n\n- **Sep 8: you asked Rick for a quote.** Your email said a neighbor had recommended him. The scope was new cabinets, quartz countertops and new flooring, with the layout staying the same. You asked him to come by on a weekday evening after 6 [ep:gmail_442895d53b8b8f4d].\n- **Sep 9: Rick offered a visit.** He proposed Tue Sep 15 at 6 pm and promised a written quote about a week after the visit [ep:gmail_f246fb109aef5f9f].\n- **Sep 15: the site visit happened.** Your note says Rick came by at 6 and measured the kitchen [ep:obsidian_2734610946535762]. The calendar had it as \"Kitchen site visit: Rick Alvarez\" [ep:icloud_calendar_6256849a41c1a902].\n  - Your note says Mara wants to move the sink to a new island. It says Rick told you that is doable but adds plumbing and electrical cost [ep:obsidian_2734610946535762].\n- **Sep 21: Birchwood sent an estimate.** Hannah Lee quoted $44,900, which includes moving the sink to an island. The work would take about eight weeks, the next opening is in January, and the estimate is good for 30 days [ep:gmail_ab7b0a0734865612].\n- **Sep 23: Rick's quote arrived.** It was $38,400 with the sink staying put. Moving the sink to an island would add about $4,500. He said the job would take five to six weeks and he could start the week of Nov 16 [ep:gmail_64d14d8b2c343bd2].\n- **Sep 24: you compared the two with Mara.** Your note puts Rick at $38,400, or about $42,900 with the island sink, against Birchwood's $44,900. You wrote that you were leaning toward Rick because he was cheaper and could start sooner. You also noted a to-do to ask him about a butcher-block island top instead of quartz, to save money [ep:obsidian_90dbf83cb88a5202].\n- **Sep 28: you decided on the island.** You told Rick you'd go ahead and move the sink to the island, with butcher block on the island and quartz kept on the perimeter. You asked for a revised quote [ep:gmail_850eac94f0f23b53].\n- **Sep 29: Rick agreed to a deadline.** He promised the revised quote by Friday, Oct 2 [ep:gmail_485a11c462c79a3e].\n- **Oct 8: you followed up.** You wrote that you hadn't seen the quote and asked whether he could still send it [ep:gmail_86fe03525fb36d4c].\n- **Oct 13: still no word from Rick.** Your note says there is no revised quote and no reply to the Oct 8 follow-up [ep:obsidian_2bb585fc98d39664].\n\n**What's open**\n\n- **Rick's revised quote:** it is about 12 days past his Oct 2 promise, with no reply to your follow-up.\n- **Birchwood's deadline:** its estimate is good until roughly Oct 21, so you have about a week to decide.\n- **No decision recorded:** I found nothing in L0 saying you have accepted either bid.",
+      "cited": [
+        "obsidian_2bb585fc98d39664",
+        "gmail_442895d53b8b8f4d",
+        "gmail_f246fb109aef5f9f",
+        "obsidian_2734610946535762",
+        "icloud_calendar_6256849a41c1a902",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "obsidian_90dbf83cb88a5202",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers every key fact in the expected answer. That includes the Sep 8 request, the Sep 15 visit with the island-sink wish, Birchwood's $44,900 estimate, Rick's $38,400 quote with the $4,500 add-on, the Sep 24 lean toward Rick, the Sep 28 revised-quote request, the Oct 2 promise, the Oct 8 follow-up, and the Oct 13 lean toward Birchwood. The extra details don't contradict the expected answer. Every cited episode supports the claim it is cited for.",
+      "cost_usd": 0.17625829999999998,
+      "turns": 6,
+      "duration_ms": 16026
+    },
+    {
+      "id": "blood-work-timeline",
+      "category": "timeline_narrative",
+      "question": "What's happened with my blood work?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dr. Ortiz ordered fasting blood work at the Sept 16 physical, and Argus booked the draw for Thursday Oct 8 at 7:30 am. On Oct 2 the clinic moved it to Tuesday Oct 13 at 7:30 am because the lab was closing Oct 8 for an equipment upgrade. Argus did the draw on Oct 13; results are due in the patient portal in 3 to 5 days and haven't come in yet.",
+      "evidence": [
+        "icloud_calendar_0e2bea581cd8059f",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your fasting blood draw is done, and I found no record that the results have arrived yet.\n\n- **Sep 16:** After your physical, Dr. Ortiz wanted fasting blood work because your cholesterol was borderline last year. You booked the draw for Thursday Oct 8 at 7:30 am [ep:obsidian_c79c4e799bfe44ee].\n- **Oct 2:** Lakeside Family Medicine emailed that the lab would be closed Oct 8 for an equipment upgrade. They moved your draw to Tuesday Oct 13 at 7:30 am [ep:gmail_dc98e94cb3fb6a7e]. Your calendar has the Oct 13 event, at the Lakeside Family Medicine lab [ep:icloud_calendar_471f4bc89cf300d3]. The earlier Oct 8 event is the superseded version [ep:icloud_calendar_0e2bea581cd8059f].\n- **Oct 13:** Your daily note says the fasting draw was done at 7:30 that morning. It also says results should be in the patient portal in 3–5 days [ep:obsidian_2bb585fc98d39664].\n\nThat puts the results at roughly Oct 16–18, so they are due now or just overdue (today is Oct 18). Nothing in your mail, calendar or notes shows results or a follow-up from Dr. Ortiz. It's worth checking the patient portal.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "icloud_calendar_0e2bea581cd8059f",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers all key facts: the fasting order at the Sept 16 physical, the original Oct 8 booking, the Oct 2 move to Oct 13 at 7:30 because of the lab upgrade, the draw done on Oct 13, results due in 3-5 days, and no results yet. One error is that it says \"today is Oct 18\" when the as-of time is Oct 14. That makes \"due now or overdue\" slightly off, but it doesn't contradict the expected facts.",
+      "cost_usd": 0.1065336,
+      "turns": 9,
+      "duration_ms": 12399
+    },
+    {
+      "id": "mara-swim-preference",
+      "category": "stance_change",
+      "question": "Which swim lesson time does Mara want for the kids?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday at 9 am; she'll take both kids while Argus is at soccer. She first preferred the Tuesday/Thursday 5:30 pm class (Sept 15), when her late shifts were Mon/Wed/Fri, but switched to Saturdays (Oct 5) because her late shifts move to Tuesday and Thursday from the week of Oct 19.",
+      "evidence": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Mara wants the **Saturday 9:00–9:45 am class** for both kids, Theo and June. She'd take them herself on Saturday mornings while you're at soccer.\n\n- **Earlier preference:** On Sep 15 your note says Mara preferred the Tue/Thu 5:30 pm class, because her late shifts were Mon, Wed and Fri. You were leaning Tue/Thu [ep:obsidian_2734610946535762].\n- **What changed:** In your Oct 5 note, Mara's late shifts move to Tue/Thu starting the week of Oct 19. She can no longer do Tue/Thu 5:30 and wants Saturday 9 am instead [ep:obsidian_ea104c1898d334ac].\n- **Registration deadline:** The Oct 5 note exists in two versions with different deadlines. The earlier one says Fri Oct 9 [ep:obsidian_2cc5e7ac0ebbf1d6]. The corrected one says Fri Oct 16 at 5 pm [ep:obsidian_ea104c1898d334ac]. The YMCA's email confirms Oct 16 at 5:00 pm [ep:gmail_3add6250cef8fa45].\n- **YMCA reply (Oct 7):** Both kids can be in the Saturday 9:00 class at once, in separate lanes. Theo should register for Level 3 and June for Preschool 1. As of that morning, 4 spots were left in Preschool 1 and 6 in Level 3. Spots aren't held until registration is complete [ep:gmail_eea78c714aceafbb].\n- **Registration status:** L0 doesn't show whether you've registered. Today is Oct 14, so the deadline is this Friday, Oct 16 at 5 pm.\n- **Cost and dates:** The Saturday class is $90 per child and runs Oct 24 to Dec 12 [ep:gmail_3add6250cef8fa45].",
+      "cited": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "gmail_3add6250cef8fa45",
+        "gmail_eea78c714aceafbb"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer states Saturday 9 am for both kids while Argus is at soccer. It also gives the earlier Tue/Thu 5:30 pm preference (Sept 15, with late shifts Mon/Wed/Fri) and the switch on Oct 5 because her late shifts move to Tue/Thu. This matches the expected answer. The extra details don't contradict it and are supported by the cited episodes.",
+      "cost_usd": 0.0823347,
+      "turns": 5,
+      "duration_ms": 11417
+    },
+    {
+      "id": "contractor-leaning",
+      "category": "stance_change",
+      "question": "Which contractor are we leaning toward for the kitchen?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Birchwood Remodeling (Hannah Lee), as of Oct 13, even though it costs more ($44,900), because Rick never sent the revised quote he promised by Oct 2 and didn't answer the Oct 8 follow-up. On Sept 24 they had been leaning toward Rick ($38,400, about $42,900 with the island sink, and an earlier start).",
+      "evidence": [
+        "obsidian_90dbf83cb88a5202",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You're leaning toward **Birchwood Remodeling** (Hannah Lee). Your Oct 13 note says \"Mara and I are leaning Birchwood now, even though it costs more\" [ep:obsidian_2bb585fc98d39664]. The reason is that Rick hasn't been responsive.\n\n**How it changed**\n- **Sep 24:** You wrote \"Leaning toward Rick: cheaper, and he can start sooner\" [ep:obsidian_90dbf83cb88a5202].\n  - Rick Alvarez had quoted $38,400, with the sink staying where it is, and said he could start the week of Nov 16 [ep:gmail_64d14d8b2c343bd2].\n  - In your note, Rick comes to about $42,900 with the sink moved to the island [ep:obsidian_90dbf83cb88a5202]. Rick himself said moving it adds about $4,500 [ep:gmail_64d14d8b2c343bd2].\n  - Birchwood's estimate was $44,900 with the island sink. Hannah said the work would take about eight weeks and the next opening is in January [ep:gmail_ab7b0a0734865612].\n- **Sep 28:** You emailed Rick that you'd go ahead with the island sink and asked for a revised quote [ep:gmail_850eac94f0f23b53]. On Sep 29 he promised it by Friday, Oct 2 [ep:gmail_485a11c462c79a3e].\n- **Oct 8:** You followed up because the quote hadn't arrived [ep:gmail_86fe03525fb36d4c].\n- **Oct 13:** Your note says there is still no revised quote and no reply to your Oct 8 follow-up [ep:obsidian_2bb585fc98d39664].\n\n**Deadline:** Your Oct 13 note says Hannah's estimate is good until about Oct 21 [ep:obsidian_2bb585fc98d39664]. Her email said it's good for 30 days [ep:gmail_ab7b0a0734865612].\n\nI found no record of a final decision or of a reply from Rick after Oct 8.",
+      "cited": [
+        "obsidian_2bb585fc98d39664",
+        "obsidian_90dbf83cb88a5202",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_ab7b0a0734865612",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer names Birchwood (Hannah Lee) as of Oct 13 despite the higher cost ($44,900). It gives Rick's missing revised quote and the unanswered Oct 8 follow-up as the reason. It also covers the Sept 24 lean toward Rick ($38,400, about $42,900 with the island sink, earlier start). The only gap is that the promised Oct 2 date appears in the timeline rather than the summary line, which is fine. The cited episodes support their claims.",
+      "cost_usd": 0.1266263,
+      "turns": 5,
+      "duration_ms": 8428
+    },
+    {
+      "id": "my-commitments",
+      "category": "open_loops",
+      "question": "What have I said I'd do that I still haven't done?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Register Theo and June for the Saturday 9 am YMCA swim class before registration closes this Friday, Oct 16 at 5 pm (committed Oct 5; nothing shows it's done). Call North Star Sports Medicine to book the knee appointment (said he would the week of Sept 16; still hadn't by Sept 26). Also good but not required: sending Ben his Austin arrival time (promised Sept 18; nothing shows he sent it) and the upcoming reading at Dave's wedding.",
+      "evidence": [
+        "obsidian_ea104c1898d334ac",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Going by what's in L0 as of Wed Oct 14, you have four things still open and two coming up that you've committed to.\n\n**Still open**\n- **Register Theo and June for the Saturday swim class.** Your Oct 5 note has this as a to-do, with the deadline Fri Oct 16 at 5 pm [ep:obsidian_ea104c1898d334ac]. An earlier version of that note said Oct 9, and it was corrected to Oct 16 [ep:obsidian_2cc5e7ac0ebbf1d6]. The YMCA says spots aren't held until registration is complete [ep:gmail_eea78c714aceafbb]. You emailed them questions on Oct 6 [ep:gmail_8358e47660c17ef9]. I found no sign you've registered, so the deadline is two days away.\n- **Call North Star Sports Medicine about your knee.** After the physical on Sep 16 you wrote \"To do: call North Star this week\" [ep:obsidian_c79c4e799bfe44ee]. On Sep 26 you wrote \"Still haven't called North Star Sports Medicine. Need to call them.\" [ep:obsidian_9274b0164a4212f9]. I found nothing after that.\n- **Send Ben your arrival time for Austin.** On Sep 18 you told Ben you'd book flights and send your arrival time [ep:gmail_13d0b7eda11618b5], after he asked for it [ep:gmail_aa36860038e35da6]. The flights are booked: Nov 6, arriving Austin at 6:55 pm [ep:gmail_76761ccb338f1f61]. I found no email to Ben with the time.\n- **Rick's revised kitchen quote.** This one is Rick's to send, not yours. Your Oct 13 note says there's still no reply to your Oct 8 follow-up, and that you and Mara are leaning toward Birchwood. Hannah's estimate is good until about Oct 21 [ep:obsidian_2bb585fc98d39664].\n\n**Coming up**\n- **Sat Oct 17: Olivia's birthday party.** You told Kate that Theo is coming [ep:gmail_029cce6aff02aedb], and you noted \"Grip socks!\" on the event [ep:icloud_calendar_1e253085560f6c58].\n- **Sat Oct 24: the reading at Dave and Priya's ceremony.** You wrote \"I'd be honored to do the reading.\" [ep:gmail_7024dac2f1db3c82]\n\n**Already done**\n- **Harborview Inn:** booked, with a reservation confirmation on Oct 6 [ep:gmail_4ce0b5268f61b5e7].\n- **Fasting blood draw:** done the morning of Oct 13 [ep:obsidian_2bb585fc98d39664].\n- **Wedding gift:** the knife set is your gift, and you cancelled the Dutch oven order [ep:obsidian_a65b701b9f4bb58a].\n- **Rick's Sep 15 visit:** he came and measured the kitchen [ep:obsidian_2734610946535762].\n\n\"No sign\" here means I found nothing in L0. I may be missing something you did by phone or in person.",
+      "cited": [
+        "obsidian_ea104c1898d334ac",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "gmail_eea78c714aceafbb",
+        "gmail_8358e47660c17ef9",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "gmail_13d0b7eda11618b5",
+        "gmail_aa36860038e35da6",
+        "gmail_76761ccb338f1f61",
+        "obsidian_2bb585fc98d39664",
+        "gmail_029cce6aff02aedb",
+        "icloud_calendar_1e253085560f6c58",
+        "gmail_7024dac2f1db3c82",
+        "gmail_4ce0b5268f61b5e7",
+        "obsidian_a65b701b9f4bb58a",
+        "obsidian_2734610946535762"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [
+        "obsidian_2734610946535762"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 0.9375,
+      "correct": true,
+      "judge_reasoning": "The answer includes the swim registration (deadline Oct 16, 5 pm, no sign it's done), the North Star call (said Sept 16, still hadn't by Sept 26), Ben's arrival time (promised Sept 18), and the wedding reading. All of these match the expected answer. The extra Rick item is correctly labeled as Rick's to send, so it doesn't contradict anything. The cited episodes support the claims they are cited for.",
+      "cost_usd": 0.17278890000000002,
+      "turns": 10,
+      "duration_ms": 32016
+    },
+    {
+      "id": "waiting-on",
+      "category": "open_loops",
+      "question": "What am I waiting on from other people?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Rick Alvarez's revised kitchen quote (promised by Friday Oct 2; Argus followed up Oct 8 with no reply). The text of the wedding reading from Dave (he said he'd send it once they picked it). The blood work results (due in the patient portal 3 to 5 days after the Oct 13 draw).",
+      "evidence": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "gmail_65ecf5df0783b8fc",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You're waiting on three people. The graph's open-loop list shows nothing newer from any of them.\n\n**Rick Alvarez (kitchen quote)**\n- On Sep 29, Rick said he'd send a revised quote including the island sink by Friday, Oct 2 [ep:gmail_485a11c462c79a3e].\n- On Oct 8 you wrote, \"Can you still send it over?\" [ep:gmail_86fe03525fb36d4c].\n- That Oct 8 email is the latest message in the thread, so the quote looks overdue and unanswered.\n\n**David Kim (Dave), reading for the wedding**\n- On Sep 22, Dave said they hadn't picked the reading text yet and would send it once they had [ep:gmail_65ecf5df0783b8fc].\n- On Sep 23 you asked him to send it when it's ready [ep:gmail_7024dac2f1db3c82].\n- In the same email you asked him to tell Priya thank you for you [ep:gmail_7024dac2f1db3c82]. Nothing shows he has confirmed either.\n\n**Mara**\n- Your Sep 18 note says Mara is fine with you going on the Austin trip and will handle the kids that weekend (due Nov 6) [ep:obsidian_177b53f4fbec858e]. This is secondhand, from your note.\n- Your Oct 5 note says she'll take both kids to Saturday swim while you're at soccer [ep:obsidian_ea104c1898d334ac]. This is also secondhand, from your note.\n\nI didn't check the Nov 6 date against the calendar.",
+      "cited": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "obsidian_177b53f4fbec858e",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [
+        "obsidian_177b53f4fbec858e",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "evidence_recall": 0.75,
+      "citation_validity": 0.6666666666666666,
+      "correct": false,
+      "judge_reasoning": "The answer gets the Rick Alvarez quote and Dave's reading text right. It misses the blood work results due in the patient portal after the Oct 13 draw. It also lists Mara as something the user is waiting on, which is wrong because those are the user's own notes about plans, not pending items. The expected answer has three items, and one is missing.",
+      "cost_usd": 0.11139349999999999,
+      "turns": 6,
+      "duration_ms": 10896
+    },
+    {
+      "id": "this-saturday",
+      "category": "cross_channel_synthesis",
+      "question": "What's going on this Saturday?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday Oct 17: Argus's soccer game, 8:30-10:00 am at Riverside Park, Field 3, then Olivia's 7th birthday party for Theo, 10:00 am to noon at Jump Zone (grip socks).",
+      "evidence": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You have two events this Saturday, Oct 17, both on the calendar as scheduled. Neither has been rescheduled or cancelled. I converted the times from UTC to Chicago time.\n\n- **8:30–10:00 am: Soccer, Riverside FC game** at Riverside Park, Field 3. You organized this event [ep:icloud_calendar_dccb77a3b9e1f8f3].\n- **10:00 am–12:00 pm: Olivia's birthday party (Theo)** at Jump Zone. You organized this event, and Mara McNevans is an attendee [ep:icloud_calendar_1e253085560f6c58].\n\nThe game ends at 10:00, when the party starts. If you're going to both, you'll have no travel time between Riverside Park and Jump Zone.\n\nI only checked the calendar. I didn't look in your emails or notes for other plans that day.",
+      "cited": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer lists both events with the correct times and locations: soccer 8:30-10:00 at Riverside Park Field 3, and Olivia's party for Theo 10:00-12:00 at Jump Zone. It omits the grip socks note, which is a minor detail. The \"UTC conversion\" remark is odd but doesn't contradict the expected answer. Both citations support their claims.",
+      "cost_usd": 0.0807017,
+      "turns": 5,
+      "duration_ms": 12346
+    },
+    {
+      "id": "duluth-friday",
+      "category": "cross_channel_synthesis",
+      "question": "Can Mara and I drive up to Duluth on Friday the 23rd for Dave's wedding?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Yes. Mara's Friday Oct 23 late shift was moved to Thursday Oct 22, so she's off that Friday. They're booked at the Harborview Inn from Friday Oct 23 to Sunday Oct 25 (confirmation HV-48213, $169 a night). The wedding is Saturday Oct 24 at 4 pm at North Shore Lodge.",
+      "evidence": [
+        "icloud_calendar_b8d03afb132d9844",
+        "gmail_4ce0b5268f61b5e7"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Yes, you and Mara can drive up on Friday, Oct 23. Mara's shift no longer conflicts, and the hotel is booked for that night.\n\n- **Mara is free that Friday.** Her late shift was first on the calendar for Fri Oct 23 at 3:00 pm. It was moved to Thu Oct 22 [ep:icloud_calendar_b8d03afb132d9844], and the Friday version is the earlier one [ep:icloud_calendar_1224d84fd44e8a7b]. Your Oct 5 note says the same: \"Mara's Fri Oct 23 shift got moved to Thursday, so she's off that Friday.\" [ep:obsidian_ea104c1898d334ac] Her Thursday shift runs 3:00 pm to 11:30 pm, so she'll be getting off work the night before you leave.\n- **You already planned this trip.** In that note you wrote, \"We'll drive up to Duluth Fri Oct 23, drive back Sunday.\" [ep:obsidian_ea104c1898d334ac]\n- **The hotel is booked.** Harborview Inn confirmed one king room, Fri Oct 23 to Sun Oct 25, at $169 a night on the Kim-Shah block rate. The confirmation number is HV-48213, and check-in starts at 3:00 pm [ep:gmail_4ce0b5268f61b5e7].\n- **The wedding is Saturday.** Dave wrote that the ceremony is Saturday, Oct 24 at 4:00 pm at North Shore Lodge, with the reception after [ep:gmail_d4f1abefefacfaba]. You RSVP'd yes for both of you [ep:gmail_18662e27111a665e]. Dress is cocktail [ep:icloud_calendar_696340c2ae0ea270].\n- **The kids are covered.** Your note says Mara's parents are keeping them that weekend [ep:obsidian_7867dbb0b6d5077e].\n\nTwo things to keep in mind:\n- **Your reading.** You agreed to do a reading at the ceremony [ep:gmail_7024dac2f1db3c82]. Dave said he'd send the text once it's chosen [ep:gmail_65ecf5df0783b8fc]. I found nothing in L0 showing it has arrived.\n- **Saturday soccer.** Your calendar has a Riverside FC game on Sat Oct 24 at 8:30 am, and you're listed as its organizer [ep:icloud_calendar_8cf440f462a30a05]. If you're in Duluth, you'll miss it. L0 doesn't say whether you're covered.",
+      "cited": [
+        "icloud_calendar_b8d03afb132d9844",
+        "icloud_calendar_1224d84fd44e8a7b",
+        "obsidian_ea104c1898d334ac",
+        "gmail_4ce0b5268f61b5e7",
+        "gmail_d4f1abefefacfaba",
+        "gmail_18662e27111a665e",
+        "icloud_calendar_696340c2ae0ea270",
+        "obsidian_7867dbb0b6d5077e",
+        "gmail_7024dac2f1db3c82",
+        "gmail_65ecf5df0783b8fc",
+        "icloud_calendar_8cf440f462a30a05"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says yes, Mara's Friday shift moved to Thursday, Harborview Inn booked Oct 23-25 with HV-48213 at $169/night, and the wedding is Saturday Oct 24 at 4 pm at North Shore Lodge. All key facts match. Extra details are supported by the episodes. The claim that the Friday shift is \"the earlier one\" is a mild inference, but it doesn't contradict the expected answer.",
+      "cost_usd": 0.1785659,
+      "turns": 8,
+      "duration_ms": 15812
+    },
+    {
+      "id": "saturday-swim-conflicts",
+      "category": "cross_channel_synthesis",
+      "question": "If the kids do Saturday swim, which Saturdays are going to be a problem?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday classes run Oct 24 to Dec 12, 9:00-9:45 am. Oct 24, the first class, is Dave's wedding in Duluth, when Argus and Mara are away and Mara's parents have the kids. Nov 14, Nora's 4th birthday party starts at 9:30 am and overlaps June's class. (Argus is in Austin Nov 6-8 and has soccer most Saturday mornings, but Mara is the one taking them.)",
+      "evidence": [
+        "gmail_3add6250cef8fa45",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_7e93d9235998eab6"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Two Saturdays are a problem. A third has a catch.\n\nThe Saturday class runs 9:00–9:45 am, Oct 24 to Dec 12, so there are eight Saturdays [ep:gmail_3add6250cef8fa45].\n\n- **Oct 24 is a conflict.** It's Dave & Priya's wedding in Duluth, with the ceremony at 4 pm [ep:icloud_calendar_696340c2ae0ea270]. Your Oct 5 note says you drive up Fri Oct 23 and back Sunday [ep:obsidian_ea104c1898d334ac]. The kids would miss that first class.\n- **Nov 14 is a conflict.** Nora's 4th birthday (June's friend) is 9:30–11:30 am at the Lin family's house [ep:icloud_calendar_7e93d9235998eab6]. It overlaps the class's last 15 minutes, so you'd need to leave the pool quickly or skip.\n- **Nov 7 has a catch.** Your Austin trip with Ben runs Nov 6–9 [ep:icloud_calendar_8d783f6aa700703f], and you have a Riverside FC game that morning [ep:icloud_calendar_ae5c5f0a089e4192]. Under the plan, Mara takes both kids to Saturday swim while you're at soccer [ep:obsidian_ea104c1898d334ac]. So you'd be away, but she can still cover it.\n\n**The other Saturdays look clear.** I found no conflicts on Oct 31, Nov 21, Nov 28, Dec 5 or Dec 12. You have a soccer game on Oct 31 [ep:icloud_calendar_aeb9b8775ecc8fc4], and Mara covers swim then too. I only checked L0, so family plans that were never captured wouldn't show up. Nov 28 is Thanksgiving weekend, so check that one.\n\n**Why Saturday.** On Oct 5 you noted that Mara's late shifts move to Tue/Thu from the week of Oct 19. That rules out the Tue/Thu class, so she wants Saturday [ep:obsidian_ea104c1898d334ac]. On Sep 15 you'd been leaning Tue/Thu [ep:obsidian_2734610946535762].\n\n**Deadline.** Registration closes Fri Oct 16 at 5 pm, and I found nothing saying you've registered yet. On Oct 7 the YMCA said Saturday Preschool 1 (June) had 4 spots left and Level 3 (Theo) had 6, and that spots aren't held until you complete registration [ep:gmail_eea78c714aceafbb].",
+      "cited": [
+        "gmail_3add6250cef8fa45",
+        "icloud_calendar_696340c2ae0ea270",
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_7e93d9235998eab6",
+        "icloud_calendar_8d783f6aa700703f",
+        "icloud_calendar_ae5c5f0a089e4192",
+        "icloud_calendar_aeb9b8775ecc8fc4",
+        "obsidian_2734610946535762",
+        "gmail_eea78c714aceafbb"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer identifies Oct 24 (wedding in Duluth) and Nov 14 (Nora's birthday at 9:30 overlapping class) as the problem Saturdays, with correct class times and dates. It treats Nov 7 (Austin trip, soccer) as covered by Mara, which matches the expected parenthetical. It doesn't explicitly say Mara's parents have the kids on Oct 24, but it does say the kids would miss that class. Extra detail doesn't contradict the expected answer.",
+      "cost_usd": 0.12132209999999999,
+      "turns": 7,
+      "duration_ms": 23604
+    },
+    {
+      "id": "dave-asks",
+      "category": "entity_resolution",
+      "question": "What has Dave asked us to do for his wedding?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "RSVP on the wedding website by Oct 1 (done: yes for both, Sept 20), book the Harborview Inn hotel block before it closes Oct 9 (booked Oct 6), and, in an email from his work address on Sept 22, do a reading at the ceremony (Argus said yes).",
+      "evidence": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave (David Kim) has made two asks about his wedding. One is done and one is still open.\n\n1. **RSVP on the wedding website by Oct 1.** Dave asked this on Sep 9 [ep:gmail_d4f1abefefacfaba]. You said on Sep 21 that you'd RSVP'd yes for you and Mara, with Mara on the salmon and you on the short rib [ep:gmail_18662e27111a665e]. This is done.\n\n2. **Do a short reading at the ceremony.** Dave asked on Sep 22 [ep:gmail_65ecf5df0783b8fc], and you replied on Sep 23, \"I'd be honored to do the reading\" [ep:gmail_7024dac2f1db3c82]. This is still open. Dave said they hadn't picked the text yet and promised to send it once they had [ep:gmail_65ecf5df0783b8fc]. You asked him to send it when it's ready, and to thank Priya for you [ep:gmail_7024dac2f1db3c82]. The graph shows no text from him yet. I didn't search L0 for a later email.\n\nDave also told you about the Harborview Inn hotel block, which closed Oct 9 [ep:gmail_d4f1abefefacfaba]. That was information, not a request. You've already booked it, for Oct 23–25 [ep:gmail_4ce0b5268f61b5e7].\n\nThe wedding is Saturday, Oct 24, at 4:00 pm at North Shore Lodge in Duluth [ep:gmail_d4f1abefefacfaba]. Your calendar note says the dress code is cocktail [ep:icloud_calendar_696340c2ae0ea270].",
+      "cited": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_18662e27111a665e",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers the RSVP request (done, yes for both) and the reading request (Sept 22, accepted). It treats the hotel block as information rather than a request but says it was booked, which matches the expected facts. It says the reading is \"still open\" because the text hasn't been sent. That doesn't contradict the expected answer, since Argus did say yes. It misses the detail that the reading request came from Dave's work address, but that's minor. Booking date Oct 6 is evidenced by the confirmation email. RSVP date is slightly off (the email was Sept 20, the answer says Sept 21), which is minor.",
+      "cost_usd": 0.1378707,
+      "turns": 8,
+      "duration_ms": 12665
+    },
+    {
+      "id": "dave-addresses",
+      "category": "entity_resolution",
+      "question": "Which email addresses has Dave written to me from?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Two, both as David Kim: dkim@example.net (the Sept 8 wedding details) and david.kim@kimlaw.example, his work address (the Sept 22 reading request).",
+      "evidence": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave (David Kim) has written to you from two addresses:\n\n- **dkim@example.net**: he sent \"Wedding details!\" to you and Mara on Sep 8, 2026 [ep:gmail_d4f1abefefacfaba]. You replied to this address on Sep 20 [ep:gmail_18662e27111a665e].\n- **david.kim@kimlaw.example**: he sent \"Quick favor\" on Sep 22, 2026 [ep:gmail_65ecf5df0783b8fc]. You replied to this address on Sep 23 [ep:gmail_7024dac2f1db3c82].\n\nThe first looks like a personal address and the second a work address at kimlaw.example. That is my inference from the domains. L0 doesn't say so.",
+      "cited": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_18662e27111a665e",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer names both addresses (dkim@example.net and david.kim@kimlaw.example) as David Kim, with the correct dates and contexts (Sept 8 wedding details, Sept 22 favor/reading request). It labels the second as a work address, framed as inference, which is consistent. All four citations support the claims they're attached to.",
+      "cost_usd": 0.0900127,
+      "turns": 8,
+      "duration_ms": 14893
+    },
+    {
+      "id": "texas-flight-times",
+      "category": "paraphrase",
+      "question": "When does my plane land in Texas, and when do I get home?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Out Friday Nov 6 on Prairie Air PA 1182, leaving Minneapolis (MSP) at 4:10 pm and landing in Austin (AUS) at 6:55 pm. Back Sunday Nov 8 on PA 1191, leaving Austin at 5:20 pm and getting into Minneapolis at 8:05 pm. (Confirmation QX7R2M.)",
+      "evidence": [
+        "gmail_76761ccb338f1f61"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your plane lands in Austin on Friday, Nov 6 at 6:55 pm, and your return flight gets you home to Minneapolis on Sunday, Nov 8 at 8:05 pm. Both times come from your Prairie Air confirmation, code QX7R2M, sent Sep 22 [ep:gmail_76761ccb338f1f61].\n\n- **Outbound:** PA 1182 leaves Minneapolis (MSP) at 4:10 pm and arrives in Austin (AUS) at 6:55 pm [ep:gmail_76761ccb338f1f61].\n- **Return:** PA 1191 leaves Austin (AUS) at 5:20 pm and arrives in Minneapolis (MSP) at 8:05 pm [ep:gmail_76761ccb338f1f61].\n\nThis is Ben Okafor's Austin trip, Nov 6–8. In his Sep 17 email he asked you to send him your arrival time once you had booked flights [ep:gmail_aa36860038e35da6]. You told him on Sep 18 that you would [ep:gmail_13d0b7eda11618b5]. I found no email in L0 where you sent him the Nov 6 arrival time. The confirmation doesn't give time zones, and I didn't convert anything. Minneapolis and Austin are both on Central time, so the times should read the same at both ends.",
+      "cited": [
+        "gmail_76761ccb338f1f61",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer matches the expected facts: PA 1182 leaves MSP at 4:10 pm and lands in AUS at 6:55 pm on Nov 6. PA 1191 leaves AUS at 5:20 pm and lands in MSP at 8:05 pm on Nov 8. It also gives confirmation code QX7R2M. The extra detail about Ben's request is supported by the cited emails. One claim has no support: Minneapolis and Austin are both on Central time. That is true, but none of the cited episodes say it. It doesn't contradict anything.",
+      "cost_usd": 0.1511321,
+      "turns": 7,
+      "duration_ms": 11468
+    },
+    {
+      "id": "cabinet-guy-update",
+      "category": "paraphrase",
+      "question": "Did the cabinet guy ever send me his updated price?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "No. Rick Alvarez (Alvarez Kitchen & Bath) said on Sept 29 he'd send the revised quote (the sink moved to the island, with a butcher-block island top) by Friday Oct 2. It never came: Argus followed up on Oct 8, and as of his Oct 13 note there was still no quote and no reply, so they're now leaning toward Birchwood.",
+      "evidence": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "No. As far as L0 shows, Rick Alvarez hasn't sent the updated price.\n\n- On Sep 23, Rick quoted $38,400 for cabinets, quartz and flooring with the sink staying put. He said moving the sink to an island would add about $4,500 [ep:gmail_64d14d8b2c343bd2].\n- On Sep 28, you told him you wanted the sink moved to the island and a butcher-block island top. You asked for a revised quote [ep:gmail_850eac94f0f23b53].\n- On Sep 29, Rick replied that he'd get it to you by Friday, Oct 2 [ep:gmail_485a11c462c79a3e].\n- On Oct 8, you wrote that it hadn't come through and asked, \"Can you still send it over?\" [ep:gmail_86fe03525fb36d4c].\n- In your Oct 13 daily note, you wrote: \"Still no revised quote from Rick. No reply to my Oct 8 follow-up either.\" You added that you and Mara are now leaning toward Birchwood despite the higher cost [ep:obsidian_2bb585fc98d39664].\n\nI found nothing from Rick in L0 after Oct 8. His quote is now about two weeks past the date he promised.\n\nBirchwood's $44,900 estimate is good for 30 days from Sep 21. Your Oct 13 note puts the deadline at about Oct 21 [ep:gmail_ab7b0a0734865612] [ep:obsidian_2bb585fc98d39664].",
+      "cited": [
+        "gmail_64d14d8b2c343bd2",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664",
+        "gmail_ab7b0a0734865612"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says No, the quote hasn't arrived. It gives Rick's Sept 29 promise for Oct 2, the Oct 8 follow-up, and the Oct 13 note with no quote, no reply, and a lean toward Birchwood. This matches the expected answer. The extra Birchwood deadline detail is supported by the cited episodes.",
+      "cost_usd": 0.1413624,
+      "turns": 8,
+      "duration_ms": 11933
+    },
+    {
+      "id": "leg-specialist",
+      "category": "paraphrase",
+      "question": "Did I ever get my bad leg looked at by that specialist the doc wanted me to see?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Not as far as anything captured shows. At the Sept 16 physical Dr. Lena Ortiz recommended sports medicine for Argus's right knee (it hurts after soccer) and sent a referral to North Star Sports Medicine; he meant to call North Star that week to book. On Sept 26, after the knee flared up again at soccer, he still hadn't called, and nothing since shows he booked.",
+      "evidence": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "I found no record that you saw the specialist. The last thing in your notes says you hadn't even called yet.\n\n- **Sep 16:** After your physical, Dr. Ortiz recommended sports medicine for your right knee, which hurts after soccer. She sent a referral to North Star Sports Medicine. Your to-do was to call North Star that week to book [ep:obsidian_c79c4e799bfe44ee].\n- **Sep 26:** Your daily note says the knee flared up again at soccer. It also says \"Still haven't called North Star Sports Medicine. Need to call them.\" [ep:obsidian_9274b0164a4212f9]\n\nNothing after Sep 26 mentions North Star or your knee. I found no booking email, no calendar event, and no later note, though I haven't read your October notes in full. So as far as L0 shows, the appointment was never booked.\n\nI'm assuming \"bad leg\" means the right knee. Nothing in L0 mentions any other leg problem.\n\nYour fasting blood draw at Lakeside was moved from Oct 8 to Tue Oct 13 at 7:30 am [ep:gmail_dc98e94cb3fb6a7e]. That's a different appointment, and I found no record of whether you went.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "gmail_dc98e94cb3fb6a7e"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says there is no record of the specialist visit. It gives the Sept 16 recommendation and referral to North Star Sports Medicine, and the Sept 26 note that the user still hadn't called. It also says nothing later shows a booking. This matches the expected answer. The extra detail about the blood draw is accurate and doesn't contradict it.",
+      "cost_usd": 0.10871060000000002,
+      "turns": 10,
+      "duration_ms": 14882
+    },
+    {
+      "id": "hitched-lodging",
+      "category": "paraphrase",
+      "question": "Where are we crashing up north when my buddy gets hitched?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "The Harborview Inn in Duluth, for Dave and Priya's wedding: one king room, checking in Friday Oct 23 (from 3 pm) and out Sunday Oct 25, 2 nights at the Kim-Shah wedding block rate of $169 a night. Confirmation HV-48213.",
+      "evidence": [
+        "gmail_4ce0b5268f61b5e7"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You're staying at the Harborview Inn in Duluth. Harborview Inn confirmed your reservation as number HV-48213 [ep:gmail_4ce0b5268f61b5e7].\n\n- **Room:** One king room, checking in Friday, Oct 23 and out Sunday, Oct 25. The rate is $169 a night on the Kim-Shah wedding block, and check-in starts at 3:00 pm [ep:gmail_4ce0b5268f61b5e7].\n- **Booking:** You booked ahead of the Oct 9 block deadline that Dave gave in his Sept email [ep:gmail_d4f1abefefacfaba]. Your Oct 5 note still listed the booking as to-do [ep:obsidian_ea104c1898d334ac], and the confirmation came on Oct 7 [ep:gmail_4ce0b5268f61b5e7].\n- **Wedding:** Dave wrote that he and Priya marry Saturday, Oct 24 at 4:00 pm at North Shore Lodge in Duluth, with the reception after [ep:gmail_d4f1abefefacfaba]. Your calendar entry says cocktail attire [ep:icloud_calendar_696340c2ae0ea270].\n- **Travel:** Your Oct 5 note says you'll drive up Friday, Oct 23 and back Sunday [ep:obsidian_ea104c1898d334ac].\n\nYou also agreed to do a short reading at the ceremony [ep:gmail_7024dac2f1db3c82]. Dave said he'd send the text once they pick it [ep:gmail_65ecf5df0783b8fc]. I found no later message with it, so it still looks outstanding.",
+      "cited": [
+        "gmail_4ce0b5268f61b5e7",
+        "gmail_d4f1abefefacfaba",
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_696340c2ae0ea270",
+        "gmail_7024dac2f1db3c82",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives all key facts: Harborview Inn in Duluth, one king room, check-in Fri Oct 23 from 3 pm, check-out Sun Oct 25, $169 a night on the Kim-Shah block, and confirmation HV-48213. The extra details don't contradict the expected answer and are supported by the cited episodes. The answer says the confirmation came on Oct 7, but the email is timestamped Oct 6 at 20:10 -05:00. That is a small error and doesn't affect the expected facts. It also says Dave and Priya's wedding is the occasion.",
+      "cost_usd": 0.1314426,
+      "turns": 7,
+      "duration_ms": 12510
+    },
+    {
+      "id": "swim-instructor",
+      "category": "abstention",
+      "question": "What's the name of the kids' swim instructor?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Unknown: nothing captured names a swim instructor (and the kids aren't registered yet).",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "I can't find the swim instructor's name in what's been captured, so I don't know it.\n\nThe swim lessons only show up in a few places, and none of them name an instructor:\n- **YMCA announcement:** The Westside YMCA Aquatics team announced Fall II youth swim lessons and signed it only as \"The Westside YMCA Aquatics team\" [ep:gmail_3add6250cef8fa45].\n- **Your question to them:** You asked them about Saturday 9:00 classes for Theo and June [ep:gmail_8358e47660c17ef9].\n- **Their reply:** The reply is also signed only \"Westside YMCA Aquatics team.\" It puts Theo in Level 3 and June in Preschool 1, both Saturdays 9:00–9:45 [ep:gmail_eea78c714aceafbb].\n- **Your daily notes:** They cover Mara's schedule and the plan to register for the Saturday class, with no instructor mentioned [ep:obsidian_2734610946535762] [ep:obsidian_ea104c1898d334ac].\n\nI also searched L0 for \"instructor\", \"coach\", \"teacher\" and \"lifeguard\" and found nothing relevant. The YMCA may assign instructors only once classes start on Oct 24.",
+      "cited": [
+        "gmail_3add6250cef8fa45",
+        "gmail_8358e47660c17ef9",
+        "gmail_eea78c714aceafbb",
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says the instructor's name isn't found and doesn't invent one, which matches the expected \"unknown\". It doesn't state that the kids aren't registered yet, but it does say the notes only plan to register. That's a minor omission. The citations support the claims they're attached to.",
+      "cost_usd": 0.08449209999999999,
+      "turns": 6,
+      "duration_ms": 14418
+    },
+    {
+      "id": "cholesterol",
+      "category": "abstention",
+      "question": "What were my cholesterol numbers from the blood work?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Unknown: the results haven't come in. The draw was Oct 13 and results were due in the portal in 3 to 5 days; the only thing captured is that cholesterol was borderline last year.",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "I couldn't find your cholesterol numbers. They aren't in what's been captured.\n\n- **Sep 16:** After your physical, Dr. Ortiz wanted fasting blood work because your cholesterol was borderline last year. You booked the draw for Thu Oct 8 at 7:30 am [ep:obsidian_c79c4e799bfe44ee].\n- **Oct 8:** Your daily note says the fasting draw was done that morning. It says the results should show up in the patient portal in 3–5 days [ep:obsidian_2bb585fc98d39664].\n\nI found no email, note or chat with the results. They are probably only in the portal, so you'd need to check there. If you read them off and tell me, I can note them for you.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says the numbers weren't found, which matches the expected \"unknown\". It also gives the 3–5 day portal timing and last year's borderline cholesterol. However, it says the draw was Oct 8, while the daily note dated Oct 13 says \"done, 7:30 this morning\", so the draw was Oct 13. The Oct 8 date was only the booked appointment. This is a minor date error, but the core conclusion is right.",
+      "cost_usd": 0.0745669,
+      "turns": 6,
+      "duration_ms": 16740
+    },
+    {
+      "id": "day-of-week",
+      "category": "canary",
+      "question": "What day of the week is it today?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Wednesday (October 14, 2026).",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "Today is Wednesday, October 14, 2026, going by the current date and time you gave me (2026-10-14, 20:00 UTC-05:00).\n\nThis comes from the date you gave me, not from anything in L0.",
+      "cited": [],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": null,
+      "correct": true,
+      "judge_reasoning": "The answer says Wednesday, October 14, 2026, which matches the expected answer. October 14, 2026 is a Wednesday. It cites no episodes.",
+      "cost_usd": 0.0487366,
+      "turns": 1,
+      "duration_ms": 2164
+    },
+    {
+      "id": "saturday-date",
+      "category": "canary",
+      "question": "What's the date this coming Saturday?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday, October 17, 2026.",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "This coming Saturday is **October 17, 2026**. Today is Wednesday, October 14, so Saturday is three days away.\n\nThis is plain date arithmetic from the current date. I didn't need anything from L0.",
+      "cited": [],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": null,
+      "correct": true,
+      "judge_reasoning": "The answer gives October 17, 2026, which matches the expected answer. October 14, 2026 is a Wednesday, so the weekday reasoning is also right. The answer cites no episodes.",
+      "cost_usd": 0.0500086,
+      "turns": 1,
+      "duration_ms": 2718
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "session_id": "4ac49fb5-c8a1-5e75-80df-f85e09a1f154",
+  "message_id": "d200670d-01cf-5711-8583-79d81c4a146e",
+  "started_at": "2026-08-07T23:30:00.000Z",
+  "ended_at": "2026-08-07T23:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "ok and what's the address and door code for the cabin? want it handy before we head out"
+    },
+    {
+      "role": "assistant",
+      "text": "Kate sent it this evening: 41420 Loon Song Lane, Cable, WI. The door code is 0815. Park on the gravel pad by the boathouse."
+    }
+  ]
+}

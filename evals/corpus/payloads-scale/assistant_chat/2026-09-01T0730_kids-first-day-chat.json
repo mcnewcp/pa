@@ -1,0 +1,16 @@
+{
+  "session_id": "4906ffa9-8aae-54b6-a5cd-3e62494428d5",
+  "message_id": "1eefedbe-b4d3-5920-9465-9beb03267148",
+  "started_at": "2026-09-01T12:30:00.000Z",
+  "ended_at": "2026-09-01T12:30:30.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "hey when's theo's first day of school again?"
+    },
+    {
+      "role": "assistant",
+      "text": "Tuesday, September 8 at 8:10 am. He's in Mr. Paul Osei's second-grade class."
+    }
+  ]
+}

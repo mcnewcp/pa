@@ -2,3 +2,4 @@
 *.ics -text
 # The frozen corpus is raw payloads, kept byte for byte.
 evals/corpus/payloads/** -text
+evals/corpus/payloads-scale/** -text
