@@ -3,9 +3,7 @@ name = "pa-home"
 version = "0.1.0"
 description = "Home adapter for the personal assistant: filesystem L0 and the pa command"
 requires-python = ">=3.12"
-# ladybug: LadybugDB's Python package (not real_ladybug, its old name). The builder, the PA MCP
-# server, and the explorer image all use this one version; see docs/research/ladybugdb-spike.md.
-dependencies = ["pa-core", "ladybug==0.21.2"]
+dependencies = ["pa-core"]
 
 [project.scripts]
 pa = "pa_home.cli:main"

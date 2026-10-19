@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,6 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from pa_core.errors import PaError
-from pa_core.librarian.ports import ModelChoice
 from pa_core.model_client import ModelClient
 from pa_evals import frozen
 from pa_evals.agent import (
@@ -35,12 +33,10 @@ from pa_evals.configurations import CONFIGURATIONS, DEFAULT_CONFIGURATION
 from pa_evals.eval_set import load_eval_set
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
-from pa_evals.librarian import EvalLibrarian
 from pa_evals.report import format_cost, format_score
 from pa_evals.results import RunResults
 from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
-from pa_home.config import load_librarian_models
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 DEFAULT_RUNS_DIR = WORKSPACE / "evals" / "runs"
@@ -208,27 +204,6 @@ def _model_judge_setup(args: argparse.Namespace) -> dict[str, str]:
     return {"judge model": args.judge_model or "default"}
 
 
-def default_librarian_cache(environ: Mapping[str, str] = os.environ) -> Path:
-    """Where eval runs keep the librarian's cache: `$XDG_CACHE_HOME/pa-eval/librarian`, by
-    default `~/.cache/pa-eval/librarian`. On the VM's disk when evals run in the VM."""
-    cache_home = environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache_home) / "pa-eval" / "librarian"
-
-
-def _librarian(args: argparse.Namespace) -> EvalLibrarian:
-    """The librarian for a configuration with the graph: the instance's librarian models (as
-    `pa librarian rebuild` takes them), on the `claude` CLI."""
-
-    def backend_for(choice: ModelChoice) -> ClaudeCliBackend:
-        return ClaudeCliBackend(model=choice.model, effort=choice.effort)
-
-    return EvalLibrarian(
-        args.librarian_cache.expanduser(),
-        models=load_librarian_models(),
-        backend_for=backend_for,
-    )
-
-
 AGENTS: dict[str, Choice[AgentRunner]] = {
     "scripted": Choice(_scripted_agent, _scripted_agent_options),
     "claude": Choice(_claude_agent, _claude_agent_options, _claude_agent_setup),
@@ -280,15 +255,7 @@ def add_run_command(commands: Any) -> None:
         default=DEFAULT_CONFIGURATION.name,
         help=f"What the agent is given (default: {DEFAULT_CONFIGURATION.name}). "
         + "; ".join(f"{c.name}: {c.about}" for c in CONFIGURATIONS.values())
-        + ". One with the claims graph has the librarian build it from each run's L0, with the "
-        "models `pa librarian rebuild` uses (PA_LIBRARIAN_MODEL and the rest).",
-    )
-    run.add_argument(
-        "--librarian-cache",
-        type=Path,
-        default=default_librarian_cache(),
-        help="Where the librarian's cache is kept between runs, so a later run over the same "
-        "corpus extracts nothing again (default: %(default)s).",
+        + ".",
     )
     run.add_argument(
         "--runs",
@@ -312,7 +279,6 @@ def _run(args: argparse.Namespace) -> int:
     agent = AGENTS[args.agent].build(args)
     judge = JUDGES[args.judge].build(args)
     configuration = CONFIGURATIONS[args.configuration]
-    librarian = _librarian(args) if configuration.graph else None
     setup = _setup(args)
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
@@ -323,7 +289,6 @@ def _run(args: argparse.Namespace) -> int:
             judge,
             concurrency=args.concurrency,
             configuration=configuration,
-            librarian=librarian,
             setup=setup,
         )
         overall = results.overall
@@ -367,11 +332,9 @@ class CorpusChoiceError(PaError):
 
 def _setup(args: argparse.Namespace) -> dict[str, str]:
     """How the run was set up, as shown at the top of the report."""
-    graph = {"librarian cache": str(args.librarian_cache)}
     return {
         "commit": _workspace_commit(),
         "corpus": args.corpus,
-        **(graph if CONFIGURATIONS[args.configuration].graph else {}),
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
         "judge": args.judge,

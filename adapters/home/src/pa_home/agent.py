@@ -5,13 +5,11 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Callable, Mapping
-from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from pa_core.errors import PaError
 from pa_core.exchange_capture import CAPTURE_VARS
@@ -30,22 +28,9 @@ ROLE = (
 """Appended to Claude Code's system prompt, which otherwise casts the agent as a coding assistant
 that declines personal questions without looking (see docs/adr/0003).
 
-It says to look the answer up but not where, so CLAUDE.md decides: the claims graph first when
-the session has it, otherwise L0's files. Until v0.12 it ended "the answer is in L0, so search
-L0 before you answer", which drew graph sessions to grep; runs before and after the change are
-not strictly comparable."""
-
-
-@dataclass(frozen=True)
-class GraphAccess:
-    """The claims graph a session is given, through the PA MCP server."""
-
-    graph: Path
-    """The graph directory the server reads (its `current` build)."""
-    time_zone: ZoneInfo
-    """The instance's time zone, which the server reads dates without an offset in."""
-    hidden_tools: AbstractSet[str] = frozenset()
-    """The server's tools the session is not given, by name (`find`, `query`, ...)."""
+It says to look the answer up but not where, so CLAUDE.md decides. Until v0.12 it ended "the
+answer is in L0, so search L0 before you answer"; runs before and after the change are not
+strictly comparable."""
 
 
 class AgentError(PaError):
@@ -129,18 +114,9 @@ class ClaudeAgent:
         self._clock = clock
 
     def answer(
-        self,
-        question: str,
-        *,
-        owner: Owner,
-        l0: Path,
-        now: datetime | None = None,
-        graph: GraphAccess | None = None,
+        self, question: str, *, owner: Owner, l0: Path, now: datetime | None = None
     ) -> AgentAnswer:
         """The agent's answer to `question`, asked at `now` (default: the clock's time).
-
-        With `graph`, the project declares the PA MCP server over that graph, less its hidden
-        tools; without, the agent has its files alone.
 
         Raises ValueError if that time has no UTC offset, since the agent is told it with one.
         """
@@ -163,16 +139,7 @@ class ClaudeAgent:
             workdir = Path(directory) / "project"
             scratch = Path(directory) / "scratch"
             scratch.mkdir()
-            render_agent_project(
-                workdir,
-                owner=owner,
-                l0=l0,
-                scratch=scratch,
-                graph=graph.graph if graph else None,
-                time_zone=graph.time_zone if graph else None,
-                hidden_tools=graph.hidden_tools if graph else (),
-                source=self._project,
-            )
+            render_agent_project(workdir, owner=owner, l0=l0, scratch=scratch, source=self._project)
             # claude -p never trusts a folder, so it drops a project's allow rules and
             # additional directories. Passing the same file as flag settings keeps them.
             args += ["--settings", str(workdir / ".claude" / "settings.json")]

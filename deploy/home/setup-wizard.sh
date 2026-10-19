@@ -185,13 +185,13 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27, #30, #31, #33, #45), and Ladybug Explorer beside it (#46): the steps only the owner can do, and the deploy
+# Sets up the PA VM on the devbox (#27, #30, #31, #33): the steps only the owner can do, and the deploy
 # scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOTAL_STAGES=21
+TOTAL_STAGES=19
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
 run() {
@@ -320,9 +320,9 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
-say "L0 goes in read-only at $PA_VM_L0, and the claims graph at $PA_VM_GRAPH, enforced on the"
-say "devbox so even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
-say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
+say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
+say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
+say "way back. Nothing else of the data root goes in."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
@@ -330,8 +330,8 @@ pause
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
 say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync, then renders the agent project into $PA_VM_PROJECT, with the PA MCP"
-say "server reading the claims graph. The ref must be pushed to GitHub."
+say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
+say "pushed to GitHub."
 upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
 default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
 printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
@@ -423,9 +423,9 @@ pause
 
 # ── 15 ────────────────────────────────────────────────────────────────────
 stage "Store check"
-say "From inside the VM: L0 and the claims graph are readable where the agent project says, and"
-say "unwritable even as root; inbox/assistant_chat/ is writable, and on the devbox a"
-say "nosuid,nodev,noexec filesystem of its own; nothing else of the data root is visible."
+say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
+say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
+say "filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then
   ok "the store's mounts hold"
@@ -495,59 +495,10 @@ else
 fi
 pause
 
-# ── 20 ────────────────────────────────────────────────────────────────────
-stage "Ladybug Explorer on the devbox"
-say "The explorer shows the claims graph, to debug bad merges and missing links. It runs here"
-say "in Docker, read-only against the current build, bound to localhost, and moves to each new"
-say "build by itself. tailscale serve puts it on the tailnet, where only your devices reach it."
-note "tailscale serve needs root unless you're tailscaled's operator, so sudo may ask for your password."
-printf '\n'
-run "$DEPLOY_DIR/install-explorer.sh" --serve
-ok "the explorer is running, and served at $(explorer_tailnet_url)"
-if [[ -L $PA_GRAPH/current ]]; then
-  printf '\n'
-  if "$DEPLOY_DIR/check-explorer.sh"; then
-    ok "the explorer serves the current build, read-only, and the VM can't reach it"
-  else
-    SKIPPED+=("explorer check failed: fix and re-run deploy/home/check-explorer.sh")
-  fi
-else
-  note "No graph is built yet, so it waits. After the first pa librarian rebuild, run"
-  note "deploy/home/check-explorer.sh."
-  SKIPPED+=("explorer check: run deploy/home/check-explorer.sh after the first rebuild")
-fi
-pause
-
-# ── 21 ────────────────────────────────────────────────────────────────────
-stage "Open the explorer from your phone"
-explorer_url=$(explorer_tailnet_url)
-lan_ip=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
-say "On your phone, with Tailscale on:"
-step "Open $explorer_url"
-step "Expect the explorer, with the graph's node and relationship tables in its schema."
-if confirm "Does it open?"; then
-  ok "the explorer is reachable from your tailnet"
-else
-  SKIPPED+=("the explorer isn't reachable from the phone: check tailscale serve status on the devbox")
-fi
-printf '\n'
-say "Now the LAN must not reach it. On your phone, on the home Wi-Fi:"
-step "Turn Tailscale off."
-step "Open http://$lan_ip:$PA_EXPLORER_PORT   (expect it not to load)"
-step "Turn Tailscale back on."
-if confirm "Did it fail to load?"; then
-  ok "the LAN can't reach the explorer"
-else
-  SKIPPED+=("the explorer answered on the LAN: run deploy/home/check-explorer.sh")
-fi
-pause
-
 finish
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
-note "And for #46's: after a pa librarian rebuild, deploy/home/check-explorer.sh shows the new build."
-note "And for #45's: chat from your phone about a topic; the answer uses the graph's tools."
 printf '\n'

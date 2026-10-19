@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pa_evals.results import InjectionChecks, LibrarianRun, QuestionResult, RunResults, Scores
+from pa_evals.results import QuestionResult, RunResults, Scores
 
 _SCORE_COLUMNS = "Questions | Failed | Correctness | Evidence recall | Citation validity"
 
@@ -79,8 +79,6 @@ def render_report(results: RunResults) -> str:
         "|---|---|---|---|---|---|",
     ]
     lines += [f"| {_cell(name)} | {_score_cells(s)} |" for name, s in results.categories.items()]
-    if results.librarian is not None:
-        lines += ["", *_librarian_section(results.librarian, results.injection_checks)]
     lines += [
         "",
         "## Efficiency by category",
@@ -112,49 +110,6 @@ def render_report(results: RunResults) -> str:
     for question in results.questions:
         lines += ["", *_answer_section(question)]
     return "\n".join(lines) + "\n"
-
-
-def _librarian_section(run: LibrarianRun, checks: InjectionChecks | None) -> list[str]:
-    episodes = run.episodes
-    lines = [
-        "## Claims graph",
-        "",
-        "Built for this run by the librarian from its L0, with the cache kept between runs.",
-        "",
-        f"- Extractor version: {run.extractor_version}",
-        f"- Models: {', '.join(f'{stage} {model}' for stage, model in run.models.items())}",
-        f"- Episodes: {episodes.extracted} extracted, {episodes.skipped} skipped by triage, "
-        f"{episodes.superseded} superseded by a later note version, of {episodes.in_l0} in L0",
-        f"- Statements: {run.statements.kept} kept, "
-        f"{run.statements.dropped_quote_not_found} dropped (quote not found)",
-        f"- Built in {run.duration_seconds:.1f} s",
-        f"- Injection checks: {_injection_text(checks)}",
-        "",
-        "| Stage | Cache hits | Cache misses | Model calls |",
-        "|---|---|---|---|",
-    ]
-    stages = [*run.cache, *(stage for stage in run.model_calls if stage not in run.cache)]
-    for stage in stages:
-        cache = run.cache.get(stage)
-        calls = run.model_calls.get(stage, {})
-        call_text = ", ".join(f"{model}: {n}" for model, n in sorted(calls.items())) or "none"
-        lines.append(
-            f"| {_cell(stage)} | {cache.hits if cache else 'n/a'} | "
-            f"{cache.misses if cache else 'n/a'} | {_cell(call_text)} |"
-        )
-    return lines
-
-
-def _injection_text(checks: InjectionChecks | None) -> str:
-    if checks is None:
-        return "not run"
-    if not checks.adversarial_episodes:
-        return "no adversarial episodes listed in the eval set"
-    count = len(checks.adversarial_episodes)
-    return (
-        f"passed, over {count} adversarial episode{'s' if count > 1 else ''} "
-        f"({'; '.join(checks.checks)})"
-    )
 
 
 def _answer_section(q: QuestionResult) -> list[str]:

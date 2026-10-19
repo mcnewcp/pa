@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0006
+---
+
 # The claims graph is built by our own librarian and stored in LadybugDB
 
 We build L2 with our own librarian and schema, not with Graphiti, and store it at home in LadybugDB, an embedded graph database (the maintained fork of Kuzu). Graphiti decides who said what with LLM calls, has no field for a span within an episode, and dedups and invalidates against whatever is already in the graph, so its results depend on ingest order and nothing can be cached per episode: every rebuild would re-run every model call (5–15 per email), which breaks the change, rebuild, eval loop of principle 2 and pushes extraction onto API billing. Our main question type is attribution, which comes from source metadata, not from an LLM's entity-to-entity fact edges. None of this would show in an eval score, so the roadmap's scored spike could not have changed the answer, and it was dropped. We chose a graph database over graph-shaped tables in SQLite because we expect open-ended questions ("how is X connected to Y", paths of unknown depth) that Cypher expresses directly, and because visualizing the graph is a requirement, both for debugging the librarian (bad merges, missing links) and for discovery, and a graph database comes with an explorer.

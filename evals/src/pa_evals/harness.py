@@ -13,21 +13,12 @@ from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
-from pa_evals import injection
-from pa_evals.agent import AgentRequest, AgentRunner, GraphAccess
+from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.judge import Judge, JudgeRequest
-from pa_evals.librarian import EvalLibrarian
-from pa_evals.results import (
-    IngestCounts,
-    InjectionChecks,
-    LibrarianRun,
-    QuestionResult,
-    RunResults,
-    Scores,
-)
+from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -38,10 +29,6 @@ class CorpusCopyError(PaError):
     """A corpus directory that cannot be copied into the inbox."""
 
 
-class NoLibrarianError(PaError):
-    """A configuration with the claims graph, asked with no librarian to build it."""
-
-
 def run_eval(
     corpus: Path | Sequence[Path],
     eval_set: EvalSet,
@@ -50,7 +37,6 @@ def run_eval(
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
     configuration: Configuration = DEFAULT_CONFIGURATION,
-    librarian: EvalLibrarian | None = None,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
@@ -63,17 +49,12 @@ def run_eval(
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
     assistant or judge raises is recorded as failed and the run goes on.
 
-    `configuration` says what the assistant is given. One with the claims graph has
-    `librarian` build it from the ingested L0 before any question is asked, and gives the
-    assistant the PA MCP server over it. `setup` describes the run (for example which agent
-    runner and judge) and is carried into the results as it is.
+    `configuration` says what the assistant is given, and is recorded in the results. `setup`
+    describes the run (for example which agent runner and judge) and is carried into the
+    results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
-    if configuration.graph and librarian is None:
-        raise NoLibrarianError(
-            f"the {configuration.name} configuration needs a librarian to build its graph"
-        )
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
@@ -83,24 +64,9 @@ def run_eval(
             # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
             known = {entry.episode_id for entry in catalog.entries()}
-        graph: GraphAccess | None = None
-        build: LibrarianRun | None = None
-        checks: InjectionChecks | None = None
-        if configuration.graph and librarian is not None:
-            injection.require_in_l0(eval_set.adversarial, known)
-            build = LibrarianRun.of(librarian.build(data_root, owner))
-            checked = injection.check_graph(
-                data_root.graph, eval_set.adversarial, extensions_root=librarian.extensions_root
-            )
-            checks = InjectionChecks(adversarial_episodes=eval_set.adversarial, checks=checked)
-            graph = GraphAccess(
-                data_root.graph,
-                time_zone=eval_set.zone,
-                hidden_tools=configuration.hidden_tools(),
-            )
 
         def ask(question: EvalQuestion) -> QuestionResult:
-            return _ask(question, eval_set, data_root, graph, owner, store, known, agent, judge)
+            return _ask(question, eval_set, data_root, owner, store, known, agent, judge)
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
@@ -111,8 +77,6 @@ def run_eval(
     return RunResults(
         configuration=configuration.name,
         setup=dict(setup or {}),
-        librarian=build,
-        injection_checks=checks,
         as_of=eval_set.as_of,
         ingest=IngestCounts(
             ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
@@ -127,7 +91,6 @@ def _ask(
     question: EvalQuestion,
     eval_set: EvalSet,
     data_root: DataRoot,
-    graph: GraphAccess | None,
     owner: Owner,
     store: L0Store,
     known: set[str],
@@ -144,7 +107,7 @@ def _ask(
         evidence=question.evidence,
         status="failed",
     )
-    request = AgentRequest(question.id, question.question, as_of, data_root, owner, graph)
+    request = AgentRequest(question.id, question.question, as_of, data_root, owner)
     answer = _attempt(lambda: agent.answer(request))
     if isinstance(answer, _Failure):
         recall = 0.0 if question.evidence else None

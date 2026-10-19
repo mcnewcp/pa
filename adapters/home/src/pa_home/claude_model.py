@@ -13,20 +13,17 @@ class ClaudeCliBackend:
     """Answers each request with one `claude -p --output-format json --json-schema` call.
 
     The prompt goes in on stdin. The call runs with no tools and no MCP servers, without saving
-    a session, in an empty temporary directory so no project's CLAUDE.md is picked up. Without
-    a model or an effort, the CLI uses its own default.
+    a session, in an empty temporary directory so no project's CLAUDE.md is picked up.
     """
 
     def __init__(
         self,
         *,
         model: str | None = None,
-        effort: str | None = None,
         executable: str = "claude",
         timeout_seconds: float = 300,
     ) -> None:
         self._model = model
-        self._effort = effort
         self._executable = executable
         self._timeout_seconds = timeout_seconds
 
@@ -41,8 +38,6 @@ class ClaudeCliBackend:
         ]
         if self._model:
             args += ["--model", self._model]
-        if self._effort:
-            args += ["--effort", self._effort]
         with tempfile.TemporaryDirectory(prefix="pa-claude-") as workdir:
             try:
                 result = run_print(

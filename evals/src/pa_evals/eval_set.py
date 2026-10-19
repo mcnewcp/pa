@@ -80,12 +80,11 @@ class EvalSet(FrozenModel):
     """When the questions are asked from, unless a question overrides it."""
     owner: EvalOwner
     time_zone: str
-    """The owner's IANA time zone, as the instance's configuration gives it: the PA MCP server
-    reads dates given without an offset in it."""
+    """The owner's IANA time zone, which the corpus's storylines are written in."""
     questions: list[EvalQuestion]
     adversarial: list[str] = []
     """The episode ids of the corpus's adversarial emails, which try to plant instructions or
-    claims about the owner. The injection checks run over them on every eval build's graph."""
+    claims about the owner."""
 
     @field_validator("time_zone")
     @classmethod

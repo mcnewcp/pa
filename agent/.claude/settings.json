@@ -2,10 +2,10 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch",
-      "mcp__pa"
+      "WebFetch"
     ],
     "deny": [
+      "mcp__*",
       "Read(~/.claude/.credentials.json)",
       "Read(~/.claude.json)"
     ],
@@ -30,14 +30,6 @@
       }
     ]
   },
-  "allowedMcpServers": [
-    {
-      "serverName": "pa"
-    }
-  ],
-  "enabledMcpjsonServers": [
-    "pa"
-  ],
   "enableAllProjectMcpServers": false,
   "disableClaudeAiConnectors": true
 }

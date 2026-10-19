@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "pa": {
-      "type": "stdio",
-      "command": "${python}",
-      "args": ["-m", "pa_home", "mcp", "serve", "--graph", "${graph}", "--time-zone", "${time_zone}"]
-    }
-  }
-}
