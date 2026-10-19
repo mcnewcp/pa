@@ -58,15 +58,7 @@ _Avoid_: Journal, log
 A derived, rebuildable index of the episodes in L0, for fast lookups by id, source, time, and participant.
 _Avoid_: Database, manifest
 
-## Memory
-
-**Librarian**:
-The batch process that reads episodes and derives claims from them into memory, using models that have no tools.
-_Avoid_: Extractor, indexer, pipeline
-
-**Claim**:
-Anything derived from episodes into memory: a statement, a request or commitment, what a statement is about, or who someone is. Every claim points back to the episode it came from.
-_Avoid_: Fact, knowledge
+## The owner's world
 
 **Topic**:
 A matter in the owner's life that unfolds over time and that they would ask about by name, such as a kitchen remodel, a wedding, or a knee injury. A statement can be about several topics. People and organizations are not topics.
@@ -89,12 +81,50 @@ Something on the owner's calendar at a set time, such as a meeting or an appoint
 _Avoid_: Appointment, meeting, event
 
 **Open loop**:
-A request or commitment that is still open. It is overdue when its due date has passed, which depends on when you ask, not on anything recorded.
+A request or commitment that is still open: something owed by one party to another. It is overdue when its due date has passed, which depends on when you ask, not on anything recorded.
 _Avoid_: Pending item, outstanding task
+
+**Decision**:
+Where a choice about a topic stands (proposed, made, or rejected), by whom, and when. A later decision on the same choice supersedes it.
+_Avoid_: Resolution, ruling, outcome
 
 **Stance**:
 Someone's position on a topic at a point in time, as their statements show it. It can change; the latest statements show where it stands now.
 _Avoid_: Opinion, view
+
+## Memory
+
+**Librarian**:
+The process that keeps the wiki current, and the wiki's only writer. Each run observes new episodes into day logs and then consolidates them into pages; dreaming is its periodic review of the whole wiki.
+_Avoid_: Extractor, indexer, pipeline
+
+**Wiki**:
+L1: the Markdown pages and day logs the librarian keeps over L0, recording who's who, where each topic stands, decisions, and open loops. It is a map into L0, never evidence itself; every line cites the episode it came from.
+_Avoid_: Knowledge base, memory, vault, notes
+
+**Page**:
+One wiki file about one person, organization, or topic: where things stand, its decisions and open loops, and notes.
+_Avoid_: Article, entry, card
+
+**Day log**:
+The wiki's file for one day, with an observation for each relevant episode of that day.
+_Avoid_: Day note, daily note, journal
+
+**Observation**:
+One line in a day log saying what one episode shows, linking the people, organizations, and topics involved and citing the episode.
+_Avoid_: Fact, note, entry
+
+**Consolidation**:
+The second phase of every librarian run: folding that run's new observations into pages, and creating pages for the people, organizations, and topics that have come up often enough to need one.
+_Avoid_: Dreaming, compaction
+
+**Dreaming**:
+A separate, periodic librarian run over the whole wiki. It judges candidate problems (duplicate pages, contradictions, stale loops), fixes what a re-read of L0 settles, and turns the rest into proposals for the owner.
+_Avoid_: Consolidation, cleanup
+
+**Correction**:
+An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
+_Avoid_: Fix, override
 
 ## Assistant
 
@@ -137,7 +167,7 @@ The fixed questions, with expected answers and required evidence episodes, that 
 _Avoid_: Test suite, benchmark
 
 **Eval configuration**:
-What the assistant is given besides L0's files in an eval run. Files alone, with nothing besides, is the only one so far.
+What the assistant is given besides L0's files in an eval run: nothing (files alone), or the wiki (files plus wiki).
 _Avoid_: Mode, variant, arm
 
 **As-of time**:
