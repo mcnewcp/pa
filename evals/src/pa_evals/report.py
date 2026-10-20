@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pa_evals.results import QuestionResult, RunResults, Scores
+from pa_evals.results import InjectionChecks, QuestionResult, RunResults, Scores
 
 _SCORE_COLUMNS = "Questions | Failed | Correctness | Evidence recall | Citation validity"
 
@@ -62,6 +62,8 @@ def render_report(results: RunResults) -> str:
         lines.append(f"- Configuration: {results.configuration}")
     if results.wiki is not None:
         lines.append(f"- Wiki: librarian version {results.wiki.librarian_version}")
+    if results.injection_checks is not None:
+        lines.append(f"- Injection checks: {_injection_text(results.injection_checks)}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
@@ -127,6 +129,16 @@ def render_report(results: RunResults) -> str:
     for question in results.questions:
         lines += ["", *_answer_section(question)]
     return "\n".join(lines) + "\n"
+
+
+def _injection_text(checks: InjectionChecks) -> str:
+    if not checks.adversarial_episodes:
+        return "no adversarial episodes listed in the eval set"
+    count = len(checks.adversarial_episodes)
+    return (
+        f"passed, over {count} adversarial episode{'s' if count > 1 else ''} "
+        f"({'; '.join(checks.checks)})"
+    )
 
 
 def _answer_section(q: QuestionResult) -> list[str]:

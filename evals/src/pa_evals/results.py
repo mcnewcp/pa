@@ -116,6 +116,16 @@ class WikiResult(BaseModel):
     """The librarian version that built it, from its run log."""
 
 
+class InjectionChecks(BaseModel):
+    """The injection checks a run's eval wiki passed before any question was asked."""
+
+    adversarial_episodes: list[str]
+    """The adversarial episodes checked against, as the eval set lists them; empty for a corpus
+    with none, such as Argus."""
+    checks: list[str]
+    """The rules checked."""
+
+
 class RunResults(BaseModel):
     configuration: str | None = None
     """The configuration the run asked, which keys its results in a comparison. None in results
@@ -125,6 +135,9 @@ class RunResults(BaseModel):
     wiki: WikiResult | None = None
     """The eval wiki the assistant was given; None in files alone, and in results written
     before configurations had a wiki."""
+    injection_checks: InjectionChecks | None = None
+    """The injection checks its eval wiki passed; None where the assistant had no wiki. v0.12's
+    claims-graph runs recorded their checks in this same shape."""
     as_of: datetime
     """The eval set's default as-of time."""
     ingest: IngestCounts

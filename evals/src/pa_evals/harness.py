@@ -18,9 +18,11 @@ from pa_evals.citations import opened, parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.eval_wiki import EvalWiki
+from pa_evals.injection import check_wiki, require_in_l0
 from pa_evals.judge import Judge, JudgeRequest
 from pa_evals.results import (
     IngestCounts,
+    InjectionChecks,
     QuestionResult,
     RunResults,
     Scores,
@@ -65,8 +67,11 @@ def run_eval(
     `configuration` says what the assistant is given, and is recorded in the results. One with
     a wiki needs `wiki`, an eval wiki: once the corpus is ingested, its tree is copied beside the
     throwaway L0 with nothing in it writable, and its path goes to the agent with every question.
-    The results record the librarian version that built it. `setup` describes the run (for
-    example which agent runner and judge) and is carried into the results as it is.
+    Before any question is asked, the copy must pass the injection checks over the eval set's
+    adversarial episodes (`pa_evals.injection`), or the run stops with InjectionCheckError. The
+    results record the librarian version that built it and the checks it passed. `setup`
+    describes the run (for example which agent runner and judge) and is carried into the
+    results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
@@ -84,6 +89,13 @@ def run_eval(
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
             known = {entry.episode_id for entry in catalog.entries()}
         laid = None if wiki is None else _lay_wiki(wiki, data_root.wiki)
+        checks = None
+        if laid is not None:
+            require_in_l0(eval_set.adversarial, known)
+            checks = InjectionChecks(
+                adversarial_episodes=eval_set.adversarial,
+                checks=check_wiki(laid, eval_set.adversarial, store.envelopes()),
+            )
 
         def ask(question: EvalQuestion) -> QuestionResult:
             return _ask(question, eval_set, data_root, laid, owner, store, known, agent, judge)
@@ -98,6 +110,7 @@ def run_eval(
         configuration=configuration.name,
         setup=dict(setup or {}),
         wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
+        injection_checks=checks,
         as_of=eval_set.as_of,
         ingest=IngestCounts(
             ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
