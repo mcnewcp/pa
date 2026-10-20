@@ -127,8 +127,8 @@ Something owed by one party to another:
 ```
 
 - Each party is `me` or one `[[slug]]`.
-- A loop is something one party owes another: a reply, a document, a payment, a visit, a
-  result. An offer's expiry ("the estimate is good for 30 days"), a deadline nobody owes
+- A loop is one thing one party owes another: a reply, a document, a payment, a visit, a
+  result, or something the owner said they'd do. An offer's expiry ("the estimate is good for 30 days"), a deadline nobody owes
   anything by, and an instruction ("bring your insurance card") are facts for Current state
   or Notes, not loops.
 - `asked` means the party owed asked for it; `promised` means the party owing promised it. A

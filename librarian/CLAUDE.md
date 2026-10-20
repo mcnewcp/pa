@@ -115,11 +115,15 @@ warnings.
      end of `<what>`: a permit office's "applications are reviewed within 10 business days" is
      a loop it promised, due on the tenth business day, and the owner's note "the vet will
      call with the test results in 2 to 4 days" is the vet's loop, due on the fourth day.
-   - A loop needs a party who owes and a party owed. An offer's expiry ("the estimate is good
-     for 30 days"), a deadline that binds no one, and an instruction ("bring your insurance
-     card", "grip socks required") go in Current state or Notes instead.
-   - One request is one loop: when the owing party later promises it, or a date for it, add
-     the due date and the promise's citation to the open loop rather than opening another.
+   - The owner's own commitments are loops too, even when they're only in a note: "need to
+     call the dentist to reschedule" is `me → [[the-dentist]]`, promised. The party owed is
+     whoever the thing is done for or with, never a bystander.
+   - An offer's expiry ("the estimate is good for 30 days"), a deadline that binds no one, and
+     an instruction ("bring your insurance card", "grip socks required") are not loops: they
+     go in Current state or Notes.
+   - One thing owed is one loop. Two things asked in one email are two loops, so each closes
+     on its own. When the owing party later promises an open request, or a date for it, add
+     the due date and the promise's citation to that loop rather than opening another.
    - Close a loop when any episode settles it, in any thread and from anyone: a builder's
      receipt forwarded by a neighbor closes the lender's request for that receipt. For each
      new observation, check the open loops on the pages it touches.
