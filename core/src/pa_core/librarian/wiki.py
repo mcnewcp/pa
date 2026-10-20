@@ -55,6 +55,8 @@ CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
 LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
 """A link to a person, organization, or topic by slug, whether or not it has a page yet."""
+NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
+"""An external fact the librarian couldn't look up, inline where it's missing."""
 
 _OBSERVATION = re.compile(
     rf"- (?P<text>\S.*?) (?P<citations>{CITATION.pattern}(?: {CITATION.pattern})*)"

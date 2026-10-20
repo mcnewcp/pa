@@ -66,4 +66,5 @@ def run(
             librarian=librarian,
             now=clock().astimezone(time_zone),
             page_threshold=config.page_threshold,
+            loop_age_days=config.loop_age_days,
         )

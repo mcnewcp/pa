@@ -1375,3 +1375,152 @@ def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
     script(data_root)
     assert run_librarian() == 0
     assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["RSVP"]
+
+
+def days_ago(days: int) -> str:
+    """The date `days` days before today in the owner's time zone; runs are told the clock."""
+    return (datetime.now(ZoneInfo("America/Chicago")).date() - timedelta(days=days)).isoformat()
+
+
+def current_wedding_pages() -> dict[str, str]:
+    """The wedding pages, citing the hotel email, with their open loops opened yesterday."""
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    pages[PERSON] = pages[PERSON].replace("promised 2026-10-02", f"promised {days_ago(1)}")
+    pages[TOPIC] = pages[TOPIC].replace(
+        "the room list · asked 2026-09-30", f"the room list · asked {days_ago(1)}"
+    )
+    return pages
+
+
+KITCHEN = textwrap.dedent(
+    f"""\
+    ---
+    type: topic
+    aliases: []
+    status: active
+    summary: The kitchen remodel.
+    updated: 2026-10-02
+    ---
+    # Kitchen
+
+    ## Current state
+    Waiting on a quote [ep:{HOTEL_EMAIL_ID}].
+
+    ## Decisions
+
+    ## Open loops
+
+    ## Notes
+    """
+)
+"""A topic page nothing links to."""
+
+
+def _edit(path: str, old: str, new: str):
+    def edit(pages: dict[str, str]) -> None:
+        assert old in pages[path], old
+        pages[path] = pages[path].replace(old, new, 1)
+
+    return edit
+
+
+WARNINGS = {
+    "an orphan page": (
+        lambda pages: pages.update({"topics/kitchen.md": KITCHEN}),
+        "topics/kitchen.md: an orphan page",
+        {},
+    ),
+    "a loop past due": (
+        _edit(
+            TOPIC,
+            f"asked {days_ago(1)} [ep:",
+            f"asked {days_ago(5)} · due {days_ago(2)} [ep:",
+        ),
+        f"{TOPIC}:20: a loop past due: due {days_ago(2)}, 2 days ago",
+        {},
+    ),
+    "a loop open more than 30 days": (
+        _edit(PERSON, f"promised {days_ago(1)}", f"promised {days_ago(31)}"),
+        f"{PERSON}:15: a loop open 31 days",
+        {},
+    ),
+    "a loop open longer than configured": (
+        _edit(PERSON, f"promised {days_ago(1)}", f"promised {days_ago(11)}"),
+        f"{PERSON}:15: a loop open 11 days",
+        {"PA_LIBRARIAN_LOOP_AGE_DAYS": "10"},
+    ),
+    "a shared alias": (
+        _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, dave]"),
+        f"{TOPIC}: a duplicate candidate: it shares the alias dave with {PERSON}",
+        {},
+    ),
+    "near-identical slugs": (
+        lambda pages: pages.update({"topics/weddings.md": KITCHEN}),
+        f"topics/weddings.md: a duplicate candidate: its slug is nearly {TOPIC}'s",
+        {},
+    ),
+    "a slug over the threshold with no page": (
+        lambda pages: pages.pop(TOPIC),
+        "`wedding` is linked on 3 days, reaching the page threshold of 3, but has no page",
+        {},
+    ),
+    "a needs-lookup marker": (
+        _edit(TOPIC, "The block closes on Oct 9", "[needs lookup: Lodge check-in time] Oct 9"),
+        f"{TOPIC}:23: needs lookup: Lodge check-in time",
+        {},
+    ),
+}
+
+
+def run_with_wedding_pages(data_root: Path, edit=None) -> None:
+    """One run over three days of wedding mail, consolidation writing the wedding pages
+    (changed by `edit`, if given)."""
+    ingest(
+        data_root,
+        {
+            "gmail/hotel.eml": email(),
+            **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
+            **wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"),
+        },
+    )
+    pages = current_wedding_pages()
+    if edit is not None:
+        edit(pages)
+    script(
+        data_root,
+        observation=[{"observe": True, "links": WEDDING}],
+        consolidation=[{"write": path, "text": text} for path, text in pages.items()],
+    )
+    assert run_librarian() == 0
+
+
+def test_a_run_without_lint_warnings_says_so_in_its_commit(data_root: Path):
+    run_with_wedding_pages(data_root)
+
+    [message, *_] = commit_messages(data_root)
+    assert trailers(message)["Lint-Warnings"] == "0"
+    assert "Lint warnings" not in message
+
+
+@pytest.mark.parametrize("warning", WARNINGS, ids=list(WARNINGS))
+def test_lint_warnings_dont_block_the_run_and_are_recorded_in_its_commit(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys, warning: str
+):
+    edit, expected, environment = WARNINGS[warning]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    run_with_wedding_pages(data_root, edit)
+
+    [message, *_] = commit_messages(data_root)
+    _, warnings, fields = message.split("\n\n")
+    assert warnings.startswith("Lint warnings:\n- ")
+    assert expected in warnings
+    count = len(warnings.splitlines()) - 1
+    assert trailers(fields)["Lint-Warnings"] == str(count)
+    assert f"{count} lint warnings" in capsys.readouterr().out
+    # The warnings don't hide the cursor from the next run.
+    ingest(data_root, wedding_mail("Gift", "Tue, 6 Oct 2026 09:00:00 -0500"))
+    script(data_root)
+    assert run_librarian() == 0
+    assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["Gift"]

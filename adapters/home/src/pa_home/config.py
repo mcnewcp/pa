@@ -10,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
-from pa_core.librarian.run import PAGE_THRESHOLD
+from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
@@ -26,6 +26,7 @@ LIBRARIAN_MAX_TURNS_VAR = "PA_LIBRARIAN_MAX_TURNS"
 LIBRARIAN_TIMEOUT_VAR = "PA_LIBRARIAN_TIMEOUT_SECONDS"
 LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
 LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
+LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -79,6 +80,8 @@ class LibrarianConfig:
     """What runs `claude` for a session: the CLI itself, or a command that reaches its VM."""
     page_threshold: int = PAGE_THRESHOLD
     """The distinct days a slug must be linked on in the day logs before it gets a page."""
+    loop_age_days: int = LOOP_AGE_DAYS
+    """How long a loop may stay open before lint warns about it."""
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
@@ -161,6 +164,7 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         page_threshold=_positive_integer(
             environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
         ),
+        loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, default.loop_age_days),
     )
 
 

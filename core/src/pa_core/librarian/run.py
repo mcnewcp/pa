@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
@@ -29,7 +30,7 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
-from pa_core.librarian.lint import Finding, L0Metadata, lint
+from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
 from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
 from pa_core.owner import Owner
 
@@ -124,11 +125,15 @@ class RunOutcome:
 
     batch: Batch | None
     commit: str | None
+    warnings: tuple[Finding, ...] = ()
+    """Lint's warnings about the wiki as committed."""
 
 
 CURSOR_FIELD = "Cursor"
 PAGE_THRESHOLD = 3
 """The distinct days a slug is linked on before it gets a page, unless configured otherwise."""
+LOOP_AGE_DAYS = 30
+"""How long a loop may stay open before lint warns about it, unless configured otherwise."""
 
 
 def run_librarian(
@@ -141,11 +146,13 @@ def run_librarian(
     librarian: Librarian,
     now: datetime,
     page_threshold: int = PAGE_THRESHOLD,
+    loop_age_days: int = LOOP_AGE_DAYS,
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, and commits.
 
     `now` is what the sessions are told the current time is, and `page_threshold` the distinct
-    days a slug must be linked on before it gets a page. Each session gets the identity table,
+    days a slug must be linked on before it gets a page; `loop_age_days` how long a loop may
+    stay open before lint warns about it. Each session gets the identity table,
     rebuilt from all of L0 for `owner`. With no new episodes it does nothing. Raises
     LibrarianRunError when the run fails, after restoring the wiki.
     """
@@ -157,18 +164,26 @@ def run_librarian(
         # Whatever an interrupted run left behind goes before this one starts.
         repository.discard()
         sessions: list[tuple[Phase, SessionResult]] = []
+        thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
+        linter = partial(lint, l0=L0Metadata.of(store.envelopes()), thresholds=thresholds)
         if batch.episodes:
             identities = identity_table(store.envelopes(), owner)
-            l0 = L0Metadata.of(store.envelopes())
             logged = day_logs(tree)
-            sessions.append(_observe(batch, identities, tree, runner, now, l0))
+            sessions.append(_observe(batch, identities, tree, runner, now, linter))
             observations = _new_observations(logged, day_logs(tree))
             if observations:
                 sessions.append(
-                    _consolidate(observations, page_threshold, identities, tree, runner, now, l0)
+                    _consolidate(
+                        observations, page_threshold, identities, tree, runner, now, linter
+                    )
                 )
         write_index(tree)
-        commit = repository.commit(commit_message(batch, librarian, sessions))
+        report = linter(tree)
+        if report.errors:
+            raise LibrarianRunError(
+                f"the wiki has {len(report.errors)} lint errors:\n" + _findings(report.errors)
+            )
+        commit = repository.commit(commit_message(batch, librarian, sessions, report.warnings))
     except LibrarianRunError as error:
         repository.discard()
         raise LibrarianRunError(
@@ -178,7 +193,7 @@ def run_librarian(
     except BaseException:
         repository.discard()
         raise
-    return RunOutcome(batch=batch, commit=commit)
+    return RunOutcome(batch=batch, commit=commit, warnings=report.warnings)
 
 
 def last_cursor(repository: WikiRepository) -> Cursor | None:
@@ -194,7 +209,7 @@ def _observe(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    l0: L0Metadata,
+    linter: Linter,
 ) -> tuple[Phase, SessionResult]:
     before = _tree_state(tree)
     prompt = observation_prompt(batch, runner.paths) + "\n" + identity_prompt(identities)
@@ -211,7 +226,7 @@ def _observe(
                 "observation may change only day logs"
             )
 
-    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, l0)
+    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, linter)
     return Phase.OBSERVATION, result
 
 
@@ -245,7 +260,7 @@ def _consolidate(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    l0: L0Metadata,
+    linter: Linter,
 ) -> tuple[Phase, SessionResult]:
     prompt = (
         consolidation_prompt(
@@ -284,9 +299,12 @@ def _consolidate(
                 f"{', '.join(edited)}; consolidation may not change the day logs"
             )
 
-    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, l0)
+    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, linter)
     return Phase.CONSOLIDATION, result
 
+
+type Linter = Callable[[Path], LintReport]
+"""Lints the wiki at a path, for this run."""
 
 MAX_RESUMES = 2
 """How many times a session that leaves lint errors is resumed to fix them."""
@@ -299,7 +317,7 @@ def _session(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    l0: L0Metadata,
+    linter: Linter,
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then checks its bounds and lints the wiki. A session
     that leaves lint errors is resumed with the findings, up to MAX_RESUMES times. Returns the
@@ -310,16 +328,20 @@ def _session(
         if not result.ok:
             raise LibrarianRunError(f"the {phase} session failed: {result.error}")
         require_bounds()
-        errors = lint(tree, l0=l0).errors
+        errors = linter(tree).errors
         if not errors:
             return _combined(attempts)
         if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
             resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
             raise LibrarianRunError(
                 f"the {phase} session left {len(errors)} lint errors{resumed}:\n"
-                + "\n".join(f"  {finding}" for finding in errors)
+                + _findings(errors)
             )
         attempts.append(runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now))
+
+
+def _findings(findings: Sequence[Finding]) -> str:
+    return "\n".join(f"  {finding}" for finding in findings)
 
 
 def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
@@ -480,9 +502,13 @@ def _listed(episode: BatchEpisode, paths: SessionPaths) -> dict[str, object]:
 
 
 def commit_message(
-    batch: Batch, librarian: Librarian, sessions: Sequence[tuple[Phase, SessionResult]]
+    batch: Batch,
+    librarian: Librarian,
+    sessions: Sequence[tuple[Phase, SessionResult]],
+    warnings: Sequence[Finding] = (),
 ) -> str:
-    """The run's commit message: a summary line, then one `Field: value` line per fact."""
+    """The run's commit message: a summary line, lint's warnings (if any) as a list, then one
+    `Field: value` line per fact, in the last paragraph."""
     fields: list[tuple[str, object]] = [
         ("Batch-Captured-From", _utc(batch.first_captured)),
         ("Batch-Captured-To", _utc(batch.last_captured)),
@@ -501,13 +527,18 @@ def commit_message(
             (f"{name}-Session", result.session_id or "unknown"),
             (f"{name}-Resumes", result.resumes),
         ]
-    summary = f"librarian run: {len(batch.episodes)} new episodes"
-    return summary + "\n\n" + "\n".join(f"{key}: {value}" for key, value in fields) + "\n"
+    fields.append(("Lint-Warnings", len(warnings)))
+    paragraphs = [f"librarian run: {len(batch.episodes)} new episodes"]
+    if warnings:
+        paragraphs.append("Lint warnings:\n" + "\n".join(f"- {w}" for w in warnings))
+    paragraphs.append("\n".join(f"{key}: {value}" for key, value in fields))
+    return "\n\n".join(paragraphs) + "\n"
 
 
 def _fields(message: str) -> dict[str, str]:
+    """The `Field: value` lines of a commit message's last paragraph."""
     fields: dict[str, str] = {}
-    for line in message.splitlines():
+    for line in message.strip().split("\n\n")[-1].splitlines():
         key, separator, value = line.partition(": ")
         if separator and key and " " not in key:
             fields[key] = value.strip()
