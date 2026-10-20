@@ -16,11 +16,13 @@ from pathlib import Path
 from pa_core.librarian.run import Phase, SessionPaths, SessionResult
 from pa_home.claude_cli import (
     ClaudeCliError,
+    ClaudeCliTimeoutError,
     now_statement,
     result_number,
     run_print,
     without_capture,
 )
+from pa_home.config import LIBRARIAN_TIMEOUT_VAR
 from pa_home.project import SETTINGS
 
 FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep")
@@ -62,18 +64,25 @@ class ClaudeSessionRunner:
         self._max_turns = max_turns
         self._timeout_seconds = timeout_seconds
         self._environ = environ
+        self._phases: dict[str, Phase] = {}
+        """The phase of each session started, by its id, for when it's resumed."""
 
     @property
     def paths(self) -> SessionPaths:
         return self._paths
 
     def start(self, phase: Phase, prompt: str, *, now: datetime) -> SessionResult:
-        return self._run(prompt, now, [])
+        result = self._run(phase, prompt, now, [])
+        if result.session_id is not None:
+            self._phases[result.session_id] = phase
+        return result
 
     def resume(self, session_id: str, prompt: str, *, now: datetime) -> SessionResult:
-        return self._run(prompt, now, ["--resume", session_id])
+        return self._run(self._phases.get(session_id), prompt, now, ["--resume", session_id])
 
-    def _run(self, prompt: str, now: datetime, extra: list[str]) -> SessionResult:
+    def _run(
+        self, phase: Phase | None, prompt: str, now: datetime, extra: list[str]
+    ) -> SessionResult:
         args = [
             *extra,
             "--tools",
@@ -101,6 +110,12 @@ class ClaudeSessionRunner:
                 timeout_seconds=self._timeout_seconds,
                 # A librarian session is never captured as a chat.
                 env=without_capture(self._environ),
+            )
+        except ClaudeCliTimeoutError as error:
+            session = f"the {phase} session" if phase else "a session"
+            return SessionResult(
+                ok=False,
+                error=f"{error}; if {session} needs longer, raise {LIBRARIAN_TIMEOUT_VAR}",
             )
         except ClaudeCliError as error:
             return SessionResult(ok=False, error=str(error))

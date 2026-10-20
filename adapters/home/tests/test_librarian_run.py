@@ -407,7 +407,10 @@ MESS = [
 
 FAILURES = {
     "session error": ([{"fail": "API Error: overloaded"}], "API Error: overloaded"),
-    "timeout": ([{"sleep": 10}], "did not answer within"),
+    "timeout": (
+        [{"sleep": 10}],
+        "if the observation session needs longer, raise PA_LIBRARIAN_TIMEOUT_SECONDS",
+    ),
     "a page written": (
         [{"write": "people/david-kim.md", "text": "# David Kim\n"}],
         "people/david-kim.md",
