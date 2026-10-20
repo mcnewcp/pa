@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Installs the PA VM's bridge firewall on the devbox as a systemd unit, so it loads at every
-# boot before Incus starts the VM. Safe to re-run; reloads the rules.
+# Installs the PA VMs' bridge firewall on the devbox as a systemd unit, so it loads at every
+# boot before Incus starts a VM, and lets each bridge's traffic through ufw. Safe to re-run;
+# reloads the rules.
 #
 # Don't enable nftables.service for this: Ubuntu's /etc/nftables.conf starts with
 # `flush ruleset`, which would wipe Docker's and Incus's rules at boot.
@@ -31,4 +32,10 @@ if sudo ufw status | grep -q '^Status: active'; then
   sudo ufw allow in on "$PA_BRIDGE" to any port 53 comment 'PA VM DNS'
   sudo ufw route allow in on "$PA_BRIDGE" comment 'PA VM out'
   log "ufw lets the VM's DHCP, DNS and outbound traffic through"
+  # The librarian's VM gets DHCP and its way to the API, and nothing more: its bridge has no DNS,
+  # and the route rule names only the API's range, a fence of its own beside pa_vm and the ACL.
+  sudo ufw allow in on "$PA_LIBRARIAN_BRIDGE" to any port 67 proto udp comment 'PA librarian DHCP'
+  sudo ufw route allow in on "$PA_LIBRARIAN_BRIDGE" to "$PA_API_RANGE" port 443 proto tcp \
+    comment 'PA librarian to the Anthropic API'
+  log "ufw lets the librarian's DHCP and its traffic to $PA_API_RANGE:443 through"
 fi

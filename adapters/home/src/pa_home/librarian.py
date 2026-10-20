@@ -6,14 +6,26 @@ directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
 renders the librarian project into a temporary directory, the sessions' working directory, and
 runs the sessions with the configured command.
+
+With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
+
+- `<sandbox> start <l0> <project> <wiki>` is given the host's paths, before any session. It
+  makes them visible where the sessions run (in the VM: L0 and the project read-only, the wiki
+  writable, and nothing else) and prints, as a JSON object with the keys `l0`, `project` and
+  `wiki`, where the sessions see them. The project is rendered for those paths after it starts,
+  into the directory it was given.
+- `<sandbox> stop` takes it down afterwards, whatever happened, even after a failed start.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -39,6 +51,10 @@ from pa_home.librarian_project import (
 
 class ReplayTargetError(PaError):
     """A replay target that is neither fresh nor, when resuming, a replay's."""
+
+
+class LibrarianSandboxError(PaError):
+    """The sandbox the librarian's sessions run in could not be set up or taken down."""
 
 
 def run(
@@ -158,20 +174,85 @@ def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
 def _runner(
     l0: Path, wiki: Path, owner: Owner, config: LibrarianConfig, project: Path
 ) -> Iterator[ClaudeSessionRunner]:
-    """A session runner in the librarian project, rendered for `l0` and `wiki`."""
-    # The sessions run on the host for now, so they see L0 and the wiki where the host does.
-    paths = SessionPaths(l0=PurePosixPath(l0), wiki=PurePosixPath(wiki))
+    """A session runner in the librarian project, rendered for where the sessions see `l0` and
+    `wiki`: in the sandbox, if one is configured, else on the host."""
     with tempfile.TemporaryDirectory(prefix="pa-librarian-") as directory:
         rendered = Path(directory) / "project"
-        render_librarian_project(
-            rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, source=project
+        rendered.mkdir()
+        with _sandbox(config.sandbox, l0=l0, project=rendered, wiki=wiki) as seen:
+            paths = SessionPaths(l0=seen.l0, wiki=seen.wiki)
+            render_librarian_project(
+                rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, source=project
+            )
+            yield ClaudeSessionRunner(
+                command=config.command,
+                project=rendered,
+                session_project=seen.project,
+                paths=paths,
+                model=config.model,
+                effort=config.effort,
+                max_turns=config.max_turns,
+                timeout_seconds=config.timeout_seconds,
+            )
+
+
+@dataclass(frozen=True)
+class _Seen:
+    """Where the sessions see L0, the librarian project, and the wiki."""
+
+    l0: PurePosixPath
+    project: PurePosixPath
+    wiki: PurePosixPath
+
+
+@contextmanager
+def _sandbox(
+    sandbox: Sequence[str] | None, *, l0: Path, project: Path, wiki: Path
+) -> Iterator[_Seen]:
+    """The sandbox set up for one run (or replay) and taken down after it, and where its
+    sessions see `l0`, `project`, and `wiki`. Without a sandbox, they see the host's paths."""
+    if sandbox is None:
+        yield _Seen(l0=PurePosixPath(l0), project=PurePosixPath(project), wiki=PurePosixPath(wiki))
+        return
+    try:
+        printed = _sandbox_command(sandbox, "start", str(l0), str(project), str(wiki))
+        yield _seen(printed)
+    finally:
+        _sandbox_command(sandbox, "stop")
+
+
+def _sandbox_command(sandbox: Sequence[str], *args: str) -> str:
+    command = [*sandbox, *args]
+    try:
+        # Its progress goes to stderr, which is the owner's terminal; only its answer is read,
+        # and it reads nothing.
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, check=False
         )
-        yield ClaudeSessionRunner(
-            command=config.command,
-            project=rendered,
-            paths=paths,
-            model=config.model,
-            effort=config.effort,
-            max_turns=config.max_turns,
-            timeout_seconds=config.timeout_seconds,
+    except OSError as error:
+        raise LibrarianSandboxError(
+            f"Could not run the librarian's sandbox {command[0]!r}: {error}"
+        ) from error
+    if completed.returncode != 0:
+        raise LibrarianSandboxError(
+            f"The librarian's sandbox failed to {args[0]} (exit {completed.returncode}): "
+            f"{' '.join(command)}"
         )
+    return completed.stdout
+
+
+def _seen(printed: str) -> _Seen:
+    """Where the sandbox says its sessions see the store, from what `start` printed."""
+    try:
+        value = json.loads(printed)
+        seen = {key: PurePosixPath(value[key]) for key in ("l0", "project", "wiki")}
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise LibrarianSandboxError(
+            "The librarian's sandbox didn't say where its sessions see the store (a JSON object "
+            f"with l0, project and wiki): {printed.strip()!r}"
+        ) from error
+    if not all(path.is_absolute() for path in seen.values()):
+        raise LibrarianSandboxError(
+            f"The librarian's sandbox gave a relative path for the store: {printed.strip()!r}"
+        )
+    return _Seen(**seen)

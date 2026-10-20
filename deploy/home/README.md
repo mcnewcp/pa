@@ -1,30 +1,43 @@
 # deploy/home
 
-The PA VM on the devbox: an Incus VM, `pa-home`, that reaches the public internet and nothing of the owner's, and reads the store without being able to change it. See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.md).
+The PA's two VMs on the devbox:
+
+- the assistant's, `pa-home`: an Incus VM that reaches the public internet and nothing of the owner's, and reads the store without being able to change it;
+- the librarian's, `pa-librarian`: a second Incus VM, made with the same scripts (`--vm librarian`), that reaches only the Anthropic API and writes nothing but the wiki ([The librarian's VM](#the-librarians-vm)).
+
+See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.md).
 
 ## Setting up
 
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh
+deploy/home/setup-wizard.sh              # both VMs
+deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
 ```
+
+The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
 
 | Script | Does |
 |---|---|
-| `incus-setup.sh` | Creates the `pa` btrfs storage pool (copy-on-write, so snapshots are cheap) and the VM's own bridge, `pabr0`, with IPv6 off |
-| `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service` |
-| `create-vm.sh` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale) |
+| `incus-setup.sh [--vm]` | Creates the `pa` btrfs storage pool (copy-on-write, so snapshots are cheap) and the VM's own bridge, `pabr0`, with IPv6 off. For the librarian: `palib0`, with DNS off too, and its egress ACL |
+| `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service`, for both bridges |
+| `create-vm.sh [--vm]` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale). For the librarian: `pa-librarian` from `librarian/profile.yaml` (2 vCPU, 3 GiB RAM, 10 GiB disk, user `librarian`), left stopped |
 | `seed-data-root.sh` | Creates the instance's data root on the devbox from the frozen synthetic corpus, with its owner as the instance owner |
-| `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo) |
+| `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
+| `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
 | `mount-store.sh` | Mounts L0 and the wiki into the VM read-only and `inbox/assistant_chat/` writable |
 | `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
-| `rollback.sh [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
+| `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
+| `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`) |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
+| `librarian-sandbox.sh start\|stop\|claude` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
+| `librarian.sh run\|replay …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
+| `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -55,14 +68,17 @@ The shares are served by `virtiofsd` running as root on the devbox, with no id m
 
 Ingest reads only regular files and never follows a symbolic link (a link is quarantined unread), so it can't be made to copy a devbox file into L0, where the VM could read it. A file it isn't allowed to read is quarantined without its content, and one it isn't allowed to remove (root in the VM can take the devbox user's write permission away) is left in the inbox, not landed, so it doesn't land again on every run; `ingest.sh` names it and exits non-zero, and the rest of the inbox still lands. Either way only root on the devbox can clear it.
 
-To start the data root over (stopping the inbox mount stops Incus too, since Incus requires it; the next `incus` command starts it again):
+The wiki and `replays/` are filesystems of their own in the same way (`install-wiki.sh`, `wiki.img` and `replays.img`), since the librarian's VM writes them. The wiki's git directory stays beside the wiki, outside its filesystem.
+
+To start the data root over (stopping a mount stops Incus too, since Incus requires it; the next `incus` command starts it again):
 
 ```sh
-incus config device remove pa-home pa-l0 pa-chat-inbox
-unit=$(systemd-escape -p --suffix=mount ~/.local/share/pa-home-synthetic/inbox/assistant_chat)
-sudo systemctl disable --now "$unit"
+incus config device remove pa-home pa-l0 pa-chat-inbox pa-wiki
+for dir in inbox/assistant_chat wiki replays; do
+  sudo systemctl disable --now "$(systemd-escape -p --suffix=mount ~/.local/share/pa-home-synthetic/$dir)"
+done
 rm -rf ~/.local/share/pa-home-synthetic
-deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/mount-store.sh
+deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh
 ```
 
 ## Remote Control
@@ -77,6 +93,42 @@ deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/hom
 - Before it's enabled, two questions are answered once from a terminal as `assistant`: running `claude` in the project (theme, the "Claude can make mistakes" notice, folder trust), and running `claude remote-control` (`Enable Remote Control? (y/n)`). With no terminal, the service would wait on that question forever. The wizard asks both, checks the answers in the VM's `~/.claude.json` (`hasTrustDialogAccepted`, `remoteDialogSeen`), and only then enables the service.
 
 Don't chat during an eval run: the run fails if the inbox changes while it runs, and every exchange changes it.
+
+## The librarian's VM
+
+`pa-librarian` runs the librarian's sessions: `claude -p` with the file tools only, over L0 and into the wiki. It follows the [sandbox spike](../../docs/research/librarian-sandbox-spike.md) and [ADR-0007](../../docs/adr/0007-living-wiki-fenced-librarian.md). Start a run by hand on the devbox:
+
+```sh
+deploy/home/ingest.sh && deploy/home/librarian.sh run
+deploy/home/librarian.sh replay ~/.local/share/pa-home-synthetic/replays/<name>   # a rebuild, or an eval wiki
+```
+
+`librarian.sh` sets `PA_LIBRARIAN_SANDBOX` to `librarian-sandbox.sh`, which `pa` calls around the run (or the whole replay):
+
+- **start**, before any session:
+  - it shares L0 and the run's rendered librarian project read-only, at `/srv/pa/l0` and `/srv/pa/librarian`, and the wiki writable, at `/srv/pa/wiki`;
+  - it starts the VM and writes `api.anthropic.com` into its `/etc/hosts`, at an address the devbox resolved and checked against the API's range;
+  - it refuses a wiki that isn't on a `nosuid,nodev,noexec` filesystem (the data root's `wiki/`, or a directory under `replays/`), a project inside the wiki, and a VM that's already running, so runs never overlap.
+- **claude**, for each session: it runs Claude Code in the VM as `librarian`, in the project, with the setup token passed through stdin into `CLAUDE_CODE_OAUTH_TOKEN`. The token is never on the VM's disk or a command line.
+- **stop**, afterwards, even after a failure:
+  - it deletes `~/.claude` in the VM, since the sessions' transcripts hold private data and a snapshot would keep them;
+  - it stops the VM and takes the shares off, so the VM at rest shares nothing.
+
+Its fences:
+
+- **Network.**
+  - The VM has no Tailscale and a bridge of its own, `palib0`, whose dnsmasq serves DHCP only (`raw.dnsmasq=port=0`), so nothing in the VM can resolve a name or send data out in one.
+  - An Incus ACL on its NIC, `pa-librarian-egress` (`librarian/egress-acl.json`), lets out TCP 443 to `160.79.104.0/23`, the API's published inbound range, and drops and logs everything else both ways. Drops show in `journalctl -k`.
+  - Two more fences stand beside it: the `pa_vm` table allows only DHCP to the devbox and TCP 443 to that range, and ufw's route rule names only that range.
+- **Managed settings** (`librarian/managed-settings.json`, at `/etc/claude-code/managed-settings.json`, root's):
+  - they deny every tool but `Read`, `Edit`, `Write`, `Glob` and `Grep`, in every permission mode, and lock out bypass mode;
+  - they block every MCP server;
+  - they turn off auto memory, claude.ai connectors, nonessential traffic, telemetry and updates.
+- **Claude Code** is a pinned release, `PA_LIBRARIAN_CLAUDE_VERSION` in `lib.sh`. The devbox downloads it and checks the manifest's signature against Anthropic's key fingerprint and the binary against the manifest's checksum. It then pushes the binary to `/usr/local/bin/claude`, root's, so the VM never contacts the download host and the librarian can't replace it. Bump the version deliberately, since a release can add tools; `check-librarian.sh` fails on any tool beyond the five.
+- **Auth** is a setup token (`claude setup-token`) at `~/.config/pa/librarian.token` on the devbox, mode 0600. It can only make model requests.
+- **Mounts**: L0 and the project read-only, enforced on the devbox, and the wiki writable. Nothing else is shared, the wiki's git directory never. The project is the sessions' working directory, and no writable directory is it or above it.
+
+`check-librarian.sh` starts the VM as a run does and checks every fence from inside it. That includes two short sessions on Haiku, one with no flags and one with every flag that tries to reopen a tool (bypass mode, the shell and web tools named, an MCP server). Each must have exactly the five file tools. The wizard runs it.
 
 ## Evals in the VM
 
@@ -100,7 +152,11 @@ The run uses the code and agent project at the VM's deployed commit, builds its 
 deploy/home/update.sh <commit|branch|tag>   # snapshot, then deploy
 deploy/home/rollback.sh                     # back to the latest pre-update snapshot
 incus snapshot list pa-home                 # every snapshot
+deploy/home/update.sh --vm librarian        # snapshot the librarian's VM, then install Claude Code
+deploy/home/rollback.sh --vm librarian      # back to its latest pre-update snapshot, left stopped
 ```
+
+The librarian's VM holds no state between runs (the wiki is on the devbox and the token stays there), so its OS packages come from the image it was created from. To refresh them, delete it (`incus delete pa-librarian`) and run `create-vm.sh --vm librarian` and `update.sh --vm librarian` again.
 
 The VM's Tailscale identity lives on its disk, so it survives reboots and rollbacks to any snapshot taken after it joined.
 
@@ -165,3 +221,17 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    deploy/home/install-remote-control.sh
    ```
 6. `run-evals.sh`, with the service running, leaves the inbox unchanged.
+
+## Acceptance run (#66)
+
+1. `setup-wizard.sh --librarian` runs, and ends with `check-librarian.sh` passing; the assistant's checks (`check-isolation.sh`, `check-store.sh`) still pass.
+2. `deploy/home/librarian.sh run` over the live data root completes a run in the VM and commits it to `wiki.git`; `pa-librarian` is stopped afterwards and shares nothing (`incus config device list pa-librarian`).
+3. Roll back:
+   ```sh
+   deploy/home/update.sh --vm librarian
+   incus start pa-librarian && incus exec pa-librarian -- touch /root/rollback-marker && incus stop pa-librarian
+   deploy/home/rollback.sh --vm librarian
+   incus start pa-librarian && incus exec pa-librarian -- test ! -e /root/rollback-marker && echo "rolled back"
+   incus stop pa-librarian
+   ```
+4. Reboot the devbox: `pa-librarian` stays stopped, the wiki and replays are mounted, and `check-librarian.sh` passes.

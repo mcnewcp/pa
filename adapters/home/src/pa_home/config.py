@@ -20,13 +20,14 @@ OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
 TIME_ZONE_VAR = "PA_TIME_ZONE"
-# The librarian: its model and effort, the caps on each session, and the command that runs
-# `claude` where the sessions are fenced.
+# The librarian: its model and effort, the caps on each session, the sandbox its sessions run
+# in, and the command that runs `claude` there.
 LIBRARIAN_MODEL_VAR = "PA_LIBRARIAN_MODEL"
 LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
 LIBRARIAN_MAX_TURNS_VAR = "PA_LIBRARIAN_MAX_TURNS"
 LIBRARIAN_TIMEOUT_VAR = "PA_LIBRARIAN_TIMEOUT_SECONDS"
 LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
+LIBRARIAN_SANDBOX_VAR = "PA_LIBRARIAN_SANDBOX"
 LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
 LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
@@ -80,6 +81,10 @@ class LibrarianConfig:
     """The longest one session may run."""
     command: tuple[str, ...] = ("claude",)
     """What runs `claude` for a session: the CLI itself, or a command that reaches its VM."""
+    sandbox: tuple[str, ...] | None = None
+    """The command that sets up the sandbox the sessions run in, such as the librarian's VM, for
+    a run or a replay, and takes it down afterwards (`pa_home.librarian`). None runs the
+    sessions on the host."""
     page_threshold: int = PAGE_THRESHOLD
     """The distinct days a slug must be linked on in the day logs before it gets a page."""
     loop_age_days: int = LOOP_AGE_DAYS
@@ -154,15 +159,28 @@ def load_time_zone(environ: Mapping[str, str] = os.environ) -> ZoneInfo:
 
 
 def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianConfig:
-    """The librarian's configuration: Opus 5.5 at medium effort unless configured otherwise."""
+    """The librarian's configuration: Opus 5.5 at medium effort unless configured otherwise.
+
+    With a sandbox, sessions run `claude` through it (`<sandbox> claude`) unless a command is
+    configured too.
+    """
     default = LibrarianConfig()
     command = environ.get(LIBRARIAN_COMMAND_VAR, "").strip()
+    sandbox = environ.get(LIBRARIAN_SANDBOX_VAR, "").strip()
+    sandbox_command = tuple(shlex.split(sandbox)) if sandbox else None
+    if command:
+        session_command = tuple(shlex.split(command))
+    elif sandbox_command:
+        session_command = (*sandbox_command, "claude")
+    else:
+        session_command = default.command
     return LibrarianConfig(
         model=environ.get(LIBRARIAN_MODEL_VAR, "").strip() or default.model,
         effort=environ.get(LIBRARIAN_EFFORT_VAR, "").strip() or default.effort,
         max_turns=int(_positive(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns)),
         timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
-        command=tuple(shlex.split(command)) if command else default.command,
+        command=session_command,
+        sandbox=sandbox_command,
         page_threshold=_positive_integer(
             environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
         ),

@@ -1,0 +1,41 @@
+description: The librarian's VM (pa-librarian)
+config:
+  limits.cpu: "2"
+  limits.memory: 3GiB
+  # Started for each run and stopped after it (librarian-sandbox.sh), never at boot.
+  boot.autostart: "false"
+  cloud-init.user-data: |
+    #cloud-config
+    # One unprivileged user, whose uid must be the devbox user's so it can write the wiki's
+    # share, and no default ubuntu user. Admin goes through `incus exec` on the devbox. Nothing
+    # is installed: the VM reaches only the Anthropic API, and Claude Code is pushed in from the
+    # devbox (update.sh --vm librarian).
+    users:
+      - name: librarian
+        gecos: PA librarian
+        shell: /bin/bash
+        lock_passwd: true
+    # librarian-sandbox.sh writes api.anthropic.com into /etc/hosts at each start.
+    manage_etc_hosts: false
+    package_update: false
+    package_upgrade: false
+    runcmd:
+      # Each would only knock on the fence: the clock comes from the hypervisor (kvm-clock),
+      # and packages from the image.
+      - systemctl disable --now systemd-timesyncd.service apt-daily.timer apt-daily-upgrade.timer
+devices:
+  root:
+    type: disk
+    path: /
+    pool: pa
+    size: 10GiB
+  eth0:
+    type: nic
+    name: eth0
+    network: palib0
+    # The fence: the egress ACL's one rule, and everything else dropped and logged, both ways.
+    security.acls: pa-librarian-egress
+    security.acls.default.egress.action: drop
+    security.acls.default.egress.logged: "true"
+    security.acls.default.ingress.action: drop
+    security.acls.default.ingress.logged: "true"

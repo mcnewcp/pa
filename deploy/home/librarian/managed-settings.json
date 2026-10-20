@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash", "PowerShell", "Monitor", "WebFetch", "WebSearch", "mcp__*",
+      "Agent", "Task", "TaskStop", "ListAgents", "SendMessage", "Skill", "ToolSearch", "Workflow",
+      "RemoteTrigger", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "PushNotification",
+      "Artifact", "SendFeedback", "ReportFindings", "NotebookEdit", "EnterWorktree", "ExitWorktree", "LSP"
+    ],
+    "disableBypassPermissionsMode": "disable",
+    "additionalDirectories": ["/srv/pa/wiki"]
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "disableAllHooks": true,
+  "allowedMcpServers": [],
+  "allowManagedMcpServersOnly": true,
+  "disableClaudeAiConnectors": true,
+  "disableSkillShellExecution": true,
+  "autoMemoryEnabled": false,
+  "env": {
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_UPDATES": "1",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+  }
+}

@@ -1,22 +1,34 @@
 #!/usr/bin/env bash
 # Usage: update.sh <commit|branch|tag>
+#        update.sh --vm librarian
 #
-# Snapshots the PA VM, puts the repo at <ref> and runs `uv sync`, then renders the agent project
+# Snapshots a PA VM, then updates it. Roll back with rollback.sh (with the same --vm).
+#
+# The assistant's VM: puts the repo at <ref> and runs `uv sync`, then renders the agent project
 # for the instance owner into a stable directory, reading L0 where the VM mounts it, and the wiki
 # too once the librarian has run into it (render-agent-project.sh), and installs the Remote
 # Control unit, restarting it once the wizard has enabled it. The
-# first run installs uv and Claude Code and clones the repo. Roll back with rollback.sh.
+# first run installs uv and Claude Code and clones the repo.
+#
+# The librarian's VM: installs Claude Code at PA_LIBRARIAN_CLAUDE_VERSION, downloaded and
+# verified on the devbox (install-librarian-claude.sh), and the managed settings. It needs no
+# ref: nothing of the repo runs in it, and each run brings its own rendered project.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
+take_vm_option "$@"
+set -- "${ARGS[@]}"
+
+if [[ $PA_VM_ROLE == librarian ]]; then
+  (($# == 0)) || die "usage: update.sh --vm librarian (it takes no ref)"
+  vm_running && die "$PA_VM is running: is a librarian run going? Update it once it's done"
+  snapshot_vm pre-update
+  exec "$DEPLOY_DIR/install-librarian-claude.sh"
+fi
 
 ref=${1:?usage: update.sh <commit|branch|tag>}
 require_owner_env
 
-snapshot="pre-update-$(date -u +%Y%m%dT%H%M%SZ)"
-log "snapshot $PA_VM/$snapshot"
-# With stdin not a terminal, snapshot create reads the snapshot's config from it, and waits
-# forever on one that never closes.
-incus snapshot create "$PA_VM" "$snapshot" </dev/null
+snapshot_vm pre-update
 
 # Remote Control runs in the rendered project, which the render deletes, and its sessions' hooks
 # run the repo's code. install-remote-control.sh starts it again. Stopping a unit that isn't
