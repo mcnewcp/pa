@@ -12,8 +12,14 @@ from pathlib import Path
 import pytest
 
 from pa_core.owner import Owner
-from pa_home.agent_project import AGENT_PROJECT, AgentProjectError, render_agent_project
+from pa_home.agent_project import (
+    AGENT_PROJECT,
+    WIKI_SECTION,
+    AgentProjectError,
+    render_agent_project,
+)
 from pa_home.cli import main
+from pa_home.librarian_project import WIKI_SCHEMA
 
 OWNER = Owner(
     name="Argus McNevans",
@@ -32,9 +38,9 @@ def instance(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _render(instance: dict[str, Path], owner: Owner = OWNER) -> Path:
+def _render(instance: dict[str, Path], owner: Owner = OWNER, *, wiki: Path | None = None) -> Path:
     render_agent_project(
-        instance["target"], owner=owner, l0=instance["l0"], scratch=instance["scratch"]
+        instance["target"], owner=owner, l0=instance["l0"], scratch=instance["scratch"], wiki=wiki
     )
     return instance["target"]
 
@@ -81,10 +87,12 @@ def test_the_rendered_capture_hook_runs_the_projects_hook_script_with_the_render
 
 
 def test_a_rendered_project_differs_from_the_source_only_where_instance_values_go(instance):
+    """Without a wiki, too: the project the assistant ran in before the wiki."""
     target = _render(instance)
 
-    assert _files(target) == _files(AGENT_PROJECT)
-    for path in _files(AGENT_PROJECT):
+    source_files = [path for path in _files(AGENT_PROJECT) if path != Path(WIKI_SECTION)]
+    assert _files(target) == source_files
+    for path in source_files:
         source_lines = (AGENT_PROJECT / path).read_text().splitlines()
         rendered_lines = (target / path).read_text().splitlines()
         assert len(rendered_lines) == len(source_lines), path
@@ -92,6 +100,59 @@ def test_a_rendered_project_differs_from_the_source_only_where_instance_values_g
             if source != rendered:
                 assert "${" in source, f"{path}: {source!r} changed with no placeholder"
                 assert "${" not in rendered, f"{path}: {rendered!r} left a placeholder"
+
+
+def test_with_a_wiki_the_rendered_claude_md_says_how_to_navigate_with_it(tmp_path: Path, instance):
+    wiki = tmp_path / "data" / "wiki"
+
+    text = (_render(instance, wiki=wiki) / "CLAUDE.md").read_text()
+    claude_md = " ".join(text.split())  # phrases may wrap across lines
+
+    assert f"`{wiki}`" in claude_md
+    # Start from the index and the pages, widen with aliases and addresses, answer from episodes.
+    for value in ("`index.md`", "aliases", "addresses", "open the episodes"):
+        assert value in claude_md, value
+    # Cite episodes only; the wiki is untrusted, possibly wrong, and never exhaustive.
+    for value in ("never a page", "untrusted mail", "wrong", "never exhaustive"):
+        assert value in claude_md, value
+    # A correction is restated in one sentence and takes effect after the next librarian run.
+    for value in ("one sentence", "next librarian run"):
+        assert value in claude_md, value
+    # It points to the schema shared with the librarian.
+    assert "`wiki-schema.md`" in claude_md
+    assert "${" not in text, "a placeholder was left unfilled"
+
+
+def test_with_a_wiki_the_settings_attach_it_after_l0_and_scratch(tmp_path: Path, instance):
+    wiki = tmp_path / "data" / "wiki"
+    target = _render(instance, wiki=wiki)
+
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"] == [
+        str(instance["l0"]),
+        str(instance["scratch"]),
+        str(wiki),
+    ]
+
+
+def test_with_a_wiki_the_project_holds_the_schema_shared_with_the_librarian(
+    tmp_path: Path, instance
+):
+    target = _render(instance, wiki=tmp_path / "data" / "wiki")
+
+    assert (target / "wiki-schema.md").read_text() == WIKI_SCHEMA.read_text()
+    assert not (target / WIKI_SECTION).exists()
+
+
+def test_without_a_wiki_the_project_says_nothing_of_one(instance):
+    target = _render(instance)
+
+    claude_md = (target / "CLAUDE.md").read_text()
+    for value in ("index.md", "wiki-schema.md", "librarian"):
+        assert value not in claude_md, value
+    assert not (target / "wiki-schema.md").exists()
+    settings = json.loads((target / SETTINGS).read_text())
+    assert len(settings["permissions"]["additionalDirectories"]) == 2
 
 
 def test_the_source_project_names_no_owner_and_no_instance_path():
@@ -148,6 +209,21 @@ def test_paths_with_json_or_template_characters_render_intact(tmp_path: Path, pa
 
     settings = json.loads((target / SETTINGS).read_text())
     assert settings["permissions"]["additionalDirectories"][0] == path
+    assert f"`{path}`" in (target / "CLAUDE.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "path", ['/data/"quoted"/wiki', "/data/back\\slash/wiki", "/data/dollar$sign/wiki"]
+)
+def test_wiki_paths_with_json_or_template_characters_render_intact(tmp_path: Path, path: str):
+    target = tmp_path / "rendered"
+
+    render_agent_project(
+        target, owner=OWNER, l0=tmp_path / "l0", scratch=tmp_path / "scratch", wiki=Path(path)
+    )
+
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"][2] == path
     assert f"`{path}`" in (target / "CLAUDE.md").read_text()
 
 
@@ -214,6 +290,17 @@ def test_the_render_command_fills_in_the_configured_owner_and_the_given_paths(
         str(instance["scratch"].resolve()),
     ]
     assert str(target.resolve()) in capsys.readouterr().out
+
+
+def test_the_render_command_attaches_a_given_wiki(instance, owner_env, tmp_path: Path):
+    wiki = tmp_path / "data" / "wiki"
+
+    assert main([*_render_command(instance), "--wiki", str(wiki)]) == 0
+
+    target = instance["target"]
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"][2] == str(wiki.resolve())
+    assert f"`{wiki.resolve()}`" in (target / "CLAUDE.md").read_text()
 
 
 def test_the_render_command_needs_the_owner(

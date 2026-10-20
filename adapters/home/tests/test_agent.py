@@ -213,6 +213,32 @@ def test_the_agent_runs_under_the_rendered_projects_settings(tmp_path: Path, l0:
         assert flag not in argv
 
 
+def test_given_a_wiki_the_agent_reads_it_beside_l0_and_is_told_how(tmp_path: Path, l0: Path):
+    wiki = tmp_path / "data" / "wiki"
+    wiki.mkdir()
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0, wiki=wiki)
+
+    seen = _seen(tmp_path)
+    directories = seen["settings"]["permissions"]["additionalDirectories"]
+    assert directories[0] == str(l0) and directories[2] == str(wiki)
+    assert seen["scratch_is_a_directory"]
+    assert f"`{wiki}`" in seen["claude_md"] and "`index.md`" in seen["claude_md"]
+    # Attached through the settings alone, like L0: --add-dir would load skills from it.
+    assert "--add-dir" not in seen["argv"]
+
+
+def test_without_a_wiki_the_agent_reads_l0_alone(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    seen = _seen(tmp_path)
+    assert len(seen["settings"]["permissions"]["additionalDirectories"]) == 2
+    assert "index.md" not in seen["claude_md"]
+
+
 def test_the_agent_runs_in_the_agent_project_told_who_the_owner_is_and_where_l0_is(
     tmp_path: Path, l0: Path
 ):

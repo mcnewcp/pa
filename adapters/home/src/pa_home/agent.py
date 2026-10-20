@@ -129,9 +129,18 @@ class ClaudeAgent:
         self._clock = clock
 
     def answer(
-        self, question: str, *, owner: Owner, l0: Path, now: datetime | None = None
+        self,
+        question: str,
+        *,
+        owner: Owner,
+        l0: Path,
+        wiki: Path | None = None,
+        now: datetime | None = None,
     ) -> AgentAnswer:
         """The agent's answer to `question`, asked at `now` (default: the clock's time).
+
+        Given a `wiki`, the agent reads it beside `l0` and is told how to find its way with it;
+        without one, it reads L0 alone.
 
         Raises ValueError if that time has no UTC offset, since the agent is told it with one.
         """
@@ -154,7 +163,9 @@ class ClaudeAgent:
             workdir = Path(directory) / "project"
             scratch = Path(directory) / "scratch"
             scratch.mkdir()
-            render_agent_project(workdir, owner=owner, l0=l0, scratch=scratch, source=self._project)
+            render_agent_project(
+                workdir, owner=owner, l0=l0, scratch=scratch, wiki=wiki, source=self._project
+            )
             # claude -p never trusts a folder, so it drops a project's allow rules and
             # additional directories. Passing the same file as flag settings keeps them.
             args += ["--settings", str(workdir / ".claude" / "settings.json")]
