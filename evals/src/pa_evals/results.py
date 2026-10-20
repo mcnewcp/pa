@@ -109,12 +109,22 @@ class IngestCounts(BaseModel):
     quarantined: int
 
 
+class WikiResult(BaseModel):
+    """The eval wiki a files-plus-wiki run gave the assistant."""
+
+    librarian_version: str
+    """The librarian version that built it, from its run log."""
+
+
 class RunResults(BaseModel):
     configuration: str | None = None
     """The configuration the run asked, which keys its results in a comparison. None in results
     written before configurations were named."""
     setup: dict[str, str] = {}
     """How the run was set up (for example which agent runner and judge), for the report."""
+    wiki: WikiResult | None = None
+    """The eval wiki the assistant was given; None in files alone, and in results written
+    before configurations had a wiki."""
     as_of: datetime
     """The eval set's default as-of time."""
     ingest: IngestCounts

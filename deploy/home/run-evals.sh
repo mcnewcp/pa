@@ -6,10 +6,47 @@
 # data root on the VM's own disk, never the mounted store, with exchange capture off. The run
 # directory is copied back to evals/runs/ in this checkout, and the run fails if the VM's inbox
 # directory changed while it ran.
+#
+# A files-plus-wiki run's --wiki DIR is an eval wiki in this checkout (a replay's wiki/ and
+# run-log.jsonl, e.g. evals/wikis/scale/<librarian version>): its copy is pushed into the VM,
+# replacing the last run's, and the run asks with that copy.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 (($#)) || set -- --agent claude --judge model
+
+# Point --wiki at the VM's copy of the eval wiki, and push that copy.
+wiki=""
+args=()
+while (($#)); do
+  case $1 in
+    --wiki)
+      (($# >= 2)) || die "--wiki needs a directory"
+      wiki=$2
+      args+=(--wiki "$PA_VM_EVAL_WIKI")
+      shift 2
+      ;;
+    --wiki=*)
+      wiki=${1#--wiki=}
+      args+=(--wiki "$PA_VM_EVAL_WIKI")
+      shift
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${args[@]}"
+if [[ -n $wiki ]]; then
+  [[ -d $wiki/wiki && -f $wiki/run-log.jsonl ]] ||
+    die "$wiki isn't an eval wiki: it needs wiki/ and run-log.jsonl"
+  # Its tree and run log only, never a replay's wiki.git/; owned by the assistant.
+  tar -C "$wiki" -cf - wiki run-log.jsonl |
+    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+      "rm -rf $PA_VM_EVAL_WIKI && mkdir -p $PA_VM_EVAL_WIKI && tar -C $PA_VM_EVAL_WIKI -xf -"
+  log "pushed the eval wiki in $wiki to $PA_VM_EVAL_WIKI"
+fi
 
 # inbox_listing lists what's in the VM's inbox directory, with sizes and times.
 inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }

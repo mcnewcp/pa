@@ -17,8 +17,16 @@ from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import opened, parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
+from pa_evals.eval_wiki import EvalWiki
 from pa_evals.judge import Judge, JudgeRequest
-from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores, ToolCallResult
+from pa_evals.results import (
+    IngestCounts,
+    QuestionResult,
+    RunResults,
+    Scores,
+    ToolCallResult,
+    WikiResult,
+)
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -29,6 +37,10 @@ class CorpusCopyError(PaError):
     """A corpus directory that cannot be copied into the inbox."""
 
 
+class WikiChoiceError(PaError):
+    """A configuration with a wiki asked without an eval wiki, or one without given one."""
+
+
 def run_eval(
     corpus: Path | Sequence[Path],
     eval_set: EvalSet,
@@ -37,6 +49,7 @@ def run_eval(
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
     configuration: Configuration = DEFAULT_CONFIGURATION,
+    wiki: EvalWiki | None = None,
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
@@ -49,12 +62,18 @@ def run_eval(
     once the run ends. Questions run `concurrency` at a time, one pass each. A question whose
     assistant or judge raises is recorded as failed and the run goes on.
 
-    `configuration` says what the assistant is given, and is recorded in the results. `setup`
-    describes the run (for example which agent runner and judge) and is carried into the
-    results as it is.
+    `configuration` says what the assistant is given, and is recorded in the results. One with
+    a wiki needs `wiki`, an eval wiki: once the corpus is ingested, its tree is copied beside the
+    throwaway L0 with nothing in it writable, and its path goes to the agent with every question.
+    The results record the librarian version that built it. `setup` describes the run (for
+    example which agent runner and judge) and is carried into the results as it is.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    if configuration.wiki and wiki is None:
+        raise WikiChoiceError(f"{configuration.name} needs an eval wiki")
+    if wiki is not None and not configuration.wiki:
+        raise WikiChoiceError(f"{configuration.name} gives the assistant no wiki")
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
@@ -64,9 +83,10 @@ def run_eval(
             # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
             known = {entry.episode_id for entry in catalog.entries()}
+        laid = None if wiki is None else _lay_wiki(wiki, data_root.wiki)
 
         def ask(question: EvalQuestion) -> QuestionResult:
-            return _ask(question, eval_set, data_root, owner, store, known, agent, judge)
+            return _ask(question, eval_set, data_root, laid, owner, store, known, agent, judge)
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
@@ -77,6 +97,7 @@ def run_eval(
     return RunResults(
         configuration=configuration.name,
         setup=dict(setup or {}),
+        wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
         as_of=eval_set.as_of,
         ingest=IngestCounts(
             ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
@@ -91,6 +112,7 @@ def _ask(
     question: EvalQuestion,
     eval_set: EvalSet,
     data_root: DataRoot,
+    wiki: Path | None,
     owner: Owner,
     store: L0Store,
     known: set[str],
@@ -107,7 +129,7 @@ def _ask(
         evidence=question.evidence,
         status="failed",
     )
-    request = AgentRequest(question.id, question.question, as_of, data_root, owner)
+    request = AgentRequest(question.id, question.question, as_of, data_root, owner, wiki)
     answer = _attempt(lambda: agent.answer(request))
     if isinstance(answer, _Failure):
         recall = 0.0 if question.evidence else None
@@ -184,6 +206,21 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
         return call()
     except Exception as error:
         return _Failure(error)
+
+
+def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
+    """Copy the eval wiki's tree to `target`, beside the throwaway L0, with nothing in it
+    writable: no file can be changed, and no directory can take a new file."""
+    shutil.copytree(wiki.tree, target)
+    for directory, _, files in target.walk(top_down=False):
+        for name in files:
+            (directory / name).chmod(_READ_ONLY_FILE)
+        directory.chmod(_READ_ONLY_DIRECTORY)
+    return target
+
+
+_READ_ONLY_FILE = 0o444
+_READ_ONLY_DIRECTORY = 0o555
 
 
 def _copy_into_inbox(corpus: Path | Sequence[Path], inbox: Path) -> None:

@@ -1,5 +1,6 @@
 import contextlib
 import shutil
+import stat
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -9,12 +10,15 @@ import pytest
 from pa_evals.agent import (
     AgentAnswer,
     AgentRequest,
+    AgentRunner,
     AgentTimeoutError,
     ScriptedAgent,
     ToolCall,
 )
+from pa_evals.configurations import FILES_PLUS_WIKI
 from pa_evals.eval_set import EvalSet, load_eval_set
-from pa_evals.harness import CorpusCopyError, run_eval
+from pa_evals.eval_wiki import load_eval_wiki
+from pa_evals.harness import CorpusCopyError, WikiChoiceError, run_eval
 from pa_evals.judge import ScriptedJudge, Verdict
 from pa_evals.results import RunResults
 
@@ -415,3 +419,98 @@ def test_the_share_of_cited_episodes_opened_pools_the_citations_of_answers_with_
     assert results.categories["abstention"].cited_opened is None
     # Two of the four citations in answers with tool calls.
     assert results.overall.cited_opened == 0.5
+
+
+# Files plus wiki (#68)
+
+EVAL_WIKI = FIXTURES / "eval-wiki"
+
+
+def run_with_the_eval_wiki(eval_set: EvalSet, agent: AgentRunner) -> RunResults:
+    return run_eval(
+        CORPUS,
+        eval_set.only("hotel-block-deadline"),
+        agent,
+        ScriptedJudge({}),
+        configuration=FILES_PLUS_WIKI,
+        wiki=load_eval_wiki(EVAL_WIKI),
+    )
+
+
+def test_files_plus_wiki_gives_the_agent_a_copy_of_the_eval_wiki_beside_the_throwaway_l0(
+    eval_set,
+):
+    seen: list[tuple[Path, Path, dict[str, str]]] = []
+
+    class LookingAgent:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
+            assert request.wiki is not None
+            files = {
+                p.relative_to(request.wiki).as_posix(): p.read_text()
+                for p in request.wiki.rglob("*")
+                if p.is_file()
+            }
+            seen.append((request.wiki, request.data_root.l0, files))
+            return AgentAnswer("Oct 9.")
+
+    run_with_the_eval_wiki(eval_set, LookingAgent())
+
+    [(wiki, l0, files)] = seen
+    assert wiki.parent == l0.parent
+    source = EVAL_WIKI / "wiki"
+    assert files == {
+        "index.md": (source / "index.md").read_text(),
+        "days/2026-09-14.md": (source / "days" / "2026-09-14.md").read_text(),
+        "topics/daves-wedding.md": (source / "topics" / "daves-wedding.md").read_text(),
+    }
+    # The copy goes with the throwaway data root.
+    assert not wiki.exists()
+
+
+def test_the_eval_wiki_is_laid_with_nothing_writable(eval_set):
+    modes: dict[str, int] = {}
+
+    class LookingAgent:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
+            assert request.wiki is not None
+            for path in [request.wiki, *request.wiki.rglob("*")]:
+                modes[path.relative_to(request.wiki).as_posix()] = path.stat().st_mode
+            return AgentAnswer("Oct 9.")
+
+    run_with_the_eval_wiki(eval_set, LookingAgent())
+
+    laid = {".", "index.md", "days", "days/2026-09-14.md", "topics", "topics/daves-wedding.md"}
+    assert set(modes) == laid
+    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    assert {path for path, mode in modes.items() if mode & writable} == set()
+
+
+def test_files_alone_gives_the_agent_no_wiki_and_records_none(eval_set):
+    agent = ScriptedAgent({"hotel-block-deadline": "Oct 9."})
+
+    results = run_eval(CORPUS, eval_set.only("hotel-block-deadline"), agent, ScriptedJudge({}))
+
+    assert [request.wiki for request in agent.requests] == [None]
+    assert results.wiki is None
+
+
+def test_the_results_record_the_librarian_version_that_built_the_wiki(eval_set):
+    results = run_with_the_eval_wiki(eval_set, ScriptedAgent({"hotel-block-deadline": "Oct 9."}))
+
+    assert results.configuration == "files-plus-wiki"
+    assert results.wiki is not None
+    assert results.wiki.librarian_version == "0123456789ab"
+
+
+def test_files_plus_wiki_without_a_wiki_is_refused(eval_set):
+    agent = ScriptedAgent({})
+
+    with pytest.raises(WikiChoiceError, match="files-plus-wiki needs an eval wiki"):
+        run_eval(CORPUS, eval_set, agent, ScriptedJudge({}), configuration=FILES_PLUS_WIKI)
+
+
+def test_files_alone_with_a_wiki_is_refused(eval_set):
+    wiki = load_eval_wiki(EVAL_WIKI)
+
+    with pytest.raises(WikiChoiceError, match="files-alone gives the assistant no wiki"):
+        run_eval(CORPUS, eval_set, ScriptedAgent({}), ScriptedJudge({}), wiki=wiki)

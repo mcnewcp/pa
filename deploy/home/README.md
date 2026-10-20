@@ -85,8 +85,12 @@ deploy/home/run-evals.sh                               # --agent claude --judge 
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet
 deploy/home/run-evals.sh --agent claude --judge model --corpus argus --runs 3   # run-1/ to run-3/ and comparison.md
 deploy/home/run-evals.sh --agent claude --judge model --corpus scale --runs 3   # the scale corpus and its 40 questions
+deploy/home/run-evals.sh --agent claude --judge model --corpus scale --runs 3 \
+  --configuration files-plus-wiki --wiki evals/wikis/scale/<librarian version>   # with the scale eval wiki
 uv run pa-eval compare evals/baselines/v0.12/scale-files-alone evals/runs/<run>  # side by side, on the devbox
 ```
+
+A files-plus-wiki run's `--wiki` is an eval wiki on the devbox: a replay's `wiki/` and `run-log.jsonl` (`pa librarian replay`), kept in `evals/wikis/<corpus>/<librarian version>/` and committed when a reported result uses it, never with its `wiki.git/`. `run-evals.sh` pushes that copy into the VM (replacing the last one) and points the run at it; the run lays it beside its throwaway L0 with nothing writable, and its report names the librarian version that built it.
 
 The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
 

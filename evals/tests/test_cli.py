@@ -499,3 +499,73 @@ def test_compare_says_when_a_directory_holds_no_runs(tmp_path, capsys):
     assert main(["compare", str(tmp_path)]) == 1
 
     assert f"no eval results in {tmp_path}" in capsys.readouterr().err
+
+
+# Files plus wiki (#68)
+
+EVAL_WIKI = FIXTURES / "eval-wiki"
+FILES_PLUS_WIKI = ["--configuration", "files-plus-wiki", "--wiki", str(EVAL_WIKI)]
+
+
+def test_a_files_plus_wiki_run_records_the_librarian_version_of_its_wiki(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["configuration"] == "files-plus-wiki"
+    assert results["wiki"] == {"librarian_version": "0123456789ab"}
+    report = (run_dir / "report.md").read_text()
+    assert "- Configuration: files-plus-wiki\n- Wiki: librarian version 0123456789ab\n" in report
+
+
+def test_a_files_alone_run_records_no_wiki(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts) == 0
+
+    [run_dir] = runs.iterdir()
+    assert json.loads((run_dir / "results.json").read_text())["wiki"] is None
+    assert "- Wiki:" not in (run_dir / "report.md").read_text()
+
+
+def test_files_plus_wiki_needs_a_wiki_directory(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, "--configuration", "files-plus-wiki") == 1
+
+    assert "--configuration files-plus-wiki needs --wiki DIR" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_files_alone_refuses_a_wiki(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, "--wiki", str(EVAL_WIKI)) == 1
+
+    assert "--configuration files-alone gives the assistant no wiki" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_a_wiki_directory_that_isnt_an_eval_wiki_is_refused(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+    not_a_wiki = tmp_path / "empty"
+    not_a_wiki.mkdir()
+
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(not_a_wiki)]
+    assert pa_eval_run(runs, scripts, *wiki) == 1
+
+    assert "has no wiki/" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_the_comparison_names_the_librarian_version_of_each_configurations_wiki(tmp_path):
+    runs = tmp_path / "runs"
+    scripts = repeated_scripts(tmp_path, "a", [True, False], [True, True])
+
+    assert pa_eval_run(runs, scripts, "--runs", "2", *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    comparison = (run_dir / "comparison.md").read_text()
+    assert "- files-plus-wiki: 2 runs (wiki librarian version 0123456789ab)\n" in comparison

@@ -10,5 +10,8 @@ build/
 # Eval run outputs (pa-eval run). Baseline reports are copied to evals/baselines/ and committed.
 evals/runs/
 
+# An eval wiki is a replay's wiki/ and run-log.jsonl; its git directory is never committed.
+evals/wikis/**/wiki.git/
+
 # Local scratch work (summaries, notes); never committed.
 .scratch/
