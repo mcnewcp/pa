@@ -612,8 +612,9 @@ def warnings_prompt(warnings: Sequence[Finding]) -> str:
         f"{WARNINGS_HEADING}\n\n"
         "Lint's open warnings about the wiki, which don't block the run: orphan pages, loops "
         "past due or open too long, duplicate candidates, slugs that have reached the page "
-        "threshold without a page, and facts that need a lookup. Act only on the warnings about "
-        "pages you touch in this run, where the evidence settles them; leave the rest.\n\n"
+        "threshold without a page, and outside information that needs a lookup. Act only on "
+        "the warnings about pages you touch in this run, where the evidence settles them; "
+        "leave the rest.\n\n"
         f"```json\n{_json(listed)}\n```\n"
     )
 

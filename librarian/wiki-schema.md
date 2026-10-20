@@ -145,7 +145,7 @@ Each loop lives on one page: its topic's page, or else the page of its party oth
 
 ### Needs lookup
 
-`[needs lookup: <public question>]` stands inline where an outside fact is missing, such as
+`[needs lookup: <public question>]` stands inline where outside information is missing, such as
 `[needs lookup: how long does an untreated redwood pergola usually last?]`. The
 question names nothing private, since it will be looked up on the web.
 
@@ -165,6 +165,6 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 | a page by another name | `^aliases: .*<name>`, ignoring case | `people/ orgs/ topics/` |
 | a slug's timeline (file names are the days) | `\[\[<slug>\]\]` | `days/` |
 | every line resting on an episode | `\[ep:<episode_id>\]` | everywhere |
-| missing outside facts | `\[needs lookup: ` | everywhere |
+| missing outside information | `\[needs lookup: ` | everywhere |
 
 Start from `index.md` to see every page and its summary.

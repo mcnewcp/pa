@@ -22,7 +22,7 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
   configured otherwise).
 - **Duplicate candidates**: pages sharing an alias, or with near-identical slugs.
 - **Slugs without pages**: linked on enough days to reach the page threshold, but with no page.
-- **"Needs lookup" markers**, until the research worker exists.
+- **"Needs lookup" markers** for outside information, until the research worker exists.
 
 Each rule is a function over the wiki's files that yields findings; add a rule by writing one
 and listing it in `_RULES` (rules about the layout itself live in `_layout`).
@@ -477,7 +477,7 @@ def _slugs_without_pages(
 
 
 def _needs_lookup(files: Sequence[WikiFile]) -> Iterator[Finding]:
-    """An external fact still marked as needing a lookup."""
+    """Outside information still marked as needing a lookup."""
     for file in files:
         if file.path == INDEX:
             continue

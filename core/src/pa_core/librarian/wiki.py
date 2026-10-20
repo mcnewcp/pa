@@ -89,12 +89,14 @@ OWNER = "me"
 DAY_LOG_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 PAGE_NAME = re.compile(rf"{SLUG.pattern}\.md")
 
+# Deliberately stricter than evals' citations.py, which forgives spaces in what an answer cites;
+# lint holds the wiki to the exact form.
 CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
 LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
 """A link to a person, organization, or topic by slug, whether or not it has a page yet."""
 NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
-"""An external fact the librarian couldn't look up, inline where it's missing."""
+"""Outside information the librarian couldn't find in L0, marked inline where it's missing."""
 
 _OBSERVATION = re.compile(
     rf"- (?P<text>\S.*?) (?P<citations>{CITATION.pattern}(?: {CITATION.pattern})*)"
