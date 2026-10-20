@@ -17,8 +17,8 @@ import hashlib
 import json
 import os
 from collections import Counter
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -29,7 +29,7 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
-from pa_core.librarian.lint import lint
+from pa_core.librarian.lint import Finding, lint
 from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
 from pa_core.owner import Owner
 
@@ -63,6 +63,8 @@ class SessionResult:
     turns: int | None = None
     error: str | None = None
     """What went wrong, when it didn't finish."""
+    resumes: int = 0
+    """How many times the run resumed it to fix lint errors."""
 
 
 class SessionRunner(Protocol):
@@ -157,15 +159,16 @@ def run_librarian(
         sessions: list[tuple[Phase, SessionResult]] = []
         if batch.episodes:
             identities = identity_table(store.envelopes(), owner)
+            episode_ids = {e.episode_id for e in store.envelopes()}
             logged = day_logs(tree)
-            sessions.append(_observe(batch, identities, tree, runner, now))
-            _require_clean_lint(tree, store)
+            sessions.append(_observe(batch, identities, tree, runner, now, episode_ids))
             observations = _new_observations(logged, day_logs(tree))
             if observations:
                 sessions.append(
-                    _consolidate(observations, page_threshold, identities, tree, runner, now)
+                    _consolidate(
+                        observations, page_threshold, identities, tree, runner, now, episode_ids
+                    )
                 )
-                _require_clean_lint(tree, store)
         write_index(tree)
         commit = repository.commit(commit_message(batch, librarian, sessions))
     except LibrarianRunError as error:
@@ -188,23 +191,29 @@ def last_cursor(repository: WikiRepository) -> Cursor | None:
 
 
 def _observe(
-    batch: Batch, identities: IdentityTable, tree: Path, runner: SessionRunner, now: datetime
+    batch: Batch,
+    identities: IdentityTable,
+    tree: Path,
+    runner: SessionRunner,
+    now: datetime,
+    episode_ids: Collection[str],
 ) -> tuple[Phase, SessionResult]:
     before = _tree_state(tree)
     prompt = observation_prompt(batch, runner.paths) + "\n" + identity_prompt(identities)
-    result = runner.start(Phase.OBSERVATION, prompt, now=now)
-    if not result.ok:
-        raise LibrarianRunError(f"the observation session failed: {result.error}")
-    outside = [
-        path
-        for path in _changed(before, _tree_state(tree))
-        if path != DAYS and not path.startswith(f"{DAYS}/")
-    ]
-    if outside:
-        raise LibrarianRunError(
-            f"the observation session changed {', '.join(outside)}, outside {DAYS}/; "
-            "observation may change only day logs"
-        )
+
+    def require_bounds() -> None:
+        outside = [
+            path
+            for path in _changed(before, _tree_state(tree))
+            if path != DAYS and not path.startswith(f"{DAYS}/")
+        ]
+        if outside:
+            raise LibrarianRunError(
+                f"the observation session changed {', '.join(outside)}, outside {DAYS}/; "
+                "observation may change only day logs"
+            )
+
+    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, episode_ids)
     return Phase.OBSERVATION, result
 
 
@@ -238,6 +247,7 @@ def _consolidate(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
+    episode_ids: Collection[str],
 ) -> tuple[Phase, SessionResult]:
     prompt = (
         consolidation_prompt(
@@ -251,38 +261,92 @@ def _consolidate(
         + identity_prompt(identities)
     )
     before, logged = _tree_state(tree), day_logs(tree)
-    result = runner.start(Phase.CONSOLIDATION, prompt, now=now)
-    if not result.ok:
-        raise LibrarianRunError(f"the consolidation session failed: {result.error}")
-    outside = [
-        path
-        for path in _changed(before, _tree_state(tree))
-        if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS)
-    ]
-    if outside:
-        raise LibrarianRunError(
-            f"the consolidation session changed {', '.join(outside)}, outside the pages; "
-            f"consolidation may change only pages, in {', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
-        )
-    after = day_logs(tree)
-    edited = [
-        f"{DAYS}/{day.isoformat()}.md"
-        for day in sorted(logged.keys() | after.keys())
-        if Counter(logged.get(day, ())) != Counter(after.get(day, ()))
-    ]
-    if edited:
-        raise LibrarianRunError(
-            f"the consolidation session added or removed day-log lines, in {', '.join(edited)}; "
-            "consolidation may not change the day logs"
-        )
+
+    def require_bounds() -> None:
+        outside = [
+            path
+            for path in _changed(before, _tree_state(tree))
+            if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS)
+        ]
+        if outside:
+            raise LibrarianRunError(
+                f"the consolidation session changed {', '.join(outside)}, outside the pages; "
+                "consolidation may change only pages, in "
+                f"{', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
+            )
+        after = day_logs(tree)
+        edited = [
+            f"{DAYS}/{day.isoformat()}.md"
+            for day in sorted(logged.keys() | after.keys())
+            if Counter(logged.get(day, ())) != Counter(after.get(day, ()))
+        ]
+        if edited:
+            raise LibrarianRunError(
+                "the consolidation session added or removed day-log lines, in "
+                f"{', '.join(edited)}; consolidation may not change the day logs"
+            )
+
+    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, episode_ids)
     return Phase.CONSOLIDATION, result
 
 
-def _require_clean_lint(tree: Path, store: L0Store) -> None:
-    report = lint(tree, episode_ids={e.episode_id for e in store.envelopes()})
-    if report.errors:
-        findings = "\n".join(f"  {finding}" for finding in report.errors)
-        raise LibrarianRunError(f"lint found {len(report.errors)} errors:\n{findings}")
+MAX_RESUMES = 2
+"""How many times a session that leaves lint errors is resumed to fix them."""
+
+
+def _session(
+    phase: Phase,
+    prompt: str,
+    require_bounds: Callable[[], None],
+    tree: Path,
+    runner: SessionRunner,
+    now: datetime,
+    episode_ids: Collection[str],
+) -> SessionResult:
+    """Runs `phase`'s session on `prompt`, then checks its bounds and lints the wiki. A session
+    that leaves lint errors is resumed with the findings, up to MAX_RESUMES times. Returns the
+    session's result, its cost and turns added up over its attempts."""
+    attempts = [runner.start(phase, prompt, now=now)]
+    while True:
+        result = attempts[-1]
+        if not result.ok:
+            raise LibrarianRunError(f"the {phase} session failed: {result.error}")
+        require_bounds()
+        errors = lint(tree, episode_ids=episode_ids).errors
+        if not errors:
+            return _combined(attempts)
+        if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
+            resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
+            raise LibrarianRunError(
+                f"the {phase} session left {len(errors)} lint errors{resumed}:\n"
+                + "\n".join(f"  {finding}" for finding in errors)
+            )
+        attempts.append(runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now))
+
+
+def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
+    """One session's result over its attempts: what it cost and the turns it took, in all."""
+    costs = [a.cost_usd for a in attempts if a.cost_usd is not None]
+    turns = [a.turns for a in attempts if a.turns is not None]
+    return replace(
+        attempts[0],
+        cost_usd=sum(costs) if costs else None,
+        turns=sum(turns) if turns else None,
+        resumes=len(attempts) - 1,
+    )
+
+
+def fix_prompt(phase: Phase, errors: Sequence[Finding]) -> str:
+    """What a session that left lint errors is told when it's resumed: the findings."""
+    findings = "\n".join(f"- {finding}" for finding in errors)
+    return (
+        f"Phase: {phase}\n\n"
+        f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
+        "committed until they are fixed. Fix each one, following CLAUDE.md and staying within "
+        f"this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
+        "<problem>`, with paths relative to the wiki.\n\n"
+        f"{findings}\n"
+    )
 
 
 type _TreeState = dict[str, tuple[str, ...]]
@@ -437,6 +501,7 @@ def commit_message(
             (f"{name}-Cost-USD", _figure(result.cost_usd)),
             (f"{name}-Turns", _figure(result.turns)),
             (f"{name}-Session", result.session_id or "unknown"),
+            (f"{name}-Resumes", result.resumes),
         ]
     summary = f"librarian run: {len(batch.episodes)} new episodes"
     return summary + "\n\n" + "\n".join(f"{key}: {value}" for key, value in fields) + "\n"

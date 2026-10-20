@@ -13,10 +13,11 @@ then follows the script for its phase in `script.json`:
 - `{"sleep": <seconds>}`;
 - `{"fail": <message>}`: report an error and exit 1.
 
-With no script, observation observes and consolidation does nothing. Then it prints what
-`claude -p --output-format json` prints. The tests assert on the wiki, the git history and the
-cursor, and on what the session was given (`inputs` holds each fenced JSON block of its prompt
-before the identity table).
+A resumed session (`--resume`) follows `<phase>_resume` instead, such as
+`observation_resume`. With no script, observation observes and everything else does nothing.
+Then it prints what `claude -p --output-format json` prints. The tests assert on the wiki, the
+git history and the cursor, and on what the session was given (`inputs` holds each fenced JSON
+block of its prompt before the identity table).
 """
 
 import json
@@ -117,7 +118,9 @@ def stand_in_claude(directory: Path) -> Path:
                     file.write(text)
 
             default = {"observation": [{"observe": True}]}
-            for action in script.get(phase, default.get(phase, [])):
+            # A resumed session follows `<phase>_resume`; a new one, `<phase>`.
+            key = f"{phase}_resume" if "--resume" in argv else phase
+            for action in script.get(key, default.get(key, [])):
                 if "observe" in action:
                     for episode in episodes:
                         slugs = action.get("links", {}).get(episode["subject"], ["someone"])
@@ -1244,3 +1247,91 @@ def test_mail_from_the_owners_address_without_the_sent_label_is_flagged_as_forge
     # The forged mail is still offered, and the session is told what the flag means.
     assert len(session["episodes"]) == 2
     assert "`forged`" in session["prompt"]
+
+
+MALFORMED = "- nothing linked or cited\n"
+"""A day-log line lint rejects."""
+
+
+@pytest.mark.parametrize("phase", ["observation", "consolidation"])
+def test_a_session_that_leaves_lint_errors_is_resumed_with_the_findings_and_fixes_them(
+    data_root: Path, phase: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    broken = pages[TOPIC].replace("Gift: decided the knife set", "Gift: the knife set")
+    if phase == "observation":
+        script(
+            data_root,
+            observation=[{"observe": True}, {"append": "days/2026-09-30.md", "text": MALFORMED}],
+            observation_resume=[{"write": "days/2026-09-30.md", "text": HOTEL_DAY_LOG}],
+        )
+        finding = "days/2026-09-30.md:2: malformed observation"
+    else:
+        script(
+            data_root,
+            observation=[{"observe": True}],
+            consolidation=[{"write": TOPIC, "text": broken}],
+            consolidation_resume=[{"write": TOPIC, "text": pages[TOPIC]}],
+        )
+        finding = f"{TOPIC}:"
+
+    assert run_librarian() == 0
+
+    started, resumed = sessions(data_root, phase)
+    assert "--resume" not in started["argv"]
+    assert flag(resumed["argv"], "--resume") == "session-1"
+    assert finding in resumed["prompt"]
+    files = wiki_files(data_root)
+    assert files["days/2026-09-30.md"] == HOTEL_DAY_LOG
+    if phase == "consolidation":
+        assert "malformed decision" in resumed["prompt"]
+        assert files[TOPIC] == pages[TOPIC]
+    fields = trailers(commit_messages(data_root)[0])
+    name = phase.capitalize()
+    # A resumed session's cost and turns add up over its attempts.
+    assert fields[f"{name}-Resumes"] == "1"
+    assert fields[f"{name}-Cost-USD"] == "0.0842"
+    assert fields[f"{name}-Turns"] == "12"
+
+
+@pytest.mark.parametrize("phase", ["observation", "consolidation"])
+def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
+    data_root: Path, capsys, phase: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    malformed = [{"append": "days/2026-10-02.md", "text": MALFORMED}]
+    broken = pages_with(TOPIC, "Gift: decided the knife set", "Gift: the knife set")
+    # Each resume makes it worse, with a file lint rejects.
+    worse = {
+        "observation": {"append": "days/2026-10-03.md", "text": MALFORMED},
+        "consolidation": {"write": "topics/worse.md", "text": "No frontmatter.\n"},
+    }[phase]
+    script(
+        data_root,
+        observation=[{"observe": True}, *(malformed if phase == "observation" else [])],
+        consolidation=broken if phase == "consolidation" else [],
+        **{f"{phase}_resume": [worse]},
+    )
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    attempts = sessions(data_root, phase)[-3:]
+    assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
+    # The first run's two sessions, then this run's: no third resume.
+    assert len(sessions(data_root)) == 2 + (3 if phase == "observation" else 4)
+    error = capsys.readouterr().err
+    assert "lint errors after 2 resumes" in error
+    assert worse.get("append", worse.get("write")) in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+    script(data_root)
+    assert run_librarian() == 0
+    assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["RSVP"]
