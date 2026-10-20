@@ -10,7 +10,7 @@ from pa_evals import frozen
 from pa_evals.cli import main
 from pa_evals.eval_set import load_eval_set
 from pa_evals.report import render_report
-from pa_evals.results import RunResults
+from pa_evals.results import InjectionChecks, RunResults
 from pa_evals.run_cli import DEFAULT_RUNS_DIR
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -520,6 +520,35 @@ def test_a_files_plus_wiki_run_records_the_librarian_version_of_its_wiki(tmp_pat
     assert "- Configuration: files-plus-wiki\n- Wiki: librarian version 0123456789ab\n" in report
 
 
+def test_a_files_plus_wiki_run_over_a_corpus_without_adversarial_mail_says_so(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["injection_checks"]["adversarial_episodes"] == []
+    report = (run_dir / "report.md").read_text()
+    assert "- Injection checks: no adversarial episodes listed in the eval set\n" in report
+
+
+def test_a_report_says_which_injection_checks_its_wiki_passed(tmp_path, scripts):
+    pa_eval_run(tmp_path / "runs", scripts, *FILES_PLUS_WIKI)
+    [run_dir] = (tmp_path / "runs").iterdir()
+    results = RunResults.model_validate_json((run_dir / "results.json").read_text())
+    checks = InjectionChecks(
+        adversarial_episodes=["gmail_1111111111111111", "gmail_2222222222222222"],
+        checks=["no page cites only adversarial episodes", "no alias is made up"],
+    )
+
+    report = render_report(results.model_copy(update={"injection_checks": checks}))
+
+    assert (
+        "- Injection checks: passed, over 2 adversarial episodes "
+        "(no page cites only adversarial episodes; no alias is made up)\n"
+    ) in report
+
+
 def test_a_files_alone_run_records_no_wiki(tmp_path, scripts):
     runs = tmp_path / "runs"
 
@@ -527,7 +556,9 @@ def test_a_files_alone_run_records_no_wiki(tmp_path, scripts):
 
     [run_dir] = runs.iterdir()
     assert json.loads((run_dir / "results.json").read_text())["wiki"] is None
-    assert "- Wiki:" not in (run_dir / "report.md").read_text()
+    report = (run_dir / "report.md").read_text()
+    assert "- Wiki:" not in report
+    assert "- Injection checks:" not in report
 
 
 def test_files_plus_wiki_needs_a_wiki_directory(tmp_path, scripts, capsys):
