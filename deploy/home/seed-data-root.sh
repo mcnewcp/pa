@@ -19,11 +19,13 @@ import shlex
 from pa_evals import frozen
 from pa_evals.eval_set import load_eval_set
 
-owner = load_eval_set(frozen.EVAL_SET).owner
+eval_set = load_eval_set(frozen.EVAL_SET)
+owner = eval_set.owner
 for name, value in (
     ("PA_OWNER_NAME", owner.name),
     ("PA_OWNER_EMAILS", ",".join(owner.email_addresses)),
     ("PA_OWNER_OTHER_NAMES", ",".join(owner.other_names)),
+    ("PA_TIME_ZONE", eval_set.time_zone),
 ):
     print(f"{name}={shlex.quote(value)}")
 EOF

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +31,7 @@ class StreamedPrint:
 
 
 def run_print(
-    executable: str,
+    executable: str | Sequence[str],
     args: list[str],
     *,
     prompt: str,
@@ -41,8 +41,9 @@ def run_print(
 ) -> dict[str, Any]:
     """The result object of `<executable> -p --output-format json <args>`, prompt on stdin.
 
-    It runs in `env` (default: this process's environment). Raises ClaudeCliTimeoutError when
-    it runs too long, and ClaudeCliError when it cannot be started, exits with an error, or
+    `executable` is the CLI, or a command that runs it (such as one that reaches a VM). It
+    runs in `env` (default: this process's environment). Raises ClaudeCliTimeoutError when it
+    runs too long, and ClaudeCliError when it cannot be started, exits with an error, or
     reports one.
     """
     completed = _run(
@@ -83,16 +84,17 @@ def run_print_stream(
 
 
 def _run(
-    executable: str,
+    executable: str | Sequence[str],
     args: list[str],
     prompt: str,
     cwd: Path | str,
     timeout_seconds: float,
     env: Mapping[str, str] | None,
 ) -> subprocess.CompletedProcess[str]:
+    command = [executable] if isinstance(executable, str) else list(executable)
     try:
         return subprocess.run(
-            [executable, "-p", *args],
+            [*command, "-p", *args],
             input=prompt,
             capture_output=True,
             text=True,
@@ -103,7 +105,7 @@ def _run(
         )
     except FileNotFoundError as error:
         raise ClaudeCliError(
-            f"Could not run {executable!r}: is Claude Code installed and on PATH?"
+            f"Could not run {command[0]!r}: is Claude Code installed and on PATH?"
         ) from error
     except subprocess.TimeoutExpired as error:
         raise ClaudeCliTimeoutError(

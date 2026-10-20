@@ -11,12 +11,15 @@ from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.renormalize import renormalize
+from pa_home import librarian
 from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
 from pa_home.config import (
     DataRoot,
     load_data_root,
+    load_librarian_config,
     load_owner,
+    load_time_zone,
     require_backup_config,
     require_outside_repository,
 )
@@ -54,6 +57,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=True,
         help="The only directory the assistant may write to.",
     )
+    librarian_parser = commands.add_parser("librarian", help="Keep the wiki over L0.")
+    librarian_commands = librarian_parser.add_subparsers(dest="librarian_command", required=True)
+    librarian_commands.add_parser(
+        "run", help="Observe the episodes captured since the last run into the wiki."
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -69,6 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _backup(data_root)
         elif args.command == "renormalize":
             _renormalize(data_root)
+        elif args.command == "librarian":
+            _run_librarian(data_root)
     except PaError as error:
         print(f"pa: {error}", file=sys.stderr)
         return 1
@@ -109,6 +119,23 @@ def _renormalize(data_root: DataRoot) -> None:
     # The catalog indexes the old envelopes until it is rebuilt from the new ones.
     rebuild_catalog(data_root.catalog, store)
     print(f"renormalized {count} episodes; catalog rebuilt")
+
+
+def _run_librarian(data_root: DataRoot) -> None:
+    outcome = librarian.run(
+        data_root,
+        owner=load_owner(),
+        time_zone=load_time_zone(),
+        config=load_librarian_config(),
+    )
+    if outcome.batch is None or outcome.commit is None:
+        print("librarian: no new episodes since the last run")
+        return
+    batch = outcome.batch
+    print(
+        f"librarian: offered {len(batch.episodes)} of {batch.captured} new episodes; "
+        f"committed {outcome.commit[:8]}"
+    )
 
 
 def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
