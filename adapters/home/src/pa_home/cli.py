@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
+from pa_core.librarian.replay import BATCH_DAYS, ReplayError
+from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
@@ -64,11 +67,52 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Observe the episodes captured since the last run into the wiki, and fold them "
         "into pages.",
     )
+    replay = librarian_commands.add_parser(
+        "replay",
+        help="Rebuild a wiki in a new directory by replaying L0 through the librarian, a batch "
+        "of days at a time.",
+    )
+    replay.add_argument(
+        "target",
+        type=Path,
+        help="New or empty directory for the wiki (wiki/), its git directory (wiki.git/), and "
+        f"the run log ({librarian.RUN_LOG}).",
+    )
+    replay.add_argument(
+        "--corpus",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Replay these raw payloads (one directory per source, as in the inbox), ingested "
+        "into a throwaway data root, instead of the data root's L0. Repeat for a corpus in "
+        "several directories.",
+    )
+    replay.add_argument(
+        "--as-of",
+        type=datetime.fromisoformat,
+        help="Replay up to this time (ISO 8601; the owner's time zone if it has no offset), "
+        "else up to the latest episode. A corpus is captured at this time.",
+    )
+    replay.add_argument(
+        "--batch-days",
+        type=int,
+        default=BATCH_DAYS,
+        help=f"How many days each batch covers (default {BATCH_DAYS}).",
+    )
+    replay.add_argument(
+        "--resume",
+        action="store_true",
+        help="Carry on with the replay in TARGET from its last committed batch.",
+    )
     args = parser.parse_args(argv)
 
     try:
         if args.command == "agent-project":
             _render_agent_project(args.target, l0=args.l0, scratch=args.scratch)
+            return 0
+        if args.command == "librarian" and args.librarian_command == "replay":
+            _replay(args.target, args.corpus, args.as_of, args.batch_days, resume=args.resume)
             return 0
         data_root = load_data_root()
         if args.command == "ingest":
@@ -138,6 +182,60 @@ def _run_librarian(data_root: DataRoot) -> None:
         f"librarian: offered {len(batch.episodes)} of {batch.captured} new episodes; "
         f"committed {outcome.commit[:8]}"
     )
+
+
+def _replay(
+    target: Path,
+    corpus: list[Path],
+    as_of: datetime | None,
+    batch_days: int,
+    *,
+    resume: bool,
+) -> None:
+    owner, time_zone = load_owner(), load_time_zone()
+    target = target.expanduser().resolve()
+    data_root = None
+    if not corpus:
+        data_root = load_data_root()
+        require_outside_repository(
+            target,
+            "The replay target",
+            "A wiki replayed from the data root holds the owner's data, so it must live "
+            "outside the repository.",
+        )
+    if as_of is not None and as_of.utcoffset() is None:
+        as_of = as_of.replace(tzinfo=time_zone)
+
+    def report(outcome: RunOutcome) -> None:
+        batch = outcome.batch
+        if batch is None or batch.window is None or outcome.commit is None:
+            return
+        print(
+            f"librarian replay: {batch.window.start.astimezone(time_zone):%Y-%m-%d} to "
+            f"{batch.window.end.astimezone(time_zone):%Y-%m-%d}: offered "
+            f"{len(batch.episodes)} of {batch.captured} episodes; committed {outcome.commit[:8]}"
+        )
+
+    try:
+        outcome = librarian.replay(
+            target,
+            data_root=data_root,
+            corpus=[directory.expanduser().resolve() for directory in corpus],
+            owner=owner,
+            time_zone=time_zone,
+            config=load_librarian_config(),
+            batch_days=batch_days,
+            as_of=as_of,
+            resume=resume,
+            progress=report,
+        )
+    except ReplayError:
+        raise
+    except LibrarianRunError as error:
+        raise LibrarianRunError(
+            f"{error}\nThe replay stopped; carry on from its last committed batch with --resume."
+        ) from error
+    print(f"librarian replay: committed {len(outcome.runs)} batches into {target}")
 
 
 def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
