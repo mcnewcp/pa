@@ -37,6 +37,8 @@ PA_VM_WIKI=/srv/pa/wiki
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
 PA_VM_SCRATCH=/home/assistant/scratch
+# Where run-evals.sh pushes the eval wiki a files-plus-wiki run asks with, replaced each run.
+PA_VM_EVAL_WIKI=/home/assistant/.cache/pa-eval/eval-wiki
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service

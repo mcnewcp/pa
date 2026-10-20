@@ -46,7 +46,10 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             told = argv[argv.index("--append-system-prompt") + 1]
             model = argv[argv.index("--model") + 1] if "--model" in argv else "default"
             settings = json.load(open(".claude/settings.json"))
-            l0 = settings["permissions"]["additionalDirectories"][0]
+            directories = settings["permissions"]["additionalDirectories"]
+            l0 = directories[0]
+            wiki = directories[2] if len(directories) > 2 else None
+            index = open(f"{wiki}/index.md").readline().strip().replace(" ", "_") if wiki else None
             opened = f"{l0}/episodes/gmail/2026-09/gmail_94f6b4cbc55a3b85.json"
             def tool(id, name, input, result, is_error=False):
                 return [
@@ -62,7 +65,7 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 *tool("t2", "Read", {"file_path": opened}, "{}"),
                 {"type": "result", "subtype": "success", "is_error": False,
                  "result": f"[{model}] {told} [ep:gmail_94f6b4cbc55a3b85] "
-                           "[ep:gmail_424bdea9b0d82720]",
+                           f"[ep:gmail_424bdea9b0d82720] l0={l0} wiki={wiki} index={index}",
                  "total_cost_usd": 0.031, "num_turns": 5, "duration_ms": 12000},
             ]
             for event in events:
@@ -154,6 +157,30 @@ def test_the_comparison_gives_each_configurations_share_of_cited_episodes_opened
     # Every answer in every run cites two episodes and opens one.
     assert "| canary | 0.50 |" in comparison
     assert "| Overall | 0.50 |" in comparison
+
+
+def test_files_plus_wiki_gives_the_claude_agent_the_eval_wiki_beside_the_throwaway_l0(
+    tmp_path: Path, fake_claude: Path, verdicts: Path
+):
+    runs = tmp_path / "runs"
+    eval_wiki = FIXTURES / "eval-wiki"
+
+    exit_code = main(
+        [
+            "run",
+            *("--corpus", str(CORPUS), "--eval-set", str(EVAL_SET), "--runs-dir", str(runs)),
+            *("--only", "day-of-week", "--agent", "claude"),
+            *("--configuration", "files-plus-wiki", "--wiki", str(eval_wiki)),
+            *("--judge", "scripted", "--verdicts", str(verdicts)),
+        ]
+    )
+
+    assert exit_code == 0
+    [run_dir] = runs.iterdir()
+    [question] = json.loads((run_dir / "results.json").read_text())["questions"]
+    told = dict(word.split("=", 1) for word in question["answer"].split() if "=" in word)
+    assert Path(told["wiki"]) == Path(told["l0"]).parent / "wiki"
+    assert told["index"] == "#_Index"  # the eval wiki's first line
 
 
 @pytest.mark.skipif(

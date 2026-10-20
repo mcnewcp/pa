@@ -50,3 +50,11 @@ CORPORA: dict[str, Corpus] = {
 }
 """The frozen corpora by name."""
 DEFAULT_CORPUS = "argus"
+
+WIKIS = CORPUS_ROOT.parent / "wikis"
+"""The eval wikis (`pa_evals.eval_wiki`), by corpus and librarian version."""
+
+
+def eval_wiki(corpus: str, librarian_version: str) -> Path:
+    """Where the eval wiki built from `corpus` by `librarian_version` is kept."""
+    return WIKIS / corpus / librarian_version

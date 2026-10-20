@@ -139,8 +139,11 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     lines = ["# Eval comparison", ""]
     for label, runs in configurations.items():
         names = sorted({run.configuration for run in runs if run.configuration} - {label})
-        named = f" (configuration {', '.join(names)})" if names else ""
-        lines.append(f"- {_cell(label)}: {len(runs)} run{'s' if len(runs) != 1 else ''}{named}")
+        versions = sorted({run.wiki.librarian_version for run in runs if run.wiki})
+        notes = [f"configuration {', '.join(names)}"] if names else []
+        notes += [f"wiki librarian version {', '.join(versions)}"] if versions else []
+        noted = f" ({'; '.join(notes)})" if notes else ""
+        lines.append(f"- {_cell(label)}: {len(runs)} run{'s' if len(runs) != 1 else ''}{noted}")
     lines += [
         "",
         "## Correctness by category",

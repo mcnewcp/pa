@@ -60,6 +60,8 @@ def render_report(results: RunResults) -> str:
     lines = ["# Eval run", ""]
     if results.configuration is not None:
         lines.append(f"- Configuration: {results.configuration}")
+    if results.wiki is not None:
+        lines.append(f"- Wiki: librarian version {results.wiki.librarian_version}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",

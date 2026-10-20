@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from pa_core.owner import Owner
@@ -43,6 +44,9 @@ class AgentRequest:
     data_root: DataRoot
     """The throwaway data root the corpus was ingested into (read-only for the assistant)."""
     owner: Owner
+    wiki: Path | None = None
+    """The eval wiki's read-only tree beside the throwaway L0, in a files-plus-wiki run; None
+    in files alone."""
 
 
 class AgentRunner(Protocol):
@@ -62,6 +66,7 @@ class ClaudeAgentRunner:
             request.question,
             owner=request.owner,
             l0=request.data_root.l0,
+            wiki=request.wiki,
             now=request.as_of,
         )
 

@@ -174,6 +174,10 @@ _Avoid_: Test suite, benchmark
 What the assistant is given besides L0's files in an eval run: nothing (files alone), or the wiki (files plus wiki).
 _Avoid_: Mode, variant, arm
 
+**Eval wiki**:
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
+_Avoid_: Test wiki, fixture wiki
+
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".
 _Avoid_: Eval date, reference date
