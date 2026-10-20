@@ -47,8 +47,18 @@ for user in "$PA_USER" root; do
   fi
 done
 
-echo "In $PA_VM, the wiki is readable at the rendered path:"
-if incus exec "$PA_VM" -- grep -qF "\`$PA_VM_WIKI\`" "$PA_VM_PROJECT/CLAUDE.md" 2>/dev/null; then
+echo "In $PA_VM, the wiki is readable at the rendered path, once there is one:"
+# As render-agent-project.sh decides: a wiki is there once the librarian has written its index.
+names_wiki() {
+  incus exec "$PA_VM" -- grep -qF "\`$PA_VM_WIKI\`" "$PA_VM_PROJECT/CLAUDE.md" 2>/dev/null
+}
+if ! incus exec "$PA_VM" -- test -f "$PA_VM_WIKI/index.md" 2>/dev/null; then
+  if names_wiki; then
+    fail "$PA_VM_PROJECT/CLAUDE.md names $PA_VM_WIKI, which holds no wiki (run update.sh)"
+  else
+    pass "no wiki at $PA_VM_WIKI yet, and the assistant runs on files alone"
+  fi
+elif names_wiki; then
   pass "$PA_VM_PROJECT/CLAUDE.md points the assistant at $PA_VM_WIKI"
 else
   fail "$PA_VM_PROJECT/CLAUDE.md doesn't name $PA_VM_WIKI (run update.sh)"

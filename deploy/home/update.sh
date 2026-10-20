@@ -2,8 +2,9 @@
 # Usage: update.sh <commit|branch|tag>
 #
 # Snapshots the PA VM, puts the repo at <ref> and runs `uv sync`, then renders the agent project
-# for the instance owner into a stable directory, reading L0 and the wiki where the VM mounts
-# them, and installs the Remote Control unit, restarting it once the wizard has enabled it. The
+# for the instance owner into a stable directory, reading L0 where the VM mounts it, and the wiki
+# too once the librarian has run into it (render-agent-project.sh), and installs the Remote
+# Control unit, restarting it once the wizard has enabled it. The
 # first run installs uv and Claude Code and clones the repo. Roll back with rollback.sh.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -49,18 +50,6 @@ incus exec "$PA_VM" -- runuser -u "$PA_USER" -- \
 
 log "rendering the agent project into $PA_VM_PROJECT"
 as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" "$PA_VM_L0" "$PA_VM_SCRATCH" \
-  "$PA_VM_WIKI" <<'EOF'
-set -euo pipefail
-repo_dir=$1 owner_env=$2 project=$3 l0=$4 scratch=$5 wiki=$6
-set -a
-source "$owner_env"
-set +a
-# A rendered project is replaced, never written over. Its path stays the same, so Claude Code's
-# folder trust and session history for it carry over.
-rm -rf "$project"
-mkdir -p "$scratch"
-"$repo_dir/.venv/bin/pa" agent-project render "$project" --l0 "$l0" --scratch "$scratch" \
-  --wiki "$wiki"
-EOF
+  "$PA_VM_WIKI" <"$DEPLOY_DIR/render-agent-project.sh"
 
 "$DEPLOY_DIR/install-remote-control.sh"
