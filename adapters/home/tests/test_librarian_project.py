@@ -5,12 +5,22 @@ the owner and the paths the session sees L0 and the wiki at, and nothing else di
 """
 
 import json
+import re
+from datetime import date
 from pathlib import Path, PurePosixPath
 
 import pytest
 
+from pa_core.librarian.lint import L0Metadata, Thresholds, lint
+from pa_core.librarian.wiki import STATUSES, parse_decision, parse_loop, parse_observation
 from pa_core.owner import Owner
-from pa_home.librarian_project import LIBRARIAN_PROJECT, SETTINGS, render_librarian_project
+from pa_home.claude_session import FILE_TOOLS
+from pa_home.librarian_project import (
+    LIBRARIAN_PROJECT,
+    SETTINGS,
+    WIKI_SCHEMA,
+    render_librarian_project,
+)
 from pa_home.project import ProjectRenderError
 
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
@@ -32,17 +42,20 @@ def test_the_rendered_project_names_the_owner_and_where_l0_and_the_wiki_are(tmp_
     target = _render(tmp_path)
 
     claude_md = (target / "CLAUDE.md").read_text()
-    for value in ("Argus McNevans", "`argus@example.com`", str(L0), str(WIKI)):
+    for value in ("Argus McNevans", "Also called: Gus", "`argus@example.com`", str(L0), str(WIKI)):
         assert value in claude_md
+    assert "${" not in claude_md, "a placeholder was left unfilled"
     settings = json.loads((target / SETTINGS).read_text())
     assert settings["permissions"]["additionalDirectories"] == [str(L0), str(WIKI)]
 
 
-def test_the_settings_allow_no_tools_and_no_mcp(tmp_path: Path):
-    """The tools come from `--tools` and the VM's managed settings, never from the project."""
+def test_the_settings_name_only_the_file_tools_and_no_mcp(tmp_path: Path):
+    """The settings allow the file tools the session is started with (`--tools`) and nothing
+    else; the VM's managed settings deny every other tool."""
     settings = json.loads((_render(tmp_path) / SETTINGS).read_text())
 
-    assert set(settings["permissions"]) == {"additionalDirectories"}
+    assert set(settings["permissions"]) == {"allow", "additionalDirectories"}
+    assert sorted(settings["permissions"]["allow"]) == sorted(FILE_TOOLS)
     assert "hooks" not in settings
     assert "mcpServers" not in settings
     assert settings["enableAllProjectMcpServers"] is False
@@ -72,6 +85,41 @@ def test_the_source_project_names_no_owner_and_no_instance_path():
             assert value not in text, f"{path} names {value!r}"
 
 
+def test_the_instructions_point_at_the_wiki_schema_and_every_template():
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+
+    assert WIKI_SCHEMA.is_file() and WIKI_SCHEMA.parent == LIBRARIAN_PROJECT
+    assert f"`{WIKI_SCHEMA.name}`" in claude_md
+    for template in (LIBRARIAN_PROJECT / "templates").iterdir():
+        assert f"`templates/{template.name}`" in claude_md
+
+
+def test_the_wiki_schema_is_written_for_any_reader_and_names_no_instance_path():
+    """The assistant reads the same schema (#67), and sees the wiki at another path, so the
+    schema gives paths relative to the wiki and holds no placeholders."""
+    schema = WIKI_SCHEMA.read_text()
+
+    assert "${" not in schema
+    for folder in ("days/", "people/", "orgs/", "topics/", "index.md"):
+        assert folder in schema
+
+
+def test_the_wiki_schemas_example_lines_are_well_formed():
+    """Its examples are what readers copy, so each must parse as the line it shows."""
+    blocks = re.findall(r"^```\n(.*?)^```$", WIKI_SCHEMA.read_text(), re.MULTILINE | re.DOTALL)
+    examples = [
+        line
+        for block in blocks
+        for line in block.splitlines()
+        if line.startswith("- ") and "<" not in line
+    ]
+
+    assert len(examples) >= 4
+    for line in examples:
+        parsed = parse_observation(line) or parse_decision(line) or parse_loop(line)
+        assert parsed is not None, line
+
+
 def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):
     target = tmp_path / "rendered"
     target.mkdir()
@@ -81,3 +129,96 @@ def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):
         render_librarian_project(target, owner=OWNER, l0=L0, wiki=WIKI)
 
     assert _files(target) == [Path("notes.txt")]
+
+
+# The templates: a page or day log with a `<placeholder>` wherever the librarian writes. Filled
+# in, each passes lint; left as is, each fails it, so a leftover placeholder never lands.
+
+TEMPLATES = LIBRARIAN_PROJECT / "templates"
+EPISODE = "gmail_0123456789abcdef"
+PLACEHOLDER = re.compile(r"<[^<>\n]+>")
+FILLS = {
+    # Frontmatter and titles.
+    "<other names they go by>": "Dave",
+    "<their addresses, from the identity table>": "dave@example.com, david.kim@example.org",
+    "<one line: who they are to me>": "Neighbor; borrowed the van in October.",
+    "<their name>": "David Kim",
+    "<other names it goes by>": "the clinic",
+    "<its mail domains, from the identity table>": "riverside-clinic.example",
+    "<one line: what it is to me>": "My doctor's office.",
+    "<its name>": "Riverside Clinic",
+    "<one line: where it stands>": "Kitchen remodel; waiting on the contractor's quote.",
+    "<what I call it>": "Kitchen remodel",
+    "<YYYY-MM-DD>": "2026-10-05",
+    # Lines.
+    "<episode_id>": EPISODE,
+    "<where things stand, citing the episodes that show it>": "The quote is due Friday.",
+    "<anything else worth keeping, citing its episodes>": "Prefers texts to calls.",
+    "<subject>": "Countertops",
+    "<choice>": "quartz",
+    "<who>": "me, [[david-kim]]",
+    "<owed by>": "[[david-kim]]",
+    "<owed to>": "me",
+    "<what is owed>": "return the van keys",
+    "<what the episode shows, in one line, linking at least one [[slug]]>": (
+        "[[david-kim]] asked to borrow the van"
+    ),
+}
+WIKI_PATHS = {
+    "person.md": "people/david-kim.md",
+    "organization.md": "orgs/riverside-clinic.md",
+    "topic.md": "topics/kitchen-remodel.md",
+    "day.md": "days/2026-10-05.md",
+}
+
+
+def _fill(placeholder: re.Match[str]) -> str:
+    """A choice like `<asked|promised>` takes its first option; any other placeholder must be
+    one this test knows."""
+    text = placeholder[0]
+    if "|" in text:
+        return text[1:-1].split("|")[0]
+    assert text in FILLS, f"a template placeholder this test doesn't fill: {text}"
+    return FILLS[text]
+
+
+def _lint_one(tmp_path: Path, wiki_path: str, text: str) -> list[str]:
+    tree = tmp_path / "wiki"
+    (tree / wiki_path).parent.mkdir(parents=True)
+    (tree / wiki_path).write_text(text)
+    l0 = L0Metadata(
+        episode_ids=frozenset({EPISODE}),
+        addresses=frozenset(
+            {"dave@example.com", "david.kim@example.org", "front-desk@riverside-clinic.example"}
+        ),
+    )
+    thresholds = Thresholds(today=date(2026, 10, 5), page_threshold=3, loop_age_days=30)
+    return [str(finding) for finding in lint(tree, l0=l0, thresholds=thresholds).errors]
+
+
+def test_there_are_templates_for_each_page_type_and_the_day_log():
+    assert sorted(p.name for p in TEMPLATES.iterdir()) == sorted(WIKI_PATHS)
+
+
+@pytest.mark.parametrize("template", sorted(WIKI_PATHS))
+def test_a_filled_in_template_passes_lint(tmp_path: Path, template: str):
+    filled = PLACEHOLDER.sub(_fill, (TEMPLATES / template).read_text())
+
+    assert _lint_one(tmp_path, WIKI_PATHS[template], filled) == []
+
+
+@pytest.mark.parametrize("template", sorted(WIKI_PATHS))
+def test_a_template_left_unfilled_fails_lint(tmp_path: Path, template: str):
+    assert _lint_one(tmp_path, WIKI_PATHS[template], (TEMPLATES / template).read_text())
+
+
+@pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
+def test_each_page_template_lists_its_types_allowed_statuses(template: str):
+    page_type = template.removesuffix(".md")
+    [status] = [
+        line
+        for line in (TEMPLATES / template).read_text().splitlines()
+        if line.startswith("status: ")
+    ]
+
+    assert status == f"status: <{'|'.join(STATUSES[page_type])}>"

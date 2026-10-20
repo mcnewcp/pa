@@ -128,6 +128,8 @@ class RunOutcome:
 
     batch: Batch | None
     commit: str | None
+    sessions: tuple[tuple[Phase, SessionResult], ...] = ()
+    """The sessions the committed run ran, in order."""
     warnings: tuple[Finding, ...] = ()
     """Lint's warnings about the wiki as committed."""
 
@@ -150,8 +152,11 @@ def run_librarian(
     now: datetime,
     page_threshold: int = PAGE_THRESHOLD,
     loop_age_days: int = LOOP_AGE_DAYS,
+    batch: Batch | None = None,
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, and commits.
+
+    A replay gives the `batch` to run instead (`pa_core.librarian.replay`).
 
     `now` is what the sessions are told the current time is, and `page_threshold` the distinct
     days a slug must be linked on before it gets a page; `loop_age_days` how long a loop may
@@ -159,7 +164,7 @@ def run_librarian(
     rebuilt from all of L0 for `owner`. With no new episodes it does nothing. Raises
     LibrarianRunError when the run fails, after restoring the wiki.
     """
-    batch = production_batch(store, after=last_cursor(repository), time_zone=time_zone)
+    batch = batch or production_batch(store, after=last_cursor(repository), time_zone=time_zone)
     if batch is None:
         return RunOutcome(batch=None, commit=None)
     tree = repository.tree
@@ -197,7 +202,9 @@ def run_librarian(
     except BaseException:
         repository.discard()
         raise
-    return RunOutcome(batch=batch, commit=commit, warnings=report.warnings)
+    return RunOutcome(
+        batch=batch, commit=commit, sessions=tuple(sessions), warnings=report.warnings
+    )
 
 
 def last_cursor(repository: WikiRepository) -> Cursor | None:
@@ -544,6 +551,13 @@ def commit_message(
         ("Model", librarian.model),
         ("Effort", librarian.effort),
     ]
+    if batch.window is not None:
+        # A replay's batch is its window of occurrence; its end is what the sessions were told
+        # is now.
+        fields[:0] = [
+            ("Batch-Occurred-From", _utc(batch.window.start)),
+            ("Batch-Occurred-To", _utc(batch.window.end)),
+        ]
     for phase, result in sessions:
         name = phase.value.capitalize()
         fields += [
