@@ -224,8 +224,11 @@ def _sandbox(
 def _sandbox_command(sandbox: Sequence[str], *args: str) -> str:
     command = [*sandbox, *args]
     try:
-        # Its progress goes to stderr, which is the owner's terminal; only its answer is read.
-        completed = subprocess.run(command, stdout=subprocess.PIPE, text=True, check=False)
+        # Its progress goes to stderr, which is the owner's terminal; only its answer is read,
+        # and it reads nothing.
+        completed = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, check=False
+        )
     except OSError as error:
         raise LibrarianSandboxError(
             f"Could not run the librarian's sandbox {command[0]!r}: {error}"

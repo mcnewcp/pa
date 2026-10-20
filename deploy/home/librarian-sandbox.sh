@@ -114,8 +114,9 @@ claude() {
     die "$PA_LIBRARIAN_TOKEN must be mode 0600, readable by you alone"
   vm_running || die "$PA_VM isn't running: librarian-sandbox.sh start comes first"
   local uid gid
-  uid=$(incus exec "$PA_VM" -- id -u "$PA_USER")
-  gid=$(incus exec "$PA_VM" -- id -g "$PA_USER")
+  # incus exec forwards stdin: these must not take the prompt.
+  uid=$(incus exec "$PA_VM" -- id -u "$PA_USER" </dev/null)
+  gid=$(incus exec "$PA_VM" -- id -g "$PA_USER" </dev/null)
   # The token is the first line of stdin, and the prompt the rest.
   # shellcheck disable=SC2016 # expanded by the shell in the VM
   { tr -d '[:space:]' <"$PA_LIBRARIAN_TOKEN"; echo; cat; } |

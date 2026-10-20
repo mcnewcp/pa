@@ -189,7 +189,12 @@ else
 fi
 [[ -n $api ]] && expect_tcp_blocked "the API's address on another port" "$api" 80
 bridge_ip=$(incus network get "$PA_BRIDGE" ipv4.address); bridge_ip=${bridge_ip%/*}
-expect_tcp_blocked "the bridge's DNS" "$bridge_ip" 53
+# Nothing to probe: the bridge's dnsmasq doesn't listen on port 53 at all.
+if ss -Hlnut "sport = :53" | awk '{print $5}' | grep -q "^$bridge_ip:"; then
+  fail "something listens for DNS on the bridge ($bridge_ip:53)"
+else
+  pass "nothing listens for DNS on the bridge ($bridge_ip:53)"
+fi
 expect_tcp_blocked "devbox SSH via the bridge" "$bridge_ip" 22
 lan_ip=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
 expect_tcp_blocked "devbox SSH via its LAN address" "$lan_ip" 22
@@ -248,7 +253,7 @@ check_session "a session with no flags"
 denied=Bash,PowerShell,Monitor,WebFetch,WebSearch,Agent,Skill,RemoteTrigger
 check_session "a session asking for bypass mode, the shell, the web and MCP" \
   --dangerously-skip-permissions --permission-mode bypassPermissions \
-  --tools "$denied" --allowedTools "$denied,mcp__stub" \
+  --tools "$(IFS=,; echo "${PA_LIBRARIAN_TOOLS[*]}"),$denied" --allowedTools "$denied,mcp__stub" \
   --mcp-config '{"mcpServers": {"stub": {"type": "stdio", "command": "/bin/true"}}}'
 if in_vm test -e "/home/$PA_USER/.claude/.credentials.json"; then
   fail "the setup token was saved in the VM"
