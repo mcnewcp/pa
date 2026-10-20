@@ -9,9 +9,9 @@ The librarian holds private data, reads untrusted mail, and writes memory that p
 ## The fences
 
 - The librarian runs in its own Incus VM. L0 and the librarian project (its instructions, the wiki schema, and the templates) are mounted read-only, and the wiki is its only writable mount.
-- Nothing in the writable mount is ever loaded as instructions or run as code. The wiki holds only Markdown content, which lint enforces, and its git directory lives on the host, which commits each run. Otherwise one injected email could rewrite the librarian's instructions for every later run, or plant a git hook that runs on the host.
-- File tools only. Managed settings deny the shell, web tools, and MCP in every permission mode, and auto memory is off. The network fence alone can't keep the web out: WebSearch runs behind the model endpoint, the one destination that must stay open, and a session with a shell could start a nested session or call the API with its own credentials.
-- Egress only to the model endpoint, and a setup token that can make model requests only.
+- Nothing in the writable mount is ever loaded as instructions or run as code. The wiki holds only Markdown content, which lint enforces, and its git directory lives on the host, which commits each run. Otherwise one injected email could rewrite the librarian's instructions for every later run, or plant a git hook that runs on the host. So the wiki is attached through settings, and it is never the session's working directory: there, Claude Code would load its `CLAUDE.md` files and skills, and even apply an untrusted `.claude/settings.json`.
+- File tools only. Managed settings deny every other tool in every permission mode (the shell, web tools, and MCP, and also tools such as `RemoteTrigger` that reach out through the model endpoint), and auto memory is off. The network fence alone can't keep the web out: WebSearch runs behind the model endpoint, the one destination that must stay open, and a session with a shell could start a nested session or call the API with its own credentials.
+- Egress only to the model endpoint, by address rules on a bridge of the librarian's own with DNS off, since a bridge's resolver forwards lookups and so is a way out. Auth is a setup token that can make model requests only.
 - The assistant's direct web access ends in v0.13, before real mail reaches the store. From v0.14, web lookups go through a research worker that sees neither L0 nor the wiki.
 
 ## Considered Options
