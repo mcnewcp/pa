@@ -100,7 +100,7 @@ def render_report(results: RunResults) -> str:
         "",
         "## Cited episodes opened",
         "",
-        "Of the episodes the answers cite, the share whose file the session read, over the "
+        "Of the episodes the answers cite, the share whose contents reached the session, over the "
         "answers whose tool calls were recorded (n/a: none cite anything).",
         "",
         "| Category | Cited episodes opened |",

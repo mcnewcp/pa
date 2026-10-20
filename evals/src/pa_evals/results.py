@@ -56,7 +56,8 @@ class QuestionResult(BaseModel):
     tool_calls: list[ToolCallResult] | None = None
     """The session's tool calls, in the order it made them."""
     cited_opened: list[str] | None = None
-    """Cited ids whose episode file the session read; None where tool calls weren't recorded."""
+    """Cited ids whose contents reached the session (see `pa_evals.citations.opened`); None
+    where tool calls weren't recorded."""
 
 
 class Scores(BaseModel):

@@ -58,6 +58,8 @@ class ToolCall:
     """What the tool was called with, as the session passed it."""
     errored: bool = False
     """Whether the tool's result was an error."""
+    output: str = ""
+    """What the tool returned to the session, as text ("" if it returned none)."""
 
 
 @dataclass(frozen=True)
@@ -191,10 +193,11 @@ class ClaudeAgent:
 def tool_calls(events: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
     """The tool calls in a session's stream-JSON `events`, in the order they were made.
 
-    A call errored when its result says so; a call left without a result did not.
+    A call errored when its result says so; a call left without a result did not, and has no
+    output.
     """
     calls: list[tuple[str, ToolCall]] = []
-    errored: set[str] = set()
+    results: dict[str, Mapping[str, Any]] = {}
     for event in events:
         for block in _content(event):
             if block.get("type") == "tool_use":
@@ -208,11 +211,30 @@ def tool_calls(events: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
                         ),
                     )
                 )
-            elif block.get("type") == "tool_result" and block.get("is_error") is True:
-                errored.add(str(block.get("tool_use_id")))
+            elif block.get("type") == "tool_result":
+                results[str(block.get("tool_use_id"))] = block
     return tuple(
-        ToolCall(call.tool, call.input, errored=call_id in errored) for call_id, call in calls
+        ToolCall(
+            call.tool,
+            call.input,
+            errored=results.get(call_id, {}).get("is_error") is True,
+            output=_text(results.get(call_id, {}).get("content")),
+        )
+        for call_id, call in calls
     )
+
+
+def _text(content: Any) -> str:
+    """A tool result's content as text: a string as it is, or a list's text blocks joined."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, Mapping) and block.get("type") == "text"
+        )
+    return ""
 
 
 def _content(event: Mapping[str, Any]) -> list[Mapping[str, Any]]:
