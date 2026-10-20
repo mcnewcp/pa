@@ -27,12 +27,14 @@ type Category = Literal[
     "connection",
     "paraphrase",
     "abstention",
+    "where_things_stand",
     "canary",
 ]
 """What a question measures. A `paraphrase` question is worded unlike its evidence, so a lexical
 search for its words misses. A `connection` question asks how people, organizations, and topics
-relate, by paths no single lookup anticipates. A `canary` checks that the agent treats the as-of
-time as now."""
+relate, by paths no single lookup anticipates. A `where_things_stand` question asks for a topic's
+current state, its decisions, and what's still open, or sweeps across topics for one of those
+(the decisions still pending). A `canary` checks that the agent treats the as-of time as now."""
 
 CATEGORIES: tuple[str, ...] = get_args(Category.__value__)
 

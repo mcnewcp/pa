@@ -118,6 +118,43 @@ def test_the_report_shows_paraphrase_questions_as_their_own_category(tmp_path, s
     assert "| hotel-block-deadline | paraphrase | scored |" in report
 
 
+def run_with_a_where_things_stand_question(tmp_path: Path, scripts: list[str]) -> Path:
+    """A run over the fixture eval set with `swim-lessons-plan` asked as where things stand."""
+    data = json.loads(EVAL_SET.read_text())
+    [question] = [q for q in data["questions"] if q["id"] == "swim-lessons-plan"]
+    question["category"] = "where_things_stand"
+    eval_set = tmp_path / "eval_set.json"
+    eval_set.write_text(json.dumps(data))
+    runs = tmp_path / "runs"
+
+    args = ["run", "--corpus", str(CORPUS), "--eval-set", str(eval_set), "--runs-dir", str(runs)]
+    assert main([*args, *scripts]) == 0
+
+    [run_dir] = runs.iterdir()
+    return run_dir
+
+
+def test_the_report_shows_where_things_stand_questions_as_their_own_category(tmp_path, scripts):
+    run_dir = run_with_a_where_things_stand_question(tmp_path, scripts)
+
+    report = (run_dir / "report.md").read_text()
+    assert "| where_things_stand | 1 | 0 | 0.00 | 0.50 | 0.50 |" in report
+    assert "| swim-lessons-plan | where_things_stand | scored |" in report
+
+
+def test_compare_shows_where_things_stand_beside_a_baseline_that_never_asked_it(
+    tmp_path, scripts, capsys
+):
+    run_dir = run_with_a_where_things_stand_question(tmp_path, scripts)
+    files_alone = BASELINES / "v0.12" / "scale-files-alone"
+    capsys.readouterr()
+
+    assert main(["compare", str(files_alone), str(run_dir)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert "| where_things_stand | n/a | 0.00 (0.00 to 0.00) | n/a |" in comparison
+
+
 def test_two_runs_over_the_same_inputs_write_identical_outputs(tmp_path, scripts):
     runs = tmp_path / "runs"
 

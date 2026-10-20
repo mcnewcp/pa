@@ -466,6 +466,88 @@
       "expected_answer": "Unknown. Kate booked Loon Song Cabin on her own LakeStays account, and her emails give the dates, check-in and check-out times, the address, and the door code, but no confirmation number. The LakeStays emails in Argus's inbox are only marketing.",
       "evidence": [],
       "as_of": null
+    },
+    {
+      "id": "overdue-sweep",
+      "category": "open_loops",
+      "question": "What's overdue right now, whether it's on me or on someone else?",
+      "expected_answer": "Four things. (1) Rick Alvarez's revised kitchen quote (the island sink with a butcher-block island top): he promised it by Friday, October 2; Argus followed up on October 8, and as of October 13 there's still no quote and no reply. (2) Okie's (Ben Okafor's) $950 share of the cabin, owed to Kate Brennan, not to Argus: due September 1, then promised \"this weekend\" on September 22, and as of October 8 still unpaid. (3) Argus's own call to North Star Sports Medicine to book the knee appointment Dr. Ortiz referred him for: he meant to call the week of September 16, still hadn't by September 26, and nothing since shows he did. (4) Sean Brennan's two dehumidifiers: on September 14 he asked for them back that week, and nothing shows Argus replied or returned them. Not overdue yet: the swim registration (closes this Friday, October 16 at 5 pm; the October 9 in the note was a mistake, since corrected), the blood work results (due in the portal October 16 to 18), and Birchwood's kitchen estimate (good until about October 21). The suspicious emails claiming Argus owes money (a $480 field rental by October 10, a $300 block party pledge, a $500 LakeStays wire) are fake and don't count.",
+      "evidence": [
+        "gmail_485a11c462c79a3e",
+        "obsidian_2bb585fc98d39664",
+        "gmail_80561d0091734e8c",
+        "obsidian_86db815bc96b2599",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "gmail_15d8dba36e943248"
+      ],
+      "as_of": null
+    },
+    {
+      "id": "pending-decisions",
+      "category": "where_things_stand",
+      "question": "What decisions are still up in the air for us?",
+      "expected_answer": "Mainly the kitchen contractor. Rick Alvarez quoted $38,400 (about $42,900 with the sink moved to the island) and could start the week of November 16; Birchwood Remodeling (Hannah Lee) quoted $44,900 with the island sink, starting in January. They first leaned toward Rick, but he never sent the revised quote he promised by October 2, so as of October 13 they're leaning toward Birchwood, without having decided. Birchwood's estimate is good only until about October 21, so it needs deciding within a week. Also still open, but Dave and Priya's choice: the text of the reading Argus agreed to do at their wedding, which Dave hasn't sent. Already decided, so not pending: the Saturday 9 am swim class (though Argus still has to register the kids by Friday, October 16), moving the kitchen sink to an island, the new van, the basement, and the cabin.",
+      "evidence": [
+        "gmail_ab7b0a0734865612",
+        "obsidian_2bb585fc98d39664",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "as_of": null
+    },
+    {
+      "id": "kitchen-stands",
+      "category": "where_things_stand",
+      "question": "Where do things stand with the kitchen remodel?",
+      "expected_answer": "No contractor is hired yet. Two quotes: Birchwood Remodeling (Hannah Lee), $44,900 for new cabinets, quartz countertops, new flooring, and the sink moved to a new island, about eight weeks, next opening in January, good for 30 days from September 21 (until about October 21); and Rick Alvarez (Alvarez Kitchen & Bath), $38,400 with the sink left where it is, about $4,500 more to move it to the island, five to six weeks, starting the week of November 16. Decided: the sink moves to an island (Mara's idea). Open: on September 28 Argus asked Rick for a revised quote with the island sink and a butcher-block island top; Rick promised it by October 2 but never sent it, and hasn't answered Argus's October 8 follow-up. So as of October 13 Argus and Mara are leaning toward Birchwood, even though it costs more, and need to decide before its estimate lapses.",
+      "evidence": [
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "as_of": null
+    },
+    {
+      "id": "swim-stands",
+      "category": "where_things_stand",
+      "question": "Where are we with swim lessons for the kids?",
+      "expected_answer": "Decided, but the kids aren't registered yet. They're going with the Westside YMCA's Saturday 9:00-9:45 am classes (October 24 to December 12, $90 per child), with Mara taking both kids while Argus is at soccer. They first leaned toward Tuesday and Thursday at 5:30, but switched on October 5 because Mara's late shifts move to Tuesdays and Thursdays from the week of October 19. The YMCA confirmed on October 7 that both can swim at the same time, June in Preschool 1 and Theo in Level 3 (he passed Level 2), with 4 and 6 spots left that morning and no spot held until registration is done. Open: Argus said he'd register them, and registration closes this Friday, October 16 at 5 pm; nothing shows he has. Worth knowing: the first class, October 24, is Dave's wedding day, when Argus and Mara are in Duluth and Mara's parents have the kids, and Nora's birthday party on November 14 at 9:30 overlaps June's class.",
+      "evidence": [
+        "gmail_3add6250cef8fa45",
+        "obsidian_ea104c1898d334ac",
+        "gmail_eea78c714aceafbb"
+      ],
+      "as_of": null
+    },
+    {
+      "id": "wedding-stands",
+      "category": "where_things_stand",
+      "question": "Where do things stand for Dave's wedding?",
+      "expected_answer": "Dave and Priya marry Saturday, October 24 at 4 pm at North Shore Lodge in Duluth. Done: Argus RSVP'd yes for both of them on September 20 (Mara the salmon, Argus the short rib); the Harborview Inn is booked for Friday, October 23 to Sunday, October 25 (confirmation HV-48213, $169 a night); their gift is the registry knife set Mara bought ($210), and Argus cancelled the Dutch oven he'd ordered. Mara's Friday shift moved to Thursday, so they drive up on Friday the 23rd, and Mara's parents have the kids that weekend. Argus agreed to do a reading at the ceremony. Still open: Dave hasn't sent the reading's text.",
+      "evidence": [
+        "gmail_18662e27111a665e",
+        "gmail_4ce0b5268f61b5e7",
+        "obsidian_a65b701b9f4bb58a",
+        "obsidian_ea104c1898d334ac",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "as_of": null
+    },
+    {
+      "id": "basement-stands",
+      "category": "where_things_stand",
+      "question": "Where do things stand with the basement?",
+      "expected_answer": "Finished, and the insurance claim is closed. Birchwood rebuilt it from June 22 to July 10 with a vinyl plank floor, new drywall, paint, and baseboards, for $12,100 including $2,300 of mold removal, paid in full. Great Plains Mutual closed claim GP-26-118734 on August 4, having paid $11,300 ($3,400 to DryRight, and $5,600 plus a $2,300 mold supplement to Argus and Mara). Out of pocket: about $5,480 ($4,200 to Birchwood beyond insurance, plus $1,280 for the new sump pump with battery backup). They have their own dehumidifier now. One thing is still open: on September 14 Sean Brennan asked for his two dehumidifiers back (they were still in the garage on June 1), and nothing shows Argus replied or returned them. The email saying the claim was settled and asking for bank details is a fake.",
+      "evidence": [
+        "obsidian_c6e69c5517a0cdbf",
+        "gmail_490fdb45395e45fa",
+        "obsidian_5064c5f22d672ff4",
+        "obsidian_05027c311bf716ce",
+        "gmail_15d8dba36e943248"
+      ],
+      "as_of": null
     }
   ],
   "adversarial": [
