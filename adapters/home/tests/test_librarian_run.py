@@ -1823,7 +1823,13 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
 
     first, *_ = entries = run_log(target)
     version = trailers(replay_messages(target)[0])["Librarian-Version"]
-    run = {"phase": "observation", "session_id": "session-1", "cost_usd": 0.0421, "turns": 6}
+    run = {
+        "phase": "observation",
+        "session_id": "session-1",
+        "cost_usd": 0.0421,
+        "turns": 6,
+        "resumes": 0,
+    }
     assert first == {
         "status": "committed",
         "commit": first["commit"],
@@ -1836,6 +1842,7 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
         "effort": "medium",
         "sessions": [run, {**run, "phase": "consolidation"}],
         "cost_usd": 0.0842,
+        "lint_warnings": 0,
         "error": None,
     }
     assert [e["occurred_from"][:10] for e in entries] == ["2026-09-28", "2026-10-05", "2026-10-19"]
@@ -1856,7 +1863,18 @@ def test_a_failed_replay_resumes_from_its_last_committed_batch(
     assert "--resume" in capsys.readouterr().err
     [committed, failed] = run_log(target)
     assert committed["status"] == "committed"
-    assert (failed["status"], failed["commit"], failed["sessions"]) == ("failed", None, [])
+    assert (failed["status"], failed["commit"]) == ("failed", None)
+    # The session that failed reported nothing, so the run's cost isn't known.
+    assert failed["sessions"] == [
+        {
+            "phase": "observation",
+            "session_id": None,
+            "cost_usd": None,
+            "turns": None,
+            "resumes": 0,
+        }
+    ]
+    assert (failed["cost_usd"], failed["lint_warnings"]) == (None, None)
     assert failed["occurred_from"] == "2026-10-05T05:00:00+00:00"
     assert "API Error" in failed["error"]
     # The wiki is as of the first batch.
@@ -1884,6 +1902,61 @@ def test_a_failed_replay_resumes_from_its_last_committed_batch(
     assert replay(target, "--resume") == 0
     assert len(replay_messages(target)) == 4
     assert len(sessions(data_root, "observation")) == 4
+
+
+def test_the_run_log_records_the_sessions_a_failed_run_ran_and_what_they_cost(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+    # The second batch's observation leaves a malformed line it never fixes.
+    script(
+        data_root,
+        observation=[
+            {"observe": True},
+            {"append": "days/2026-10-07.md", "text": MALFORMED, "when": "RSVP"},
+        ],
+    )
+
+    assert replay(target) != 0
+
+    [_, failed] = run_log(target)
+    assert failed["status"] == "failed"
+    # Started, then resumed twice: three attempts' cost and turns.
+    assert failed["sessions"] == [
+        {
+            "phase": "observation",
+            "session_id": "session-1",
+            "cost_usd": 0.1263,
+            "turns": 18,
+            "resumes": 2,
+        }
+    ]
+    assert failed["cost_usd"] == 0.1263
+    assert "lint errors after 2 resumes" in failed["error"]
+
+
+def test_the_run_log_records_resumes_and_lint_warnings_of_a_committed_run(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    target = tmp_path / "rebuilt"
+    script(
+        data_root,
+        observation=[{"observe": True}, {"append": "days/2026-09-30.md", "text": MALFORMED}],
+        observation_resume=[{"write": "days/2026-09-30.md", "text": HOTEL_DAY_LOG}],
+        consolidation=[{"write": "topics/kitchen.md", "text": KITCHEN}],
+    )
+
+    assert replay(target) == 0
+
+    [entry] = run_log(target)
+    assert [(s["phase"], s["resumes"]) for s in entry["sessions"]] == [
+        ("observation", 1),
+        ("consolidation", 0),
+    ]
+    assert entry["cost_usd"] == 0.1263
+    assert entry["lint_warnings"] == 1  # the kitchen page is an orphan
 
 
 def test_a_replay_starts_only_in_a_fresh_wiki_and_resumes_only_its_own_librarians_replay(

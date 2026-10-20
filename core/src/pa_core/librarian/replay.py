@@ -17,9 +17,13 @@ per line, with these keys in this order.
   sessions were told is now.
 - `episodes`: how many episodes were offered; `skipped`: how many of the window's weren't.
 - `librarian_version`, `model`, `effort`: the librarian that ran.
-- `sessions`: `{phase, session_id, cost_usd, turns}` for each session, in order (empty when the
-  run failed or had nothing to offer).
-- `cost_usd`: the sessions' total, or null if one didn't report its cost.
+- `sessions`: `{phase, session_id, cost_usd, turns, resumes}` for each session the run ran, in
+  order, a failed run's included (the one that failed with what it reported, often nothing);
+  empty when the run had nothing to offer. Cost and turns add up over a session's resumes.
+- `cost_usd`: a committed run's total, or null if a session didn't report its cost; a failed
+  run's total of the costs that were reported, or null if none was.
+- `lint_warnings`: how many warnings lint had about the committed wiki; null when the run
+  failed.
 - `error`: why the run failed, or null.
 """
 
@@ -108,7 +112,7 @@ def replay_librarian(
                 batch=batch,
             )
         except LibrarianRunError as error:
-            _log(run_log, _entry(batch, librarian, error=str(error)))
+            _log(run_log, _entry(batch, librarian, error=error))
             raise
         _log(run_log, _entry(batch, librarian, outcome=outcome))
         runs.append(outcome)
@@ -168,12 +172,19 @@ def _entry(
     librarian: Librarian,
     *,
     outcome: RunOutcome | None = None,
-    error: str | None = None,
+    error: LibrarianRunError | None = None,
 ) -> dict[str, object]:
-    """The run log's entry for a run of `batch`: committed with `outcome`, or failed."""
+    """The run log's entry for a run of `batch`: committed with `outcome`, or failed with
+    `error`."""
     assert batch.window is not None
-    sessions = outcome.sessions if outcome else ()
+    sessions = outcome.sessions if outcome else error.sessions if error else ()
     costs = [result.cost_usd for _, result in sessions]
+    known = [cost for cost in costs if cost is not None]
+    if outcome is not None:
+        cost = None if None in costs else round(sum(known), 6)
+    else:
+        # What a failed run cost is what its sessions reported, never a made-up zero.
+        cost = round(sum(known), 6) if known else None
     return {
         "status": "committed" if outcome else "failed",
         "commit": outcome.commit if outcome else None,
@@ -190,11 +201,13 @@ def _entry(
                 "session_id": result.session_id,
                 "cost_usd": result.cost_usd,
                 "turns": result.turns,
+                "resumes": result.resumes,
             }
             for phase, result in sessions
         ],
-        "cost_usd": None if None in costs else round(sum(c or 0 for c in costs), 6),
-        "error": error,
+        "cost_usd": cost,
+        "lint_warnings": len(outcome.warnings) if outcome else None,
+        "error": str(error) if error else None,
     }
 
 

@@ -127,6 +127,14 @@ class Librarian:
 class LibrarianRunError(PaError):
     """A run that failed; the wiki was left as last committed."""
 
+    def __init__(
+        self, message: str, *, sessions: Sequence[tuple[Phase, SessionResult]] = ()
+    ) -> None:
+        super().__init__(message)
+        self.sessions = tuple(sessions)
+        """The sessions the run ran before it failed, in order, the one that failed included
+        (with what it reported up to then)."""
+
 
 @dataclass(frozen=True)
 class RunOutcome:
@@ -218,7 +226,8 @@ def run_librarian(
         repository.discard()
         raise LibrarianRunError(
             f"{error}\nThe run was discarded: the wiki is as last committed, and its "
-            f"{batch.captured} episodes are still new."
+            f"{batch.captured} episodes are still new.",
+            sessions=[*sessions, *error.sessions],
         ) from error
     except BaseException:
         repository.discard()
@@ -406,21 +415,27 @@ def _session(
     MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
     the session's result, its cost and turns added up over its attempts."""
     attempts = [runner.start(phase, prompt, now=now)]
-    while True:
-        result = attempts[-1]
-        if not result.ok:
-            raise LibrarianRunError(f"the {phase} session failed: {result.error}")
-        require_bounds()
-        errors = [e for e in linter(tree).errors if judged(e)]
-        if not errors:
-            return _combined(attempts)
-        if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
-            resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
-            raise LibrarianRunError(
-                f"the {phase} session left {len(errors)} lint errors{resumed}"
-                f"{committed.blame(errors)}:\n" + _findings(errors)
+    try:
+        while True:
+            result = attempts[-1]
+            if not result.ok:
+                raise LibrarianRunError(f"the {phase} session failed: {result.error}")
+            require_bounds()
+            errors = [e for e in linter(tree).errors if judged(e)]
+            if not errors:
+                return _combined(attempts)
+            if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
+                resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
+                raise LibrarianRunError(
+                    f"the {phase} session left {len(errors)} lint errors{resumed}"
+                    f"{committed.blame(errors)}:\n" + _findings(errors)
+                )
+            attempts.append(
+                runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now)
             )
-        attempts.append(runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now))
+    except LibrarianRunError as error:
+        # The run log records a failed session too, with what it reported.
+        raise LibrarianRunError(str(error), sessions=[(phase, _combined(attempts))]) from error
 
 
 def _findings(findings: Sequence[Finding]) -> str:
