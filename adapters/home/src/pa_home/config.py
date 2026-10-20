@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
+from pa_core.librarian.run import PAGE_THRESHOLD
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
@@ -24,6 +25,7 @@ LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
 LIBRARIAN_MAX_TURNS_VAR = "PA_LIBRARIAN_MAX_TURNS"
 LIBRARIAN_TIMEOUT_VAR = "PA_LIBRARIAN_TIMEOUT_SECONDS"
 LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
+LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -75,6 +77,8 @@ class LibrarianConfig:
     """The longest one session may run."""
     command: tuple[str, ...] = ("claude",)
     """What runs `claude` for a session: the CLI itself, or a command that reaches its VM."""
+    page_threshold: int = PAGE_THRESHOLD
+    """The distinct days a slug must be linked on in the day logs before it gets a page."""
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
@@ -154,6 +158,9 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         max_turns=int(_positive(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns)),
         timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
         command=tuple(shlex.split(command)) if command else default.command,
+        page_threshold=_positive_integer(
+            environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
+        ),
     )
 
 
@@ -182,6 +189,15 @@ def _positive(environ: Mapping[str, str], var: str, default: float) -> float:
     if not number > 0:
         raise ConfigError(f"{var} must be a positive number (got {value!r}).")
     return number
+
+
+def _positive_integer(environ: Mapping[str, str], var: str, default: int) -> int:
+    value = environ.get(var, "").strip()
+    if not value:
+        return default
+    if not value.isdigit() or int(value) < 1:
+        raise ConfigError(f"{var} must be a whole number of at least 1 (got {value!r}).")
+    return int(value)
 
 
 def _comma_separated(environ: Mapping[str, str], var: str) -> tuple[str, ...]:

@@ -64,4 +64,5 @@ def run(
             runner=runner,
             librarian=librarian,
             now=clock().astimezone(time_zone),
+            page_threshold=config.page_threshold,
         )

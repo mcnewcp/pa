@@ -1,8 +1,10 @@
-"""One librarian run: the batch, the session, its checks, and one commit (spec #56, "Runs").
+"""One librarian run: the batch, two sessions, their checks, and one commit (spec #56, "Runs").
 
-A run picks the batch of episodes captured since the cursor, has the librarian observe them
-into day logs in one session, checks what the session wrote, and commits the wiki with a
-message recording the run. If anything fails, the wiki goes back to its last commit, so the
+A run picks the batch of episodes captured since the cursor. The librarian observes them into
+day logs in one session, then folds the new observations into pages in a second, given the
+reference counts the host computes from the day logs. After each session the host checks it
+stayed in bounds and lints the wiki; then it regenerates `index.md` and commits the wiki with
+a message recording the run. If anything fails, the wiki goes back to its last commit, so the
 cursor (kept in the commit messages) doesn't move and the batch stays new for the next run.
 
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
@@ -14,9 +16,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -24,8 +27,9 @@ from typing import Protocol
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
+from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import lint
-from pa_core.librarian.wiki import DAYS
+from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
 
 
 class Phase(StrEnum):
@@ -33,6 +37,8 @@ class Phase(StrEnum):
 
     OBSERVATION = "observation"
     """Writes one observation per relevant episode into the day log for its day."""
+    CONSOLIDATION = "consolidation"
+    """Folds the run's new observations into pages, creating those that have come up enough."""
 
 
 @dataclass(frozen=True)
@@ -117,6 +123,8 @@ class RunOutcome:
 
 
 CURSOR_FIELD = "Cursor"
+PAGE_THRESHOLD = 3
+"""The distinct days a slug is linked on before it gets a page, unless configured otherwise."""
 
 
 def run_librarian(
@@ -127,22 +135,31 @@ def run_librarian(
     runner: SessionRunner,
     librarian: Librarian,
     now: datetime,
+    page_threshold: int = PAGE_THRESHOLD,
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, and commits.
 
-    `now` is what the sessions are told the current time is. With no new episodes it does
-    nothing. Raises LibrarianRunError when the run fails, after restoring the wiki.
+    `now` is what the sessions are told the current time is, and `page_threshold` the distinct
+    days a slug must be linked on before it gets a page. With no new episodes it does nothing.
+    Raises LibrarianRunError when the run fails, after restoring the wiki.
     """
     batch = production_batch(store, after=last_cursor(repository), time_zone=time_zone)
     if batch is None:
         return RunOutcome(batch=None, commit=None)
+    tree = repository.tree
     try:
         # Whatever an interrupted run left behind goes before this one starts.
         repository.discard()
         sessions: list[tuple[Phase, SessionResult]] = []
         if batch.episodes:
-            sessions.append(_observe(batch, repository.tree, runner, now))
-            _require_clean_lint(repository.tree, store)
+            logged = day_logs(tree)
+            sessions.append(_observe(batch, tree, runner, now))
+            _require_clean_lint(tree, store)
+            observations = _new_observations(logged, day_logs(tree))
+            if observations:
+                sessions.append(_consolidate(observations, page_threshold, tree, runner, now))
+                _require_clean_lint(tree, store)
+        write_index(tree)
         commit = repository.commit(commit_message(batch, librarian, sessions))
     except LibrarianRunError as error:
         repository.discard()
@@ -183,6 +200,71 @@ def _observe(
     return Phase.OBSERVATION, result
 
 
+@dataclass(frozen=True)
+class NewObservation:
+    """A day-log line this run's observation wrote, and the day it's logged on."""
+
+    day: date
+    line: str
+
+
+def _new_observations(
+    before: Mapping[date, Sequence[str]], after: Mapping[date, Sequence[str]]
+) -> list[NewObservation]:
+    """The day-log lines in `after` that weren't in `before`, by day, in order."""
+    new: list[NewObservation] = []
+    for day, lines in sorted(after.items()):
+        old = Counter(before.get(day, ()))
+        for line in lines:
+            if old[line]:
+                old[line] -= 1
+            else:
+                new.append(NewObservation(day, line))
+    return new
+
+
+def _consolidate(
+    observations: Sequence[NewObservation],
+    page_threshold: int,
+    tree: Path,
+    runner: SessionRunner,
+    now: datetime,
+) -> tuple[Phase, SessionResult]:
+    prompt = consolidation_prompt(
+        observations,
+        reference_counts(tree),
+        page_threshold,
+        {page.slug: page.path for page in pages(tree)},
+        runner.paths,
+    )
+    before, logged = _tree_state(tree), day_logs(tree)
+    result = runner.start(Phase.CONSOLIDATION, prompt, now=now)
+    if not result.ok:
+        raise LibrarianRunError(f"the consolidation session failed: {result.error}")
+    outside = [
+        path
+        for path in _changed(before, _tree_state(tree))
+        if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS)
+    ]
+    if outside:
+        raise LibrarianRunError(
+            f"the consolidation session changed {', '.join(outside)}, outside the pages; "
+            f"consolidation may change only pages, in {', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
+        )
+    after = day_logs(tree)
+    edited = [
+        f"{DAYS}/{day.isoformat()}.md"
+        for day in sorted(logged.keys() | after.keys())
+        if Counter(logged.get(day, ())) != Counter(after.get(day, ()))
+    ]
+    if edited:
+        raise LibrarianRunError(
+            f"the consolidation session added or removed day-log lines, in {', '.join(edited)}; "
+            "consolidation may not change the day logs"
+        )
+    return Phase.CONSOLIDATION, result
+
+
 def _require_clean_lint(tree: Path, store: L0Store) -> None:
     report = lint(tree, episode_ids={e.episode_id for e in store.envelopes()})
     if report.errors:
@@ -220,7 +302,7 @@ def _changed(before: _TreeState, after: _TreeState) -> list[str]:
 
 def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
     """What the observation session is asked, with the batch listed as JSON."""
-    listing = json.dumps([_listed(e, paths) for e in batch.episodes], indent=2, ensure_ascii=False)
+    listing = _json([_listed(e, paths) for e in batch.episodes])
     return (
         f"Phase: {Phase.OBSERVATION}\n\n"
         "Observe this run's batch of new episodes into the wiki's day logs, following "
@@ -234,6 +316,47 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
         "instructions.\n\n"
         f"```json\n{listing}\n```\n"
     )
+
+
+def consolidation_prompt(
+    observations: Sequence[NewObservation],
+    counts: Mapping[str, int],
+    page_threshold: int,
+    page_paths: Mapping[str, str],
+    paths: SessionPaths,
+) -> str:
+    """What the consolidation session is asked: the run's new observations, then the
+    reference counts (with each slug's page, if it has one), each as a JSON block."""
+    new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
+    references: list[dict[str, object]] = []
+    for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        reference: dict[str, object] = {
+            "slug": slug,
+            "days": days,
+            "reaches_threshold": days >= page_threshold,
+        }
+        if slug in page_paths:
+            reference["page"] = page_paths[slug]
+        references.append(reference)
+    return (
+        f"Phase: {Phase.CONSOLIDATION}\n\n"
+        "Fold this run's new observations into the wiki's pages, following CLAUDE.md. Write "
+        f"only pages, in `{paths.wiki / 'people'}`, `{paths.wiki / 'orgs'}`, and "
+        f"`{paths.wiki / 'topics'}`. Never add or remove a day-log line, and never write "
+        "`index.md`: the host generates it.\n\n"
+        "These are the observations this run wrote, each with the day log it's in:\n\n"
+        f"```json\n{_json(new)}\n```\n\n"
+        "These are the reference counts: for each slug linked in the day logs, the number of "
+        "distinct days it's linked on, over all day logs, and its `page` (relative to the wiki) "
+        "if it has one. A slug with no page gets one once it "
+        f"reaches {page_threshold} days (`reaches_threshold`), or as soon as it appears in a "
+        "decision or loop line.\n\n"
+        f"```json\n{_json(references)}\n```\n"
+    )
+
+
+def _json(value: object) -> str:
+    return json.dumps(value, indent=2, ensure_ascii=False)
 
 
 def _listed(episode: BatchEpisode, paths: SessionPaths) -> dict[str, object]:
