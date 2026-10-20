@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+TREE = "wiki"
+"""The wiki's working tree, by this name in a data root and in a replay's target directory."""
+GIT_DIR = "wiki.git"
+"""The wiki's git directory, beside its tree and never inside it."""
+
 INDEX = "index.md"
 """The generated index, the only file at the wiki's top level."""
 DAYS = "days"

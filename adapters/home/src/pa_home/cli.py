@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
-from pa_core.librarian.replay import BATCH_DAYS, ReplayError
+from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
 from pa_home import librarian
@@ -107,7 +107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "target",
         type=Path,
         help="New or empty directory for the wiki (wiki/), its git directory (wiki.git/), and "
-        f"the run log ({librarian.RUN_LOG}).",
+        f"the run log ({RUN_LOG}).",
     )
     replay.add_argument(
         "--corpus",

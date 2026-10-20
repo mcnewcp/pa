@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
+from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
+from pa_core.librarian.wiki import TREE as WIKI_TREE
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
@@ -58,12 +60,12 @@ class DataRoot:
     @property
     def wiki(self) -> Path:
         """L1: the librarian's wiki."""
-        return self.path / "wiki"
+        return self.path / WIKI_TREE
 
     @property
     def wiki_git(self) -> Path:
         """The wiki's git directory, beside the wiki and never inside it."""
-        return self.path / "wiki.git"
+        return self.path / WIKI_GIT_DIR
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,7 @@ while (($#)); do
 done
 set -- "${args[@]}"
 if [[ -n $wiki ]]; then
+  # A replay target's layout, as pa_core.librarian.replay.ReplayTarget defines it.
   [[ -d $wiki/wiki && -f $wiki/run-log.jsonl ]] ||
     die "$wiki isn't an eval wiki: it needs wiki/ and run-log.jsonl"
   # Its tree and run log only, never a replay's wiki.git/; owned by the assistant.

@@ -1,10 +1,10 @@
 """Eval wikis: the wiki a files-plus-wiki run gives the assistant, built by a replay on the host.
 
 An eval wiki is a directory holding a replay's final tree and its run log, as
-`pa librarian replay TARGET` leaves them in TARGET:
+`pa librarian replay TARGET` leaves them in TARGET (`pa_core.librarian.replay.ReplayTarget`):
 
     wiki/            the wiki's tree: index.md, days/, people/, orgs/, topics/
-    run-log.jsonl    one entry per librarian run (`pa_core.librarian.replay` documents it)
+    run-log.jsonl    one entry per librarian run (`pa_core.librarian.replay.RunLogEntry`)
 
 The replay's git directory (`wiki.git/` beside them) is not part of it, and is never committed.
 Eval wikis are built once per librarian version and kept in the evals tree by corpus and
@@ -16,14 +16,11 @@ The run log names the librarian version that built the wiki; the results record 
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from pa_core.errors import PaError
-
-TREE = "wiki"
-RUN_LOG = "run-log.jsonl"
+from pa_core.librarian.replay import ReplayTarget, RunLogEntry, RunLogError, read_run_log
 
 
 class EvalWikiError(PaError):
@@ -46,34 +43,27 @@ def load_eval_wiki(directory: Path) -> EvalWiki:
     """
     if not directory.is_dir():
         raise EvalWikiError(f"eval wiki not found: {directory}")
-    tree, run_log = directory / TREE, directory / RUN_LOG
+    layout = ReplayTarget(directory)
+    tree, run_log = layout.tree, layout.run_log
     if not tree.is_dir():
-        raise EvalWikiError(f"{directory} has no {TREE}/: it isn't an eval wiki")
+        raise EvalWikiError(f"{directory} has no {tree.name}/: it isn't an eval wiki")
     if not run_log.is_file():
-        raise EvalWikiError(f"{directory} has no {RUN_LOG}: it isn't an eval wiki")
+        raise EvalWikiError(f"{directory} has no {run_log.name}: it isn't an eval wiki")
     entries = _entries(run_log)
-    if not any(entry.get("status") == "committed" for entry in entries):
+    if not any(entry.status == "committed" for entry in entries):
         raise EvalWikiError(f"{run_log} has no committed run")
-    versions = sorted({str(entry.get("librarian_version")) for entry in entries})
+    versions = sorted({entry.librarian_version for entry in entries})
     if len(versions) > 1:
         raise EvalWikiError(f"{run_log} names more than one librarian version: {versions}")
-    if entries[-1].get("status") != "committed":
+    if entries[-1].status != "committed":
         raise EvalWikiError(
             f"{run_log} ends with a failed run: finish the replay with --resume first"
         )
     return EvalWiki(tree, versions[0])
 
 
-def _entries(run_log: Path) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    for number, line in enumerate(run_log.read_text().splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise EvalWikiError(f"{run_log}:{number} is not JSON: {error}") from error
-        if not isinstance(entry, dict):
-            raise EvalWikiError(f"{run_log}:{number} is not a run log entry")
-        entries.append(entry)
-    return entries
+def _entries(run_log: Path) -> list[RunLogEntry]:
+    try:
+        return read_run_log(run_log)
+    except RunLogError as error:
+        raise EvalWikiError(str(error)) from error

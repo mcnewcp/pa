@@ -2,7 +2,7 @@
 wired to its home adapters.
 
 A run's wiki and its git directory live in the data root. A replay's live in its target
-directory (`wiki/`, `wiki.git/`), beside its run log (`run-log.jsonl`), and it replays either
+directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
 renders the librarian project into a temporary directory, the sessions' working directory, and
 runs the sessions with the configured command.
@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
-from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, replay_librarian
+from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import Librarian, RunOutcome, SessionPaths, run_librarian
 from pa_core.librarian.version import librarian_version
 from pa_core.owner import Owner
@@ -35,9 +35,6 @@ from pa_home.librarian_project import (
     project_files,
     render_librarian_project,
 )
-
-RUN_LOG = "run-log.jsonl"
-"""A replay's run log, in its target directory."""
 
 
 class ReplayTargetError(PaError):
@@ -92,8 +89,8 @@ def replay(
     time). `target` must be new or empty, unless `resume`, when it must hold a replay to carry
     on from its last committed run.
     """
-    wiki, wiki_git = target / "wiki", target / "wiki.git"
-    if resume and not wiki_git.is_dir():
+    layout = ReplayTarget(target)
+    if resume and not layout.git_dir.is_dir():
         raise ReplayTargetError(f"{target} holds no replay to resume")
     if not resume and target.exists() and any(target.iterdir()):
         raise ReplayTargetError(
@@ -101,8 +98,8 @@ def replay(
             "on with the replay in it)"
         )
     with _l0(data_root, corpus, owner, as_of or clock()) as l0:
-        repository = GitWikiRepository.open(wiki, wiki_git)
-        with _runner(l0, wiki, owner, config, project) as runner:
+        repository = GitWikiRepository.open(layout.tree, layout.git_dir)
+        with _runner(l0, layout.tree, owner, config, project) as runner:
             return replay_librarian(
                 store=FilesystemL0(l0),
                 owner=owner,
@@ -110,7 +107,7 @@ def replay(
                 repository=repository,
                 runner=runner,
                 librarian=_librarian(config, project),
-                run_log=target / RUN_LOG,
+                run_log=layout.run_log,
                 batch_days=batch_days,
                 as_of=as_of,
                 page_threshold=config.page_threshold,
