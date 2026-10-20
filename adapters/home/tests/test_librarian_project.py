@@ -12,16 +12,12 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import STATUSES, parse_decision, parse_loop, parse_observation
+from pa_core.librarian.wiki import PAGE_TYPES, parse_decision, parse_loop, parse_observation
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
-from pa_home.librarian_project import (
-    LIBRARIAN_PROJECT,
-    SETTINGS,
-    WIKI_SCHEMA,
-    render_librarian_project,
-)
-from pa_home.project import ProjectRenderError
+from pa_home.cli import main
+from pa_home.librarian_project import LIBRARIAN_PROJECT, WIKI_SCHEMA, render_librarian_project
+from pa_home.project import SETTINGS, ProjectRenderError
 
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
 L0 = PurePosixPath("/srv/pa/l0")
@@ -131,6 +127,65 @@ def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):
     assert _files(target) == [Path("notes.txt")]
 
 
+@pytest.fixture
+def owner_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PA_DATA_DIR", raising=False)
+    monkeypatch.setenv("PA_OWNER_NAME", "Argus McNevans")
+    monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com")
+    monkeypatch.setenv("PA_OWNER_OTHER_NAMES", "Gus")
+
+
+def test_the_render_command_fills_in_the_owner_and_the_paths_the_session_sees(
+    tmp_path: Path, owner_env, capsys: pytest.CaptureFixture[str]
+):
+    target = tmp_path / "rendered"
+
+    # The paths are where the session sees L0 and the wiki (in its VM): they needn't exist here.
+    assert (
+        main(["librarian-project", "render", str(target), "--l0", str(L0), "--wiki", str(WIKI)])
+        == 0
+    )
+
+    claude_md = (target / "CLAUDE.md").read_text()
+    assert "Argus McNevans" in claude_md and "`argus@example.com`" in claude_md
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"] == [str(L0), str(WIKI)]
+    assert (target / "wiki-schema.md").read_text() == WIKI_SCHEMA.read_text()
+    assert str(target.resolve()) in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("args", "reason"),
+    [
+        (["--l0", "l0", "--wiki", str(WIKI)], "absolute"),
+        (["--l0", str(L0), "--wiki", "wiki"], "absolute"),
+    ],
+)
+def test_the_render_command_needs_absolute_session_paths(
+    tmp_path: Path, owner_env, capsys: pytest.CaptureFixture[str], args: list[str], reason: str
+):
+    target = tmp_path / "rendered"
+
+    assert main(["librarian-project", "render", str(target), *args]) != 0
+
+    assert reason in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_the_render_command_refuses_a_target_inside_the_repository(
+    owner_env, capsys: pytest.CaptureFixture[str]
+):
+    target = LIBRARIAN_PROJECT.parent / "rendered-librarian"
+
+    assert (
+        main(["librarian-project", "render", str(target), "--l0", str(L0), "--wiki", str(WIKI)])
+        != 0
+    )
+
+    assert "inside the repository" in capsys.readouterr().err
+    assert not target.exists()
+
+
 # The templates: a page or day log with a `<placeholder>` wherever the librarian writes. Filled
 # in, each passes lint; left as is, each fails it, so a leftover placeholder never lands.
 
@@ -214,11 +269,11 @@ def test_a_template_left_unfilled_fails_lint(tmp_path: Path, template: str):
 
 @pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
 def test_each_page_template_lists_its_types_allowed_statuses(template: str):
-    page_type = template.removesuffix(".md")
+    [page_type] = [t for t in PAGE_TYPES.values() if t.type == template.removesuffix(".md")]
     [status] = [
         line
         for line in (TEMPLATES / template).read_text().splitlines()
         if line.startswith("status: ")
     ]
 
-    assert status == f"status: <{'|'.join(STATUSES[page_type])}>"
+    assert status == f"status: <{'|'.join(page_type.statuses)}>"

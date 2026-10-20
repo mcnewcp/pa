@@ -12,13 +12,18 @@ import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from pa_core.exchange_capture import CAPTURE_VARS
 from pa_core.librarian.run import Phase, SessionPaths, SessionResult
-from pa_home.agent import now_statement
-from pa_home.claude_cli import ClaudeCliError, run_print
-from pa_home.librarian_project import SETTINGS
+from pa_home.claude_cli import (
+    ClaudeCliError,
+    ClaudeCliTimeoutError,
+    now_statement,
+    result_number,
+    run_print,
+    without_capture,
+)
+from pa_home.config import LIBRARIAN_TIMEOUT_VAR
+from pa_home.project import SETTINGS
 
 FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep")
 """The only tools a librarian session is started with."""
@@ -59,20 +64,25 @@ class ClaudeSessionRunner:
         self._max_turns = max_turns
         self._timeout_seconds = timeout_seconds
         self._environ = environ
+        self._phases: dict[str, Phase] = {}
+        """The phase of each session started, by its id, for when it's resumed."""
 
     @property
     def paths(self) -> SessionPaths:
         return self._paths
 
     def start(self, phase: Phase, prompt: str, *, now: datetime) -> SessionResult:
-        return self._run(prompt, now, [])
+        result = self._run(phase, prompt, now, [])
+        if result.session_id is not None:
+            self._phases[result.session_id] = phase
+        return result
 
     def resume(self, session_id: str, prompt: str, *, now: datetime) -> SessionResult:
-        return self._run(prompt, now, ["--resume", session_id])
+        return self._run(self._phases.get(session_id), prompt, now, ["--resume", session_id])
 
-    def _run(self, prompt: str, now: datetime, extra: list[str]) -> SessionResult:
-        if now.utcoffset() is None:
-            raise ValueError(f"a session's now must have a UTC offset (got {now.isoformat()})")
+    def _run(
+        self, phase: Phase | None, prompt: str, now: datetime, extra: list[str]
+    ) -> SessionResult:
         args = [
             *extra,
             "--tools",
@@ -99,7 +109,13 @@ class ClaudeSessionRunner:
                 cwd=self._project,
                 timeout_seconds=self._timeout_seconds,
                 # A librarian session is never captured as a chat.
-                env={k: v for k, v in self._environ.items() if k not in CAPTURE_VARS},
+                env=without_capture(self._environ),
+            )
+        except ClaudeCliTimeoutError as error:
+            session = f"the {phase} session" if phase else "a session"
+            return SessionResult(
+                ok=False,
+                error=f"{error}; if {session} needs longer, raise {LIBRARIAN_TIMEOUT_VAR}",
             )
         except ClaudeCliError as error:
             return SessionResult(ok=False, error=str(error))
@@ -107,16 +123,6 @@ class ClaudeSessionRunner:
         return SessionResult(
             ok=True,
             session_id=session_id if isinstance(session_id, str) else None,
-            cost_usd=_number(result, "total_cost_usd"),
-            turns=_integer(result, "num_turns"),
+            cost_usd=result_number(result, "total_cost_usd", float),
+            turns=result_number(result, "num_turns", int),
         )
-
-
-def _number(result: dict[str, Any], key: str) -> float | None:
-    value = result.get(key)
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
-
-
-def _integer(result: dict[str, Any], key: str) -> int | None:
-    value = _number(result, key)
-    return int(value) if value is not None else None

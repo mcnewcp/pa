@@ -8,8 +8,11 @@ after it. A window with no episodes has no run.
 
 A replay resumes from its last committed run: the next window starts where that one ended.
 
-The run log has one entry per run, committed or failed, appended as the run ends: a JSON object
-per line, with these keys in this order.
+A replay's target directory (`ReplayTarget`) holds the wiki's tree (`wiki/`), its git directory
+(`wiki.git/`), and the run log (`run-log.jsonl`).
+
+The run log has one entry per run (`RunLogEntry`), committed or failed, appended as the run
+ends: a JSON object per line, with these keys in this order.
 
 - `status`: `committed` or `failed`.
 - `commit`: the run's commit, or null when it failed.
@@ -17,20 +20,29 @@ per line, with these keys in this order.
   sessions were told is now.
 - `episodes`: how many episodes were offered; `skipped`: how many of the window's weren't.
 - `librarian_version`, `model`, `effort`: the librarian that ran.
-- `sessions`: `{phase, session_id, cost_usd, turns}` for each session, in order (empty when the
-  run failed or had nothing to offer).
-- `cost_usd`: the sessions' total, or null if one didn't report its cost.
+- `sessions`: `{phase, session_id, cost_usd, turns, resumes}` for each session the run ran, in
+  order, a failed run's included (the one that failed with what it reported, often nothing);
+  empty when the run had nothing to offer. Cost and turns add up over a session's resumes.
+- `cost_usd`: a committed run's total, or null if a session didn't report its cost; a failed
+  run's total of the costs that were reported, or null if none was.
+- `lint_warnings`: how many warnings lint had about the committed wiki; null when the run
+  failed.
 - `error`: why the run failed, or null.
+
+Entries written before `resumes` and `lint_warnings` were recorded read with them null.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
+from typing import Annotated, Literal
 
+from pydantic import AwareDatetime, BaseModel, ConfigDict, PlainSerializer, ValidationError
+
+from pa_core.errors import PaError
 from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch
 from pa_core.librarian.run import (
@@ -38,16 +50,96 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     Librarian,
     LibrarianRunError,
+    Phase,
     RunOutcome,
     SessionRunner,
     WikiRepository,
     _fields,
     run_librarian,
 )
+from pa_core.librarian.wiki import GIT_DIR, TREE
 from pa_core.owner import Owner
 
 BATCH_DAYS = 7
 """A replay batch's length in days, unless given otherwise."""
+
+RUN_LOG = "run-log.jsonl"
+"""The run log's name in a replay's target directory."""
+
+
+@dataclass(frozen=True)
+class ReplayTarget:
+    """A replay's target directory: the wiki's tree and git directory, and the run log."""
+
+    path: Path
+
+    @property
+    def tree(self) -> Path:
+        return self.path / TREE
+
+    @property
+    def git_dir(self) -> Path:
+        return self.path / GIT_DIR
+
+    @property
+    def run_log(self) -> Path:
+        return self.path / RUN_LOG
+
+
+type _Utc = Annotated[AwareDatetime, PlainSerializer(lambda m: m.astimezone(UTC).isoformat())]
+
+
+class RunLogSession(BaseModel):
+    """A session in a run log entry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    phase: Phase
+    session_id: str | None
+    cost_usd: float | None
+    turns: int | None
+    resumes: int | None = None
+    """How many times the run resumed it; null in entries written before it was recorded."""
+
+
+class RunLogEntry(BaseModel):
+    """A run log entry: one run of a replay, committed or failed (see the module docstring)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["committed", "failed"]
+    commit: str | None
+    occurred_from: _Utc
+    occurred_to: _Utc
+    episodes: int
+    skipped: int
+    librarian_version: str
+    model: str
+    effort: str
+    sessions: tuple[RunLogSession, ...]
+    cost_usd: float | None
+    lint_warnings: int | None = None
+    error: str | None
+
+
+class RunLogError(PaError):
+    """A run log that can't be read."""
+
+
+def read_run_log(path: Path) -> list[RunLogEntry]:
+    """The entries of the run log at `path`, in order."""
+    entries: list[RunLogEntry] = []
+    for number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            entries.append(RunLogEntry.model_validate_json(line))
+        except ValidationError as error:
+            raise RunLogError(
+                f"{path}:{number} isn't a run log entry: {error.errors()[0]['msg']}"
+            ) from error
+    return entries
+
 
 _TO, _VERSION = "Batch-Occurred-To", "Librarian-Version"
 
@@ -108,7 +200,7 @@ def replay_librarian(
                 batch=batch,
             )
         except LibrarianRunError as error:
-            _log(run_log, _entry(batch, librarian, error=str(error)))
+            _log(run_log, _entry(batch, librarian, error=error))
             raise
         _log(run_log, _entry(batch, librarian, outcome=outcome))
         runs.append(outcome)
@@ -168,37 +260,46 @@ def _entry(
     librarian: Librarian,
     *,
     outcome: RunOutcome | None = None,
-    error: str | None = None,
-) -> dict[str, object]:
-    """The run log's entry for a run of `batch`: committed with `outcome`, or failed."""
+    error: LibrarianRunError | None = None,
+) -> RunLogEntry:
+    """The run log's entry for a run of `batch`: committed with `outcome`, or failed with
+    `error`."""
     assert batch.window is not None
-    sessions = outcome.sessions if outcome else ()
+    sessions = outcome.sessions if outcome else error.sessions if error else ()
     costs = [result.cost_usd for _, result in sessions]
-    return {
-        "status": "committed" if outcome else "failed",
-        "commit": outcome.commit if outcome else None,
-        "occurred_from": batch.window.start.astimezone(UTC).isoformat(),
-        "occurred_to": batch.window.end.astimezone(UTC).isoformat(),
-        "episodes": len(batch.episodes),
-        "skipped": batch.captured - len(batch.episodes),
-        "librarian_version": librarian.version,
-        "model": librarian.model,
-        "effort": librarian.effort,
-        "sessions": [
-            {
-                "phase": str(phase),
-                "session_id": result.session_id,
-                "cost_usd": result.cost_usd,
-                "turns": result.turns,
-            }
+    known = [cost for cost in costs if cost is not None]
+    if outcome is not None:
+        cost = None if None in costs else round(sum(known), 6)
+    else:
+        # What a failed run cost is what its sessions reported, never a made-up zero.
+        cost = round(sum(known), 6) if known else None
+    return RunLogEntry(
+        status="committed" if outcome else "failed",
+        commit=outcome.commit if outcome else None,
+        occurred_from=batch.window.start,
+        occurred_to=batch.window.end,
+        episodes=len(batch.episodes),
+        skipped=batch.captured - len(batch.episodes),
+        librarian_version=librarian.version,
+        model=librarian.model,
+        effort=librarian.effort,
+        sessions=tuple(
+            RunLogSession(
+                phase=phase,
+                session_id=result.session_id,
+                cost_usd=result.cost_usd,
+                turns=result.turns,
+                resumes=result.resumes,
+            )
             for phase, result in sessions
-        ],
-        "cost_usd": None if None in costs else round(sum(c or 0 for c in costs), 6),
-        "error": error,
-    }
+        ),
+        cost_usd=cost,
+        lint_warnings=len(outcome.warnings) if outcome else None,
+        error=str(error) if error else None,
+    )
 
 
-def _log(run_log: Path, entry: dict[str, object]) -> None:
+def _log(run_log: Path, entry: RunLogEntry) -> None:
     run_log.parent.mkdir(parents=True, exist_ok=True)
     with run_log.open("a", encoding="utf-8") as log:
-        log.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        log.write(entry.model_dump_json() + "\n")

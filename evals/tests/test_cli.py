@@ -566,7 +566,7 @@ def test_files_plus_wiki_needs_a_wiki_directory(tmp_path, scripts, capsys):
 
     assert pa_eval_run(runs, scripts, "--configuration", "files-plus-wiki") == 1
 
-    assert "--configuration files-plus-wiki needs --wiki DIR" in capsys.readouterr().err
+    assert "files-plus-wiki needs an eval wiki (--wiki DIR)" in capsys.readouterr().err
     assert not runs.exists()
 
 
@@ -575,7 +575,7 @@ def test_files_alone_refuses_a_wiki(tmp_path, scripts, capsys):
 
     assert pa_eval_run(runs, scripts, "--wiki", str(EVAL_WIKI)) == 1
 
-    assert "--configuration files-alone gives the assistant no wiki" in capsys.readouterr().err
+    assert "files-alone gives the assistant no wiki: drop --wiki" in capsys.readouterr().err
     assert not runs.exists()
 
 

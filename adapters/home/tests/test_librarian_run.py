@@ -2,8 +2,8 @@
 
 The stand-in plays the librarian's session. It records what it was given (argv, the prompt,
 the episodes listed in it, the identity table under its `## Identity table` heading, lint's
-warnings under `## Lint warnings`, its working directory, the CLAUDE.md there and the settings
-passed to it) to `sessions.jsonl`,
+warnings under `## Lint warnings` and errors under `## Lint errors`, its working directory,
+the CLAUDE.md there and the settings passed to it) to `sessions.jsonl`,
 then follows the script for its phase in `script.json`:
 
 - `{"observe": true}`: one observation per listed episode, in the day log for its day,
@@ -48,7 +48,8 @@ from pa_home.config import (
     load_owner,
     load_time_zone,
 )
-from pa_home.librarian_project import LIBRARIAN_PROJECT
+from pa_home.git_wiki import GitWikiRepository
+from pa_home.librarian_project import LIBRARIAN_PROJECT, project_files
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -104,6 +105,8 @@ def stand_in_claude(directory: Path) -> Path:
             identity = json.loads(table[1]) if table else None
             found = re.search(r"^## Lint warnings$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             warnings = json.loads(found[1]) if found else None
+            found = re.search(r"^## Lint errors$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            errors = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -113,7 +116,7 @@ def stand_in_claude(directory: Path) -> Path:
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
-                    "warnings": warnings, "inputs": inputs,
+                    "warnings": warnings, "errors": errors, "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -404,7 +407,10 @@ MESS = [
 
 FAILURES = {
     "session error": ([{"fail": "API Error: overloaded"}], "API Error: overloaded"),
-    "timeout": ([{"sleep": 10}], "did not answer within"),
+    "timeout": (
+        [{"sleep": 10}],
+        "if the observation session needs longer, raise PA_LIBRARIAN_TIMEOUT_SECONDS",
+    ),
     "a page written": (
         [{"write": "people/david-kim.md", "text": "# David Kim\n"}],
         "people/david-kim.md",
@@ -579,6 +585,55 @@ def test_the_librarian_version_changes_with_the_project_the_model_and_the_effort
     with (project / "CLAUDE.md").open("a") as claude_md:
         claude_md.write("\nOne more rule.\n")
     assert version(base) != first
+
+
+def test_in_a_git_checkout_the_librarian_version_is_of_the_project_as_committed(
+    data_root: Path, tmp_path: Path
+):
+    checkout = tmp_path / "checkout"
+    project = checkout / "librarian"
+    shutil.copytree(LIBRARIAN_PROJECT, project)
+
+    def in_checkout(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+            cwd=checkout,
+            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+            capture_output=True,
+            check=True,
+        )
+
+    in_checkout("init", "--quiet")
+    in_checkout("add", "librarian")
+    in_checkout("commit", "--quiet", "--message", "The librarian")
+    runs = 0
+
+    def version() -> str:
+        nonlocal runs
+        runs += 1
+        ingest(data_root, {f"gmail/{runs}.eml": email(message_id=f"{runs}@example.net")})
+        librarian.run(
+            load_data_root(),
+            owner=load_owner(),
+            time_zone=load_time_zone(),
+            config=load_librarian_config(),
+            project=project,
+        )
+        return trailers(commit_messages(data_root)[0])["Librarian-Version"]
+
+    first = version()
+    # Uncommitted edits and untracked files aren't the librarian a version names.
+    (project / "scratch.md").write_text("A draft.\n")
+    with (project / "CLAUDE.md").open("a") as claude_md:
+        claude_md.write("\nOne more rule.\n")
+    assert version() == first
+    in_checkout("add", "librarian/CLAUDE.md")
+    in_checkout("commit", "--quiet", "--message", "One more rule")
+    assert version() != first
+    # The committed project hashes as the same files outside a checkout would.
+    copied = tmp_path / "copied"
+    shutil.copytree(project, copied, ignore=shutil.ignore_patterns("scratch.md"))
+    assert project_files(copied) == project_files(project)
 
 
 def test_what_an_interrupted_run_left_in_the_wiki_is_never_committed(data_root: Path):
@@ -1607,6 +1662,125 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
 
+# Lint errors already in the last commit
+
+BROKEN_TOPIC = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[TOPIC].replace(
+    "Gift: decided the knife set", "Gift: the knife set"
+)
+"""The wedding topic with a malformed decision."""
+
+
+def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
+    """Commits `files` into the wiki under the last run's message, so the cursor stays: as a
+    seeded wiki would be, or one a rule tightened since its last run now rejects."""
+    repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
+    for path, text in files.items():
+        (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
+        (data_root / "wiki" / path).write_text(text)
+    repository.commit(repository.last_commit_message() or "")
+
+
+NEW_EPISODES = {
+    "new observations": (
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+        [{"observe": True}],
+    ),
+    "no new observations": (
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+        [],
+    ),
+    "nothing offered": (
+        {
+            "gmail/sale.eml": email(
+                message_id="sale-0003@example.net", labels="Category Promotions", subject="Sale"
+            )
+        },
+        [{"observe": True}],
+    ),
+}
+
+
+@pytest.mark.parametrize("new", NEW_EPISODES, ids=list(NEW_EPISODES))
+def test_page_errors_already_committed_are_handed_to_consolidation_to_fix(
+    data_root: Path, new: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    commit_by_hand(data_root, {TOPIC: BROKEN_TOPIC})
+    payloads, observation = NEW_EPISODES[new]
+    ingest(data_root, payloads)
+    fixed = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[TOPIC]
+    script(data_root, observation=observation, consolidation=[{"write": TOPIC, "text": fixed}])
+
+    assert run_librarian() == 0
+
+    # Observation can't touch pages, so it's never resumed over one.
+    assert all("--resume" not in s["argv"] for s in sessions(data_root, "observation"))
+    consolidation = sessions(data_root, "consolidation")[-1]
+    assert "--resume" not in consolidation["argv"]
+    [error] = consolidation["errors"]
+    assert error["path"] == TOPIC and "malformed decision" in error["message"]
+    assert wiki_files(data_root)[TOPIC] == fixed
+    assert "lint errors" not in commit_messages(data_root)[0]
+
+
+def test_a_run_without_errors_already_committed_hands_consolidation_none(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    assert consolidation["errors"] is None
+    assert "## Lint errors" not in consolidation["prompt"]
+
+
+ALREADY_COMMITTED = {
+    "a page error consolidation doesn't fix": ({TOPIC: BROKEN_TOPIC}, 3),
+    "a file outside the layout": ({"notes.txt": "Remember the milk.\n"}, 1),
+}
+
+
+@pytest.mark.parametrize("committed", ALREADY_COMMITTED, ids=list(ALREADY_COMMITTED))
+def test_a_run_failing_only_on_errors_already_committed_says_so(
+    data_root: Path, capsys, committed: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    files, consolidations = ALREADY_COMMITTED[committed]
+    commit_by_hand(data_root, files)
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    script(data_root)
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    error = capsys.readouterr().err
+    assert "all of them already in the wiki's last commit" in error
+    assert next(iter(files)) in error
+    # Observation is never resumed over them; consolidation only over the pages it can fix.
+    assert len(sessions(data_root, "observation")) == 2
+    assert len(sessions(data_root, "consolidation")[1:]) == consolidations
+    # Nothing with errors is committed, even errors that were there before.
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
+def test_a_run_failing_on_its_own_errors_doesnt_blame_the_last_commit(data_root: Path, capsys):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    script(data_root, consolidation=pages_with(TOPIC, "Gift: decided", "Gift:"))
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    error = capsys.readouterr().err
+    assert "malformed decision" in error
+    assert "already in the wiki's last commit" not in error
+
+
 # Replay (#64)
 
 # Three weeks of wedding mail, Monday to Monday in Chicago, with nothing in the week of 12 Oct.
@@ -1701,7 +1875,13 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
 
     first, *_ = entries = run_log(target)
     version = trailers(replay_messages(target)[0])["Librarian-Version"]
-    run = {"phase": "observation", "session_id": "session-1", "cost_usd": 0.0421, "turns": 6}
+    run = {
+        "phase": "observation",
+        "session_id": "session-1",
+        "cost_usd": 0.0421,
+        "turns": 6,
+        "resumes": 0,
+    }
     assert first == {
         "status": "committed",
         "commit": first["commit"],
@@ -1714,6 +1894,7 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
         "effort": "medium",
         "sessions": [run, {**run, "phase": "consolidation"}],
         "cost_usd": 0.0842,
+        "lint_warnings": 0,
         "error": None,
     }
     assert [e["occurred_from"][:10] for e in entries] == ["2026-09-28", "2026-10-05", "2026-10-19"]
@@ -1734,7 +1915,18 @@ def test_a_failed_replay_resumes_from_its_last_committed_batch(
     assert "--resume" in capsys.readouterr().err
     [committed, failed] = run_log(target)
     assert committed["status"] == "committed"
-    assert (failed["status"], failed["commit"], failed["sessions"]) == ("failed", None, [])
+    assert (failed["status"], failed["commit"]) == ("failed", None)
+    # The session that failed reported nothing, so the run's cost isn't known.
+    assert failed["sessions"] == [
+        {
+            "phase": "observation",
+            "session_id": None,
+            "cost_usd": None,
+            "turns": None,
+            "resumes": 0,
+        }
+    ]
+    assert (failed["cost_usd"], failed["lint_warnings"]) == (None, None)
     assert failed["occurred_from"] == "2026-10-05T05:00:00+00:00"
     assert "API Error" in failed["error"]
     # The wiki is as of the first batch.
@@ -1762,6 +1954,61 @@ def test_a_failed_replay_resumes_from_its_last_committed_batch(
     assert replay(target, "--resume") == 0
     assert len(replay_messages(target)) == 4
     assert len(sessions(data_root, "observation")) == 4
+
+
+def test_the_run_log_records_the_sessions_a_failed_run_ran_and_what_they_cost(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+    # The second batch's observation leaves a malformed line it never fixes.
+    script(
+        data_root,
+        observation=[
+            {"observe": True},
+            {"append": "days/2026-10-07.md", "text": MALFORMED, "when": "RSVP"},
+        ],
+    )
+
+    assert replay(target) != 0
+
+    [_, failed] = run_log(target)
+    assert failed["status"] == "failed"
+    # Started, then resumed twice: three attempts' cost and turns.
+    assert failed["sessions"] == [
+        {
+            "phase": "observation",
+            "session_id": "session-1",
+            "cost_usd": 0.1263,
+            "turns": 18,
+            "resumes": 2,
+        }
+    ]
+    assert failed["cost_usd"] == 0.1263
+    assert "lint errors after 2 resumes" in failed["error"]
+
+
+def test_the_run_log_records_resumes_and_lint_warnings_of_a_committed_run(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    target = tmp_path / "rebuilt"
+    script(
+        data_root,
+        observation=[{"observe": True}, {"append": "days/2026-09-30.md", "text": MALFORMED}],
+        observation_resume=[{"write": "days/2026-09-30.md", "text": HOTEL_DAY_LOG}],
+        consolidation=[{"write": "topics/kitchen.md", "text": KITCHEN}],
+    )
+
+    assert replay(target) == 0
+
+    [entry] = run_log(target)
+    assert [(s["phase"], s["resumes"]) for s in entry["sessions"]] == [
+        ("observation", 1),
+        ("consolidation", 0),
+    ]
+    assert entry["cost_usd"] == 0.1263
+    assert entry["lint_warnings"] == 1  # the kitchen page is an orphan
 
 
 def test_a_replay_starts_only_in_a_fresh_wiki_and_resumes_only_its_own_librarians_replay(

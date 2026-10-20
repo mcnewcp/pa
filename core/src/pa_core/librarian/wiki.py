@@ -13,37 +13,74 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+TREE = "wiki"
+"""The wiki's working tree, by this name in a data root and in a replay's target directory."""
+GIT_DIR = "wiki.git"
+"""The wiki's git directory, beside its tree and never inside it."""
+
 INDEX = "index.md"
 """The generated index, the only file at the wiki's top level."""
 DAYS = "days"
 """The folder of day logs."""
-PAGE_FOLDERS = ("people", "orgs", "topics")
-"""The folders of pages, by page type."""
-FOLDERS = (DAYS, *PAGE_FOLDERS)
-
-PERSON, ORGANIZATION, TOPIC = "person", "organization", "topic"
-PAGE_TYPES = {"people": PERSON, "orgs": ORGANIZATION, "topics": TOPIC}
-"""Each page folder's page type, which its pages' `type` must be."""
 
 CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES = "Current state", "Decisions", "Open loops", "Notes"
-SECTIONS = {
-    PERSON: (CURRENT_STATE, OPEN_LOOPS, NOTES),
-    ORGANIZATION: (CURRENT_STATE, OPEN_LOOPS, NOTES),
-    TOPIC: (CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES),
-}
-"""Each page type's sections (`## <name>`), in order. Current state and Notes are free-form."""
-
+"""The sections a page can have (`## <name>`). Current state and Notes are free-form."""
 FIELDS = ("type", "aliases", "status", "summary", "updated")
 """The frontmatter every page has."""
-LIST_FIELDS = {PERSON: "emails", ORGANIZATION: "domains"}
-"""The list of identifiers a page type adds to its frontmatter: a person's email addresses, an
-organization's mail domains."""
-STATUSES = {
-    PERSON: ("active", "inactive"),
-    ORGANIZATION: ("active", "inactive"),
-    TOPIC: ("active", "settled", "dormant"),
-}
-"""Each page type's allowed `status` values."""
+
+
+@dataclass(frozen=True)
+class PageType:
+    """A type of page, as the wiki schema gives it."""
+
+    folder: str
+    """The folder its pages are in."""
+    type: str
+    """Its name, which its pages' `type` must be."""
+    heading: str
+    """The heading its pages are listed under in `index.md`."""
+    sections: tuple[str, ...]
+    """Its sections, in order."""
+    statuses: tuple[str, ...]
+    """Its allowed `status` values."""
+    list_field: str | None = None
+    """The list of identifiers it adds to its frontmatter, if any: a person's email addresses,
+    an organization's mail domains."""
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Its frontmatter: every page's, then its list of identifiers."""
+        return (*FIELDS, *((self.list_field,) if self.list_field else ()))
+
+
+PERSON = PageType(
+    folder="people",
+    type="person",
+    heading="People",
+    sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
+    statuses=("active", "inactive"),
+    list_field="emails",
+)
+ORGANIZATION = PageType(
+    folder="orgs",
+    type="organization",
+    heading="Organizations",
+    sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
+    statuses=("active", "inactive"),
+    list_field="domains",
+)
+TOPIC = PageType(
+    folder="topics",
+    type="topic",
+    heading="Topics",
+    sections=(CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES),
+    statuses=("active", "settled", "dormant"),
+)
+PAGE_TYPES = {page_type.folder: page_type for page_type in (PERSON, ORGANIZATION, TOPIC)}
+"""Each page folder's page type, in the order `index.md` lists them."""
+PAGE_FOLDERS = tuple(PAGE_TYPES)
+"""The folders of pages."""
+FOLDERS = (DAYS, *PAGE_FOLDERS)
 
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 """Lowercase ASCII words joined by hyphens: a page's name, and how it's linked."""
@@ -52,12 +89,14 @@ OWNER = "me"
 DAY_LOG_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 PAGE_NAME = re.compile(rf"{SLUG.pattern}\.md")
 
+# Deliberately stricter than evals' citations.py, which forgives spaces in what an answer cites;
+# lint holds the wiki to the exact form.
 CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
 LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
 """A link to a person, organization, or topic by slug, whether or not it has a page yet."""
 NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
-"""An external fact the librarian couldn't look up, inline where it's missing."""
+"""Outside information the librarian couldn't find in L0, marked inline where it's missing."""
 
 _OBSERVATION = re.compile(
     rf"- (?P<text>\S.*?) (?P<citations>{CITATION.pattern}(?: {CITATION.pattern})*)"

@@ -8,10 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from pa_core.librarian.wiki import INDEX, Page, pages
-
-_GROUPS = (("people", "People"), ("orgs", "Organizations"), ("topics", "Topics"))
-"""Each page folder and its heading in the index, in order."""
+from pa_core.librarian.wiki import INDEX, PAGE_TYPES, Page, pages
 
 
 def render_index(listed: Iterable[Page]) -> str:
@@ -20,11 +17,11 @@ def render_index(listed: Iterable[Page]) -> str:
     for page in listed:
         by_folder.setdefault(page.folder, []).append(page)
     parts = ["# Index\n"]
-    for folder, heading in _GROUPS:
+    for folder, page_type in PAGE_TYPES.items():
         group = sorted(by_folder.get(folder, ()), key=lambda page: page.slug)
         if group:
             entries = "".join(f"- [[{page.slug}]]: {page.summary}\n" for page in group)
-            parts.append(f"## {heading}\n\n{entries}")
+            parts.append(f"## {page_type.heading}\n\n{entries}")
     if len(parts) == 1:
         parts.append("No pages yet.\n")
     return "\n".join(parts)

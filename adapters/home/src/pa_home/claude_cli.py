@@ -1,4 +1,6 @@
-"""Running the `claude` CLI in print mode with JSON output, on the owner's subscription."""
+"""Running the `claude` CLI in print mode with JSON output, on the owner's subscription, and
+what every session it runs shares: being told "now", running without exchange capture, and the
+figures its result reports."""
 
 from __future__ import annotations
 
@@ -6,10 +8,12 @@ import json
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from pa_core.errors import PaError
+from pa_core.exchange_capture import CAPTURE_VARS
 
 
 class ClaudeCliError(PaError):
@@ -28,6 +32,36 @@ class StreamedPrint:
     """The final `result` event, shaped as `--output-format json` prints it alone."""
     events: list[dict[str, Any]]
     """Every event in the order printed, the result last."""
+
+
+def now_statement(now: datetime) -> str:
+    """What a session is told about the current time (see docs/adr/0003).
+
+    Raises ValueError if `now` has no UTC offset, since the session is told it with one.
+    """
+    if now.utcoffset() is None:
+        raise ValueError(f"a session's now must have a UTC offset (got {now.isoformat()})")
+    offset = now.strftime("%z")
+    return (
+        f"The current date and time is {now:%A, %B} {now.day}, {now:%Y, %H:%M} "
+        f"(UTC{offset[:3]}:{offset[3:]}; {now.isoformat()}). Treat it as now. It overrides "
+        "any other date you may see, including today's date in your environment."
+    )
+
+
+def without_capture(environ: Mapping[str, str]) -> dict[str, str]:
+    """`environ` with exchange capture turned off. Only Remote Control captures exchanges; a
+    session run here never does, so its exchanges can't come back into L0 as if the owner had
+    said them."""
+    return {name: value for name, value in environ.items() if name not in CAPTURE_VARS}
+
+
+def result_number[N: (int, float)](result: Mapping[str, Any], key: str, kind: type[N]) -> N | None:
+    """`result[key]` as a `kind`, or None if it's missing or not a number."""
+    value = result.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return kind(value)
 
 
 def run_print(

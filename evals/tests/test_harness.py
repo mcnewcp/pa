@@ -15,10 +15,10 @@ from pa_evals.agent import (
     ScriptedAgent,
     ToolCall,
 )
-from pa_evals.configurations import FILES_PLUS_WIKI
+from pa_evals.configurations import FILES_PLUS_WIKI, WikiChoiceError
 from pa_evals.eval_set import EvalSet, load_eval_set
 from pa_evals.eval_wiki import load_eval_wiki
-from pa_evals.harness import CorpusCopyError, WikiChoiceError, run_eval
+from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.injection import InjectionCheckError
 from pa_evals.judge import ScriptedJudge, Verdict
 from pa_evals.results import RunResults

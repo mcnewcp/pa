@@ -22,14 +22,12 @@ from string import Template
 
 from pa_core.owner import Owner
 from pa_home.librarian_project import WIKI_SCHEMA
-from pa_home.project import REPOSITORY, ProjectRenderError, render_project
+from pa_home.project import REPOSITORY, SETTINGS, ProjectRenderError, render_project
 
 AGENT_PROJECT = REPOSITORY / "agent"
 """`agent/` at the repository root: the shared agent project."""
 
-_SETTINGS = ".claude/settings.json"
-
-_TEMPLATES = ("CLAUDE.md", _SETTINGS)
+_TEMPLATES = ("CLAUDE.md", SETTINGS)
 """The files that hold placeholders; every other file is copied as is."""
 
 WIKI_SECTION = "CLAUDE.wiki.md"
@@ -84,7 +82,7 @@ def _add_wiki(target: Path, *, wiki: Path, source: Path) -> None:
     claude_md = target / "CLAUDE.md"
     claude_md.write_text(claude_md.read_text() + section)
     shutil.copyfile(WIKI_SCHEMA, target / WIKI_SCHEMA.name)
-    settings_path = target / _SETTINGS
+    settings_path = target / SETTINGS
     settings = json.loads(settings_path.read_text())
     settings["permissions"]["additionalDirectories"].append(str(wiki))
     settings_path.write_text(json.dumps(settings, indent=2) + "\n")

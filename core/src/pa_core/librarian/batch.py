@@ -15,6 +15,10 @@ Episode selection (`pa_core.selection`) decides which of them are offered:
 - a daily note only in its latest version, judged over all of L0, with the versions it
   supersedes;
 - a chat with its owner turns, read from its raw payload: they are its only evidence.
+
+Known limitation: a daily note's capture time comes from its own capture header, so a note
+ingested after a run but captured (by its header) before that run's cursor is never offered.
+That's fine for the frozen corpora; real collectors (v0.13) need to revisit it.
 """
 
 from __future__ import annotations

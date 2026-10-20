@@ -27,7 +27,6 @@ from pa_core.errors import PaError
 from pa_core.librarian.wiki import (
     DAYS,
     DECISIONS,
-    LIST_FIELDS,
     OPEN_LOOPS,
     PAGE_FOLDERS,
     PAGE_TYPES,
@@ -121,8 +120,10 @@ def _searchable(envelope: Envelope) -> str:
 
 def _list_field(page: Page) -> tuple[str, ...]:
     """A person's email addresses, or an organization's mail domains."""
-    field = LIST_FIELDS.get(PAGE_TYPES.get(page.folder, ""), "")
-    value = page.fields.get(field, ())
+    page_type = PAGE_TYPES.get(page.folder)
+    if page_type is None or page_type.list_field is None:
+        return ()
+    value = page.fields.get(page_type.list_field, ())
     return value if isinstance(value, tuple) else ()
 
 

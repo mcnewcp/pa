@@ -39,10 +39,6 @@ class CorpusCopyError(PaError):
     """A corpus directory that cannot be copied into the inbox."""
 
 
-class WikiChoiceError(PaError):
-    """A configuration with a wiki asked without an eval wiki, or one without given one."""
-
-
 def run_eval(
     corpus: Path | Sequence[Path],
     eval_set: EvalSet,
@@ -75,10 +71,7 @@ def run_eval(
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
-    if configuration.wiki and wiki is None:
-        raise WikiChoiceError(f"{configuration.name} needs an eval wiki")
-    if wiki is not None and not configuration.wiki:
-        raise WikiChoiceError(f"{configuration.name} gives the assistant no wiki")
+    configuration.require_wiki_choice(wiki_given=wiki is not None)
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
