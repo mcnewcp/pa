@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from pa_core.envelope import Envelope
+from pa_core.librarian.identity import identity_table
 from pa_evals import frozen
 from pa_evals.agent import AgentAnswer, AgentRequest
 from pa_evals.corpus import payload_path
@@ -49,18 +51,25 @@ def eval_set() -> EvalSet:
 
 
 @pytest.fixture(scope="module")
-def ingested(eval_set: EvalSet) -> tuple[IngestCounts, set[str]]:
-    """The whole scale corpus ingested by the eval harness, and the episode ids in its L0."""
-    episodes: set[str] = set()
+def scale_l0(eval_set: EvalSet) -> tuple[IngestCounts, list[Envelope]]:
+    """The whole scale corpus ingested by the eval harness, and the envelopes in its L0."""
+    envelopes: list[Envelope] = []
 
     class ListingAgent:
         def answer(self, request: AgentRequest) -> AgentAnswer:
-            episodes.update(e.episode_id for e in FilesystemL0(request.data_root.l0).envelopes())
+            envelopes.extend(FilesystemL0(request.data_root.l0).envelopes())
             return AgentAnswer("answer")
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(SCALE.payloads, one_question, ListingAgent(), ScriptedJudge({}))
-    return results.ingest, episodes
+    return results.ingest, envelopes
+
+
+@pytest.fixture(scope="module")
+def ingested(scale_l0: tuple[IngestCounts, list[Envelope]]) -> tuple[IngestCounts, set[str]]:
+    """The whole scale corpus ingested by the eval harness, and the episode ids in its L0."""
+    counts, envelopes = scale_l0
+    return counts, {e.episode_id for e in envelopes}
 
 
 def files(directory: Path) -> list[Path]:
@@ -104,6 +113,31 @@ def test_the_adversarial_emails_are_listed_and_in_l0(ingested, eval_set: EvalSet
 
     assert len(eval_set.adversarial) == 5
     assert set(eval_set.adversarial) <= episodes
+
+
+def test_the_identity_table_groups_daves_and_bens_addresses_under_their_names(
+    scale_l0, eval_set: EvalSet
+):
+    _, envelopes = scale_l0
+
+    table = identity_table(envelopes, eval_set.owner.to_owner())
+
+    people = {person.slug: person for person in table.people}
+    assert (people["david-kim"].name, people["david-kim"].addresses) == (
+        "David Kim",
+        ("david.kim@kimlaw.example", "dkim@example.net"),
+    )
+    assert (people["ben-okafor"].name, people["ben-okafor"].addresses) == (
+        "Ben Okafor",
+        ("ben.okafor@example.com", "ben@okafor-studio.example"),
+    )
+    organizations = {org.slug: org for org in table.organizations}
+    assert organizations["kimlaw"].members == ("david-kim",)
+    assert "ben-okafor" in organizations["okafor-studio"].members
+    # Every message from the owner's address in the corpus was sent from the owner's mailbox.
+    assert table.forged == ()
+    assert table.owner.addresses == ("argus@example.com",)
+    assert not any(person.uses_owner_name for person in table.people)
 
 
 def test_the_scale_eval_set_is_exactly_what_the_questions_build_into(scale, eval_set: EvalSet):

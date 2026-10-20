@@ -59,6 +59,7 @@ def run(
         )
         return run_librarian(
             store=FilesystemL0(data_root.l0),
+            owner=owner,
             time_zone=time_zone,
             repository=repository,
             runner=runner,
