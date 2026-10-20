@@ -2127,3 +2127,176 @@ def test_a_rebuilt_wiki_moved_into_the_data_root_carries_on_where_the_replay_sto
     assert run_librarian() == 0
 
     assert observed_subjects(data_root)[-1] == ["Gift"]
+
+
+# The librarian's sandbox (#66)
+
+
+def stand_in_sandbox(directory: Path, claude: Path) -> Path:
+    """A sandbox that "mounts" the store by symbolic link under `directory / "vm"`, records each
+    command to `sandbox.jsonl`, and runs the stand-in `claude` in the project as it sees it.
+    `sandbox-fail` holding a command's name (start or stop) makes that command fail."""
+    script = directory / "sandbox"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            f"""\
+            import json, os, sys
+            from pathlib import Path
+            HERE = Path({str(directory)!r})
+            CLAUDE = {str(claude)!r}
+            """
+        )
+        + textwrap.dedent(
+            """\
+            command, *args = sys.argv[1:]
+            vm = HERE / "vm"
+            if command != "claude":
+                with (HERE / "sandbox.jsonl").open("a") as log:
+                    log.write(json.dumps([command, *args]) + "\\n")
+            failing = HERE / "sandbox-fail"
+            if failing.exists() and failing.read_text().strip() == command:
+                print(f"the sandbox can't {command}", file=sys.stderr)
+                sys.exit(1)
+            if command == "start":
+                vm.mkdir()
+                for name, source in zip(("l0", "librarian", "wiki"), args, strict=True):
+                    (vm / name).symlink_to(source)
+                print("starting the sandbox", file=sys.stderr)
+                print(json.dumps({"l0": str(vm / "l0"), "project": str(vm / "librarian"),
+                                  "wiki": str(vm / "wiki")}))
+            elif command == "stop":
+                if vm.exists():
+                    for link in vm.iterdir():
+                        link.unlink()
+                    vm.rmdir()
+            elif command == "claude":
+                os.chdir(vm / "librarian")
+                os.execv(CLAUDE, [CLAUDE, *args])
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    return script
+
+
+@pytest.fixture
+def sandbox(data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The librarian configured with a stand-in sandbox and no command of its own; the
+    sandbox's commands are logged in the returned file."""
+    claude = Path(os.environ["PA_LIBRARIAN_COMMAND"])
+    monkeypatch.delenv("PA_LIBRARIAN_COMMAND")
+    monkeypatch.setenv("PA_LIBRARIAN_SANDBOX", str(stand_in_sandbox(tmp_path, claude)))
+    return tmp_path / "sandbox.jsonl"
+
+
+def sandbox_commands(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def test_a_run_in_a_sandbox_sets_it_up_once_runs_its_sessions_there_and_takes_it_down(
+    data_root: Path, sandbox: Path, tmp_path: Path
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert run_librarian() == 0
+
+    [start, stop] = sandbox_commands(sandbox)
+    assert stop == ["stop"]
+    command, l0, project, wiki = start
+    assert (command, l0, wiki) == ("start", str(data_root / "l0"), str(data_root / "wiki"))
+    # The project is rendered into the directory the sandbox was given, for where the sessions
+    # see the store, and the sessions are started there with its settings.
+    vm = tmp_path / "vm"
+    [observation, consolidation] = sessions(data_root)
+    for session in (observation, consolidation):
+        assert flag(session["argv"], "--settings") == str(vm / "librarian/.claude/settings.json")
+        assert Path(session["cwd"]) == Path(project)
+        assert session["settings"]["permissions"]["additionalDirectories"] == [
+            str(vm / "l0"),
+            str(vm / "wiki"),
+        ]
+        assert f"`{vm / 'l0'}`" in session["claude_md"]
+        assert str(data_root) not in session["claude_md"]
+    assert f"{vm / 'l0'}/episodes/" in observation["prompt"]
+    # What the sessions wrote there is the host's wiki, committed.
+    assert wiki_files(data_root)["days/2026-09-30.md"].endswith(f"[ep:{HOTEL_EMAIL_ID}]\n")
+    assert cursor(data_root) is not None
+
+
+def test_a_failed_run_still_takes_the_sandbox_down(data_root: Path, sandbox: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    script(data_root, observation=[{"fail": "API Error: overloaded"}])
+
+    assert run_librarian() == 1
+
+    assert [command for command, *_ in sandbox_commands(sandbox)] == ["start", "stop"]
+    assert cursor(data_root) is None
+
+
+def test_a_sandbox_that_fails_to_start_runs_no_session_and_is_still_taken_down(
+    data_root: Path, sandbox: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    (tmp_path / "sandbox-fail").write_text("start")
+
+    assert run_librarian() == 1
+
+    assert "sandbox failed to start" in capsys.readouterr().err
+    assert [command for command, *_ in sandbox_commands(sandbox)] == ["start", "stop"]
+    assert sessions(data_root) == []
+    assert cursor(data_root) is None
+
+
+def test_a_sandbox_that_fails_to_stop_fails_the_run_it_took(
+    data_root: Path, sandbox: Path, tmp_path: Path
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    (tmp_path / "sandbox-fail").write_text("stop")
+
+    # The run is committed by then; the failure says the sandbox may still be up.
+    assert run_librarian() == 1
+    assert cursor(data_root) is not None
+
+
+def test_a_replay_in_a_sandbox_sets_it_up_once_for_all_its_batches(
+    data_root: Path, sandbox: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+
+    assert replay(target) == 0
+
+    assert len(sessions(data_root, "observation")) == 3
+    [start, stop] = sandbox_commands(sandbox)
+    assert (start[0], start[1], start[3]) == ("start", str(data_root / "l0"), str(target / "wiki"))
+    assert stop == ["stop"]
+
+
+def test_a_sandbox_that_doesnt_say_where_the_sessions_see_the_store_fails_the_run(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    quiet = tmp_path / "quiet-sandbox"
+    quiet.write_text("#!/bin/sh\nexit 0\n")
+    quiet.chmod(0o755)
+    monkeypatch.setenv("PA_LIBRARIAN_SANDBOX", str(quiet))
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert run_librarian() == 1
+
+    assert "didn't say where its sessions see the store" in capsys.readouterr().err
+    assert sessions(data_root) == []
+
+
+def test_a_configured_command_overrides_the_sandboxs_own():
+    environ = {"PA_LIBRARIAN_SANDBOX": "deploy/home/librarian-sandbox.sh --quiet"}
+
+    assert load_librarian_config(environ).command == (
+        "deploy/home/librarian-sandbox.sh",
+        "--quiet",
+        "claude",
+    )
+    assert load_librarian_config(environ).sandbox == ("deploy/home/librarian-sandbox.sh", "--quiet")
+    environ["PA_LIBRARIAN_COMMAND"] = "claude"
+    assert load_librarian_config(environ).command == ("claude",)
+    assert load_librarian_config({}).sandbox is None

@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from pa_core.librarian.run import Phase, SessionPaths, SessionResult
 from pa_home.claude_cli import (
@@ -39,9 +39,11 @@ ROLE = (
 class ClaudeSessionRunner:
     """Runs librarian sessions with `<command> -p` in a rendered librarian project.
 
-    `project` is the rendered project, the sessions' working directory; `paths` are where the
-    sessions see L0 and the wiki (the paths the project was rendered with). Sessions keep their
-    transcripts, so a session can be resumed from the same project.
+    `project` is the rendered project, the sessions' working directory, on the host;
+    `session_project` is where the sessions see it, if that's elsewhere (in a sandbox, whose
+    `command` starts them there). `paths` are where the sessions see L0 and the wiki (the paths
+    the project was rendered with). Sessions keep their transcripts, so a session can be resumed
+    from the same project.
     """
 
     def __init__(
@@ -49,6 +51,7 @@ class ClaudeSessionRunner:
         *,
         command: Sequence[str],
         project: Path,
+        session_project: PurePath | None = None,
         paths: SessionPaths,
         model: str,
         effort: str,
@@ -58,6 +61,7 @@ class ClaudeSessionRunner:
     ) -> None:
         self._command = list(command)
         self._project = project
+        self._session_project = session_project or project
         self._paths = paths
         self._model = model
         self._effort = effort
@@ -88,7 +92,7 @@ class ClaudeSessionRunner:
             "--tools",
             ",".join(FILE_TOOLS),
             "--settings",
-            str(self._project / SETTINGS),
+            str(self._session_project / SETTINGS),
             # Edits must not wait for approval in print mode; the mounts are the fence.
             "--permission-mode",
             "acceptEdits",
