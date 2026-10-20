@@ -13,6 +13,9 @@ then follows the script for its phase in `script.json`:
 - `{"sleep": <seconds>}`;
 - `{"fail": <message>}`: report an error and exit 1.
 
+An action with `"when": <subject>` is taken only by a session listing an episode with that
+subject.
+
 With no script, observation observes and consolidation does nothing. Then it prints what
 `claude -p --output-format json` prints. The tests assert on the wiki, the git history and the
 cursor, and on what the session was given (`inputs` holds each fenced JSON block of its prompt
@@ -118,6 +121,8 @@ def stand_in_claude(directory: Path) -> Path:
 
             default = {"observation": [{"observe": True}]}
             for action in script.get(phase, default.get(phase, [])):
+                if action.get("when") not in (None, *(e.get("subject") for e in episodes)):
+                    continue
                 if "observe" in action:
                     for episode in episodes:
                         slugs = action.get("links", {}).get(episode["subject"], ["someone"])
@@ -1244,3 +1249,278 @@ def test_mail_from_the_owners_address_without_the_sent_label_is_flagged_as_forge
     # The forged mail is still offered, and the session is told what the flag means.
     assert len(session["episodes"]) == 2
     assert "`forged`" in session["prompt"]
+
+
+# Replay (#64)
+
+# Three weeks of wedding mail, Monday to Monday in Chicago, with nothing in the week of 12 Oct.
+REPLAYED = {
+    **wedding_mail("Hotel block", "Wed, 30 Sep 2026 09:00:00 -0500"),
+    **wedding_mail("RSVP", "Wed, 7 Oct 2026 09:00:00 -0500"),
+    **wedding_mail("Menu", "Tue, 20 Oct 2026 09:00:00 -0500"),
+}
+
+
+def replay(target: Path, *args: str) -> int:
+    return main(["librarian", "replay", str(target), *args])
+
+
+def replay_git(target: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", f"--git-dir={target / 'wiki.git'}", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def replay_messages(target: Path) -> list[str]:
+    """Every commit's message in the replayed wiki, newest first."""
+    log = replay_git(target, "log", "--format=%B%x00")
+    return [m.strip() for m in log.split("\0") if m.strip()]
+
+
+def told_now(session: dict) -> str:
+    """The time the session was told is now, as it was written."""
+    system_prompt = flag(session["argv"], "--append-system-prompt")
+    stamp = re.search(r"; (\S+)\)\. Treat it as now\.", system_prompt)
+    assert stamp is not None, system_prompt
+    return stamp[1]
+
+
+def observed_subjects(data_root: Path) -> list[list[str]]:
+    """The subjects each observation session was given, session by session."""
+    return [[e["subject"] for e in s["episodes"]] for s in sessions(data_root, "observation")]
+
+
+def test_a_replay_runs_a_batch_per_week_of_occurrence_into_a_fresh_wiki(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+
+    assert replay(target) == 0
+
+    # The week of 12 Oct has no episodes, so no run.
+    assert observed_subjects(data_root) == [["Hotel block"], ["RSVP"], ["Menu"]]
+    # Each batch is told its end as now: the Monday after its week, in the owner's time zone.
+    assert [told_now(s) for s in sessions(data_root, "observation")] == [
+        "2026-10-05T00:00:00-05:00",
+        "2026-10-12T00:00:00-05:00",
+        "2026-10-26T00:00:00-05:00",
+    ]
+    # Each batch is a full run: observation, consolidation, and a commit.
+    assert len(sessions(data_root, "consolidation")) == 3
+    [*runs, start] = replay_messages(target)
+    assert start == "Start the wiki"
+    assert [
+        (trailers(m)["Batch-Occurred-From"], trailers(m)["Batch-Occurred-To"])
+        for m in reversed(runs)
+    ] == [
+        ("2026-09-28T05:00:00+00:00", "2026-10-05T05:00:00+00:00"),
+        ("2026-10-05T05:00:00+00:00", "2026-10-12T05:00:00+00:00"),
+        ("2026-10-19T05:00:00+00:00", "2026-10-26T05:00:00+00:00"),
+    ]
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-09-30.md",
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+    # The data root's own wiki is untouched.
+    assert not (data_root / "wiki").exists()
+
+
+def run_log(target: Path) -> list[dict]:
+    return [json.loads(line) for line in (target / "run-log.jsonl").read_text().splitlines()]
+
+
+def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_version(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+
+    assert replay(target) == 0
+
+    first, *_ = entries = run_log(target)
+    version = trailers(replay_messages(target)[0])["Librarian-Version"]
+    run = {"phase": "observation", "session_id": "session-1", "cost_usd": 0.0421, "turns": 6}
+    assert first == {
+        "status": "committed",
+        "commit": first["commit"],
+        "occurred_from": "2026-09-28T05:00:00+00:00",
+        "occurred_to": "2026-10-05T05:00:00+00:00",
+        "episodes": 1,
+        "skipped": 0,
+        "librarian_version": version,
+        "model": "claude-opus-5-5",
+        "effort": "medium",
+        "sessions": [run, {**run, "phase": "consolidation"}],
+        "cost_usd": 0.0842,
+        "error": None,
+    }
+    assert [e["occurred_from"][:10] for e in entries] == ["2026-09-28", "2026-10-05", "2026-10-19"]
+    assert [e["commit"] for e in reversed(entries)] == replay_git(
+        target, "log", "--format=%H", "-3"
+    ).split()
+
+
+def test_a_failed_replay_resumes_from_its_last_committed_batch(
+    data_root: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "RSVP"}])
+
+    assert replay(target) != 0
+
+    assert "--resume" in capsys.readouterr().err
+    [committed, failed] = run_log(target)
+    assert committed["status"] == "committed"
+    assert (failed["status"], failed["commit"], failed["sessions"]) == ("failed", None, [])
+    assert failed["occurred_from"] == "2026-10-05T05:00:00+00:00"
+    assert "API Error" in failed["error"]
+    # The wiki is as of the first batch.
+    assert len(replay_messages(target)) == 2
+    assert sorted(p.name for p in (target / "wiki").rglob("*.md")) == ["2026-09-30.md", "index.md"]
+
+    script(data_root)
+    assert replay(target, "--resume") == 0
+
+    assert observed_subjects(data_root) == [["Hotel block"], ["RSVP"], ["RSVP"], ["Menu"]]
+    assert [e["status"] for e in run_log(target)] == [
+        "committed",
+        "failed",
+        "committed",
+        "committed",
+    ]
+    assert len(replay_messages(target)) == 4
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-09-30.md",
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+    # A finished replay has nothing left to resume.
+    assert replay(target, "--resume") == 0
+    assert len(replay_messages(target)) == 4
+    assert len(sessions(data_root, "observation")) == 4
+
+
+def test_a_replay_starts_only_in_a_fresh_wiki_and_resumes_only_its_own_librarians_replay(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "Menu"}])
+    assert replay(target) != 0
+    history = replay_messages(target)
+    script(data_root)
+    capsys.readouterr()
+
+    assert replay(target) != 0
+    assert "isn't empty" in capsys.readouterr().err
+    monkeypatch.setenv("PA_LIBRARIAN_EFFORT", "high")
+    assert replay(target, "--resume") != 0
+    assert "librarian version" in capsys.readouterr().err
+    assert replay(tmp_path / "elsewhere", "--resume") != 0
+    assert "no replay to resume" in capsys.readouterr().err
+    # A production wiki isn't a replay's.
+    assert run_librarian() == 0
+    assert replay(data_root, "--resume") != 0
+    assert "isn't a replay's" in capsys.readouterr().err
+
+    assert replay_messages(target) == history
+    assert len(sessions(data_root, "observation")) == 4  # three replayed, one production run
+
+
+def test_the_batch_length_is_a_parameter(data_root: Path, tmp_path: Path):
+    ingest(data_root, REPLAYED)
+
+    assert replay(tmp_path / "rebuilt", "--batch-days", "14") == 0
+
+    assert observed_subjects(data_root) == [["Hotel block", "RSVP"], ["Menu"]]
+    assert [told_now(s) for s in sessions(data_root, "observation")] == [
+        "2026-10-12T00:00:00-05:00",
+        "2026-10-26T00:00:00-05:00",
+    ]
+
+
+def test_a_replay_up_to_an_as_of_time_ends_there_and_its_last_batch_takes_the_rest(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+
+    assert replay(target, "--as-of", "2026-10-14T20:00:00") == 0
+
+    # The menu mail, from after the as-of time, goes in the last batch, which ends at it.
+    assert observed_subjects(data_root) == [["Hotel block"], ["RSVP"], ["Menu"]]
+    assert [told_now(s) for s in sessions(data_root, "observation")] == [
+        "2026-10-05T00:00:00-05:00",
+        "2026-10-12T00:00:00-05:00",
+        "2026-10-14T20:00:00-05:00",
+    ]
+    last = run_log(target)[-1]
+    assert (last["occurred_from"], last["occurred_to"]) == (
+        "2026-10-12T05:00:00+00:00",
+        "2026-10-15T01:00:00+00:00",
+    )
+
+
+def test_a_replay_over_a_corpus_ingests_it_into_a_throwaway_data_root(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    mail, notes = tmp_path / "corpus" / "mail", tmp_path / "corpus" / "notes"
+    for directory, payloads in (
+        (mail, REPLAYED),
+        (notes, {"obsidian/day.md": daily_note("2026-10-06T07:00:00-05:00", "Swim.")}),
+    ):
+        for name, payload in payloads.items():
+            (directory / name).parent.mkdir(parents=True, exist_ok=True)
+            (directory / name).write_bytes(payload)
+    monkeypatch.delenv("PA_DATA_DIR")
+    target = tmp_path / "eval-wiki"
+
+    assert (
+        replay(
+            target,
+            "--corpus",
+            str(mail),
+            "--corpus",
+            str(notes),
+            "--as-of",
+            "2026-10-21T20:00:00-05:00",
+        )
+        == 0
+    )
+
+    assert observed_subjects(data_root) == [["Hotel block"], [None, "RSVP"], ["Menu"]]
+    [_, second, _] = sessions(data_root, "observation")
+    note = second["episodes"][0]
+    assert note["day"] == "2026-10-05"
+    l0 = Path(note["path"]).parents[3]
+    assert not l0.exists()  # thrown away
+    assert not data_root.exists()
+    # Mail was captured at the as-of time, as in an eval; the note when its header says.
+    first = trailers(replay_messages(target)[-2])
+    assert first["Batch-Captured-From"] == "2026-10-22T01:00:00+00:00"
+    assert mail.is_dir() and (mail / "gmail" / "Menu.eml").is_file()  # the corpus is untouched
+
+
+def test_a_rebuilt_wiki_moved_into_the_data_root_carries_on_where_the_replay_stopped(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, REPLAYED)
+    target = tmp_path / "rebuilt"
+    assert replay(target) == 0
+    for name in ("wiki", "wiki.git"):
+        (target / name).rename(data_root / name)
+
+    assert run_librarian() == 0
+    assert len(sessions(data_root, "observation")) == 3  # nothing new since the replay
+    ingest(data_root, wedding_mail("Gift", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    assert run_librarian() == 0
+
+    assert observed_subjects(data_root)[-1] == ["Gift"]
