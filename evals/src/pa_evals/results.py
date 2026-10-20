@@ -5,11 +5,19 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from pa_evals.eval_set import Category
+
+
+class ToolCallResult(BaseModel):
+    """One tool call the assistant's session made on its way to an answer."""
+
+    tool: str
+    input: dict[str, Any]
+    errored: bool
 
 
 class QuestionResult(BaseModel):
@@ -19,7 +27,8 @@ class QuestionResult(BaseModel):
     whatever scores could still be worked out. A score is None where it does not apply: recall
     for a question with no required evidence, validity for an answer with no citations. Cost,
     turns, and duration are None where the agent didn't report them, and in results written
-    before they were recorded.
+    before they were recorded. Tool calls are None where they weren't recorded (a scripted
+    answer, or results written before they were).
     """
 
     id: str
@@ -44,6 +53,10 @@ class QuestionResult(BaseModel):
     """What the agent's session cost, in US dollars at API prices."""
     turns: int | None = None
     duration_ms: int | None = None
+    tool_calls: list[ToolCallResult] | None = None
+    """The session's tool calls, in the order it made them."""
+    cited_opened: list[str] | None = None
+    """Cited ids whose episode file the session read; None where tool calls weren't recorded."""
 
 
 class Scores(BaseModel):
@@ -56,6 +69,10 @@ class Scores(BaseModel):
     Cost, turns, and duration are summarised over the answers that report them: the median of
     each, and the total cost. They are None where no answer does, as in results written before
     they were recorded.
+
+    The share of cited episodes opened pools the citations of every answer whose tool calls
+    were recorded: of all they cite, the share their sessions read. It is None where none cites
+    anything with its tool calls recorded.
     """
 
     questions: int
@@ -67,6 +84,7 @@ class Scores(BaseModel):
     median_turns: float | None = None
     median_duration_ms: float | None = None
     total_cost_usd: float | None = None
+    cited_opened: float | None = None
 
     @classmethod
     def over(cls, results: Sequence[QuestionResult]) -> Scores:
@@ -81,6 +99,7 @@ class Scores(BaseModel):
             median_turns=median([r.turns for r in results]),
             median_duration_ms=median([r.duration_ms for r in results]),
             total_cost_usd=sum(costs) if costs else None,
+            cited_opened=cited_opened(results),
         )
 
 
@@ -104,6 +123,14 @@ class RunResults(BaseModel):
     """Scores per category, in the order categories first appear in the eval set."""
     questions: list[QuestionResult]
     """Per-question results, in eval set order."""
+
+
+def cited_opened(results: Sequence[QuestionResult]) -> float | None:
+    """Of the citations in answers whose tool calls were recorded, the share their sessions
+    opened, or None if there are none."""
+    recorded = [r for r in results if r.cited_opened is not None]
+    cited = sum(len(r.cited) for r in recorded)
+    return sum(len(r.cited_opened or []) for r in recorded) / cited if cited else None
 
 
 def _share(flags: Sequence[bool]) -> float | None:

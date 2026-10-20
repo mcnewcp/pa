@@ -94,6 +94,21 @@ def render_report(results: RunResults) -> str:
     lines += [
         f"| Overall | {_efficiency_cells(overall)} |",
         "",
+        "## Cited episodes opened",
+        "",
+        "Of the episodes the answers cite, the share whose file the session read, over the "
+        "answers whose tool calls were recorded (n/a: none cite anything).",
+        "",
+        "| Category | Cited episodes opened |",
+        "|---|---|",
+    ]
+    lines += [
+        f"| {_cell(name)} | {format_score(s.cited_opened)} |"
+        for name, s in results.categories.items()
+    ]
+    lines += [
+        f"| Overall | {format_score(overall.cited_opened)} |",
+        "",
         "## By question",
         "",
         "| Question | Category | Status | Correct | Evidence recall | Citation validity "
@@ -127,6 +142,12 @@ def _answer_section(q: QuestionResult) -> list[str]:
             f"- Cost: {format_cost(q.cost_usd)}, {format_turns(q.turns)} turns, "
             f"{format_duration(q.duration_ms)}"
         )
+    if q.tool_calls is not None:
+        errored = sum(call.errored for call in q.tool_calls)
+        lines.append(f"- Tool calls: {len(q.tool_calls)} ({errored} errored)")
+    if q.cited_opened is not None and len(q.cited_opened) < len(q.cited):
+        not_opened = [episode_id for episode_id in q.cited if episode_id not in q.cited_opened]
+        lines.append(f"- Cited but not opened: {_ids(not_opened)}")
     if q.unknown_citations:
         lines.append(f"- Not in L0: {_ids(q.unknown_citations)}")
     if q.irrelevant_citations:

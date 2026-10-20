@@ -1,7 +1,9 @@
 """`pa-eval run --agent claude`: the real agent runner, over a stand-in `claude` on PATH.
 
 The stand-in answers with what it was told about "now", so the results show which time each
-question was asked at. The real CLI is exercised only by the opt-in smoke test at the end.
+question was asked at, and prints stream-JSON events as the real CLI does: it greps L0, reads
+one episode's file, and cites that episode and another it never opened. The real CLI is
+exercised only by the opt-in smoke test at the end.
 """
 
 import json
@@ -28,7 +30,7 @@ WHY_SYSTEM_PROMPT = (
 
 @pytest.fixture
 def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A `claude` on PATH that answers with the system prompt it was given, citing nothing."""
+    """A `claude` on PATH that answers with the system prompt it was given."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "claude"
@@ -39,11 +41,32 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             import json, sys
             argv = sys.argv[1:]
             sys.stdin.read()
+            assert argv[argv.index("--output-format") + 1] == "stream-json"
+            assert "--verbose" in argv
             told = argv[argv.index("--append-system-prompt") + 1]
             model = argv[argv.index("--model") + 1] if "--model" in argv else "default"
-            print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": f"[{model}] {told}", "total_cost_usd": 0.031,
-                              "num_turns": 5, "duration_ms": 12000}))
+            settings = json.load(open(".claude/settings.json"))
+            l0 = settings["permissions"]["additionalDirectories"][0]
+            opened = f"{l0}/episodes/gmail/2026-09/gmail_94f6b4cbc55a3b85.json"
+            def tool(id, name, input, result, is_error=False):
+                return [
+                    {"type": "assistant", "message": {"role": "assistant", "content": [
+                        {"type": "tool_use", "id": id, "name": name, "input": input}]}},
+                    {"type": "user", "message": {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": id, "content": result,
+                         "is_error": is_error}]}},
+                ]
+            events = [
+                {"type": "system", "subtype": "init", "session_id": "s1"},
+                *tool("t1", "Bash", {"command": f"grep -rl hotel {l0}"}, "", is_error=True),
+                *tool("t2", "Read", {"file_path": opened}, "{}"),
+                {"type": "result", "subtype": "success", "is_error": False,
+                 "result": f"[{model}] {told} [ep:gmail_94f6b4cbc55a3b85] "
+                           "[ep:gmail_424bdea9b0d82720]",
+                 "total_cost_usd": 0.031, "num_turns": 5, "duration_ms": 12000},
+            ]
+            for event in events:
+                print(json.dumps(event))
             """
         )
     )
@@ -84,6 +107,12 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert "Tuesday, October 6, 2026, 20:00" in answers["swim-instructor"]
     figures = {(q["cost_usd"], q["turns"], q["duration_ms"]) for q in results["questions"]}
     assert figures == {(0.031, 5, 12000)}
+    [_, read] = results["questions"][0]["tool_calls"]
+    assert read["tool"] == "Read" and read["errored"] is False
+    assert read["input"]["file_path"].endswith("/gmail_94f6b4cbc55a3b85.json")
+    assert [q["tool_calls"][0]["errored"] for q in results["questions"]] == [True, True]
+    assert {tuple(q["cited_opened"]) for q in results["questions"]} == {("gmail_94f6b4cbc55a3b85",)}
+    assert results["overall"]["cited_opened"] == 0.5
     assert {k: v for k, v in results["setup"].items() if k != "commit"} == {
         "corpus": str(CORPUS),
         "agent": "claude",
@@ -97,6 +126,34 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert "- As-of method: system-prompt" in report
     assert f"- Why this as-of method: {WHY_SYSTEM_PROMPT}" in report
     assert "- As-of methods compared in: docs/adr/0003-as-of-time-injection.md" in report
+    assert "## Cited episodes opened" in report
+    assert "| canary | 0.50 |" in report
+    assert "| Overall | 0.50 |" in report
+    assert "- Tool calls: 2 (1 errored)" in report
+    assert "- Cited but not opened: gmail_424bdea9b0d82720" in report
+
+
+def test_the_comparison_gives_each_configurations_share_of_cited_episodes_opened(
+    tmp_path: Path, fake_claude: Path, verdicts: Path
+):
+    runs = tmp_path / "runs"
+
+    main(
+        [
+            "run",
+            *("--corpus", str(CORPUS), "--eval-set", str(EVAL_SET), "--runs-dir", str(runs)),
+            *("--only", "day-of-week", "--only", "swim-instructor", "--runs", "2"),
+            *("--agent", "claude", "--judge", "scripted", "--verdicts", str(verdicts)),
+        ]
+    )
+
+    [run_dir] = runs.iterdir()
+    comparison = (run_dir / "comparison.md").read_text()
+    assert "## Cited episodes opened" in comparison
+    assert "| Category | files-alone |" in comparison
+    # Every answer in every run cites two episodes and opens one.
+    assert "| canary | 0.50 |" in comparison
+    assert "| Overall | 0.50 |" in comparison
 
 
 @pytest.mark.skipif(

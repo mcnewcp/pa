@@ -14,11 +14,11 @@ from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
 from pa_evals.agent import AgentRequest, AgentRunner
-from pa_evals.citations import parse_citations
+from pa_evals.citations import opened, parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import Category, EvalQuestion, EvalSet
 from pa_evals.judge import Judge, JudgeRequest
-from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores
+from pa_evals.results import IngestCounts, QuestionResult, RunResults, Scores, ToolCallResult
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -114,6 +114,7 @@ def _ask(
         return result.model_copy(update={"error": f"agent: {answer}", "evidence_recall": recall})
 
     cited = parse_citations(answer.text)
+    calls = answer.tool_calls
     existing = [episode_id for episode_id in cited if episode_id in known]
     result = result.model_copy(
         update={
@@ -121,7 +122,13 @@ def _ask(
             "cost_usd": answer.cost_usd,
             "turns": answer.turns,
             "duration_ms": answer.duration_ms,
+            "tool_calls": None
+            if calls is None
+            else [
+                ToolCallResult(tool=c.tool, input=dict(c.input), errored=c.errored) for c in calls
+            ],
             "cited": cited,
+            "cited_opened": None if calls is None else opened(cited, calls),
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
         }

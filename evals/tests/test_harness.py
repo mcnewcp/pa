@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from pa_evals.agent import AgentAnswer, AgentRequest, AgentTimeoutError, ScriptedAgent
+from pa_evals.agent import (
+    AgentAnswer,
+    AgentRequest,
+    AgentTimeoutError,
+    ScriptedAgent,
+    ToolCall,
+)
 from pa_evals.eval_set import EvalSet, load_eval_set
 from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.judge import ScriptedJudge, Verdict
@@ -327,3 +333,85 @@ def test_cost_turns_and_duration_are_summarised_per_category_over_measured_answe
     assert results.overall.median_turns == 6
     assert results.overall.median_duration_ms == 20000
     assert results.overall.total_cost_usd == pytest.approx(0.65)
+
+
+def read(episode_id: str, *, errored: bool = False) -> ToolCall:
+    """A Read of an episode's file in L0."""
+    path = f"/tmp/pa-eval-x/l0/episodes/gmail/2026-09/{episode_id}.json"
+    return ToolCall("Read", {"file_path": path}, errored=errored)
+
+
+def test_each_answer_records_its_tool_calls(eval_set):
+    eval_set = eval_set.only("hotel-block-deadline", "who-asked-about-hotel")
+    grep = ToolCall("Bash", {"command": "grep -rl 'hotel block' /l0/episodes["}, errored=True)
+    answers = {
+        "hotel-block-deadline": AgentAnswer("Oct 9.", tool_calls=(grep, read(DEADLINE_EMAIL))),
+        "who-asked-about-hotel": "You did.",
+    }
+    verdicts = {"hotel-block-deadline": correct(), "who-asked-about-hotel": correct()}
+
+    recorded, scripted = run(eval_set, answers, verdicts).questions
+
+    assert [(c.tool, c.input, c.errored) for c in recorded.tool_calls or []] == [
+        ("Bash", {"command": "grep -rl 'hotel block' /l0/episodes["}, True),
+        (
+            "Read",
+            {"file_path": f"/tmp/pa-eval-x/l0/episodes/gmail/2026-09/{DEADLINE_EMAIL}.json"},
+            False,
+        ),
+    ]
+    # A scripted answer came from no session, so it has no tool calls to record.
+    assert scripted.tool_calls is None
+
+
+def test_a_citation_counts_as_opened_only_when_the_session_read_its_file(eval_set):
+    eval_set = eval_set.only("who-asked-about-hotel")
+    grep = ToolCall("Grep", {"pattern": FIRST_EMAIL})
+    answers = {
+        "who-asked-about-hotel": AgentAnswer(
+            f"You asked Dave [ep:{FIRST_EMAIL}], and he answered [ep:{DEADLINE_EMAIL}] "
+            f"[ep:{SWIM_NOTE}] [ep:gmail_0000000000000000].",
+            # Grepping for an id isn't reading it, and neither is a read that failed.
+            tool_calls=(grep, read(FIRST_EMAIL, errored=True), read(DEADLINE_EMAIL)),
+        )
+    }
+    verdicts = {"who-asked-about-hotel": correct()}
+
+    results = run(eval_set, answers, verdicts)
+
+    [result] = results.questions
+    assert result.cited_opened == [DEADLINE_EMAIL]
+    assert results.overall.cited_opened == 0.25
+
+
+def test_the_share_of_cited_episodes_opened_pools_the_citations_of_answers_with_tool_calls(
+    eval_set,
+):
+    answers = {
+        "hotel-block-deadline": AgentAnswer(
+            f"Oct 9 [ep:{DEADLINE_EMAIL}].", tool_calls=(read(DEADLINE_EMAIL),)
+        ),
+        "swim-lessons-plan": AgentAnswer(
+            f"Saturdays [ep:{SWIM_EVENT}] [ep:{SWIM_NOTE}] [ep:{FIRST_EMAIL}].",
+            tool_calls=(read(SWIM_NOTE),),
+        ),
+        # Cites nothing, so it has nothing to open.
+        "swim-instructor": AgentAnswer("Unknown.", tool_calls=()),
+        # Its tool calls weren't recorded, so whether it opened what it cites is unknown.
+        "who-asked-about-hotel": f"You [ep:{FIRST_EMAIL}].",
+        "day-of-week": AgentTimeoutError("no answer within 300 s"),
+    }
+    verdicts = {q.id: correct() for q in eval_set.questions}
+
+    results = run(eval_set, answers, verdicts)
+
+    by_id = {q.id: q for q in results.questions}
+    assert by_id["swim-instructor"].cited_opened == []
+    assert by_id["who-asked-about-hotel"].cited_opened is None
+    assert by_id["day-of-week"].cited_opened is None
+    assert results.categories["single_fact_recall"].cited_opened == 1.0
+    assert results.categories["cross_channel_synthesis"].cited_opened == pytest.approx(1 / 3)
+    assert results.categories["attribution"].cited_opened is None
+    assert results.categories["abstention"].cited_opened is None
+    # Two of the four citations in answers with tool calls.
+    assert results.overall.cited_opened == 0.5

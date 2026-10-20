@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -15,7 +15,7 @@ from pa_core.errors import PaError
 from pa_core.exchange_capture import CAPTURE_VARS
 from pa_core.owner import Owner
 from pa_home.agent_project import AGENT_PROJECT, render_agent_project
-from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print
+from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print_stream
 
 DEFAULT_TIMEOUT_SECONDS = 600
 
@@ -42,8 +42,20 @@ class AgentTimeoutError(AgentError):
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """One tool the session called on its way to the answer."""
+
+    tool: str
+    """The tool's name, as Claude Code names it (`Read`, `Bash`, `Grep`, ...)."""
+    input: Mapping[str, Any]
+    """What the tool was called with, as the session passed it."""
+    errored: bool = False
+    """Whether the tool's result was an error."""
+
+
+@dataclass(frozen=True)
 class AgentAnswer:
-    """The agent's answer, with what the session cost, as `claude -p` reports it.
+    """The agent's answer, with what the session cost and did, as `claude -p` reports it.
 
     A figure the CLI didn't report is None.
     """
@@ -55,6 +67,9 @@ class AgentAnswer:
     """The session's turns (`num_turns`)."""
     duration_ms: int | None = None
     """The session's wall-clock time in milliseconds (`duration_ms`)."""
+    tool_calls: tuple[ToolCall, ...] | None = None
+    """The session's tool calls, in the order it made them. None where they weren't recorded
+    (an answer that didn't come from a session, such as a scripted one)."""
 
 
 class AsOfMethod(StrEnum):
@@ -144,7 +159,7 @@ class ClaudeAgent:
             # additional directories. Passing the same file as flag settings keeps them.
             args += ["--settings", str(workdir / ".claude" / "settings.json")]
             try:
-                result = run_print(
+                session = run_print_stream(
                     self._executable,
                     args,
                     prompt=prompt,
@@ -156,12 +171,50 @@ class ClaudeAgent:
                 raise AgentTimeoutError(str(error)) from error
             except ClaudeCliError as error:
                 raise AgentError(str(error)) from error
+        result = session.result
         return AgentAnswer(
             text=str(result.get("result", "")),
             cost_usd=_number(result, "total_cost_usd", float),
             turns=_number(result, "num_turns", int),
             duration_ms=_number(result, "duration_ms", int),
+            tool_calls=tool_calls(session.events),
         )
+
+
+def tool_calls(events: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
+    """The tool calls in a session's stream-JSON `events`, in the order they were made.
+
+    A call errored when its result says so; a call left without a result did not.
+    """
+    calls: list[tuple[str, ToolCall]] = []
+    errored: set[str] = set()
+    for event in events:
+        for block in _content(event):
+            if block.get("type") == "tool_use":
+                name, arguments = block.get("name"), block.get("input")
+                calls.append(
+                    (
+                        str(block.get("id")),
+                        ToolCall(
+                            str(name),
+                            dict(arguments) if isinstance(arguments, Mapping) else {},
+                        ),
+                    )
+                )
+            elif block.get("type") == "tool_result" and block.get("is_error") is True:
+                errored.add(str(block.get("tool_use_id")))
+    return tuple(
+        ToolCall(call.tool, call.input, errored=call_id in errored) for call_id, call in calls
+    )
+
+
+def _content(event: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The content blocks of an assistant or user message event (none for any other event)."""
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, Mapping)]
 
 
 def _number[N: (int, float)](result: dict[str, Any], key: str, kind: type[N]) -> N | None:

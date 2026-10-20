@@ -1,8 +1,10 @@
 """The agent: `claude -p` in the agent project, driven through a stand-in `claude` executable.
 
 The stand-in records what the real CLI would see (argv, the prompt on stdin, the project's
-CLAUDE.md in its working directory) and prints a result shaped like
-`claude -p --output-format json`. The real CLI is exercised only by the opt-in smoke tests.
+CLAUDE.md in its working directory) and prints what the real CLI would: with
+`--output-format stream-json --verbose`, one JSON event per line (the session's start, its tool
+calls and their results, then the result), and otherwise the result alone, as
+`--output-format json` does. The real CLI is exercised only by the opt-in smoke tests.
 """
 
 import json
@@ -16,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.owner import Owner
-from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent
+from pa_home.agent import AgentError, AgentTimeoutError, AsOfMethod, ClaudeAgent, ToolCall
 
 SATURDAY_MORNING = datetime(2026, 10, 10, 9, 0, tzinfo=timezone(timedelta(hours=-5)))
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
@@ -25,7 +27,9 @@ OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), oth
 def _fake_claude(tmp_path: Path, body: str = "") -> Path:
     """A `claude` stand-in that saves what it saw to `seen.json`, then runs `body`.
 
-    It replies with `reply` (default: an answer citing one episode) unless `body` exits first.
+    It replies with `reply` (default: an answer citing one episode) after the tool calls in
+    `events` (default: a grep that failed, then a read of the cited episode), unless `body` exits
+    first.
     """
     script = tmp_path / "claude"
     seen = tmp_path / "seen.json"
@@ -53,12 +57,38 @@ def _fake_claude(tmp_path: Path, body: str = "") -> Path:
             reply = "The hotel block closes on Oct 9 [ep:gmail_94f6b4cbc55a3b85]."
             """
         )
+        + textwrap.dedent(
+            """\
+            def tool_use(id, name, input):
+                return {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": id, "name": name, "input": input}]}}
+            def tool_result(id, content, is_error=False):
+                return {"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": id, "content": content,
+                     "is_error": is_error}]}}
+            events = [
+                tool_use("toolu_1", "Bash", {"command": "grep -rl hotel /l0/episodes["}),
+                tool_result("toolu_1", "grep: Unmatched [", is_error=True),
+                tool_use("toolu_2", "Read", {"file_path": "/l0/gmail_94f6b4cbc55a3b85.json"}),
+                tool_result("toolu_2", "{...}"),
+            ]
+            """
+        )
         + textwrap.dedent(body)
         + textwrap.dedent(
             """\
-            print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": reply, "total_cost_usd": 0.0421, "num_turns": 6,
-                              "duration_ms": 18250}))
+            result = {"type": "result", "subtype": "success", "is_error": False,
+                      "result": reply, "total_cost_usd": 0.0421, "num_turns": 6,
+                      "duration_ms": 18250}
+            if argv[argv.index("--output-format") + 1] != "stream-json":
+                print(json.dumps(result))
+            elif "--verbose" not in argv:
+                sys.exit("Error: When using --print, --output-format=stream-json requires "
+                         "--verbose")
+            else:
+                init = {"type": "system", "subtype": "init", "session_id": "s1", "tools": []}
+                for event in [init, *events, result]:
+                    print(json.dumps(event))
             """
         )
     )
@@ -102,6 +132,41 @@ def test_the_answer_carries_the_sessions_cost_turns_and_duration(tmp_path: Path,
     answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
     assert (answer.cost_usd, answer.turns, answer.duration_ms) == (0.0421, 6, 18250)
+
+
+def test_the_answer_carries_the_sessions_tool_calls_in_order(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert answer.tool_calls == (
+        ToolCall("Bash", {"command": "grep -rl hotel /l0/episodes["}, errored=True),
+        ToolCall("Read", {"file_path": "/l0/gmail_94f6b4cbc55a3b85.json"}, errored=False),
+    )
+
+
+def test_a_tool_call_left_without_a_result_did_not_error(tmp_path: Path, l0: Path):
+    body = """\
+        events = [
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Let me look."},
+                {"type": "tool_use", "id": "toolu_1", "name": "Glob",
+                 "input": {"pattern": "**/*.json"}},
+                {"type": "tool_use", "id": "toolu_2", "name": "Read",
+                 "input": {"file_path": "/l0/a.json"}}]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_2", "content": "no such file",
+                 "is_error": True}]}},
+        ]
+        """
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path, body)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert answer.tool_calls == (
+        ToolCall("Glob", {"pattern": "**/*.json"}, errored=False),
+        ToolCall("Read", {"file_path": "/l0/a.json"}, errored=True),
+    )
 
 
 def test_an_answer_without_usage_figures_has_none(tmp_path: Path, l0: Path):
