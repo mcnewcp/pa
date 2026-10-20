@@ -2,6 +2,7 @@
 extension's payloads beside them, asked with the Argus questions and the new ones."""
 
 import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -22,6 +23,19 @@ SCALE = frozen.CORPORA["scale"]
 
 ARGUS_PAYLOADS_SHA256 = "49a4ab1a6894854b3fcd1171033570b45431ae1f00f2e62170ca64fb4ec35379"
 """The digest of every Argus payload's path and bytes, taken when the scale corpus was frozen."""
+
+V0_12_QUESTIONS_SHA256 = "7c80704961bf819c7eb9da039513ed121c14e22ad73d3a13d154051ba6ad12d6"
+"""The digest of the scale eval set's 40 questions as v0.12 asked them, evidence ids included."""
+
+V0_12_1_QUESTIONS = [
+    "overdue-sweep",
+    "pending-decisions",
+    "kitchen-stands",
+    "swim-stands",
+    "wedding-stands",
+    "basement-stands",
+]
+"""The questions v0.12.1 adds, where the wiki should help."""
 
 
 @pytest.fixture(scope="module")
@@ -111,8 +125,17 @@ def test_the_argus_questions_are_asked_unchanged_with_their_episode_ids(eval_set
     )
 
 
-def test_the_scale_eval_set_adds_connection_questions_to_the_argus_categories(eval_set):
+def test_the_scale_eval_set_adds_connection_and_where_things_stand_questions(eval_set):
     counts = Counter(question.category for question in eval_set.questions)
 
-    assert len(eval_set.questions) == 40
+    assert len(eval_set.questions) == 46
     assert counts["connection"] == 3
+    assert counts["where_things_stand"] == 5
+
+
+def test_the_v0_12_questions_are_asked_unchanged_and_v0_12_1s_follow_them(eval_set: EvalSet):
+    v0_12 = [question.model_dump(mode="json") for question in eval_set.questions[:40]]
+    digest = hashlib.sha256(json.dumps(v0_12, sort_keys=True).encode()).hexdigest()
+
+    assert digest == V0_12_QUESTIONS_SHA256
+    assert [question.id for question in eval_set.questions[40:]] == V0_12_1_QUESTIONS
