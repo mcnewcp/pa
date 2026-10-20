@@ -58,7 +58,13 @@ def run_evals(tmp_path: Path, calls: Path, *args: str) -> subprocess.CompletedPr
         ["bash", str(RUN_EVALS), *args],
         capture_output=True,
         text=True,
-        env={"HOME": str(home), "PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls)},
+        env={
+            "HOME": str(home),
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "CALLS": str(calls),
+            # The run directory comes back here, never into the checkout's evals/runs/.
+            "PA_EVAL_RUNS_DIR": str(tmp_path / "runs"),
+        },
         check=False,
     )
 
@@ -108,6 +114,8 @@ def test_a_files_plus_wiki_run_pushes_the_eval_wiki_and_asks_with_the_vms_copy(
     assert f"tar -C {VM_EVAL_WIKI} -xf -" in push["argv"][-1]
     assert pa_eval_args(ask) == [*options, "--wiki", VM_EVAL_WIKI, "--corpus", "scale"]
     assert pull["argv"][:3] == ["file", "pull", "-r"]
+    assert pull["argv"][-1] == f"{tmp_path / 'runs'}/"
+    assert (tmp_path / "runs").is_dir()
 
 
 def test_the_wiki_option_can_be_given_with_an_equals_sign(

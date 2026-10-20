@@ -22,7 +22,7 @@ deploy/home/setup-wizard.sh
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `rollback.sh [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
-| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` |
+| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`) |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 
