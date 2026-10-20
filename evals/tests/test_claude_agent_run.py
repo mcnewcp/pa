@@ -59,10 +59,26 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                         {"type": "tool_result", "tool_use_id": id, "content": result,
                          "is_error": is_error}]}},
                 ]
+            import os
+            if os.environ.get("FAKE_CLAUDE_TOOLS"):
+                with open(os.environ["FAKE_CLAUDE_TOOLS"]) as listed:
+                    calls = [
+                        (c["name"], json.loads(json.dumps(c["input"]).replace("{l0}", l0)),
+                         c.get("is_error", False))
+                        for c in json.load(listed)
+                    ]
+            else:
+                calls = [
+                    ("Bash", {"command": f"grep -rl hotel {l0}"}, True),
+                    ("Read", {"file_path": opened}, False),
+                ]
             events = [
                 {"type": "system", "subtype": "init", "session_id": "s1"},
-                *tool("t1", "Bash", {"command": f"grep -rl hotel {l0}"}, "", is_error=True),
-                *tool("t2", "Read", {"file_path": opened}, "{}"),
+                *[
+                    event
+                    for number, (name, input, is_error) in enumerate(calls, start=1)
+                    for event in tool(f"t{number}", name, input, "", is_error=is_error)
+                ],
                 {"type": "result", "subtype": "success", "is_error": False,
                  "result": f"[{model}] {told} [ep:gmail_94f6b4cbc55a3b85] "
                            f"[ep:gmail_424bdea9b0d82720] l0={l0} wiki={wiki} index={index}",
@@ -134,6 +150,58 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert "| Overall | 0.50 |" in report
     assert "- Tool calls: 2 (1 errored)" in report
     assert "- Cited but not opened: gmail_424bdea9b0d82720" in report
+
+
+HOTEL = "gmail_94f6b4cbc55a3b85"
+ENVELOPE = f"{{l0}}/episodes/gmail/2026-09/{HOTEL}.json"
+RAW = f"{{l0}}/raw/gmail/2026-09/{HOTEL}.eml"
+
+
+@pytest.mark.parametrize(
+    ("call", "is_opened"),
+    [
+        (("Read", {"file_path": ENVELOPE}), True),
+        (("Read", {"file_path": RAW}), True),
+        (("Bash", {"command": f"cat {ENVELOPE}"}), True),
+        (("Bash", {"command": f"jq -r .subject '{ENVELOPE}' | head -5"}), True),
+        (("Bash", {"command": f"sed -n 1,40p {RAW}"}), True),
+        (("Bash", {"command": f"cd {{l0}}/episodes/gmail/2026-09 && less {HOTEL}.json"}), True),
+        (("Bash", {"command": f"grep -i hotel {ENVELOPE}"}), True),
+        (("Bash", {"command": "grep -rl hotel {l0}"}), False),
+        (("Bash", {"command": f"grep -rl {HOTEL} {{l0}}"}), False),
+        (("Bash", {"command": f"ls -l {ENVELOPE}"}), False),
+        (("Bash", {"command": f"find {{l0}} -name {HOTEL}.json"}), False),
+        (("Grep", {"pattern": "hotel", "path": ENVELOPE}), False),
+        (("Bash", {"command": f"cat {ENVELOPE}", "errored": True}), False),
+    ],
+)
+def test_a_cited_episode_counts_as_opened_when_a_successful_call_reads_its_file(
+    tmp_path: Path,
+    fake_claude: Path,
+    verdicts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    call: tuple[str, dict[str, object]],
+    is_opened: bool,
+):
+    name, arguments = call[0], dict(call[1])
+    errored = bool(arguments.pop("errored", False))
+    listed = tmp_path / "tools.json"
+    listed.write_text(json.dumps([{"name": name, "input": arguments, "is_error": errored}]))
+    monkeypatch.setenv("FAKE_CLAUDE_TOOLS", str(listed))
+    runs = tmp_path / "runs"
+
+    main(
+        [
+            "run",
+            *("--corpus", str(CORPUS), "--eval-set", str(EVAL_SET), "--runs-dir", str(runs)),
+            *("--only", "day-of-week", "--agent", "claude"),
+            *("--judge", "scripted", "--verdicts", str(verdicts)),
+        ]
+    )
+
+    [run_dir] = runs.iterdir()
+    [question] = json.loads((run_dir / "results.json").read_text())["questions"]
+    assert question["cited_opened"] == ([HOTEL] if is_opened else [])
 
 
 def test_the_comparison_gives_each_configurations_share_of_cited_episodes_opened(
