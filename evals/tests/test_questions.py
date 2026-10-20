@@ -173,6 +173,17 @@ def test_a_connection_question_asks_how_people_and_topics_relate(
     assert question.category == "connection"
 
 
+def test_a_where_things_stand_question_asks_for_a_topics_current_state(
+    tmp_path: Path, spec: StorylineSpec, corpus: Path
+) -> None:
+    text = QUESTIONS.replace("category: stance_change", "category: where_things_stand")
+
+    eval_set = build_eval_set([write(tmp_path, text)], spec, [corpus])
+
+    [question] = [q for q in eval_set.questions if q.id == "swim-stance"]
+    assert question.category == "where_things_stand"
+
+
 def test_eval_set_build_writes_the_eval_set_the_harness_reads(
     tmp_path: Path, spec: StorylineSpec, corpus: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
