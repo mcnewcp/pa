@@ -22,33 +22,65 @@ INDEX = "index.md"
 """The generated index, the only file at the wiki's top level."""
 DAYS = "days"
 """The folder of day logs."""
-PAGE_FOLDERS = ("people", "orgs", "topics")
-"""The folders of pages, by page type."""
-FOLDERS = (DAYS, *PAGE_FOLDERS)
-
-PERSON, ORGANIZATION, TOPIC = "person", "organization", "topic"
-PAGE_TYPES = {"people": PERSON, "orgs": ORGANIZATION, "topics": TOPIC}
-"""Each page folder's page type, which its pages' `type` must be."""
 
 CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES = "Current state", "Decisions", "Open loops", "Notes"
-SECTIONS = {
-    PERSON: (CURRENT_STATE, OPEN_LOOPS, NOTES),
-    ORGANIZATION: (CURRENT_STATE, OPEN_LOOPS, NOTES),
-    TOPIC: (CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES),
-}
-"""Each page type's sections (`## <name>`), in order. Current state and Notes are free-form."""
-
+"""The sections a page can have (`## <name>`). Current state and Notes are free-form."""
 FIELDS = ("type", "aliases", "status", "summary", "updated")
 """The frontmatter every page has."""
-LIST_FIELDS = {PERSON: "emails", ORGANIZATION: "domains"}
-"""The list of identifiers a page type adds to its frontmatter: a person's email addresses, an
-organization's mail domains."""
-STATUSES = {
-    PERSON: ("active", "inactive"),
-    ORGANIZATION: ("active", "inactive"),
-    TOPIC: ("active", "settled", "dormant"),
-}
-"""Each page type's allowed `status` values."""
+
+
+@dataclass(frozen=True)
+class PageType:
+    """A type of page, as the wiki schema gives it."""
+
+    folder: str
+    """The folder its pages are in."""
+    type: str
+    """Its name, which its pages' `type` must be."""
+    heading: str
+    """The heading its pages are listed under in `index.md`."""
+    sections: tuple[str, ...]
+    """Its sections, in order."""
+    statuses: tuple[str, ...]
+    """Its allowed `status` values."""
+    list_field: str | None = None
+    """The list of identifiers it adds to its frontmatter, if any: a person's email addresses,
+    an organization's mail domains."""
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Its frontmatter: every page's, then its list of identifiers."""
+        return (*FIELDS, *((self.list_field,) if self.list_field else ()))
+
+
+PERSON = PageType(
+    folder="people",
+    type="person",
+    heading="People",
+    sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
+    statuses=("active", "inactive"),
+    list_field="emails",
+)
+ORGANIZATION = PageType(
+    folder="orgs",
+    type="organization",
+    heading="Organizations",
+    sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
+    statuses=("active", "inactive"),
+    list_field="domains",
+)
+TOPIC = PageType(
+    folder="topics",
+    type="topic",
+    heading="Topics",
+    sections=(CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES),
+    statuses=("active", "settled", "dormant"),
+)
+PAGE_TYPES = {page_type.folder: page_type for page_type in (PERSON, ORGANIZATION, TOPIC)}
+"""Each page folder's page type, in the order `index.md` lists them."""
+PAGE_FOLDERS = tuple(PAGE_TYPES)
+"""The folders of pages."""
+FOLDERS = (DAYS, *PAGE_FOLDERS)
 
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 """Lowercase ASCII words joined by hyphens: a page's name, and how it's linked."""

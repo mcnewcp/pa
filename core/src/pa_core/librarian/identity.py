@@ -35,7 +35,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pa_core.envelope import Envelope, Kind, Role
-from pa_core.librarian.wiki import slugify
+from pa_core.librarian.wiki import ORGANIZATION, PERSON, slugify
 from pa_core.owner import Owner
 from pa_core.selection import SKIPPED, category
 
@@ -253,17 +253,17 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
 
     # Slugs go to people and organizations in the order first seen, so they stay put as L0 grows.
     slugs = _Slugs()
-    claims = [(org_first[domain], "organization", domain) for domain in domains]
+    claims = [(org_first[domain], ORGANIZATION.type, domain) for domain in domains]
     named_orgs = set(own.values())
     claims += [
-        (position[addresses[0]], "person", key)
+        (position[addresses[0]], PERSON.type, key)
         for key, addresses in groups.items()
         if key not in named_orgs
     ]
     org_slugs: dict[str, str] = {}
     person_slugs: dict[str, str] = {}
     for _, kind, claimant in sorted(claims):
-        if kind == "organization":
+        if kind == ORGANIZATION.type:
             name = _commonest(spellings[own[claimant]]) if claimant in own else ""
             base = slugify(name) if name else _domain_label(claimant)
             org_slugs[claimant] = slugs.claim(base, f"{kind}:{claimant}")

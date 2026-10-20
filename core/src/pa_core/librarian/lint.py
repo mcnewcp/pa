@@ -42,22 +42,19 @@ from pa_core.librarian.wiki import (
     DAYS,
     DECISION_FORMAT,
     DECISIONS,
-    FIELDS,
     FOLDERS,
     INDEX,
     LINK,
-    LIST_FIELDS,
     LOOP_FORMAT,
     NEEDS_LOOKUP,
     OPEN_LOOPS,
     OWNER,
     PAGE_NAME,
     PAGE_TYPES,
-    SECTIONS,
-    STATUSES,
     FieldValue,
     Page,
     PageFormatError,
+    PageType,
     citations,
     parse_decision,
     parse_loop,
@@ -257,26 +254,27 @@ def _pages(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
         yield Finding(file.path, f"bad frontmatter: {error.message}", error.line)
         return
     page_type = PAGE_TYPES[folder]
-    for problem in _frontmatter_problems(page.fields, page_type, folder):
+    for problem in _frontmatter_problems(page.fields, page_type):
         yield Finding(file.path, f"bad frontmatter: {problem}", 1)
     yield from _sections(page, page_type)
     yield from _section_lines(page)
 
 
-def _frontmatter_problems(
-    fields: Mapping[str, FieldValue], page_type: str, folder: str
-) -> Iterator[str]:
-    identifiers = LIST_FIELDS.get(page_type)
-    expected = (*FIELDS, *([identifiers] if identifiers else []))
+def _frontmatter_problems(fields: Mapping[str, FieldValue], page_type: PageType) -> Iterator[str]:
+    identifiers = page_type.list_field
+    expected = page_type.fields
     for key in expected:
         if key not in fields:
             yield f"`{key}` is missing"
     for key in fields:
         if key not in expected:
-            yield f"`{key}` isn't a field of a {page_type} page"
-    if "type" in fields and fields["type"] != page_type:
-        yield f"`type` is {fields['type']!r}, but pages in {folder}/ are {page_type} pages"
-    statuses = STATUSES[page_type]
+            yield f"`{key}` isn't a field of a {page_type.type} page"
+    if "type" in fields and fields["type"] != page_type.type:
+        yield (
+            f"`type` is {fields['type']!r}, but pages in {page_type.folder}/ are "
+            f"{page_type.type} pages"
+        )
+    statuses = page_type.statuses
     if "status" in fields and fields["status"] not in statuses:
         yield f"`status` is {fields['status']!r}, not one of {', '.join(statuses)}"
     summary = fields.get("summary")
@@ -290,14 +288,14 @@ def _frontmatter_problems(
             yield f"`{key}` must be a list, such as [a, b] or []"
 
 
-def _sections(page: Page, page_type: str) -> Iterator[Finding]:
-    expected = SECTIONS[page_type]
+def _sections(page: Page, page_type: PageType) -> Iterator[Finding]:
+    expected = page_type.sections
     names = tuple(section.name for section in page.sections)
     if names != expected:
         line = page.sections[0].line if page.sections else None
         yield Finding(
             page.path,
-            f"wrong sections for a {page_type} page: expected "
+            f"wrong sections for a {page_type.type} page: expected "
             f"{', '.join(f'`## {name}`' for name in expected)}, in that order; got "
             f"{', '.join(f'`## {name}`' for name in names) or 'none'}",
             line,
@@ -355,7 +353,7 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata) -> Iterator[Finding]:
     listed: dict[str, str] = {}
     """The page listing each address first."""
     for page in pages:
-        key = LIST_FIELDS.get(PAGE_TYPES[page.folder])
+        key = PAGE_TYPES[page.folder].list_field
         values = page.fields.get(key, ()) if key else ()
         if not isinstance(values, tuple):
             continue  # reported as bad frontmatter

@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import STATUSES, parse_decision, parse_loop, parse_observation
+from pa_core.librarian.wiki import PAGE_TYPES, parse_decision, parse_loop, parse_observation
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
 from pa_home.cli import main
@@ -269,11 +269,11 @@ def test_a_template_left_unfilled_fails_lint(tmp_path: Path, template: str):
 
 @pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
 def test_each_page_template_lists_its_types_allowed_statuses(template: str):
-    page_type = template.removesuffix(".md")
+    [page_type] = [t for t in PAGE_TYPES.values() if t.type == template.removesuffix(".md")]
     [status] = [
         line
         for line in (TEMPLATES / template).read_text().splitlines()
         if line.startswith("status: ")
     ]
 
-    assert status == f"status: <{'|'.join(STATUSES[page_type])}>"
+    assert status == f"status: <{'|'.join(page_type.statuses)}>"
