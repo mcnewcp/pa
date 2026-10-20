@@ -17,7 +17,7 @@ import hashlib
 import json
 import os
 from collections import Counter
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
@@ -29,7 +29,7 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
-from pa_core.librarian.lint import Finding, lint
+from pa_core.librarian.lint import Finding, L0Metadata, lint
 from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
 from pa_core.owner import Owner
 
@@ -159,15 +159,13 @@ def run_librarian(
         sessions: list[tuple[Phase, SessionResult]] = []
         if batch.episodes:
             identities = identity_table(store.envelopes(), owner)
-            episode_ids = {e.episode_id for e in store.envelopes()}
+            l0 = L0Metadata.of(store.envelopes())
             logged = day_logs(tree)
-            sessions.append(_observe(batch, identities, tree, runner, now, episode_ids))
+            sessions.append(_observe(batch, identities, tree, runner, now, l0))
             observations = _new_observations(logged, day_logs(tree))
             if observations:
                 sessions.append(
-                    _consolidate(
-                        observations, page_threshold, identities, tree, runner, now, episode_ids
-                    )
+                    _consolidate(observations, page_threshold, identities, tree, runner, now, l0)
                 )
         write_index(tree)
         commit = repository.commit(commit_message(batch, librarian, sessions))
@@ -196,7 +194,7 @@ def _observe(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    episode_ids: Collection[str],
+    l0: L0Metadata,
 ) -> tuple[Phase, SessionResult]:
     before = _tree_state(tree)
     prompt = observation_prompt(batch, runner.paths) + "\n" + identity_prompt(identities)
@@ -213,7 +211,7 @@ def _observe(
                 "observation may change only day logs"
             )
 
-    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, episode_ids)
+    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, l0)
     return Phase.OBSERVATION, result
 
 
@@ -247,7 +245,7 @@ def _consolidate(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    episode_ids: Collection[str],
+    l0: L0Metadata,
 ) -> tuple[Phase, SessionResult]:
     prompt = (
         consolidation_prompt(
@@ -286,7 +284,7 @@ def _consolidate(
                 f"{', '.join(edited)}; consolidation may not change the day logs"
             )
 
-    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, episode_ids)
+    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, l0)
     return Phase.CONSOLIDATION, result
 
 
@@ -301,7 +299,7 @@ def _session(
     tree: Path,
     runner: SessionRunner,
     now: datetime,
-    episode_ids: Collection[str],
+    l0: L0Metadata,
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then checks its bounds and lints the wiki. A session
     that leaves lint errors is resumed with the findings, up to MAX_RESUMES times. Returns the
@@ -312,7 +310,7 @@ def _session(
         if not result.ok:
             raise LibrarianRunError(f"the {phase} session failed: {result.error}")
         require_bounds()
-        errors = lint(tree, episode_ids=episode_ids).errors
+        errors = lint(tree, l0=l0).errors
         if not errors:
             return _combined(attempts)
         if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:

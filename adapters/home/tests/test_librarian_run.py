@@ -970,6 +970,28 @@ CONSOLIDATION_FAILURES = {
         pages_with(TOPIC, f"Oct 9 [ep:{HOTEL_EMAIL_ID}]", "Oct 9 [ep:gmail_0000000000000000]"),
         "gmail_0000000000000000",
     ),
+    "an address that isn't in L0": (
+        pages_with(
+            PERSON, "emails: [dkim@example.net]", "emails: [dkim@example.net, d@kim.example]"
+        ),
+        "d@kim.example, which isn't in L0",
+    ),
+    "a domain that isn't in L0": (
+        pages_with(ORG, "domains: []", "domains: [northshorelodge.example]"),
+        "northshorelodge.example, which isn't in L0",
+    ),
+    "an address on two pages": (
+        [
+            *pages_with(PERSON, "", ""),
+            {
+                "write": "people/dave.md",
+                "text": wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON].replace(
+                    "[dkim@example.net]", "[DKim@example.net]"
+                ),
+            },
+        ],
+        "an address belongs on one page",
+    ),
 }
 
 
@@ -1012,6 +1034,24 @@ def test_the_wedding_pages_pass_lint(data_root: Path):
     assert run_librarian() == 0
 
     assert set(wiki_files(data_root)) >= {PERSON, ORG, TOPIC}
+
+
+def test_a_pages_addresses_and_domains_may_come_from_any_mail_in_l0(data_root: Path):
+    """The control for the identity errors: L0's metadata is every episode's participants,
+    even mail never offered to the librarian."""
+    promotion = email(
+        message_id="offer@northshorelodge.example",
+        labels="Inbox,Category Promotions",
+        sender="North Shore Lodge <offers@mail.northshorelodge.example>",
+        subject="Winter rates",
+    )
+    ingest(data_root, {"gmail/hotel.eml": email(), "gmail/offer.eml": promotion})
+    pages = pages_with(ORG, "domains: []", "domains: [mail.northshorelodge.example]")
+    script(data_root, consolidation=pages)
+
+    assert run_librarian() == 0
+
+    assert "domains: [mail.northshorelodge.example]" in wiki_files(data_root)[ORG]
 
 
 def identity(data_root: Path) -> dict:

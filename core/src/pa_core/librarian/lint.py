@@ -12,6 +12,8 @@ An error fails the run. The rules so far:
   well-formed decision and loop lines in Decisions and Open loops; and a citation on every
   other line.
 - **Citations** name episodes that are in L0.
+- **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
+  metadata (any episode's participants), and no address is on two pages.
 
 Each rule is a function over the wiki's files that yields findings; add a rule by writing one
 and listing it in `_RULES` (rules about the layout itself live in `_layout`).
@@ -19,11 +21,12 @@ and listing it in `_RULES` (rules about the layout itself live in `_layout`).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from pa_core.envelope import Envelope
 from pa_core.librarian.wiki import (
     DAY_LOG_NAME,
     DAYS,
@@ -72,6 +75,32 @@ class LintReport:
 
 
 @dataclass(frozen=True)
+class L0Metadata:
+    """What lint checks the wiki's evidence and identifiers against: L0's episodes and the
+    addresses of their participants, every episode included, even those never offered."""
+
+    episode_ids: frozenset[str]
+    addresses: frozenset[str]
+    """Every participant's address, in lowercase."""
+
+    @classmethod
+    def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
+        ids: set[str] = set()
+        addresses: set[str] = set()
+        for envelope in envelopes:
+            ids.add(envelope.episode_id)
+            addresses.update(
+                p.identifier.strip().lower() for p in envelope.participants if "@" in p.identifier
+            )
+        return cls(frozenset(ids), frozenset(addresses))
+
+    @property
+    def domains(self) -> frozenset[str]:
+        """The mail domain of every address, as seen (subdomains included)."""
+        return frozenset(a.rpartition("@")[2] for a in self.addresses)
+
+
+@dataclass(frozen=True)
 class WikiFile:
     """A Markdown file in the wiki's layout, and its lines."""
 
@@ -84,17 +113,18 @@ class WikiFile:
         return self.path.startswith(f"{DAYS}/")
 
 
-type Rule = Callable[[WikiFile, Collection[str]], Iterator[Finding]]
-"""A check of one file, given the ids of every episode in L0."""
+type Rule = Callable[[WikiFile, L0Metadata], Iterator[Finding]]
+"""A check of one file, given L0's metadata."""
 
 
-def lint(tree: Path, *, episode_ids: Collection[str]) -> LintReport:
-    """Lints the wiki at `tree`; `episode_ids` are the ids of every episode in L0."""
+def lint(tree: Path, *, l0: L0Metadata) -> LintReport:
+    """Lints the wiki at `tree` against `l0`, the metadata of every episode in L0."""
     files: list[WikiFile] = []
     errors = list(_layout(tree, files))
     for file in files:
         for rule in _RULES:
-            errors.extend(rule(file, episode_ids))
+            errors.extend(rule(file, l0))
+    errors.extend(_identifiers(_readable_pages(files), l0))
     return LintReport(errors=tuple(errors))
 
 
@@ -159,7 +189,7 @@ def _read(entry: Path, path: str, files: list[WikiFile]) -> Iterator[Finding]:
     files.append(WikiFile(path, tuple(text.splitlines())))
 
 
-def _observations(file: WikiFile, episode_ids: Collection[str]) -> Iterator[Finding]:
+def _observations(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     """A day log holds only observation lines."""
     if not file.is_day_log:
         return
@@ -173,15 +203,15 @@ def _observations(file: WikiFile, episode_ids: Collection[str]) -> Iterator[Find
             )
 
 
-def _cited_episodes_exist(file: WikiFile, episode_ids: Collection[str]) -> Iterator[Finding]:
+def _cited_episodes_exist(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     """Every citation names an episode in L0."""
     for number, line in enumerate(file.lines, start=1):
         for episode_id in citations(line):
-            if episode_id not in episode_ids:
+            if episode_id not in l0.episode_ids:
                 yield Finding(file.path, f"cites {episode_id}, which isn't in L0", number)
 
 
-def _pages(file: WikiFile, episode_ids: Collection[str]) -> Iterator[Finding]:
+def _pages(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     """A page follows its type's schema: frontmatter, sections, and line formats."""
     folder = file.path.partition("/")[0]
     if folder not in PAGE_TYPES:
@@ -271,6 +301,48 @@ def _section_lines(page: Page) -> Iterator[Finding]:
                     f"[ep:<episode_id>]; got {line!r}",
                     number,
                 )
+
+
+def _readable_pages(files: Iterable[WikiFile]) -> list[Page]:
+    """The pages among `files` whose frontmatter can be read."""
+    found: list[Page] = []
+    for file in files:
+        if file.path.partition("/")[0] in PAGE_TYPES:
+            try:
+                found.append(read_page(file.path, "\n".join(file.lines)))
+            except PageFormatError:
+                continue
+    return found
+
+
+def _identifiers(pages: Iterable[Page], l0: L0Metadata) -> Iterator[Finding]:
+    """A page's addresses and domains are in L0's metadata, and an address is on one page."""
+    listed: dict[str, str] = {}
+    """The page listing each address first."""
+    for page in pages:
+        key = LIST_FIELDS.get(PAGE_TYPES[page.folder])
+        values = page.fields.get(key, ()) if key else ()
+        if not isinstance(values, tuple):
+            continue  # reported as bad frontmatter
+        known = l0.addresses if key == "emails" else l0.domains
+        for value in values:
+            identifier = value.strip().lower()
+            if identifier not in known:
+                yield Finding(
+                    page.path,
+                    f"`{key}` lists {value}, which isn't in L0's metadata: identifiers are "
+                    "copied from the identity table, never made up",
+                    1,
+                )
+            if key == "emails":
+                first = listed.setdefault(identifier, page.path)
+                if first != page.path:
+                    yield Finding(
+                        page.path,
+                        f"`emails` lists {value}, which {first} lists too: an address belongs "
+                        "on one page",
+                        1,
+                    )
 
 
 def _is_date(text: str) -> bool:
