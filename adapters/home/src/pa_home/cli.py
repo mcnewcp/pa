@@ -60,7 +60,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     librarian_parser = commands.add_parser("librarian", help="Keep the wiki over L0.")
     librarian_commands = librarian_parser.add_subparsers(dest="librarian_command", required=True)
     librarian_commands.add_parser(
-        "run", help="Observe the episodes captured since the last run into the wiki."
+        "run",
+        help="Observe the episodes captured since the last run into the wiki, and fold them "
+        "into pages.",
     )
     args = parser.parse_args(argv)
 
