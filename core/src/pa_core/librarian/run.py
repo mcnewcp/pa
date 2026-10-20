@@ -4,9 +4,15 @@ A run picks the batch of episodes captured since the cursor. The librarian obser
 day logs in one session, then folds the new observations into pages in a second, given the
 reference counts the host computes from the day logs and lint's open warnings. After each
 session the host checks it stayed in bounds and lints the wiki; a session that leaves lint
-errors is resumed with the findings, at most twice. Then the host rewrites links to aliases,
-regenerates `index.md`, and commits the wiki with a message recording the run and lint's
-warnings. If anything fails, the wiki goes back to its last commit, so the cursor (kept in the
+errors it can fix (observation: in the day logs; consolidation: in the pages) is resumed with
+the findings, at most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+lints the whole wiki once more, and commits it with a message recording the run and lint's
+warnings. Nothing with a lint error is ever committed.
+
+A wiki can start a run with lint errors already committed (a rule tightened since, or a seeded
+wiki). Consolidation is handed those in the pages, and runs for them even when there's nothing
+new to fold in; a run that fails only on errors its last commit already had says so. If
+anything fails, the wiki goes back to its last commit, so the cursor (kept in the
 commit messages) doesn't move and the batch stays new for the next run.
 
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
@@ -174,15 +180,29 @@ def run_librarian(
         sessions: list[tuple[Phase, SessionResult]] = []
         thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
         linter = partial(lint, l0=L0Metadata.of(store.envelopes()), thresholds=thresholds)
-        if batch.episodes:
+        # Errors the last commit already has (a rule tightened since, or a seeded wiki): a
+        # session is judged only on errors it can fix, and consolidation is handed the pages'.
+        committed = _Committed(linter(tree).errors)
+        page_errors = [e for e in committed.errors if _in_pages(e)]
+        observations: list[NewObservation] = []
+        if batch.episodes or page_errors:
             identities = identity_table(store.envelopes(), owner)
-            logged = day_logs(tree)
-            sessions.append(_observe(batch, identities, tree, runner, now, linter))
-            observations = _new_observations(logged, day_logs(tree))
-            if observations:
+            if batch.episodes:
+                logged = day_logs(tree)
+                sessions.append(_observe(batch, identities, tree, runner, now, linter, committed))
+                observations = _new_observations(logged, day_logs(tree))
+            if observations or page_errors:
                 sessions.append(
                     _consolidate(
-                        observations, page_threshold, identities, tree, runner, now, linter
+                        observations,
+                        page_errors,
+                        page_threshold,
+                        identities,
+                        tree,
+                        runner,
+                        now,
+                        linter,
+                        committed,
                     )
                 )
         rewrite_alias_links(tree)
@@ -190,7 +210,8 @@ def run_librarian(
         report = linter(tree)
         if report.errors:
             raise LibrarianRunError(
-                f"the wiki has {len(report.errors)} lint errors:\n" + _findings(report.errors)
+                f"the wiki has {len(report.errors)} lint errors"
+                f"{committed.blame(report.errors)}:\n" + _findings(report.errors)
             )
         commit = repository.commit(commit_message(batch, librarian, sessions, report.warnings))
     except LibrarianRunError as error:
@@ -214,6 +235,37 @@ def last_cursor(repository: WikiRepository) -> Cursor | None:
     return Cursor.parse(value) if value else None
 
 
+@dataclass(frozen=True)
+class _Committed:
+    """The lint errors the wiki had as last committed, before this run changed anything."""
+
+    errors: Sequence[Finding]
+
+    def blame(self, errors: Sequence[Finding]) -> str:
+        """What a failure over `errors` adds: that the last commit already had them all, when
+        it did."""
+        already = {_key(e) for e in self.errors}
+        if errors and all(_key(e) in already for e in errors):
+            return (
+                ", all of them already in the wiki's last commit (this run didn't cause them; "
+                "a rule may have been tightened since, or the wiki was seeded with them)"
+            )
+        return ""
+
+
+def _key(finding: Finding) -> tuple[str, str]:
+    # Not the line: a finding is the same one when lines above it were added.
+    return finding.path, finding.message
+
+
+def _in_days(finding: Finding) -> bool:
+    return finding.path.partition("/")[0] == DAYS
+
+
+def _in_pages(finding: Finding) -> bool:
+    return finding.path.partition("/")[0] in PAGE_FOLDERS
+
+
 def _observe(
     batch: Batch,
     identities: IdentityTable,
@@ -221,6 +273,7 @@ def _observe(
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
+    committed: _Committed,
 ) -> tuple[Phase, SessionResult]:
     before = _tree_state(tree)
     prompt = observation_prompt(batch, runner.paths) + "\n" + identity_prompt(identities)
@@ -237,7 +290,10 @@ def _observe(
                 "observation may change only day logs"
             )
 
-    result = _session(Phase.OBSERVATION, prompt, require_bounds, tree, runner, now, linter)
+    # Observation may change only day logs, so it's judged only on the errors in days/.
+    result = _session(
+        Phase.OBSERVATION, prompt, require_bounds, _in_days, tree, runner, now, linter, committed
+    )
     return Phase.OBSERVATION, result
 
 
@@ -266,13 +322,16 @@ def _new_observations(
 
 def _consolidate(
     observations: Sequence[NewObservation],
+    page_errors: Sequence[Finding],
     page_threshold: int,
     identities: IdentityTable,
     tree: Path,
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
+    committed: _Committed,
 ) -> tuple[Phase, SessionResult]:
+    report = linter(tree)
     prompt = (
         consolidation_prompt(
             observations,
@@ -284,9 +343,15 @@ def _consolidate(
         + "\n"
         + identity_prompt(identities)
         + "\n"
-        + warnings_prompt(linter(tree).warnings)
+        + warnings_prompt(report.warnings)
+        + ("\n" + errors_prompt(page_errors) if page_errors else "")
     )
     before, logged = _tree_state(tree), day_logs(tree)
+    # Consolidation may not change day-log lines, so it can't fix the errors already in them.
+    unfixable = {_key(e) for e in report.errors if _in_days(e)}
+
+    def fixable(finding: Finding) -> bool:
+        return _in_pages(finding) or (_in_days(finding) and _key(finding) not in unfixable)
 
     def require_bounds() -> None:
         outside = [
@@ -312,7 +377,9 @@ def _consolidate(
                 f"{', '.join(edited)}; consolidation may not change the day logs"
             )
 
-    result = _session(Phase.CONSOLIDATION, prompt, require_bounds, tree, runner, now, linter)
+    result = _session(
+        Phase.CONSOLIDATION, prompt, require_bounds, fixable, tree, runner, now, linter, committed
+    )
     return Phase.CONSOLIDATION, result
 
 
@@ -327,28 +394,31 @@ def _session(
     phase: Phase,
     prompt: str,
     require_bounds: Callable[[], None],
+    judged: Callable[[Finding], bool],
     tree: Path,
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
+    committed: _Committed,
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then checks its bounds and lints the wiki. A session
-    that leaves lint errors is resumed with the findings, up to MAX_RESUMES times. Returns the
-    session's result, its cost and turns added up over its attempts."""
+    that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
+    MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
+    the session's result, its cost and turns added up over its attempts."""
     attempts = [runner.start(phase, prompt, now=now)]
     while True:
         result = attempts[-1]
         if not result.ok:
             raise LibrarianRunError(f"the {phase} session failed: {result.error}")
         require_bounds()
-        errors = linter(tree).errors
+        errors = [e for e in linter(tree).errors if judged(e)]
         if not errors:
             return _combined(attempts)
         if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
             resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
             raise LibrarianRunError(
-                f"the {phase} session left {len(errors)} lint errors{resumed}:\n"
-                + _findings(errors)
+                f"the {phase} session left {len(errors)} lint errors{resumed}"
+                f"{committed.blame(errors)}:\n" + _findings(errors)
             )
         attempts.append(runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now))
 
@@ -465,6 +535,30 @@ def consolidation_prompt(
     )
 
 
+ERRORS_HEADING = "## Lint errors"
+
+
+def errors_prompt(errors: Sequence[Finding]) -> str:
+    """Lint errors the wiki's pages already had as last committed, as a section of
+    consolidation's prompt under `ERRORS_HEADING`: the run can't be committed until they're
+    fixed."""
+    return (
+        f"{ERRORS_HEADING}\n\n"
+        "The wiki's pages already had these lint errors when this run started (a rule may have "
+        "been tightened since they were written). The run can't be committed until they are "
+        "fixed: fix each one, following CLAUDE.md, even on a page this run's observations don't "
+        "touch, and change nothing else for it.\n\n"
+        f"```json\n{_json(_listed_findings(errors))}\n```\n"
+    )
+
+
+def _listed_findings(findings: Sequence[Finding]) -> list[dict[str, object]]:
+    return [
+        {"path": f.path, **({"line": f.line} if f.line is not None else {}), "message": f.message}
+        for f in findings
+    ]
+
+
 def _json(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
 
@@ -498,10 +592,7 @@ WARNINGS_HEADING = "## Lint warnings"
 
 def warnings_prompt(warnings: Sequence[Finding]) -> str:
     """Lint's open warnings as a section of consolidation's prompt, under `WARNINGS_HEADING`."""
-    listed = [
-        {"path": w.path, **({"line": w.line} if w.line is not None else {}), "message": w.message}
-        for w in warnings
-    ]
+    listed = _listed_findings(warnings)
     return (
         f"{WARNINGS_HEADING}\n\n"
         "Lint's open warnings about the wiki, which don't block the run: orphan pages, loops "

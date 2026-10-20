@@ -2,8 +2,8 @@
 
 The stand-in plays the librarian's session. It records what it was given (argv, the prompt,
 the episodes listed in it, the identity table under its `## Identity table` heading, lint's
-warnings under `## Lint warnings`, its working directory, the CLAUDE.md there and the settings
-passed to it) to `sessions.jsonl`,
+warnings under `## Lint warnings` and errors under `## Lint errors`, its working directory,
+the CLAUDE.md there and the settings passed to it) to `sessions.jsonl`,
 then follows the script for its phase in `script.json`:
 
 - `{"observe": true}`: one observation per listed episode, in the day log for its day,
@@ -48,6 +48,7 @@ from pa_home.config import (
     load_owner,
     load_time_zone,
 )
+from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import LIBRARIAN_PROJECT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -104,6 +105,8 @@ def stand_in_claude(directory: Path) -> Path:
             identity = json.loads(table[1]) if table else None
             found = re.search(r"^## Lint warnings$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             warnings = json.loads(found[1]) if found else None
+            found = re.search(r"^## Lint errors$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            errors = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -113,7 +116,7 @@ def stand_in_claude(directory: Path) -> Path:
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
-                    "warnings": warnings, "inputs": inputs,
+                    "warnings": warnings, "errors": errors, "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -1605,6 +1608,125 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert "[[north-shore-lodge]] → me" in files[TOPIC]
     assert "[[dave]]" not in files["index.md"]
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+
+
+# Lint errors already in the last commit
+
+BROKEN_TOPIC = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[TOPIC].replace(
+    "Gift: decided the knife set", "Gift: the knife set"
+)
+"""The wedding topic with a malformed decision."""
+
+
+def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
+    """Commits `files` into the wiki under the last run's message, so the cursor stays: as a
+    seeded wiki would be, or one a rule tightened since its last run now rejects."""
+    repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
+    for path, text in files.items():
+        (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
+        (data_root / "wiki" / path).write_text(text)
+    repository.commit(repository.last_commit_message() or "")
+
+
+NEW_EPISODES = {
+    "new observations": (
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+        [{"observe": True}],
+    ),
+    "no new observations": (
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+        [],
+    ),
+    "nothing offered": (
+        {
+            "gmail/sale.eml": email(
+                message_id="sale-0003@example.net", labels="Category Promotions", subject="Sale"
+            )
+        },
+        [{"observe": True}],
+    ),
+}
+
+
+@pytest.mark.parametrize("new", NEW_EPISODES, ids=list(NEW_EPISODES))
+def test_page_errors_already_committed_are_handed_to_consolidation_to_fix(
+    data_root: Path, new: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    commit_by_hand(data_root, {TOPIC: BROKEN_TOPIC})
+    payloads, observation = NEW_EPISODES[new]
+    ingest(data_root, payloads)
+    fixed = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[TOPIC]
+    script(data_root, observation=observation, consolidation=[{"write": TOPIC, "text": fixed}])
+
+    assert run_librarian() == 0
+
+    # Observation can't touch pages, so it's never resumed over one.
+    assert all("--resume" not in s["argv"] for s in sessions(data_root, "observation"))
+    consolidation = sessions(data_root, "consolidation")[-1]
+    assert "--resume" not in consolidation["argv"]
+    [error] = consolidation["errors"]
+    assert error["path"] == TOPIC and "malformed decision" in error["message"]
+    assert wiki_files(data_root)[TOPIC] == fixed
+    assert "lint errors" not in commit_messages(data_root)[0]
+
+
+def test_a_run_without_errors_already_committed_hands_consolidation_none(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    assert consolidation["errors"] is None
+    assert "## Lint errors" not in consolidation["prompt"]
+
+
+ALREADY_COMMITTED = {
+    "a page error consolidation doesn't fix": ({TOPIC: BROKEN_TOPIC}, 3),
+    "a file outside the layout": ({"notes.txt": "Remember the milk.\n"}, 1),
+}
+
+
+@pytest.mark.parametrize("committed", ALREADY_COMMITTED, ids=list(ALREADY_COMMITTED))
+def test_a_run_failing_only_on_errors_already_committed_says_so(
+    data_root: Path, capsys, committed: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    files, consolidations = ALREADY_COMMITTED[committed]
+    commit_by_hand(data_root, files)
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    script(data_root)
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    error = capsys.readouterr().err
+    assert "all of them already in the wiki's last commit" in error
+    assert next(iter(files)) in error
+    # Observation is never resumed over them; consolidation only over the pages it can fix.
+    assert len(sessions(data_root, "observation")) == 2
+    assert len(sessions(data_root, "consolidation")[1:]) == consolidations
+    # Nothing with errors is committed, even errors that were there before.
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
+def test_a_run_failing_on_its_own_errors_doesnt_blame_the_last_commit(data_root: Path, capsys):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    script(data_root, consolidation=pages_with(TOPIC, "Gift: decided", "Gift:"))
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    error = capsys.readouterr().err
+    assert "malformed decision" in error
+    assert "already in the wiki's last commit" not in error
 
 
 # Replay (#64)

@@ -148,3 +148,6 @@ consolidation applies it.
 
 The host lints the wiki after each session. When it resumes you with findings, fix exactly
 those lines, within your phase's bounds, and change nothing else.
+
+Consolidation's prompt may also list, under `## Lint errors`, errors the pages already had
+when the run started: fix them the same way, whether or not this run touches their pages.
