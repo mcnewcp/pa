@@ -1,8 +1,9 @@
 """`pa librarian run`: whole runs over a temporary data root, through a stand-in `claude`.
 
-The stand-in plays the librarian's session. It records what it was given (argv, the prompt
-and the episodes listed in it, its working directory, the CLAUDE.md there and the settings
-passed to it) to `sessions.jsonl`, then follows the script for its phase in `script.json`:
+The stand-in plays the librarian's session. It records what it was given (argv, the prompt,
+the episodes listed in it and the identity table under its `## Identity table` heading, its
+working directory, the CLAUDE.md there and the settings passed to it) to `sessions.jsonl`,
+then follows the script for its phase in `script.json`:
 
 - `{"observe": true}`: one observation per listed episode, in the day log for its day,
   linking `[[someone]]`, or the slugs `links` maps its subject to;
@@ -14,7 +15,8 @@ passed to it) to `sessions.jsonl`, then follows the script for its phase in `scr
 
 With no script, observation observes and consolidation does nothing. Then it prints what
 `claude -p --output-format json` prints. The tests assert on the wiki, the git history and the
-cursor, and on what the session was given (`inputs` holds each fenced JSON block of its prompt).
+cursor, and on what the session was given (`inputs` holds each fenced JSON block of its prompt
+before the identity table).
 """
 
 import json
@@ -55,6 +57,7 @@ def email(
     labels: str = "Inbox",
     date: str = "Wed, 30 Sep 2026 21:30:00 -0500",
     sender: str = "David Kim <dkim@example.net>",
+    to: str = "Argus McNevans <argus@example.com>",
     subject: str = "Hotel block",
     body: str = "The hotel block closes on Oct 9.",
 ) -> bytes:
@@ -63,7 +66,7 @@ def email(
         f"Message-ID: <{message_id}>\r\n"
         f"Date: {date}\r\n"
         f"From: {sender}\r\n"
-        "To: Argus McNevans <argus@example.com>\r\n"
+        f"To: {to}\r\n"
         f"Subject: {subject}\r\n"
         'Content-Type: text/plain; charset="utf-8"\r\n'
         "\r\n"
@@ -92,14 +95,18 @@ def stand_in_claude(directory: Path) -> Path:
             phase = re.search(r"^Phase: (\\w+)$", prompt, re.M)[1]
             listing = re.search(r"^```json\\n(.*?)^```$", prompt, re.M | re.S)
             episodes = json.loads(listing[1]) if listing else []
+            table = re.search(r"^## Identity table$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            identity = json.loads(table[1]) if table else None
+            phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
-                      re.findall(r"^```json\\n(.*?)^```$", prompt, re.M | re.S)]
+                      re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
             claude_md = Path("CLAUDE.md")
             with LOG.open("a") as log:
                 log.write(json.dumps({
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
-                    "settings": settings, "episodes": episodes, "inputs": inputs,
+                    "settings": settings, "episodes": episodes, "identity": identity,
+                    "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -1002,3 +1009,238 @@ def test_the_wedding_pages_pass_lint(data_root: Path):
     assert run_librarian() == 0
 
     assert set(wiki_files(data_root)) >= {PERSON, ORG, TOPIC}
+
+
+def identity(data_root: Path) -> dict:
+    """The identity table the run's (only) observation session was given."""
+    [session] = sessions(data_root, "observation")
+    return session["identity"]
+
+
+def test_consolidation_gets_the_same_identity_table_as_observation(data_root: Path):
+    ingest(
+        data_root,
+        {
+            "gmail/personal.eml": email(),
+            "gmail/work.eml": email(
+                message_id="work@kimlaw.example",
+                sender="David Kim <david.kim@kimlaw.example>",
+                subject="Contract",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    assert consolidation["identity"] is not None
+    assert consolidation["identity"] == identity(data_root)
+    [david] = [p for p in consolidation["identity"]["people"] if p["slug"] == "david-kim"]
+    assert david["addresses"] == ["david.kim@kimlaw.example", "dkim@example.net"]
+    assert consolidation["identity"]["owner"]["slug"] == "me"
+
+
+def test_the_session_gets_addresses_grouped_by_display_name_with_suggested_slugs(
+    data_root: Path,
+):
+    ingest(
+        data_root,
+        {
+            "gmail/personal.eml": email(),
+            "gmail/work.eml": email(
+                message_id="work@kimlaw.example",
+                sender="David Kim <david.kim@kimlaw.example>",
+                to="argus@example.com, =?utf-8?q?Zo=C3=AB?=  Brandt <zoe@example.org>",
+                subject="Contract",
+            ),
+            "gmail/shouty.eml": email(
+                message_id="shouty@example.net",
+                sender="DAVID KIM <dk@example.org>",
+                subject="Lunch",
+            ),
+            "gmail/bare.eml": email(
+                message_id="bare@example.net",
+                sender="pat.hughes@example.net",
+                subject="Hello",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    people = {person["slug"]: person for person in identity(data_root)["people"]}
+    # Display names match whatever their case and spacing; the commonest spelling names them.
+    assert people["david-kim"] == {
+        "slug": "david-kim",
+        "name": "David Kim",
+        "addresses": ["david.kim@kimlaw.example", "dk@example.org", "dkim@example.net"],
+        "organizations": ["kimlaw"],
+    }
+    assert people["zoe-brandt"]["name"] == "Zoë Brandt"
+    assert people["zoe-brandt"]["addresses"] == ["zoe@example.org"]
+    # An address with no display name is a group of its own, its slug read from the address.
+    assert people["pat-hughes"] == {
+        "slug": "pat-hughes",
+        "name": None,
+        "addresses": ["pat.hughes@example.net"],
+        "organizations": [],
+    }
+    assert set(people) == {"david-kim", "zoe-brandt", "pat-hughes"}
+
+
+def test_organizations_come_from_mail_domains_that_arent_webmail(data_root: Path):
+    ingest(
+        data_root,
+        {
+            "gmail/reminder.eml": email(
+                message_id="reminder@birchwood.example",
+                sender="Birchwood Clinic <appointments@birchwood.example>",
+                to="Argus McNevans <argus@example.com>, Hannah Lee <hlee@mail.birchwood.example>",
+                subject="Appointment reminder",
+            ),
+            "gmail/results.eml": email(
+                message_id="results@birchwood.example",
+                sender="Hannah Lee <hannah.lee@birchwood.example>",
+                subject="Results",
+            ),
+            "gmail/gmail.eml": email(
+                message_id="gmail@gmail.com",
+                sender="Ana Ruiz <ana.ruiz@gmail.com>",
+                subject="Coffee?",
+            ),
+            "gmail/uk.eml": email(
+                message_id="quote@builders.co.uk",
+                sender="Harrow Builders <quotes@harrow-builders.co.uk>",
+                to="Argus McNevans <argus@example.com>, accounts@harrow-builders.co.uk",
+                subject="Your quote",
+            ),
+            "gmail/survey.eml": email(
+                message_id="survey@birchwood.example",
+                sender="noreply@birchwood.example",
+                subject="How did we do?",
+            ),
+            # Bulk mail is never offered, so its senders stay out of the table.
+            "gmail/sale.eml": email(
+                message_id="sale@shop.example",
+                labels="Inbox,Category Promotions",
+                sender="Shop <deals@shop.example>",
+                subject="50% off",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    table = identity(data_root)
+    assert table["organizations"] == [
+        {
+            "slug": "birchwood",
+            "name": None,
+            "domains": ["birchwood.example", "mail.birchwood.example"],
+            "addresses": [],
+            "members": ["birchwood-clinic", "hannah-lee", "noreply-birchwood"],
+        },
+        # Named for its domain and writing only from it: the organization's own address.
+        {
+            "slug": "harrow-builders",
+            "name": "Harrow Builders",
+            "domains": ["harrow-builders.co.uk"],
+            "addresses": ["quotes@harrow-builders.co.uk"],
+            "members": ["accounts-harrow-builders"],
+        },
+    ]
+    people = {person["slug"]: person for person in table["people"]}
+    assert set(people) == {
+        "birchwood-clinic",
+        "hannah-lee",
+        "noreply-birchwood",
+        "ana-ruiz",
+        "accounts-harrow-builders",
+    }
+    assert people["hannah-lee"]["organizations"] == ["birchwood"]
+    assert people["birchwood-clinic"]["organizations"] == ["birchwood"]
+    assert people["accounts-harrow-builders"]["organizations"] == ["harrow-builders"]
+    assert people["ana-ruiz"]["organizations"] == []
+    assert table["owner"]["organizations"] == []
+
+
+def test_only_the_owners_configured_addresses_are_the_owners(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com, Argus@McNevans-Design.example")
+    ingest(
+        data_root,
+        {
+            "gmail/impostor.eml": email(
+                message_id="impostor@gmail.com",
+                sender="Argus McNevans <argus.mcnevans@gmail.com>",
+                subject="New address",
+            ),
+            "gmail/nickname.eml": email(
+                message_id="nickname@example.net",
+                sender="gus <gus@lakestays-payments.example>",
+                subject="Wire the deposit",
+            ),
+            "gmail/renamed.eml": email(
+                message_id="renamed@example.com",
+                labels="Sent",
+                sender="Dave <argus@example.com>",
+                to="David Kim <dkim@example.net>",
+                subject="Re: Hotel block",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    table = identity(data_root)
+    assert table["owner"] == {
+        "slug": "me",
+        "name": "Argus McNevans",
+        "other_names": ["Gus"],
+        "addresses": ["argus@example.com", "argus@mcnevans-design.example"],
+        "organizations": ["mcnevans-design"],
+    }
+    people = {person["slug"]: person for person in table["people"]}
+    # Someone else using the owner's name or nickname is someone else.
+    assert people["argus-mcnevans"]["addresses"] == ["argus.mcnevans@gmail.com"]
+    assert people["argus-mcnevans"]["uses_owner_name"] is True
+    assert people["gus"]["addresses"] == ["gus@lakestays-payments.example"]
+    assert people["gus"]["uses_owner_name"] is True
+    # The owner's address is the owner's whatever name it goes by; "Dave" is no one's alias.
+    assert set(people) == {"argus-mcnevans", "gus", "david-kim"}
+    assert "uses_owner_name" not in people["david-kim"]
+    assert all("aliases" not in person for person in people.values())
+    organizations = {org["slug"]: org for org in table["organizations"]}
+    assert organizations["mcnevans-design"]["members"] == ["me"]
+    assert organizations["mcnevans-design"]["domains"] == ["mcnevans-design.example"]
+    assert table["forged"] == []
+
+
+def test_mail_from_the_owners_address_without_the_sent_label_is_flagged_as_forged(
+    data_root: Path,
+):
+    forged_mail = email(
+        message_id="forged@examp1e.com",
+        labels="Inbox,Important",
+        sender="Argus McNevans <ARGUS@example.com>",
+        to="Denise Hart <denise@greatplains.example>",
+        subject="Disregard my last message",
+    )
+    sent_mail = email(
+        message_id="sent@example.com",
+        labels="Sent, Important",
+        sender="Argus McNevans <argus@example.com>",
+        to="Denise Hart <denise@greatplains.example>",
+        subject="Claim",
+    )
+    ingest(data_root, {"gmail/forged.eml": forged_mail, "gmail/sent.eml": sent_mail})
+
+    assert run_librarian() == 0
+
+    [session] = sessions(data_root, "observation")
+    forged_id = next(e["id"] for e in session["episodes"] if e["subject"].startswith("Disregard"))
+    assert session["identity"]["forged"] == [{"episode": forged_id, "address": "argus@example.com"}]
+    # The forged mail is still offered, and the session is told what the flag means.
+    assert len(session["episodes"]) == 2
+    assert "`forged`" in session["prompt"]
