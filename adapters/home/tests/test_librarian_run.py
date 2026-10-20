@@ -1556,3 +1556,47 @@ def test_lint_warnings_are_handed_to_the_next_consolidation(data_root: Path):
         }
     ]
     assert "only on the warnings about pages you touch" in consolidation["prompt"]
+
+
+def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_root: Path):
+    # The first run gives Dave a page of his own, linked from the day log.
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = current_wedding_pages()
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"Hotel block": ["dave", "wedding"]}}],
+        consolidation=[{"write": "people/dave.md", "text": pages[PERSON]}],
+    )
+    assert run_librarian() == 0
+    assert "[[dave]]" in wiki_files(data_root)["index.md"]
+    # The next merges it into david-kim, which takes "Dave" as an alias; a page still links
+    # [[dave]], and so do the day logs.
+    ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
+    topic = pages[TOPIC].replace("The block closes", "[[dave]] says the block closes")
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"RSVP": ["dave"]}}],
+        consolidation=[
+            {"delete": "people/dave.md"},
+            {"write": PERSON, "text": pages[PERSON]},
+            {"write": ORG, "text": pages[ORG]},
+            {"write": TOPIC, "text": topic},
+        ],
+    )
+
+    assert run_librarian() == 0
+
+    files = wiki_files(data_root)
+    assert files["days/2026-09-30.md"] == (
+        f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
+    )
+    [rsvp] = sessions(data_root, "observation")[-1]["episodes"]
+    assert files["days/2026-10-02.md"] == (
+        f"- email about RSVP with [[david-kim]] [ep:{rsvp['id']}]\n"
+    )
+    assert "[[david-kim]] says the block closes" in files[TOPIC]
+    # A page's own slug and other pages' links stay as they are.
+    assert files[PERSON] == pages[PERSON]
+    assert "[[north-shore-lodge]] → me" in files[TOPIC]
+    assert "[[dave]]" not in files["index.md"]
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""

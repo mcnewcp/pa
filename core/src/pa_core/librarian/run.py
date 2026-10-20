@@ -2,10 +2,12 @@
 
 A run picks the batch of episodes captured since the cursor. The librarian observes them into
 day logs in one session, then folds the new observations into pages in a second, given the
-reference counts the host computes from the day logs. After each session the host checks it
-stayed in bounds and lints the wiki; then it regenerates `index.md` and commits the wiki with
-a message recording the run. If anything fails, the wiki goes back to its last commit, so the
-cursor (kept in the commit messages) doesn't move and the batch stays new for the next run.
+reference counts the host computes from the day logs and lint's open warnings. After each
+session the host checks it stayed in bounds and lints the wiki; a session that leaves lint
+errors is resumed with the findings, at most twice. Then the host rewrites links to aliases,
+regenerates `index.md`, and commits the wiki with a message recording the run and lint's
+warnings. If anything fails, the wiki goes back to its last commit, so the cursor (kept in the
+commit messages) doesn't move and the batch stays new for the next run.
 
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
@@ -30,6 +32,7 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
+from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
 from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
 from pa_core.owner import Owner
@@ -177,6 +180,7 @@ def run_librarian(
                         observations, page_threshold, identities, tree, runner, now, linter
                     )
                 )
+        rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
         if report.errors:

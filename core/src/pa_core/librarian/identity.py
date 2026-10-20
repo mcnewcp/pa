@@ -30,13 +30,12 @@ Nicknames that appear only in bodies ("Okie") are left to the librarian, which r
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pa_core.envelope import Envelope, Kind, Role
+from pa_core.librarian.wiki import slugify
 from pa_core.owner import Owner
 from pa_core.selection import SKIPPED, category
 
@@ -266,11 +265,11 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
     for _, kind, claimant in sorted(claims):
         if kind == "organization":
             name = _commonest(spellings[own[claimant]]) if claimant in own else ""
-            base = _slug(name) if name else _domain_label(claimant)
+            base = slugify(name) if name else _domain_label(claimant)
             org_slugs[claimant] = slugs.claim(base, f"{kind}:{claimant}")
         else:
             name = _commonest(spellings[claimant])
-            base = _slug(name) if name else _address_slug(groups[claimant][0])
+            base = slugify(name) if name else _address_slug(groups[claimant][0])
             person_slugs[claimant] = slugs.claim(base, f"{kind}:{claimant}")
 
     owner_names = {_key(n) for n in (owner.name, *owner.other_names)}
@@ -333,20 +332,14 @@ class _Slugs:
         return slug
 
 
-def _slug(text: str) -> str:
-    """Lowercase ASCII words joined by hyphens: "Zoë Brandt" is `zoe-brandt`."""
-    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return "-".join(re.findall(r"[a-z0-9]+", ascii_text.lower()))
-
-
 def _compact(text: str) -> str:
     """A name's letters and digits alone: "ClearFlow Gutters" is `clearflowgutters`."""
-    return _slug(text).replace("-", "")
+    return slugify(text).replace("-", "")
 
 
 def _address_slug(address: str) -> str:
     """A slug for an address with no name: its local part, then its organization's name."""
-    local = _slug(address.partition("@")[0])
+    local = slugify(address.partition("@")[0])
     registered = _registered_of(address)
     org = _domain_label(registered) if registered is not None else ""
     return "-".join(part for part in (local, org) if part)
@@ -378,7 +371,7 @@ def _registered(domain: str) -> str:
 
 def _domain_label(domain: str) -> str:
     """The slug of a registered domain's name: `harrow-builders` of `harrow-builders.co.uk`."""
-    return _slug(domain.split(".")[0])
+    return slugify(domain.split(".")[0])
 
 
 def _commonest(seen: Counter[str]) -> str:
