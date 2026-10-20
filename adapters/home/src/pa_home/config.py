@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
@@ -14,6 +16,14 @@ DATA_DIR_VAR = "PA_DATA_DIR"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
+TIME_ZONE_VAR = "PA_TIME_ZONE"
+# The librarian: its model and effort, the caps on each session, and the command that runs
+# `claude` where the sessions are fenced.
+LIBRARIAN_MODEL_VAR = "PA_LIBRARIAN_MODEL"
+LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
+LIBRARIAN_MAX_TURNS_VAR = "PA_LIBRARIAN_MAX_TURNS"
+LIBRARIAN_TIMEOUT_VAR = "PA_LIBRARIAN_TIMEOUT_SECONDS"
+LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -41,6 +51,30 @@ class DataRoot:
     @property
     def catalog(self) -> Path:
         return self.path / "catalog" / "catalog.sqlite"
+
+    @property
+    def wiki(self) -> Path:
+        """L1: the librarian's wiki."""
+        return self.path / "wiki"
+
+    @property
+    def wiki_git(self) -> Path:
+        """The wiki's git directory, beside the wiki and never inside it."""
+        return self.path / "wiki.git"
+
+
+@dataclass(frozen=True)
+class LibrarianConfig:
+    """How the librarian's sessions run."""
+
+    model: str = "claude-opus-5-5"
+    effort: str = "medium"
+    max_turns: int = 200
+    """The most turns one session may take."""
+    timeout_seconds: float = 3600
+    """The longest one session may run."""
+    command: tuple[str, ...] = ("claude",)
+    """What runs `claude` for a session: the CLI itself, or a command that reaches its VM."""
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
@@ -94,6 +128,35 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     )
 
 
+def load_time_zone(environ: Mapping[str, str] = os.environ) -> ZoneInfo:
+    """The owner's time zone, which decides each episode's day in the wiki."""
+    name = environ.get(TIME_ZONE_VAR, "").strip()
+    if not name:
+        raise ConfigError(
+            f"The owner's time zone is missing: set {TIME_ZONE_VAR} to an IANA time zone, "
+            "such as America/Chicago."
+        )
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ConfigError(
+            f"{TIME_ZONE_VAR} is not a known IANA time zone, such as America/Chicago: {name!r}"
+        ) from error
+
+
+def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianConfig:
+    """The librarian's configuration: Opus 5.5 at medium effort unless configured otherwise."""
+    default = LibrarianConfig()
+    command = environ.get(LIBRARIAN_COMMAND_VAR, "").strip()
+    return LibrarianConfig(
+        model=environ.get(LIBRARIAN_MODEL_VAR, "").strip() or default.model,
+        effort=environ.get(LIBRARIAN_EFFORT_VAR, "").strip() or default.effort,
+        max_turns=int(_positive(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns)),
+        timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
+        command=tuple(shlex.split(command)) if command else default.command,
+    )
+
+
 def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
     """Refuses to go on unless restic's repository and password are configured."""
     missing = [
@@ -106,6 +169,19 @@ def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
             f"Backup configuration is missing: set {' and '.join(missing)}. "
             "These are restic's own variables: the repository to back up to and its password."
         )
+
+
+def _positive(environ: Mapping[str, str], var: str, default: float) -> float:
+    value = environ.get(var, "").strip()
+    if not value:
+        return default
+    try:
+        number = float(value)
+    except ValueError:
+        number = 0.0
+    if not number > 0:
+        raise ConfigError(f"{var} must be a positive number (got {value!r}).")
+    return number
 
 
 def _comma_separated(environ: Mapping[str, str], var: str) -> tuple[str, ...]:

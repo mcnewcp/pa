@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "${l0}",
+      "${wiki}"
+    ]
+  },
+  "enableAllProjectMcpServers": false,
+  "disableClaudeAiConnectors": true
+}
