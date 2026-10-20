@@ -111,16 +111,25 @@ warnings.
      [[pinecrest-dental]].`, cited).
 4. **Loops.** Record every request and commitment still open as a loop, on its one page (the
    topic's page, or else the other party's), never on two.
-   - Record implied waits as loops too: a permit office's "applications are reviewed within
-     10 business days" is a loop it promised, due on the tenth business day.
+   - Record implied waits as loops too, owed by whoever will deliver, with `(implied)` at the
+     end of `<what>`: a permit office's "applications are reviewed within 10 business days" is
+     a loop it promised, due on the tenth business day, and the owner's note "the vet will
+     call with the test results in 2 to 4 days" is the vet's loop, due on the fourth day.
+   - A loop needs a party who owes and a party owed. An offer's expiry ("the estimate is good
+     for 30 days"), a deadline that binds no one, and an instruction ("bring your insurance
+     card", "grip socks required") go in Current state or Notes instead.
+   - One request is one loop: when the owing party later promises it, or a date for it, add
+     the due date and the promise's citation to the open loop rather than opening another.
    - Close a loop when any episode settles it, in any thread and from anyone: a builder's
      receipt forwarded by a neighbor closes the lender's request for that receipt. For each
      new observation, check the open loops on the pages it touches.
 5. **Decisions.** Record proposals, decisions, and rejections on the topic's page, superseding
    in place when a later decision replaces one.
 6. **Keep each touched page whole.** Rewrite its Current state whenever its decisions or loops
-   change, so that it agrees with the lines below it. Update `summary`, `status`, and set
-   `updated` to today's date.
+   change, so that it agrees with the lines below it. Current state says where things stand
+   now in a few lines, not how they got there: rewrite it rather than appending to it, and
+   drop what's been overtaken (the day logs keep the timeline). Update `summary`, `status`,
+   and set `updated` to today's date.
 7. **Warnings.** Act on a lint warning only when it is about a page you touched this run; the
    rest wait for a later review.
 

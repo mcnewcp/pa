@@ -90,8 +90,8 @@ matter has concluded; `dormant` means it has paused and may resume.
 
 ### Sections
 
-- **Current state** is free-form: a few lines saying where things stand now. It agrees with
-  the decisions and loops below it.
+- **Current state** is free-form: a few lines saying where things stand now, not a history
+  (the day logs are the timeline). It agrees with the decisions and loops below it.
 - **Decisions** (topics only) holds decision lines.
 - **Open loops** holds loop lines, open and closed.
 - **Notes** is free-form: anything else worth keeping, such as how a person is related to an
@@ -127,12 +127,20 @@ Something owed by one party to another:
 ```
 
 - Each party is `me` or one `[[slug]]`.
+- A loop is something one party owes another: a reply, a document, a payment, a visit, a
+  result. An offer's expiry ("the estimate is good for 30 days"), a deadline nobody owes
+  anything by, and an instruction ("bring your insurance card") are facts for Current state
+  or Notes, not loops.
 - `asked` means the party owed asked for it; `promised` means the party owing promised it. A
   wait nobody promised in words ("X-rays are emailed within a week") is a loop too, promised
-  by whoever said it.
+  by whoever said it, and its `<what>` ends with `(implied)`, as below.
 - The date after `asked` or `promised` is the day the loop opened. `due` is there only when a
   date was given, or follows from one ("within a week" is due seven days later).
 - `<what>` holds no ` · `.
+
+```
+- [ ] [[pinecrest-dental]] → me: X-rays by email (implied) · promised 2026-10-01 · due 2026-10-08 [ep:obsidian_5555555555555555]
+```
 
 A closed loop stays in place, checked, with the day it closed and the episode that settled
 it; it keeps its opening citation:
@@ -158,6 +166,7 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 |---|---|---|
 | what the owner is waiting on | `^- \[ \] .* → me: ` | `people/ orgs/ topics/` |
 | what the owner has promised | `^- \[ \] me → .*· promised ` | `people/ orgs/ topics/` |
+| waits nobody promised in words | `^- \[ \] .*\(implied\) · ` | `people/ orgs/ topics/` |
 | every open loop, or every closed one | `^- \[ \] `, `^- \[x\] ` | `people/ orgs/ topics/` |
 | loops with a due date (overdue is due before now) | `^- \[ \] .*· due [0-9-]{10} ` | `people/ orgs/ topics/` |
 | decisions still only proposed | `^- [0-9-]{10} · [^:]+: proposed ` | `topics/` |
