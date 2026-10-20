@@ -6,11 +6,12 @@ the owner and the paths the session sees L0 and the wiki at, and nothing else di
 
 import json
 import re
+from datetime import date
 from pathlib import Path, PurePosixPath
 
 import pytest
 
-from pa_core.librarian.lint import lint
+from pa_core.librarian.lint import L0Metadata, Thresholds, lint
 from pa_core.librarian.wiki import STATUSES, parse_decision, parse_loop, parse_observation
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
@@ -185,7 +186,14 @@ def _lint_one(tmp_path: Path, wiki_path: str, text: str) -> list[str]:
     tree = tmp_path / "wiki"
     (tree / wiki_path).parent.mkdir(parents=True)
     (tree / wiki_path).write_text(text)
-    return [str(finding) for finding in lint(tree, episode_ids={EPISODE}).errors]
+    l0 = L0Metadata(
+        episode_ids=frozenset({EPISODE}),
+        addresses=frozenset(
+            {"dave@example.com", "david.kim@example.org", "front-desk@riverside-clinic.example"}
+        ),
+    )
+    thresholds = Thresholds(today=date(2026, 10, 5), page_threshold=3, loop_age_days=30)
+    return [str(finding) for finding in lint(tree, l0=l0, thresholds=thresholds).errors]
 
 
 def test_there_are_templates_for_each_page_type_and_the_day_log():

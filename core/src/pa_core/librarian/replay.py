@@ -34,6 +34,7 @@ from pathlib import Path
 from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch
 from pa_core.librarian.run import (
+    LOOP_AGE_DAYS,
     PAGE_THRESHOLD,
     Librarian,
     LibrarianRunError,
@@ -74,6 +75,7 @@ def replay_librarian(
     batch_days: int = BATCH_DAYS,
     as_of: datetime | None = None,
     page_threshold: int = PAGE_THRESHOLD,
+    loop_age_days: int = LOOP_AGE_DAYS,
     progress: Callable[[RunOutcome], None] = lambda _: None,
 ) -> ReplayOutcome:
     """Replays L0 through the librarian into `repository`, `batch_days` days at a time.
@@ -102,6 +104,7 @@ def replay_librarian(
                 librarian=librarian,
                 now=window.end.astimezone(time_zone),
                 page_threshold=page_threshold,
+                loop_age_days=loop_age_days,
                 batch=batch,
             )
         except LibrarianRunError as error:

@@ -7,6 +7,7 @@ The wiki is `index.md` and four folders of Markdown: `days/` (day logs, `YYYY-MM
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
@@ -55,6 +56,8 @@ CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
 LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
 """A link to a person, organization, or topic by slug, whether or not it has a page yet."""
+NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
+"""An external fact the librarian couldn't look up, inline where it's missing."""
 
 _OBSERVATION = re.compile(
     rf"- (?P<text>\S.*?) (?P<citations>{CITATION.pattern}(?: {CITATION.pattern})*)"
@@ -83,6 +86,13 @@ def parse_observation(line: str) -> Observation | None:
     if not links:
         return None
     return Observation(match["text"], links, tuple(CITATION.findall(match["citations"])))
+
+
+def slugify(text: str) -> str:
+    """The slug for a name: lowercase ASCII words joined by hyphens ("Zoë Brandt" is
+    `zoe-brandt`); empty when the name has no letters or digits."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return "-".join(re.findall(r"[a-z0-9]+", ascii_text.lower()))
 
 
 def citations(text: str) -> list[str]:

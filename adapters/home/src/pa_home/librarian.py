@@ -62,6 +62,7 @@ def run(
             librarian=_librarian(config, project),
             now=clock().astimezone(time_zone),
             page_threshold=config.page_threshold,
+            loop_age_days=config.loop_age_days,
         )
 
 
@@ -109,6 +110,7 @@ def replay(
                 batch_days=batch_days,
                 as_of=as_of,
                 page_threshold=config.page_threshold,
+                loop_age_days=config.loop_age_days,
                 progress=progress,
             )
 

@@ -180,7 +180,7 @@ def _run_librarian(data_root: DataRoot) -> None:
     batch = outcome.batch
     print(
         f"librarian: offered {len(batch.episodes)} of {batch.captured} new episodes; "
-        f"committed {outcome.commit[:8]}"
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
     )
 
 

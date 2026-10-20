@@ -1,8 +1,9 @@
 """`pa librarian run`: whole runs over a temporary data root, through a stand-in `claude`.
 
 The stand-in plays the librarian's session. It records what it was given (argv, the prompt,
-the episodes listed in it and the identity table under its `## Identity table` heading, its
-working directory, the CLAUDE.md there and the settings passed to it) to `sessions.jsonl`,
+the episodes listed in it, the identity table under its `## Identity table` heading, lint's
+warnings under `## Lint warnings`, its working directory, the CLAUDE.md there and the settings
+passed to it) to `sessions.jsonl`,
 then follows the script for its phase in `script.json`:
 
 - `{"observe": true}`: one observation per listed episode, in the day log for its day,
@@ -14,9 +15,10 @@ then follows the script for its phase in `script.json`:
 - `{"fail": <message>}`: report an error and exit 1.
 
 An action with `"when": <subject>` is taken only by a session listing an episode with that
-subject.
+subject. A resumed session (`--resume`) follows `<phase>_resume` instead, such as
+`observation_resume`.
 
-With no script, observation observes and consolidation does nothing. Then it prints what
+With no script, observation observes and everything else does nothing. Then it prints what
 `claude -p --output-format json` prints. The tests assert on the wiki, the git history and the
 cursor, and on what the session was given (`inputs` holds each fenced JSON block of its prompt
 before the identity table).
@@ -100,6 +102,8 @@ def stand_in_claude(directory: Path) -> Path:
             episodes = json.loads(listing[1]) if listing else []
             table = re.search(r"^## Identity table$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             identity = json.loads(table[1]) if table else None
+            found = re.search(r"^## Lint warnings$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            warnings = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -109,7 +113,7 @@ def stand_in_claude(directory: Path) -> Path:
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
-                    "inputs": inputs,
+                    "warnings": warnings, "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -120,7 +124,9 @@ def stand_in_claude(directory: Path) -> Path:
                     file.write(text)
 
             default = {"observation": [{"observe": True}]}
-            for action in script.get(phase, default.get(phase, [])):
+            # A resumed session follows `<phase>_resume`; a new one, `<phase>`.
+            key = f"{phase}_resume" if "--resume" in argv else phase
+            for action in script.get(key, default.get(key, [])):
                 if action.get("when") not in (None, *(e.get("subject") for e in episodes)):
                     continue
                 if "observe" in action:
@@ -972,6 +978,28 @@ CONSOLIDATION_FAILURES = {
         pages_with(TOPIC, f"Oct 9 [ep:{HOTEL_EMAIL_ID}]", "Oct 9 [ep:gmail_0000000000000000]"),
         "gmail_0000000000000000",
     ),
+    "an address that isn't in L0": (
+        pages_with(
+            PERSON, "emails: [dkim@example.net]", "emails: [dkim@example.net, d@kim.example]"
+        ),
+        "d@kim.example, which isn't in L0",
+    ),
+    "a domain that isn't in L0": (
+        pages_with(ORG, "domains: []", "domains: [northshorelodge.example]"),
+        "northshorelodge.example, which isn't in L0",
+    ),
+    "an address on two pages": (
+        [
+            *pages_with(PERSON, "", ""),
+            {
+                "write": "people/dave.md",
+                "text": wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON].replace(
+                    "[dkim@example.net]", "[DKim@example.net]"
+                ),
+            },
+        ],
+        "an address belongs on one page",
+    ),
 }
 
 
@@ -1014,6 +1042,24 @@ def test_the_wedding_pages_pass_lint(data_root: Path):
     assert run_librarian() == 0
 
     assert set(wiki_files(data_root)) >= {PERSON, ORG, TOPIC}
+
+
+def test_a_pages_addresses_and_domains_may_come_from_any_mail_in_l0(data_root: Path):
+    """The control for the identity errors: L0's metadata is every episode's participants,
+    even mail never offered to the librarian."""
+    promotion = email(
+        message_id="offer@northshorelodge.example",
+        labels="Inbox,Category Promotions",
+        sender="North Shore Lodge <offers@mail.northshorelodge.example>",
+        subject="Winter rates",
+    )
+    ingest(data_root, {"gmail/hotel.eml": email(), "gmail/offer.eml": promotion})
+    pages = pages_with(ORG, "domains: []", "domains: [mail.northshorelodge.example]")
+    script(data_root, consolidation=pages)
+
+    assert run_librarian() == 0
+
+    assert "domains: [mail.northshorelodge.example]" in wiki_files(data_root)[ORG]
 
 
 def identity(data_root: Path) -> dict:
@@ -1249,6 +1295,316 @@ def test_mail_from_the_owners_address_without_the_sent_label_is_flagged_as_forge
     # The forged mail is still offered, and the session is told what the flag means.
     assert len(session["episodes"]) == 2
     assert "`forged`" in session["prompt"]
+
+
+MALFORMED = "- nothing linked or cited\n"
+"""A day-log line lint rejects."""
+
+
+@pytest.mark.parametrize("phase", ["observation", "consolidation"])
+def test_a_session_that_leaves_lint_errors_is_resumed_with_the_findings_and_fixes_them(
+    data_root: Path, phase: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    broken = pages[TOPIC].replace("Gift: decided the knife set", "Gift: the knife set")
+    if phase == "observation":
+        script(
+            data_root,
+            observation=[{"observe": True}, {"append": "days/2026-09-30.md", "text": MALFORMED}],
+            observation_resume=[{"write": "days/2026-09-30.md", "text": HOTEL_DAY_LOG}],
+        )
+        finding = "days/2026-09-30.md:2: malformed observation"
+    else:
+        script(
+            data_root,
+            observation=[{"observe": True}],
+            consolidation=[{"write": TOPIC, "text": broken}],
+            consolidation_resume=[{"write": TOPIC, "text": pages[TOPIC]}],
+        )
+        finding = f"{TOPIC}:"
+
+    assert run_librarian() == 0
+
+    started, resumed = sessions(data_root, phase)
+    assert "--resume" not in started["argv"]
+    assert flag(resumed["argv"], "--resume") == "session-1"
+    assert finding in resumed["prompt"]
+    files = wiki_files(data_root)
+    assert files["days/2026-09-30.md"] == HOTEL_DAY_LOG
+    if phase == "consolidation":
+        assert "malformed decision" in resumed["prompt"]
+        assert files[TOPIC] == pages[TOPIC]
+    fields = trailers(commit_messages(data_root)[0])
+    name = phase.capitalize()
+    # A resumed session's cost and turns add up over its attempts.
+    assert fields[f"{name}-Resumes"] == "1"
+    assert fields[f"{name}-Cost-USD"] == "0.0842"
+    assert fields[f"{name}-Turns"] == "12"
+
+
+@pytest.mark.parametrize("phase", ["observation", "consolidation"])
+def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
+    data_root: Path, capsys, phase: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    malformed = [{"append": "days/2026-10-02.md", "text": MALFORMED}]
+    broken = pages_with(TOPIC, "Gift: decided the knife set", "Gift: the knife set")
+    # Each resume makes it worse, with a file lint rejects.
+    worse = {
+        "observation": {"append": "days/2026-10-03.md", "text": MALFORMED},
+        "consolidation": {"write": "topics/worse.md", "text": "No frontmatter.\n"},
+    }[phase]
+    script(
+        data_root,
+        observation=[{"observe": True}, *(malformed if phase == "observation" else [])],
+        consolidation=broken if phase == "consolidation" else [],
+        **{f"{phase}_resume": [worse]},
+    )
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    attempts = sessions(data_root, phase)[-3:]
+    assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
+    # The first run's two sessions, then this run's: no third resume.
+    assert len(sessions(data_root)) == 2 + (3 if phase == "observation" else 4)
+    error = capsys.readouterr().err
+    assert "lint errors after 2 resumes" in error
+    assert worse.get("append", worse.get("write")) in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+    script(data_root)
+    assert run_librarian() == 0
+    assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["RSVP"]
+
+
+def days_ago(days: int) -> str:
+    """The date `days` days before today in the owner's time zone; runs are told the clock."""
+    return (datetime.now(ZoneInfo("America/Chicago")).date() - timedelta(days=days)).isoformat()
+
+
+def current_wedding_pages() -> dict[str, str]:
+    """The wedding pages, citing the hotel email, with their open loops opened yesterday."""
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    pages[PERSON] = pages[PERSON].replace("promised 2026-10-02", f"promised {days_ago(1)}")
+    pages[TOPIC] = pages[TOPIC].replace(
+        "the room list · asked 2026-09-30", f"the room list · asked {days_ago(1)}"
+    )
+    return pages
+
+
+KITCHEN = textwrap.dedent(
+    f"""\
+    ---
+    type: topic
+    aliases: []
+    status: active
+    summary: The kitchen remodel.
+    updated: 2026-10-02
+    ---
+    # Kitchen
+
+    ## Current state
+    Waiting on a quote [ep:{HOTEL_EMAIL_ID}].
+
+    ## Decisions
+
+    ## Open loops
+
+    ## Notes
+    """
+)
+"""A topic page nothing links to."""
+
+
+def _edit(path: str, old: str, new: str):
+    def edit(pages: dict[str, str]) -> None:
+        assert old in pages[path], old
+        pages[path] = pages[path].replace(old, new, 1)
+
+    return edit
+
+
+WARNINGS = {
+    "an orphan page": (
+        lambda pages: pages.update({"topics/kitchen.md": KITCHEN}),
+        "topics/kitchen.md: an orphan page",
+        {},
+    ),
+    "a loop past due": (
+        _edit(
+            TOPIC,
+            f"asked {days_ago(1)} [ep:",
+            f"asked {days_ago(5)} · due {days_ago(2)} [ep:",
+        ),
+        f"{TOPIC}:20: a loop past due: due {days_ago(2)}, 2 days ago",
+        {},
+    ),
+    "a loop open more than 30 days": (
+        _edit(PERSON, f"promised {days_ago(1)}", f"promised {days_ago(31)}"),
+        f"{PERSON}:15: a loop open 31 days",
+        {},
+    ),
+    "a loop open longer than configured": (
+        _edit(PERSON, f"promised {days_ago(1)}", f"promised {days_ago(11)}"),
+        f"{PERSON}:15: a loop open 11 days",
+        {"PA_LIBRARIAN_LOOP_AGE_DAYS": "10"},
+    ),
+    "a shared alias": (
+        _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, dave]"),
+        f"{TOPIC}: a duplicate candidate: it shares the alias dave with {PERSON}",
+        {},
+    ),
+    "near-identical slugs": (
+        lambda pages: pages.update({"topics/weddings.md": KITCHEN}),
+        f"topics/weddings.md: a duplicate candidate: its slug is nearly {TOPIC}'s",
+        {},
+    ),
+    "a slug over the threshold with no page": (
+        lambda pages: pages.pop(TOPIC),
+        "`wedding` is linked on 3 days, reaching the page threshold of 3, but has no page",
+        {},
+    ),
+    "a needs-lookup marker": (
+        _edit(TOPIC, "The block closes on Oct 9", "[needs lookup: Lodge check-in time] Oct 9"),
+        f"{TOPIC}:23: needs lookup: Lodge check-in time",
+        {},
+    ),
+}
+
+
+def run_with_wedding_pages(data_root: Path, edit=None) -> None:
+    """One run over three days of wedding mail, consolidation writing the wedding pages
+    (changed by `edit`, if given)."""
+    ingest(
+        data_root,
+        {
+            "gmail/hotel.eml": email(),
+            **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
+            **wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"),
+        },
+    )
+    pages = current_wedding_pages()
+    if edit is not None:
+        edit(pages)
+    script(
+        data_root,
+        observation=[{"observe": True, "links": WEDDING}],
+        consolidation=[{"write": path, "text": text} for path, text in pages.items()],
+    )
+    assert run_librarian() == 0
+
+
+def test_a_run_without_lint_warnings_says_so_in_its_commit(data_root: Path):
+    run_with_wedding_pages(data_root)
+
+    [message, *_] = commit_messages(data_root)
+    assert trailers(message)["Lint-Warnings"] == "0"
+    assert "Lint warnings" not in message
+
+
+@pytest.mark.parametrize("warning", WARNINGS, ids=list(WARNINGS))
+def test_lint_warnings_dont_block_the_run_and_are_recorded_in_its_commit(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys, warning: str
+):
+    edit, expected, environment = WARNINGS[warning]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    run_with_wedding_pages(data_root, edit)
+
+    [message, *_] = commit_messages(data_root)
+    _, warnings, fields = message.split("\n\n")
+    assert warnings.startswith("Lint warnings:\n- ")
+    assert expected in warnings
+    count = len(warnings.splitlines()) - 1
+    assert trailers(fields)["Lint-Warnings"] == str(count)
+    assert f"{count} lint warnings" in capsys.readouterr().out
+    # The warnings don't hide the cursor from the next run.
+    ingest(data_root, wedding_mail("Gift", "Tue, 6 Oct 2026 09:00:00 -0500"))
+    script(data_root)
+    assert run_librarian() == 0
+    assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["Gift"]
+
+
+def test_lint_warnings_are_handed_to_the_next_consolidation(data_root: Path):
+    run_with_wedding_pages(data_root, WARNINGS["an orphan page"][0])
+    [first] = sessions(data_root, "consolidation")
+    ingest(data_root, wedding_mail("Toast", "Tue, 6 Oct 2026 09:00:00 -0500"))
+    script(data_root)
+
+    assert run_librarian() == 0
+
+    [observation] = sessions(data_root, "observation")[1:]
+    [consolidation] = sessions(data_root, "consolidation")[1:]
+    assert observation["warnings"] is None
+    # The open warnings as consolidation starts: before the first run's pages, `wedding` had
+    # reached the threshold with no page; the kitchen page it wrote is an orphan.
+    assert first["warnings"] == [
+        {
+            "path": "days/2026-10-05.md",
+            "message": "`wedding` is linked on 3 days, reaching the page threshold of 3, "
+            "but has no page",
+        }
+    ]
+    assert consolidation["warnings"] == [
+        {
+            "path": "topics/kitchen.md",
+            "message": "an orphan page: nothing in the wiki links [[kitchen]]",
+        }
+    ]
+    assert "only on the warnings about pages you touch" in consolidation["prompt"]
+
+
+def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_root: Path):
+    # The first run gives Dave a page of his own, linked from the day log.
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = current_wedding_pages()
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"Hotel block": ["dave", "wedding"]}}],
+        consolidation=[{"write": "people/dave.md", "text": pages[PERSON]}],
+    )
+    assert run_librarian() == 0
+    assert "[[dave]]" in wiki_files(data_root)["index.md"]
+    # The next merges it into david-kim, which takes "Dave" as an alias; a page still links
+    # [[dave]], and so do the day logs.
+    ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
+    topic = pages[TOPIC].replace("The block closes", "[[dave]] says the block closes")
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"RSVP": ["dave"]}}],
+        consolidation=[
+            {"delete": "people/dave.md"},
+            {"write": PERSON, "text": pages[PERSON]},
+            {"write": ORG, "text": pages[ORG]},
+            {"write": TOPIC, "text": topic},
+        ],
+    )
+
+    assert run_librarian() == 0
+
+    files = wiki_files(data_root)
+    assert files["days/2026-09-30.md"] == (
+        f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
+    )
+    [rsvp] = sessions(data_root, "observation")[-1]["episodes"]
+    assert files["days/2026-10-02.md"] == (
+        f"- email about RSVP with [[david-kim]] [ep:{rsvp['id']}]\n"
+    )
+    assert "[[david-kim]] says the block closes" in files[TOPIC]
+    # A page's own slug and other pages' links stay as they are.
+    assert files[PERSON] == pages[PERSON]
+    assert "[[north-shore-lodge]] → me" in files[TOPIC]
+    assert "[[dave]]" not in files["index.md"]
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
 
 # Replay (#64)
