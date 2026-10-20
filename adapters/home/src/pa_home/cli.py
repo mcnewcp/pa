@@ -60,6 +60,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=True,
         help="The only directory the assistant may write to.",
     )
+    render.add_argument(
+        "--wiki", type=Path, help="The wiki the assistant reads beside L0 (default: none)."
+    )
     librarian_parser = commands.add_parser("librarian", help="Keep the wiki over L0.")
     librarian_commands = librarian_parser.add_subparsers(dest="librarian_command", required=True)
     librarian_commands.add_parser(
@@ -109,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "agent-project":
-            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch)
+            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch, wiki=args.wiki)
             return 0
         if args.command == "librarian" and args.librarian_command == "replay":
             _replay(args.target, args.corpus, args.as_of, args.batch_days, resume=args.resume)
@@ -238,7 +241,7 @@ def _replay(
     print(f"librarian replay: committed {len(outcome.runs)} batches into {target}")
 
 
-def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
+def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
     owner = load_owner()
     target = target.expanduser().resolve()
     require_outside_repository(
@@ -247,6 +250,10 @@ def _render_agent_project(target: Path, *, l0: Path, scratch: Path) -> None:
         "A rendered agent project names the owner, so it must live outside the repository.",
     )
     render_agent_project(
-        target, owner=owner, l0=l0.expanduser().resolve(), scratch=scratch.expanduser().resolve()
+        target,
+        owner=owner,
+        l0=l0.expanduser().resolve(),
+        scratch=scratch.expanduser().resolve(),
+        wiki=wiki.expanduser().resolve() if wiki else None,
     )
     print(f"rendered the agent project into {target}")
