@@ -192,7 +192,7 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         "## Cited episodes opened",
         "",
         "Of the episodes cited by every answer in every run whose tool calls were recorded, the "
-        "share whose file the session read (n/a: none cite anything).",
+        "share whose contents reached the session (n/a: none cite anything).",
         "",
         f"| Category | {' | '.join(_cell(label) for label in labels)} |",
         f"|---|{'---|' * len(labels)}",
