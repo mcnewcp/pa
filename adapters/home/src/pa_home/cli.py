@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
@@ -27,6 +27,7 @@ from pa_home.config import (
     require_outside_repository,
 )
 from pa_home.filesystem_l0 import FilesystemL0
+from pa_home.librarian_project import render_librarian_project
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -62,6 +63,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     render.add_argument(
         "--wiki", type=Path, help="The wiki the assistant reads beside L0 (default: none)."
+    )
+    librarian_project = commands.add_parser(
+        "librarian-project", help="Manage the librarian project the librarian's sessions run in."
+    )
+    librarian_project_commands = librarian_project.add_subparsers(
+        dest="librarian_project_command", required=True
+    )
+    render_librarian = librarian_project_commands.add_parser(
+        "render",
+        help="Write a copy of the librarian project filled in with the owner and the paths "
+        "the sessions see L0 and the wiki at, such as for a read-only mount in the "
+        "librarian's VM.",
+    )
+    render_librarian.add_argument(
+        "target", type=Path, help="New or empty directory to render into."
+    )
+    render_librarian.add_argument(
+        "--l0",
+        type=PurePosixPath,
+        required=True,
+        help="Where the sessions see L0 (an absolute path, as the session sees it).",
+    )
+    render_librarian.add_argument(
+        "--wiki",
+        type=PurePosixPath,
+        required=True,
+        help="Where the sessions see the wiki (an absolute path, as the session sees it).",
     )
     librarian_parser = commands.add_parser("librarian", help="Keep the wiki over L0.")
     librarian_commands = librarian_parser.add_subparsers(dest="librarian_command", required=True)
@@ -113,6 +141,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "agent-project":
             _render_agent_project(args.target, l0=args.l0, scratch=args.scratch, wiki=args.wiki)
+            return 0
+        if args.command == "librarian-project":
+            _render_librarian_project(args.target, l0=args.l0, wiki=args.wiki)
             return 0
         if args.command == "librarian" and args.librarian_command == "replay":
             _replay(args.target, args.corpus, args.as_of, args.batch_days, resume=args.resume)
@@ -257,3 +288,20 @@ def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path |
         wiki=wiki.expanduser().resolve() if wiki else None,
     )
     print(f"rendered the agent project into {target}")
+
+
+def _render_librarian_project(target: Path, *, l0: PurePosixPath, wiki: PurePosixPath) -> None:
+    for name, path in (("--l0", l0), ("--wiki", wiki)):
+        if not path.is_absolute():
+            raise PaError(
+                f"{name} must be an absolute path, as the librarian's session sees it (got {path})"
+            )
+    owner = load_owner()
+    target = target.expanduser().resolve()
+    require_outside_repository(
+        target,
+        "The render target",
+        "A rendered librarian project names the owner, so it must live outside the repository.",
+    )
+    render_librarian_project(target, owner=owner, l0=l0, wiki=wiki)
+    print(f"rendered the librarian project into {target}")
