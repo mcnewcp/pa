@@ -1,7 +1,8 @@
 """`pa librarian run`: whole runs over a temporary data root, through a stand-in `claude`.
 
 The stand-in plays the librarian's session. It records what it was given (argv, the prompt,
-the episodes listed in it and the identity table under its `## Identity table` heading, its
+the episodes listed in it, the identity table under its `## Identity table` heading and lint's
+warnings under `## Lint warnings`, its
 working directory, the CLAUDE.md there and the settings passed to it) to `sessions.jsonl`,
 then follows the script for its phase in `script.json`:
 
@@ -98,6 +99,8 @@ def stand_in_claude(directory: Path) -> Path:
             episodes = json.loads(listing[1]) if listing else []
             table = re.search(r"^## Identity table$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             identity = json.loads(table[1]) if table else None
+            found = re.search(r"^## Lint warnings$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            warnings = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -107,7 +110,7 @@ def stand_in_claude(directory: Path) -> Path:
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
-                    "inputs": inputs,
+                    "warnings": warnings, "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -1524,3 +1527,32 @@ def test_lint_warnings_dont_block_the_run_and_are_recorded_in_its_commit(
     script(data_root)
     assert run_librarian() == 0
     assert [e["subject"] for e in sessions(data_root, "observation")[-1]["episodes"]] == ["Gift"]
+
+
+def test_lint_warnings_are_handed_to_the_next_consolidation(data_root: Path):
+    run_with_wedding_pages(data_root, WARNINGS["an orphan page"][0])
+    [first] = sessions(data_root, "consolidation")
+    ingest(data_root, wedding_mail("Toast", "Tue, 6 Oct 2026 09:00:00 -0500"))
+    script(data_root)
+
+    assert run_librarian() == 0
+
+    [observation] = sessions(data_root, "observation")[1:]
+    [consolidation] = sessions(data_root, "consolidation")[1:]
+    assert observation["warnings"] is None
+    # The open warnings as consolidation starts: before the first run's pages, `wedding` had
+    # reached the threshold with no page; the kitchen page it wrote is an orphan.
+    assert first["warnings"] == [
+        {
+            "path": "days/2026-10-05.md",
+            "message": "`wedding` is linked on 3 days, reaching the page threshold of 3, "
+            "but has no page",
+        }
+    ]
+    assert consolidation["warnings"] == [
+        {
+            "path": "topics/kitchen.md",
+            "message": "an orphan page: nothing in the wiki links [[kitchen]]",
+        }
+    ]
+    assert "only on the warnings about pages you touch" in consolidation["prompt"]
