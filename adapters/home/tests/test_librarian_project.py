@@ -16,13 +16,8 @@ from pa_core.librarian.wiki import STATUSES, parse_decision, parse_loop, parse_o
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
 from pa_home.cli import main
-from pa_home.librarian_project import (
-    LIBRARIAN_PROJECT,
-    SETTINGS,
-    WIKI_SCHEMA,
-    render_librarian_project,
-)
-from pa_home.project import ProjectRenderError
+from pa_home.librarian_project import LIBRARIAN_PROJECT, WIKI_SCHEMA, render_librarian_project
+from pa_home.project import SETTINGS, ProjectRenderError
 
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
 L0 = PurePosixPath("/srv/pa/l0")

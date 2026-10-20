@@ -21,7 +21,7 @@ from pa_home.claude_cli import (
     run_print,
     without_capture,
 )
-from pa_home.librarian_project import SETTINGS
+from pa_home.project import SETTINGS
 
 FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep")
 """The only tools a librarian session is started with."""

@@ -17,13 +17,10 @@ import subprocess
 from pathlib import Path, PurePath
 
 from pa_core.owner import Owner
-from pa_home.project import REPOSITORY, render_project
+from pa_home.project import REPOSITORY, SETTINGS, render_project
 
 LIBRARIAN_PROJECT = REPOSITORY / "librarian"
 """`librarian/` at the repository root: the shared librarian project."""
-
-SETTINGS = ".claude/settings.json"
-"""The project's settings, relative to the project."""
 
 WIKI_SCHEMA = LIBRARIAN_PROJECT / "wiki-schema.md"
 """The wiki schema: the wiki's layout, page types, and line formats, written for every reader

@@ -22,6 +22,7 @@ from pa_home.claude_cli import (
     run_print_stream,
     without_capture,
 )
+from pa_home.project import SETTINGS
 
 DEFAULT_TIMEOUT_SECONDS = 600
 
@@ -162,7 +163,7 @@ class ClaudeAgent:
             )
             # claude -p never trusts a folder, so it drops a project's allow rules and
             # additional directories. Passing the same file as flag settings keeps them.
-            args += ["--settings", str(workdir / ".claude" / "settings.json")]
+            args += ["--settings", str(workdir / SETTINGS)]
             try:
                 session = run_print_stream(
                     self._executable,

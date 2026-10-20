@@ -18,6 +18,10 @@ from pa_core.errors import PaError
 REPOSITORY = Path(__file__).resolve().parents[4]
 """The repository root, where the shared project directories are."""
 
+SETTINGS = ".claude/settings.json"
+"""A project's settings, relative to the project. A `claude -p` session is given them as flag
+settings (`--settings`), since print mode never trusts a project folder."""
+
 
 class ProjectRenderError(PaError):
     """A project could not be rendered."""
