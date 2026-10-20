@@ -320,9 +320,9 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
-say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
-say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
-say "way back. Nothing else of the data root goes in."
+say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
+say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause

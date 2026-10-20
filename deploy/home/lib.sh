@@ -16,9 +16,11 @@ PA_REPO_DIR=/home/assistant/pa
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
-# The two parts of it the VM sees.
+# The three parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
+# The wiki's working tree; its git directory (wiki.git beside it) is never shared.
+PA_WIKI=$PA_DATA_ROOT/wiki
 # The inbox directory is a filesystem of its own, loop-mounted from this image
 # (install-chat-inbox.sh).
 PA_CHAT_INBOX_IMAGE=$PA_DATA_ROOT/chat-inbox.img
@@ -26,9 +28,11 @@ PA_CHAT_INBOX_SIZE=1G
 # What it's mounted with, so nothing the VM writes there runs, runs setuid, or acts as a device.
 PA_CHAT_INBOX_FLAGS=(nosuid nodev noexec)
 
-# Where the VM sees the store: L0 read-only, and its own inbox directory, its only way back.
+# Where the VM sees the store: L0 and the wiki read-only, and its own inbox directory, its only
+# way back.
 PA_VM_L0=/srv/pa/l0
 PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
+PA_VM_WIKI=/srv/pa/wiki
 # The VM's copy of owner.env, and the agent project rendered from it.
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
@@ -36,6 +40,14 @@ PA_VM_SCRATCH=/home/assistant/scratch
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
+
+# The store's shares into the VM, and nothing else of the data root: each one's Incus device,
+# its directory on the devbox, where the VM mounts it, and whether it's read-only.
+PA_SHARES=(
+  "pa-l0|$PA_L0|$PA_VM_L0|true"
+  "pa-chat-inbox|$PA_CHAT_INBOX|$PA_VM_CHAT_INBOX|false"
+  "pa-wiki|$PA_WIKI|$PA_VM_WIKI|true"
+)
 
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
@@ -73,6 +85,37 @@ chat_inbox_missing_flags() {
   for flag in "${PA_CHAT_INBOX_FLAGS[@]}"; do
     [[ ,$options, == *,$flag,* ]] || echo "$flag"
   done
+}
+
+# store_share_problems reads the VM as `incus query /1.0/instances/$PA_VM` prints it, and prints
+# each way its host directories differ from PA_SHARES, one per line: a share that's missing, at
+# another path, or writable when it should be read-only, and any other host directory shared.
+# It prints nothing when they match.
+store_share_problems() {
+  python3 -c '
+import json, sys
+expected = {}
+for share in sys.argv[1:]:
+    _, source, path, readonly = share.split("|")
+    expected[source] = (path, readonly == "true")
+devices = json.load(sys.stdin)["expanded_devices"].values()
+shared = {
+    d["source"]: d for d in devices if d.get("type") == "disk" and d.get("source", "").startswith("/")
+}
+for source, (path, readonly) in expected.items():
+    device = shared.pop(source, None)
+    if device is None:
+        print(f"{source} isn'"'"'t shared")
+        continue
+    at = device.get("path")
+    if at != path:
+        print(f"{source} is shared at {at}, not {path}")
+    if readonly and device.get("readonly", "false").lower() not in ("true", "1", "yes", "on"):
+        print(f"{source} is shared writable")
+for source, device in shared.items():
+    at = device.get("path")
+    print(f"{source} is shared too, at {at}")
+' "${PA_SHARES[@]}"
 }
 
 # rc_unit CMD...: runs systemctl CMD on the Remote Control unit in the VM.

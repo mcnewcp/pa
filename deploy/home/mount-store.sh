@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Mounts the store into the PA VM: L0 read-only, enforced on the host so even root in the VM
-# can't write it, and the VM's own inbox directory writable, its only way back. Nothing else of
-# the data root goes in. Safe to re-run; a device whose settings changed is replaced.
+# Mounts the store into the PA VM: L0 and the wiki read-only, enforced on the host so even root in
+# the VM can't write them, and the VM's own inbox directory writable, its only way back. Nothing
+# else of the data root goes in (never the wiki's git directory). Safe to re-run; a device whose
+# settings changed is replaced.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -29,11 +30,17 @@ share() {
   log "$device: mounted $source at $path (readonly=$readonly)"
 }
 
-share pa-l0 "$PA_L0" "$PA_VM_L0" true
-share pa-chat-inbox "$PA_CHAT_INBOX" "$PA_VM_CHAT_INBOX"
+# The wiki directory is shared before the librarian's first run, so the VM's mount is there from
+# the start; the librarian fills it in place.
+mkdir -p "$PA_WIKI"
+for entry in "${PA_SHARES[@]}"; do
+  IFS='|' read -r device source path readonly <<<"$entry"
+  share "$device" "$source" "$path" "$readonly"
+done
 
 # The VM's agent mounts a share when it's added and at every boot.
-for path in "$PA_VM_L0" "$PA_VM_CHAT_INBOX"; do
+for entry in "${PA_SHARES[@]}"; do
+  IFS='|' read -r _ _ path _ <<<"$entry"
   for _ in $(seq 15); do
     incus exec "$PA_VM" -- mountpoint -q "$path" && continue 2
     sleep 1

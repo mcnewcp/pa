@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Checks the store's mounts from inside the PA VM: L0 is readable where the rendered agent
-# project says it is and unwritable even by root, and the VM's inbox directory is the only part
-# of the data root it can see or write; on the devbox, that inbox directory is a filesystem of its
-# own that nothing written into it can run from. Exits non-zero if any check fails.
+# Checks the store's mounts from inside the PA VM: L0 and the wiki are readable where the rendered
+# agent project says they are and unwritable even by root, and the VM's inbox directory is the
+# only part of the data root it can write; on the devbox, that inbox directory is a filesystem of
+# its own that nothing written into it can run from, and the VM is shared exactly those three
+# directories. Exits non-zero if any check fails.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -46,6 +47,38 @@ for user in "$PA_USER" root; do
   fi
 done
 
+echo "In $PA_VM, the wiki is readable at the rendered path:"
+if incus exec "$PA_VM" -- grep -qF "\`$PA_VM_WIKI\`" "$PA_VM_PROJECT/CLAUDE.md" 2>/dev/null; then
+  pass "$PA_VM_PROJECT/CLAUDE.md points the assistant at $PA_VM_WIKI"
+else
+  fail "$PA_VM_PROJECT/CLAUDE.md doesn't name $PA_VM_WIKI (run update.sh)"
+fi
+page=$(incus exec "$PA_VM" -- find "$PA_VM_WIKI" -name '*.md' -print -quit 2>/dev/null || true)
+if [[ -z $page ]]; then
+  printf '  SKIP  %s\n' "the wiki has no pages yet: run pa librarian run on the devbox"
+elif in_vm_as "$PA_USER" cat "$page"; then
+  pass "$PA_USER reads pages under $PA_VM_WIKI"
+else
+  fail "$PA_USER can't read a page under $PA_VM_WIKI"
+fi
+
+echo "In $PA_VM, the wiki can't be written, even as root:"
+for user in "$PA_USER" root; do
+  if in_vm_as "$user" touch "$PA_VM_WIKI/.write-check"; then
+    fail "$user created a file in $PA_VM_WIKI"
+    incus exec "$PA_VM" -- rm -f "$PA_VM_WIKI/.write-check"
+  else
+    pass "$user can't create a file in $PA_VM_WIKI"
+  fi
+  [[ -n $page ]] || continue
+  # shellcheck disable=SC2016 # $1 is expanded by the shell in the VM
+  if in_vm_as "$user" sh -c ': >>"$1"' sh "$page"; then
+    fail "$user opened $page for writing"
+  else
+    pass "$user can't change a page"
+  fi
+done
+
 echo "In $PA_VM, the inbox directory is writable, and it reaches the devbox:"
 probe=.store-check-$$
 if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
@@ -75,21 +108,22 @@ else
   fail "$PA_CHAT_INBOX isn't a mount of its own (run install-chat-inbox.sh)"
 fi
 
-echo "Nothing else of the data root is visible in $PA_VM:"
-expected=$(printf '%s\n' "$PA_CHAT_INBOX" "$PA_L0" | sort)
-shared=$(incus query "/1.0/instances/$PA_VM" |
-  python3 -c 'import json, sys
-for device in json.load(sys.stdin)["expanded_devices"].values():
-    if device.get("type") == "disk" and device.get("source", "").startswith("/"):
-        print(device["source"])' | sort)
-if [[ $shared == "$expected" ]]; then
-  pass "the VM's only host directories are L0 and inbox/assistant_chat"
+echo "The VM is shared L0, the inbox directory and the wiki, and nothing else:"
+problems=$(incus query "/1.0/instances/$PA_VM" | store_share_problems)
+if [[ -z $problems ]]; then
+  pass "the devbox shares L0 and the wiki read-only, inbox/assistant_chat, and nothing else"
 else
-  fail "the VM shares other host directories:"$'\n'"$shared"
+  while read -r problem; do fail "$problem"; done <<<"$problems"
 fi
+expected=$(
+  for entry in "${PA_SHARES[@]}"; do
+    IFS='|' read -r _ _ path _ <<<"$entry"
+    echo "$path"
+  done | sort
+)
 mounts=$(incus exec "$PA_VM" -- findmnt -rn -t virtiofs -o TARGET | sort)
-if [[ $mounts == "$(printf '%s\n' "$PA_VM_CHAT_INBOX" "$PA_VM_L0" | sort)" ]]; then
-  pass "the VM mounts only $PA_VM_L0 and $PA_VM_CHAT_INBOX"
+if [[ $mounts == "$expected" ]]; then
+  pass "the VM mounts only $(paste -sd ' ' <<<"$expected")"
 else
   fail "the VM mounts other shares:"$'\n'"$mounts"
 fi
