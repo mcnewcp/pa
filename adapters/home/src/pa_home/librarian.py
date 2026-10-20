@@ -30,7 +30,11 @@ from pa_home.claude_session import ClaudeSessionRunner
 from pa_home.config import DataRoot, LibrarianConfig
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.git_wiki import GitWikiRepository
-from pa_home.librarian_project import LIBRARIAN_PROJECT, render_librarian_project
+from pa_home.librarian_project import (
+    LIBRARIAN_PROJECT,
+    project_files,
+    render_librarian_project,
+)
 
 RUN_LOG = "run-log.jsonl"
 """A replay's run log, in its target directory."""
@@ -147,7 +151,7 @@ def _copy_into_inbox(corpus: Sequence[Path], inbox: Path) -> None:
 
 def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
     return Librarian(
-        version=librarian_version(project, model=config.model, effort=config.effort),
+        version=librarian_version(project_files(project), model=config.model, effort=config.effort),
         model=config.model,
         effort=config.effort,
     )

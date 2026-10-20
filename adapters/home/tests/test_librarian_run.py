@@ -49,7 +49,7 @@ from pa_home.config import (
     load_time_zone,
 )
 from pa_home.git_wiki import GitWikiRepository
-from pa_home.librarian_project import LIBRARIAN_PROJECT
+from pa_home.librarian_project import LIBRARIAN_PROJECT, project_files
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -582,6 +582,55 @@ def test_the_librarian_version_changes_with_the_project_the_model_and_the_effort
     with (project / "CLAUDE.md").open("a") as claude_md:
         claude_md.write("\nOne more rule.\n")
     assert version(base) != first
+
+
+def test_in_a_git_checkout_the_librarian_version_is_of_the_project_as_committed(
+    data_root: Path, tmp_path: Path
+):
+    checkout = tmp_path / "checkout"
+    project = checkout / "librarian"
+    shutil.copytree(LIBRARIAN_PROJECT, project)
+
+    def in_checkout(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args],
+            cwd=checkout,
+            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+            capture_output=True,
+            check=True,
+        )
+
+    in_checkout("init", "--quiet")
+    in_checkout("add", "librarian")
+    in_checkout("commit", "--quiet", "--message", "The librarian")
+    runs = 0
+
+    def version() -> str:
+        nonlocal runs
+        runs += 1
+        ingest(data_root, {f"gmail/{runs}.eml": email(message_id=f"{runs}@example.net")})
+        librarian.run(
+            load_data_root(),
+            owner=load_owner(),
+            time_zone=load_time_zone(),
+            config=load_librarian_config(),
+            project=project,
+        )
+        return trailers(commit_messages(data_root)[0])["Librarian-Version"]
+
+    first = version()
+    # Uncommitted edits and untracked files aren't the librarian a version names.
+    (project / "scratch.md").write_text("A draft.\n")
+    with (project / "CLAUDE.md").open("a") as claude_md:
+        claude_md.write("\nOne more rule.\n")
+    assert version() == first
+    in_checkout("add", "librarian/CLAUDE.md")
+    in_checkout("commit", "--quiet", "--message", "One more rule")
+    assert version() != first
+    # The committed project hashes as the same files outside a checkout would.
+    copied = tmp_path / "copied"
+    shutil.copytree(project, copied, ignore=shutil.ignore_patterns("scratch.md"))
+    assert project_files(copied) == project_files(project)
 
 
 def test_what_an_interrupted_run_left_in_the_wiki_is_never_committed(data_root: Path):
