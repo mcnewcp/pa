@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pa_core.errors import PaError
+
+
+class WikiChoiceError(PaError):
+    """A configuration with a wiki asked without an eval wiki, or one without given one."""
+
 
 @dataclass(frozen=True)
 class Configuration:
@@ -18,6 +24,14 @@ class Configuration:
     """What it gives the assistant, for `pa-eval run --help`."""
     wiki: bool = False
     """Whether it gives the assistant a wiki, so a run of it needs an eval wiki."""
+
+    def require_wiki_choice(self, *, wiki_given: bool) -> None:
+        """Refuses a run of this configuration without an eval wiki if it gives the assistant
+        one, or with one if it doesn't."""
+        if self.wiki and not wiki_given:
+            raise WikiChoiceError(f"{self.name} needs an eval wiki (--wiki DIR)")
+        if wiki_given and not self.wiki:
+            raise WikiChoiceError(f"{self.name} gives the assistant no wiki: drop --wiki")
 
 
 FILES_ALONE = Configuration(

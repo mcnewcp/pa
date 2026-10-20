@@ -32,7 +32,7 @@ from pa_evals.comparison import COMPARISON, write_runs
 from pa_evals.configurations import CONFIGURATIONS, DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import load_eval_set
 from pa_evals.eval_wiki import EvalWiki, load_eval_wiki
-from pa_evals.harness import DEFAULT_CONCURRENCY, WikiChoiceError, run_eval
+from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.report import format_cost, format_score
 from pa_evals.results import RunResults
@@ -343,12 +343,7 @@ class CorpusChoiceError(PaError):
 def _wiki(configuration: Configuration, directory: Path | None) -> EvalWiki | None:
     """The eval wiki in `--wiki DIR`, which a configuration with a wiki needs and no other
     takes."""
-    if configuration.wiki and directory is None:
-        raise WikiChoiceError(f"--configuration {configuration.name} needs --wiki DIR")
-    if directory is not None and not configuration.wiki:
-        raise WikiChoiceError(
-            f"--configuration {configuration.name} gives the assistant no wiki: drop --wiki"
-        )
+    configuration.require_wiki_choice(wiki_given=directory is not None)
     return None if directory is None else load_eval_wiki(directory)
 
 
