@@ -202,3 +202,38 @@ def test_a_session_that_never_started_or_failed_is_an_error():
     assert "never started" in never.stderr
     assert failed.returncode != 0
     assert "API Error: 401" in failed.stderr
+
+
+ACL = LIB.parent / "librarian" / "egress-acl.json"
+
+
+def as_incus_reports(acl: dict[str, Any]) -> dict[str, Any]:
+    """The ACL as `incus query` prints it: every rule field present, empty if unset."""
+    fields = ("action", "source", "destination", "protocol", "source_port", "destination_port")
+    fields += ("icmp_type", "icmp_code", "description", "state")
+    return {
+        **acl,
+        "name": "pa-librarian-egress",
+        "config": {},
+        "used_by": ["/1.0/instances/pa-librarian"],
+        "egress": [{f: rule.get(f, "") for f in fields} for rule in acl["egress"]],
+    }
+
+
+def acl_differs(reported: dict[str, Any]) -> bool:
+    result = lib(f'acl_differs "{ACL}"', stdin=json.dumps(reported))
+    assert result.returncode in (0, 1), result.stderr
+    return result.returncode == 0
+
+
+def test_the_acl_as_incus_reports_it_is_the_repos():
+    assert not acl_differs(as_incus_reports(json.loads(ACL.read_text())))
+
+
+def test_a_changed_or_extra_rule_differs_from_the_repos():
+    acl = json.loads(ACL.read_text())
+    widened = {**acl, "egress": [{**acl["egress"][0], "destination": "0.0.0.0/0"}]}
+    extra = {**acl, "egress": [*acl["egress"], {"action": "allow", "state": "enabled"}]}
+
+    assert acl_differs(as_incus_reports(widened))
+    assert acl_differs(as_incus_reports(extra))

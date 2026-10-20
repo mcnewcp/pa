@@ -237,6 +237,21 @@ for line in sys.stdin:
 ' "$PA_API_RANGE"
 }
 
+# acl_differs FILE reads a network ACL as `incus query /1.0/network-acls/<name>` prints it, and
+# succeeds if its description or rules differ from FILE's (JSON, as `incus network acl edit`
+# takes it). Empty fields count as absent.
+acl_differs() {
+  python3 -c '
+import json, sys
+def rules(acl, key):
+    return sorted(json.dumps({k: v for k, v in r.items() if v != ""}, sort_keys=True)
+                  for r in acl.get(key) or [])
+def spec(acl):
+    return acl.get("description", ""), rules(acl, "egress"), rules(acl, "ingress")
+sys.exit(0 if spec(json.load(sys.stdin)) != spec(json.load(open(sys.argv[1]))) else 1)
+' "$1"
+}
+
 # vm_running: the selected VM is running.
 vm_running() { [[ $(incus list "^$PA_VM\$" -c s -f csv 2>/dev/null) == RUNNING ]]; }
 

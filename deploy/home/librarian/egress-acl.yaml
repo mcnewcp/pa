@@ -1,9 +1,0 @@
-description: The librarian VM's egress, TCP 443 to the Anthropic API's published inbound range only
-egress:
-- action: allow
-  protocol: tcp
-  destination: 160.79.104.0/23
-  destination_port: "443"
-  description: Anthropic API (published inbound range)
-  state: enabled
-ingress: []
