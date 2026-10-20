@@ -118,6 +118,10 @@ _Avoid_: Fact, note, entry
 The second phase of every librarian run: folding that run's new observations into pages, and creating pages for the people, organizations, and topics that have come up often enough to need one.
 _Avoid_: Dreaming, compaction
 
+**Replay**:
+Rebuilding a wiki from scratch by running L0 through the librarian a week of occurrence at a time, each week one run told its end as now. It is the rebuild for recovery, and it builds each eval wiki.
+_Avoid_: Rebuild run, backfill
+
 **Dreaming**:
 A separate, periodic librarian run over the whole wiki. It judges candidate problems (duplicate pages, contradictions, stale loops), fixes what a re-read of L0 settles, and turns the rest into proposals for the owner.
 _Avoid_: Consolidation, cleanup

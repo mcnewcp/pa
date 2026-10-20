@@ -4,6 +4,10 @@ A production batch is the episodes captured since the run cursor, ordered by cap
 episode id. The cursor is the last episode a committed run took, so a run that fails leaves its
 episodes new for the next.
 
+A replay batch is the episodes whose day falls in a window of whole days (a week, in a replay),
+ordered by when they occurred, then episode id. Replays batch by occurrence because eval ingest
+gives almost every episode the same capture time.
+
 Episode selection (`pa_core.selection`) decides which of them are offered:
 
 - Promotions and Social mail never;
@@ -68,17 +72,32 @@ class BatchEpisode:
 
 
 @dataclass(frozen=True)
+class Window:
+    """When a replay batch's episodes occurred: the days from `start` up to `end`.
+
+    Both are midnights in the owner's time zone, except a replay's last window, which ends at
+    the replay's as-of time if it has one. The batch's sessions are told `end` is now.
+    """
+
+    start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True)
 class Batch:
-    """The episodes captured since the cursor, and those of them offered to the librarian."""
+    """The episodes a run takes (captured since the cursor, or occurred in a replay's window),
+    and those of them offered to the librarian."""
 
     episodes: tuple[BatchEpisode, ...]
-    """The episodes offered, by capture time, then id."""
+    """The episodes offered: by capture time, then id; in a replay, by occurrence, then id."""
     captured: int
-    """How many episodes were captured since the cursor, offered or not."""
+    """How many episodes the batch took, offered or not."""
     first_captured: datetime
     last_captured: datetime
     cursor: Cursor
-    """Where the next run starts once this one is committed."""
+    """Where the next production run starts once this one is committed."""
+    window: Window | None = None
+    """A replay batch's window; None for a production batch."""
 
 
 def production_batch(store: L0Store, *, after: Cursor | None, time_zone: tzinfo) -> Batch | None:
@@ -89,21 +108,61 @@ def production_batch(store: L0Store, *, after: Cursor | None, time_zone: tzinfo)
     )
     if not captured:
         return None
-    latest = {e.episode_id for e in latest_note_versions(everything)}
-    notes: dict[str, list[str]] = {}
-    for envelope in sorted((e for e in everything if e.kind is Kind.NOTE), key=_position):
-        notes.setdefault(envelope.native_id, []).append(envelope.episode_id)
-    offered = [
-        _offered(e, time_zone, store, notes)
-        for e in captured
-        if e.episode_id in latest and category(e) not in SKIPPED
-    ]
     return Batch(
-        episodes=tuple(offered),
+        episodes=_offered_of(captured, everything, time_zone, store),
         captured=len(captured),
         first_captured=captured[0].captured_at,
         last_captured=captured[-1].captured_at,
         cursor=_position(captured[-1]),
+    )
+
+
+def replay_batch(
+    store: L0Store, window: Window, *, time_zone: tzinfo, last: bool = False
+) -> Batch | None:
+    """The episodes whose day (in `time_zone`) falls in `window`, or None if there are none.
+
+    The `last` window of a replay also takes every episode after it (a calendar event booked
+    for after the as-of time). The cursor is the last episode by capture time of everything up
+    to the window's end, so a replayed wiki carries on in production where the replay stopped.
+    """
+    everything = list(store.envelopes())
+    first = window.start.astimezone(time_zone).date()
+    end = window.end.astimezone(time_zone).date()
+    days = {e.episode_id: episode_day(e, time_zone) for e in everything}
+    taken = sorted(
+        (
+            e
+            for e in everything
+            if days[e.episode_id] >= first and (last or days[e.episode_id] < end)
+        ),
+        key=lambda e: (e.occurred_at.start, e.episode_id),
+    )
+    if not taken:
+        return None
+    replayed = [e for e in everything if last or days[e.episode_id] < end]
+    return Batch(
+        episodes=_offered_of(taken, everything, time_zone, store),
+        captured=len(taken),
+        first_captured=min(e.captured_at for e in taken),
+        last_captured=max(e.captured_at for e in taken),
+        cursor=max(_position(e) for e in replayed),
+        window=window,
+    )
+
+
+def _offered_of(
+    taken: list[Envelope], everything: list[Envelope], time_zone: tzinfo, store: L0Store
+) -> tuple[BatchEpisode, ...]:
+    """The episodes of `taken` offered to the librarian, judged over `everything` in L0."""
+    latest = {e.episode_id for e in latest_note_versions(everything)}
+    notes: dict[str, list[str]] = {}
+    for envelope in sorted((e for e in everything if e.kind is Kind.NOTE), key=_position):
+        notes.setdefault(envelope.native_id, []).append(envelope.episode_id)
+    return tuple(
+        _offered(e, time_zone, store, notes)
+        for e in taken
+        if e.episode_id in latest and category(e) not in SKIPPED
     )
 
 
