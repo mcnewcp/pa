@@ -4,7 +4,8 @@
 its instructions (CLAUDE.md), the wiki schema (wiki-schema.md), the page and day-log templates
 (templates/), and its settings (.claude/settings.json). It is shared by both instances and
 names none of them. Rendering fills in the owner and the paths the session sees L0 and the wiki
-at; the schema and templates are copied as is. The settings allow only the file tools and
+at, in the project as committed (the files its version is a hash of); the schema and templates
+are copied as is. The settings allow only the file tools and
 attach L0 and the wiki as additional directories; they reach
 the session as flag settings, since `claude -p` never trusts a project folder (and the wiki is
 never attached with `--add-dir`, which would load skills from it).
@@ -14,6 +15,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path, PurePath
 
 from pa_core.owner import Owner
@@ -87,23 +90,31 @@ def render_librarian_project(
     owner: Owner,
     l0: PurePath,
     wiki: PurePath,
-    source: Path = LIBRARIAN_PROJECT,
+    files: Mapping[str, bytes] | None = None,
 ) -> None:
     """Writes a copy of the librarian project to `target`, filled in for this instance.
 
-    `l0` and `wiki` are where the session sees L0 and the wiki. `target` must not exist yet, or
-    be empty.
+    `files` are the project's files (`project_files`), by default the shared librarian project's
+    as committed: what the librarian version names, so a run never runs uncommitted edits under
+    a version that doesn't hash them. `l0` and `wiki` are where the session sees L0 and the
+    wiki. `target` must not exist yet, or be empty.
     """
-    render_project(
-        source,
-        target,
-        templates=_TEMPLATES,
-        values={
-            "owner_name": owner.name,
-            "owner_other_names": ", ".join(owner.other_names) or "(none)",
-            "owner_email_addresses": ", ".join(f"`{a}`" for a in owner.email_addresses),
-            "l0": str(l0),
-            "wiki": str(wiki),
-        },
-        name="the librarian project",
-    )
+    files = project_files() if files is None else files
+    with tempfile.TemporaryDirectory(prefix="pa-librarian-source-") as directory:
+        source = Path(directory)
+        for path, content in files.items():
+            (source / path).parent.mkdir(parents=True, exist_ok=True)
+            (source / path).write_bytes(content)
+        render_project(
+            source,
+            target,
+            templates=_TEMPLATES,
+            values={
+                "owner_name": owner.name,
+                "owner_other_names": ", ".join(owner.other_names) or "(none)",
+                "owner_email_addresses": ", ".join(f"`{a}`" for a in owner.email_addresses),
+                "l0": str(l0),
+                "wiki": str(wiki),
+            },
+            name="the librarian project",
+        )

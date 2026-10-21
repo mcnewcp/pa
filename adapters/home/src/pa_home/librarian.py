@@ -4,8 +4,9 @@ wired to its home adapters.
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
-renders the librarian project into a temporary directory, the sessions' working directory, and
-runs the sessions with the configured command.
+renders the librarian project as committed (the project its librarian version names) into a
+temporary directory, the sessions' working directory, and runs the sessions with the configured
+command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -23,7 +24,7 @@ import json
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -67,16 +68,18 @@ def run(
     clock: Callable[[], datetime] = wall_clock,
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, telling it the clock's
-    time as "now". `project` is the librarian project's source."""
+    time as "now". `project` is the librarian project's source, run as committed
+    (`project_files`)."""
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    with _runner(data_root.l0, data_root.wiki, owner, config, project) as runner:
+    files = project_files(project)
+    with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
         return run_librarian(
             store=FilesystemL0(data_root.l0),
             owner=owner,
             time_zone=time_zone,
             repository=repository,
             runner=runner,
-            librarian=_librarian(config, project),
+            librarian=_librarian(config, files),
             now=clock().astimezone(time_zone),
             page_threshold=config.page_threshold,
             loop_age_days=config.loop_age_days,
@@ -115,14 +118,15 @@ def replay(
         )
     with _l0(data_root, corpus, owner, as_of or clock()) as l0:
         repository = GitWikiRepository.open(layout.tree, layout.git_dir)
-        with _runner(l0, layout.tree, owner, config, project) as runner:
+        files = project_files(project)
+        with _runner(l0, layout.tree, owner, config, files) as runner:
             return replay_librarian(
                 store=FilesystemL0(l0),
                 owner=owner,
                 time_zone=time_zone,
                 repository=repository,
                 runner=runner,
-                librarian=_librarian(config, project),
+                librarian=_librarian(config, files),
                 run_log=layout.run_log,
                 batch_days=batch_days,
                 as_of=as_of,
@@ -162,9 +166,10 @@ def _copy_into_inbox(corpus: Sequence[Path], inbox: Path) -> None:
                 shutil.copyfile(payload, inbox / relative)
 
 
-def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
+def _librarian(config: LibrarianConfig, files: Mapping[str, bytes]) -> Librarian:
+    """The librarian that runs the project made of `files`: the same files the sessions run."""
     return Librarian(
-        version=librarian_version(project_files(project), model=config.model, effort=config.effort),
+        version=librarian_version(files, model=config.model, effort=config.effort),
         model=config.model,
         effort=config.effort,
     )
@@ -172,17 +177,17 @@ def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
 
 @contextmanager
 def _runner(
-    l0: Path, wiki: Path, owner: Owner, config: LibrarianConfig, project: Path
+    l0: Path, wiki: Path, owner: Owner, config: LibrarianConfig, files: Mapping[str, bytes]
 ) -> Iterator[ClaudeSessionRunner]:
-    """A session runner in the librarian project, rendered for where the sessions see `l0` and
-    `wiki`: in the sandbox, if one is configured, else on the host."""
+    """A session runner in the librarian project made of `files`, rendered for where the
+    sessions see `l0` and `wiki`: in the sandbox, if one is configured, else on the host."""
     with tempfile.TemporaryDirectory(prefix="pa-librarian-") as directory:
         rendered = Path(directory) / "project"
         rendered.mkdir()
         with _sandbox(config.sandbox, l0=l0, project=rendered, wiki=wiki) as seen:
             paths = SessionPaths(l0=seen.l0, wiki=seen.wiki)
             render_librarian_project(
-                rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, source=project
+                rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, files=files
             )
             yield ClaudeSessionRunner(
                 command=config.command,

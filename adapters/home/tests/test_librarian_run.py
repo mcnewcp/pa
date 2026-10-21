@@ -627,9 +627,12 @@ def test_in_a_git_checkout_the_librarian_version_is_of_the_project_as_committed(
     with (project / "CLAUDE.md").open("a") as claude_md:
         claude_md.write("\nOne more rule.\n")
     assert version() == first
+    # And the sessions run the project the version names: as committed.
+    assert all("One more rule" not in s["claude_md"] for s in sessions(data_root))
     in_checkout("add", "librarian/CLAUDE.md")
     in_checkout("commit", "--quiet", "--message", "One more rule")
     assert version() != first
+    assert "One more rule" in sessions(data_root)[-1]["claude_md"]
     # The committed project hashes as the same files outside a checkout would.
     copied = tmp_path / "copied"
     shutil.copytree(project, copied, ignore=shutil.ignore_patterns("scratch.md"))
