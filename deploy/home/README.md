@@ -23,7 +23,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `incus-setup.sh [--vm]` | Creates the `pa` btrfs storage pool (copy-on-write, so snapshots are cheap) and the VM's own bridge, `pabr0`, with IPv6 off. For the librarian: `palib0`, with DNS off too, and its egress ACL |
 | `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service`, for both bridges |
 | `create-vm.sh [--vm]` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale). For the librarian: `pa-librarian` from `librarian/profile.yaml` (2 vCPU, 3 GiB RAM, 10 GiB disk, user `librarian`), left stopped |
-| `seed-data-root.sh` | Creates the instance's data root on the devbox from the frozen synthetic corpus, with its owner as the instance owner |
+| `seed-data-root.sh [--corpus argus\|scale]` | Creates the instance's data root on the devbox from a frozen synthetic corpus (Argus's unless `--corpus scale`), with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
 | `mount-store.sh` | Mounts L0 and the wiki into the VM read-only and `inbox/assistant_chat/` writable |
@@ -36,7 +36,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|replay …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
+| `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
@@ -80,6 +80,18 @@ done
 rm -rf ~/.local/share/pa-home-synthetic
 deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh
 ```
+
+### Reseeding with the scale corpus
+
+The live data root can hold the scale corpus instead, with its wiki seeded from the scale eval wiki rather than built by a second replay: the episode ids are the same. Start the data root over as above, but seed it with the scale corpus, then seed the wiki:
+
+```sh
+deploy/home/seed-data-root.sh --corpus scale && deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh
+deploy/home/librarian.sh seed evals/wikis/scale/<librarian version>
+deploy/home/update.sh <ref>   # the assistant's project points at the wiki once it has index.md
+```
+
+`seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
 
 ## Remote Control
 
