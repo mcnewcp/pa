@@ -29,8 +29,6 @@ from pa_core.librarian.wiki import (
     DECISIONS,
     OPEN_LOOPS,
     PAGE_FOLDERS,
-    PAGE_TYPES,
-    Page,
     PageFormatError,
     citations,
     pages,
@@ -97,7 +95,7 @@ def _identifiers(tree: Path, adversarial: set[str], l0: Iterable[Envelope]) -> l
     failures: list[str] = []
     for page in pages(tree):
         identifiers = [("alias", alias) for alias in page.aliases]
-        identifiers += [("address", value) for value in _list_field(page)]
+        identifiers += [("address", value) for value in page.identifiers]
         for kind, value in identifiers:
             pattern = _mention(value)
             if pattern is None or not any(pattern.search(text) for text in suspect):
@@ -116,15 +114,6 @@ def _searchable(envelope: Envelope) -> str:
     parts = [envelope.subject or "", envelope.body]
     parts += [f"{p.name or ''} {p.identifier}" for p in envelope.participants]
     return "\n".join(parts).casefold()
-
-
-def _list_field(page: Page) -> tuple[str, ...]:
-    """A person's email addresses, or an organization's mail domains."""
-    page_type = PAGE_TYPES.get(page.folder)
-    if page_type is None or page_type.list_field is None:
-        return ()
-    value = page.fields.get(page_type.list_field, ())
-    return value if isinstance(value, tuple) else ()
 
 
 def _mention(value: str) -> re.Pattern[str] | None:

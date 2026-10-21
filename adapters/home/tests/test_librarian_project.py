@@ -255,7 +255,8 @@ def _lint_one(tmp_path: Path, wiki_path: str, text: str) -> list[str]:
         ),
     )
     thresholds = Thresholds(today=date(2026, 10, 5), page_threshold=3, loop_age_days=30)
-    return [str(finding) for finding in lint(tree, l0=l0, thresholds=thresholds).errors]
+    report = lint(tree, l0=l0, owner=OWNER, thresholds=thresholds)
+    return [str(finding) for finding in report.errors]
 
 
 def test_there_are_templates_for_each_page_type_and_the_day_log():

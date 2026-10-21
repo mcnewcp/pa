@@ -199,7 +199,9 @@ def run_librarian(
         repository.discard()
         sessions: list[tuple[Phase, SessionResult]] = []
         thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
-        linter = partial(lint, l0=L0Metadata.of(store.envelopes()), thresholds=thresholds)
+        linter = partial(
+            lint, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds
+        )
         # Errors the last commit already has (a rule tightened since, or a seeded wiki): a
         # session is judged only on errors it can fix, and consolidation is handed the pages'.
         committed = _Committed(linter(tree).errors)

@@ -1091,6 +1091,24 @@ CONSOLIDATION_FAILURES = {
         pages_with(ORG, "domains: []", "domains: [northshorelodge.example]"),
         "northshorelodge.example, which isn't in L0",
     ),
+    "a domain on two pages": (
+        [
+            *pages_with(ORG, "domains: []", "domains: [example.net]"),
+            {
+                "write": "orgs/lodge.md",
+                "text": wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[ORG].replace(
+                    "domains: []", "domains: [Example.NET]"
+                ),
+            },
+        ],
+        "a domain belongs on one page",
+    ),
+    "the owner's address on a page": (
+        pages_with(
+            PERSON, "emails: [dkim@example.net]", "emails: [dkim@example.net, Argus@example.com]"
+        ),
+        "Argus@example.com, one of the owner's addresses",
+    ),
     "an address on two pages": (
         [
             *pages_with(PERSON, "", ""),

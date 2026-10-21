@@ -128,6 +128,7 @@ def test_the_seeded_wiki_lints_clean_and_the_next_run_takes_exactly_the_chats(tm
     report = lint(
         data_root.wiki,
         l0=L0Metadata.of(store.envelopes()),
+        owner=OWNER,
         thresholds=Thresholds(today=RUN_CLOCKS[0].date(), page_threshold=3, loop_age_days=30),
     )
     assert report.errors == ()

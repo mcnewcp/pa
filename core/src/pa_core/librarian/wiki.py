@@ -46,6 +46,8 @@ class PageType:
     list_field: str | None = None
     """The list of identifiers it adds to its frontmatter, if any: a person's email addresses,
     an organization's mail domains."""
+    identifier: str | None = None
+    """What one of those identifiers is, with its article: "an address", "a domain"."""
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -60,6 +62,7 @@ PERSON = PageType(
     sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
     statuses=("active", "inactive"),
     list_field="emails",
+    identifier="an address",
 )
 ORGANIZATION = PageType(
     folder="orgs",
@@ -68,6 +71,7 @@ ORGANIZATION = PageType(
     sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
     statuses=("active", "inactive"),
     list_field="domains",
+    identifier="a domain",
 )
 TOPIC = PageType(
     folder="topics",
@@ -405,6 +409,18 @@ class Page:
     @property
     def aliases(self) -> tuple[str, ...]:
         value = self.fields.get("aliases", ())
+        return value if isinstance(value, tuple) else ()
+
+    @property
+    def page_type(self) -> PageType:
+        return PAGE_TYPES[self.folder]
+
+    @property
+    def identifiers(self) -> tuple[str, ...]:
+        """Its list of identifiers (a person's `emails`, an organization's `domains`), as
+        written; none for a topic, or when the field isn't a list (lint reports that)."""
+        key = self.page_type.list_field
+        value = self.fields.get(key, ()) if key else ()
         return value if isinstance(value, tuple) else ()
 
     @property

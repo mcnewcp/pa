@@ -13,7 +13,8 @@ An error fails the run. The rules so far:
   other line.
 - **Citations** name episodes that are in L0.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
-  metadata (any episode's participants), and no address is on two pages.
+  metadata (any episode's participants), no address or domain is on two pages, and no page
+  lists one of the owner's configured addresses (the owner is `me`).
 
 A warning doesn't fail the run; it's recorded with it, and handed to the next consolidation:
 
@@ -48,9 +49,11 @@ from pa_core.librarian.wiki import (
     LOOP_FORMAT,
     NEEDS_LOOKUP,
     OPEN_LOOPS,
+    ORGANIZATION,
     OWNER,
     PAGE_NAME,
     PAGE_TYPES,
+    PERSON,
     FieldValue,
     Page,
     PageFormatError,
@@ -63,6 +66,7 @@ from pa_core.librarian.wiki import (
     read_page,
     slugify,
 )
+from pa_core.owner import Owner
 
 
 @dataclass(frozen=True)
@@ -143,15 +147,16 @@ class Thresholds:
     """How long a loop may stay open before it's flagged."""
 
 
-def lint(tree: Path, *, l0: L0Metadata, thresholds: Thresholds) -> LintReport:
-    """Lints the wiki at `tree` against `l0`, the metadata of every episode in L0."""
+def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) -> LintReport:
+    """Lints the wiki at `tree` against `l0`, the metadata of every episode in L0, for
+    `owner`."""
     files: list[WikiFile] = []
     errors = list(_layout(tree, files))
     for file in files:
         for rule in _RULES:
             errors.extend(rule(file, l0))
     pages = _readable_pages(files)
-    errors.extend(_identifiers(pages, l0))
+    errors.extend(_identifiers(pages, l0, owner))
     warnings = [
         *_orphans(files, pages),
         *_aging_loops(pages, thresholds),
@@ -350,34 +355,40 @@ def _readable_pages(files: Iterable[WikiFile]) -> list[Page]:
     return found
 
 
-def _identifiers(pages: Iterable[Page], l0: L0Metadata) -> Iterator[Finding]:
-    """A page's addresses and domains are in L0's metadata, and an address is on one page."""
-    listed: dict[str, str] = {}
-    """The page listing each address first."""
+def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterator[Finding]:
+    """A page's addresses and domains are in L0's metadata, none is on two pages, and none of
+    its addresses is the owner's."""
+    known = {PERSON: l0.addresses, ORGANIZATION: l0.domains}
+    owners = {address.strip().lower() for address in owner.email_addresses}
+    listed: dict[tuple[str, str], str] = {}
+    """The page listing each identifier first, by its field and its lowercase form."""
     for page in pages:
-        key = PAGE_TYPES[page.folder].list_field
-        values = page.fields.get(key, ()) if key else ()
-        if not isinstance(values, tuple):
-            continue  # reported as bad frontmatter
-        known = l0.addresses if key == "emails" else l0.domains
-        for value in values:
+        page_type = page.page_type
+        key = page_type.list_field
+        for value in page.identifiers:
             identifier = value.strip().lower()
-            if identifier not in known:
+            if identifier not in known.get(page_type, frozenset()):
                 yield Finding(
                     page.path,
                     f"`{key}` lists {value}, which isn't in L0's metadata: identifiers are "
                     "copied from the identity table, never made up",
                     1,
                 )
-            if key == "emails":
-                first = listed.setdefault(identifier, page.path)
-                if first != page.path:
-                    yield Finding(
-                        page.path,
-                        f"`emails` lists {value}, which {first} lists too: an address belongs "
-                        "on one page",
-                        1,
-                    )
+            if page_type is PERSON and identifier in owners:
+                yield Finding(
+                    page.path,
+                    f"`{key}` lists {value}, one of the owner's addresses: the owner is `me`, "
+                    "never on a page",
+                    1,
+                )
+            first = listed.setdefault((str(key), identifier), page.path)
+            if first != page.path:
+                yield Finding(
+                    page.path,
+                    f"`{key}` lists {value}, which {first} lists too: {page_type.identifier} "
+                    "belongs on one page",
+                    1,
+                )
 
 
 # Warnings
