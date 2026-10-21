@@ -144,6 +144,7 @@ def _ask(
     cited = parse_citations(answer.text)
     calls = answer.tool_calls
     existing = [episode_id for episode_id in cited if episode_id in known]
+    episodes = tuple(e for e in (store.get(i) for i in existing) if e is not None)
     result = result.model_copy(
         update={
             "answer": answer.text,
@@ -156,12 +157,13 @@ def _ask(
                 ToolCallResult(tool=c.tool, input=dict(c.input), errored=c.errored) for c in calls
             ],
             "cited": cited,
-            "cited_opened": None if calls is None else opened(cited, calls),
+            "cited_opened": None
+            if calls is None
+            else opened(cited, calls, {e.episode_id: e for e in episodes}),
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
         }
     )
-    episodes = tuple(e for e in (store.get(i) for i in existing) if e is not None)
     verdict = _attempt(
         lambda: judge.judge(
             JudgeRequest(

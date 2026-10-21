@@ -140,9 +140,31 @@ def test_the_answer_carries_the_sessions_tool_calls_in_order(tmp_path: Path, l0:
     answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
     assert answer.tool_calls == (
-        ToolCall("Bash", {"command": "grep -rl hotel /l0/episodes["}, errored=True),
-        ToolCall("Read", {"file_path": "/l0/gmail_94f6b4cbc55a3b85.json"}, errored=False),
+        ToolCall(
+            "Bash",
+            {"command": "grep -rl hotel /l0/episodes["},
+            errored=True,
+            output="grep: Unmatched [",
+        ),
+        ToolCall(
+            "Read", {"file_path": "/l0/gmail_94f6b4cbc55a3b85.json"}, errored=False, output="{...}"
+        ),
     )
+
+
+def test_a_tool_result_given_as_text_blocks_is_their_text(tmp_path: Path, l0: Path):
+    body = """\
+        events = [
+            tool_use("toolu_1", "Bash", {"command": "cat a.txt b.txt"}),
+            tool_result("toolu_1", [{"type": "text", "text": "alpha"},
+                                    {"type": "text", "text": "beta"}]),
+        ]
+        """
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path, body)))
+
+    answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
+
+    assert [call.output for call in answer.tool_calls or ()] == ["alpha\nbeta"]
 
 
 def test_a_tool_call_left_without_a_result_did_not_error(tmp_path: Path, l0: Path):
@@ -164,8 +186,8 @@ def test_a_tool_call_left_without_a_result_did_not_error(tmp_path: Path, l0: Pat
     answer = agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
     assert answer.tool_calls == (
-        ToolCall("Glob", {"pattern": "**/*.json"}, errored=False),
-        ToolCall("Read", {"file_path": "/l0/a.json"}, errored=True),
+        ToolCall("Glob", {"pattern": "**/*.json"}, errored=False, output=""),
+        ToolCall("Read", {"file_path": "/l0/a.json"}, errored=True, output="no such file"),
     )
 
 
