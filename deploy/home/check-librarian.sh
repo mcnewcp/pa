@@ -199,7 +199,7 @@ expect_tcp_blocked "devbox SSH via the bridge" "$bridge_ip" 22
 lan_ip=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
 expect_tcp_blocked "devbox SSH via its LAN address" "$lan_ip" 22
 expect_ping_blocked "LAN gateway" "$(ip -4 route show default | awk '{print $3; exit}')"
-assistant_ip=$(incus list "^pa-home\$" -c 4 -f csv | grep -o '^[0-9.]*' || true)
+assistant_ip=$(incus list "^$PA_ASSISTANT_VM\$" -c 4 -f csv | grep -o '^[0-9.]*' || true)
 if [[ -n $assistant_ip ]]; then
   expect_ping_blocked "the assistant's VM" "$assistant_ip"
 else
