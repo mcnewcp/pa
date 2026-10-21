@@ -1678,13 +1678,19 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert run_librarian() == 0
     assert "[[dave]]" in wiki_files(data_root)["index.md"]
     # The next merges it into david-kim, which takes "Dave" as an alias; a page still links
-    # [[dave]], and so do the day logs. The session's file tools can't remove a file, so it
-    # empties dave's page, and the host removes it.
+    # [[dave]], in a line and as a loop's party, and so do the day logs, the merge's own among
+    # them. The session's file tools can't remove a file, so it empties dave's page, and the
+    # host removes it.
     ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
-    topic = pages[TOPIC].replace("The block closes", "[[dave]] says the block closes")
+    toast = f"- [ ] [[dave|Dave]] → me: the toast · promised {days_ago(1)} [ep:{HOTEL_EMAIL_ID}]"
+    topic = (
+        pages[TOPIC]
+        .replace("The block closes", "[[dave]] says the block closes")
+        .replace("\n## Notes", f"{toast}\n\n## Notes")
+    )
     script(
         data_root,
-        observation=[{"observe": True, "links": {"RSVP": ["dave"]}}],
+        observation=[{"observe": True, "links": {"RSVP": ["dave", "david-kim"]}}],
         consolidation=[
             {"write": "people/dave.md", "text": "\n"},
             {"write": PERSON, "text": pages[PERSON]},
@@ -1697,18 +1703,28 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
 
     files = wiki_files(data_root)
     assert "people/dave.md" not in files
+    # Each link now goes to the page, still showing the name it was written with.
     assert files["days/2026-09-30.md"] == (
-        f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
+        f"- email about Hotel block with [[david-kim|dave]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
     )
     [rsvp] = sessions(data_root, "observation")[-1]["episodes"]
     assert files["days/2026-10-02.md"] == (
-        f"- email about RSVP with [[david-kim]] [ep:{rsvp['id']}]\n"
+        f"- email about RSVP with [[david-kim|dave]] and [[david-kim]] [ep:{rsvp['id']}]\n"
     )
-    assert "[[david-kim]] says the block closes" in files[TOPIC]
+    assert "[[david-kim|dave]] says the block closes" in files[TOPIC]
+    assert "- [ ] [[david-kim|Dave]] → me: the toast" in files[TOPIC]
     # A page's own slug and other pages' links stay as they are.
     assert files[PERSON] == pages[PERSON]
     assert "[[north-shore-lodge]] → me" in files[TOPIC]
     assert "[[dave]]" not in files["index.md"]
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # A piped link counts for the page it goes to.
+    ingest(data_root, wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    script(data_root, observation=[{"observe": True, "links": {"Menu": ["wedding"]}}])
+    assert run_librarian() == 0
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    assert {"slug": "david-kim", "days": 2, "reaches_threshold": False, "page": PERSON} in counts
+    assert "dave" not in {count["slug"] for count in counts}
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
 

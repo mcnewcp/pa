@@ -34,7 +34,7 @@ from pa_core.librarian.batch import production_batch
 from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
 from pa_core.librarian.run import CURSOR_FIELD, RunOutcome, last_cursor
-from pa_core.librarian.wiki import NOTES, Page, citations, day_logs, pages, slugify
+from pa_core.librarian.wiki import NOTES, Page, citations, day_logs, links, pages, slugify
 from pa_core.owner import Owner
 from pa_home import librarian
 from pa_home.config import DataRoot, load_librarian_config
@@ -186,6 +186,25 @@ def test_the_checks_find_every_correction_missing_from_the_starting_wiki(tmp_pat
     ]
 
 
+def test_the_checks_read_links_as_the_wiki_does_piped_or_not(tmp_path: Path):
+    ids = seed_corrections_fixture(tmp_path)
+    wiki = DataRoot(tmp_path).wiki
+    # The host's rewrite goes to Ben Okafor's page, still showing "okie"; a piped link to
+    # okie still links okie.
+    for day, old, new in (
+        ("2026-10-04", "[[okie]]", "[[ben-okafor|okie]]"),
+        ("2026-10-08", "[[okie]]", "[[okie|Okie]]"),
+    ):
+        log = wiki / "days" / f"{day}.md"
+        assert old in log.read_text()
+        log.write_text(log.read_text().replace(old, new))
+
+    problems = corrections_problems(wiki, ids)
+
+    assert "days/2026-10-04.md still links [[okie]]" not in problems
+    assert "days/2026-10-08.md still links [[okie]]" in problems
+
+
 @pytest.mark.skipif(
     os.environ.get("PA_SMOKE_LIBRARIAN") != "1",
     reason="runs the real librarian in its VM; set PA_SMOKE_LIBRARIAN=1 to run "
@@ -245,7 +264,7 @@ def corrections_problems(wiki: Path, ids: dict[str, str]) -> list[str]:
     problems += [
         f"{p.relative_to(wiki)} still links [[okie]]"
         for p, t in text.items()
-        if "[[okie]]" in t and (ben is None or ben.slug != "okie")
+        if "okie" in links(t) and (ben is None or ben.slug != "okie")
     ]
 
     # The split: two pages, each saying so with the chat's citation.
@@ -298,12 +317,12 @@ def later_problems(wiki: Path, ids: dict[str, str]) -> list[str]:
         ("practice-moved", coach, accountant),
     ):
         line = logged.get(ids[name], "")
-        if page and f"[[{page.slug}]]" not in line:
+        if page and page.slug not in links(line):
             problems.append(f"the observation of {name} doesn't link [[{page.slug}]]: {line!r}")
-        if other and page and other.slug != page.slug and f"[[{other.slug}]]" in line:
+        if other and page and other.slug != page.slug and other.slug in links(line):
             problems.append(f"the observation of {name} links the other Chris Lee: {line!r}")
     for path in sorted(wiki.rglob("*.md")):
-        if "[[okie]]" in path.read_text(encoding="utf-8") and "okie" not in found:
+        if "okie" in links(path.read_text(encoding="utf-8")) and "okie" not in found:
             problems.append(f"{path.relative_to(wiki)} links [[okie]] again")
     return problems
 

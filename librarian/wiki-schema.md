@@ -27,8 +27,14 @@ A slug names a person, organization, or topic: lowercase ASCII words joined by h
 as `jordan-reyes`, `pinecrest-dental`, or `pergola-build`. People, organizations, and topics
 share one namespace, and a page's file name is its slug.
 
-`[[slug]]` links to one, whether or not it has a page yet. The owner is always written `me`,
-plain: never linked, and never given a page.
+`[[slug]]` links to one, whether or not it has a page yet. `[[slug|text]]` links to it too, but
+shows `text` in its place; the text holds no `[`, `]`, or `|`. The owner is always written
+`me`, plain: never linked, and never given a page.
+
+After a merge, the host rewrites each link to the merged-away name as a piped link to the page
+it was merged into, keeping the name it was written with: `[[okie]] is [[ben-okafor]]` becomes
+`[[ben-okafor|okie]] is [[ben-okafor]]`. Wherever a link may stand, a piped link may too, and
+it counts as a link to its slug.
 
 ## Citations
 
@@ -107,7 +113,7 @@ Where a choice about the topic stands, who took that stance, and when:
 - YYYY-MM-DD · <subject>: <proposed|decided|rejected> <choice> (<who>) [ep:<id>]
 ```
 
-`<who>` is one or more parties (`me` or `[[slug]]`) joined by `, `. The subject holds no
+`<who>` is one or more parties (`me` or a link) joined by `, `. The subject holds no
 colon. When a later decision replaces one, the earlier line is struck through in place and
 says what replaced it, keeping both citations, and the later decision gets its own line:
 
@@ -126,7 +132,7 @@ Something owed by one party to another:
 - [ ] <owed by> → <owed to>: <what> · <asked|promised> YYYY-MM-DD[ · due YYYY-MM-DD] [ep:<id>]
 ```
 
-- Each party is `me` or one `[[slug]]`.
+- Each party is `me` or one link.
 - A loop is one thing one party owes another: a reply, a document, a payment, a visit, a
   result, or something the owner said they'd do. An offer's expiry ("the estimate is good for 30 days"), a deadline nobody owes
   anything by, and an instruction ("bring your insurance card") are facts for Current state
@@ -172,7 +178,7 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 | decisions still only proposed | `^- [0-9-]{10} · [^:]+: proposed ` | `topics/` |
 | who has an address, or a mail domain | the address or domain | `people/ orgs/` |
 | a page by another name | `^aliases: .*<name>`, ignoring case | `people/ orgs/ topics/` |
-| a slug's timeline (file names are the days) | `\[\[<slug>\]\]` | `days/` |
+| a slug's timeline (file names are the days) | `\[\[<slug>(\|[^]]*)?\]\]` | `days/` |
 | every line resting on an episode | `\[ep:<episode_id>\]` | everywhere |
 | missing outside information | `\[needs lookup: ` | everywhere |
 

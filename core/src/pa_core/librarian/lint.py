@@ -44,7 +44,6 @@ from pa_core.librarian.wiki import (
     DECISIONS,
     FOLDERS,
     INDEX,
-    LINK,
     LOOP_FORMAT,
     NEEDS_LOOKUP,
     OPEN_LOOPS,
@@ -56,6 +55,7 @@ from pa_core.librarian.wiki import (
     PageFormatError,
     PageType,
     citations,
+    links,
     parse_decision,
     parse_loop,
     parse_observation,
@@ -387,7 +387,7 @@ def _orphans(files: Sequence[WikiFile], pages: Sequence[Page]) -> Iterator[Findi
     for file in files:
         if file.path != INDEX:
             for line in file.lines:
-                for slug in LINK.findall(line):
+                for slug in links(line):
                     linked_from[slug].add(file.path)
     for page in pages:
         if not linked_from[page.slug] - {page.path}:

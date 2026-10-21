@@ -151,8 +151,9 @@ consolidation applies it.
 - **A merge** combines the two pages into one: keep both names as aliases, carry over every
   address, loop, decision, and note, and add a Notes line saying who is who, citing the chat.
   Then delete the other page by writing it with no content at all: your tools can't remove a
-  file, so the host removes an empty page after your session and rewrites links to the old
-  name.
+  file, so after your session the host removes an empty page whose name is an alias of the
+  page it was merged into (any other empty file fails lint), and rewrites links to the old
+  name as piped links to that page (`[[okie]]` becomes `[[ben-okafor|okie]]`).
 - **A split** gets a cited Notes line on both pages saying they are different people (or
   organizations, or topics), so no later run merges them again. Move the lines that belong to
   the other one onto its page, creating it if needed, and drop the alias that joined them.

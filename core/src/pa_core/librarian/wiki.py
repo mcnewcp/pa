@@ -120,8 +120,11 @@ def folder_files(tree: Path, folder: str) -> list[Path]:
 # lint holds the wiki to the exact form.
 CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
-LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
-"""A link to a person, organization, or topic by slug, whether or not it has a page yet."""
+_SHOWN = r"[^\[\]|\n]+"
+LINK = re.compile(rf"\[\[(?P<slug>{SLUG.pattern})(?:\|(?P<shown>{_SHOWN}))?\]\]")
+"""A link to a person, organization, or topic by slug, whether or not it has a page yet:
+`[[slug]]`, or `[[slug|text]]` showing `text` in its place (as a link rewritten from an alias
+keeps the name it was written with)."""
 NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
 """Outside information the librarian couldn't find in L0, marked inline where it's missing."""
 
@@ -139,6 +142,11 @@ class Observation:
     citations: tuple[str, ...]
 
 
+def links(text: str) -> list[str]:
+    """The slugs `text` links, in order, piped links included."""
+    return [match["slug"] for match in LINK.finditer(text)]
+
+
 def parse_observation(line: str) -> Observation | None:
     """The observation `line` holds, or None if it isn't one.
 
@@ -148,10 +156,10 @@ def parse_observation(line: str) -> Observation | None:
     match = _OBSERVATION.fullmatch(line)
     if match is None:
         return None
-    links = tuple(LINK.findall(match["text"]))
-    if not links:
+    linked = tuple(links(match["text"]))
+    if not linked:
         return None
-    return Observation(match["text"], links, tuple(CITATION.findall(match["citations"])))
+    return Observation(match["text"], linked, tuple(CITATION.findall(match["citations"])))
 
 
 def slugify(text: str) -> str:
@@ -166,11 +174,11 @@ def citations(text: str) -> list[str]:
     return CITATION.findall(text)
 
 
-# Decision and loop lines. A party is `me` or a `[[slug]]`; `<who>` is parties joined by ", ".
+# Decision and loop lines. A party is `me` or a link; `<who>` is parties joined by ", ".
 
 _DATE = r"\d{4}-\d{2}-\d{2}"
 _CITES = r"\[ep:[A-Za-z0-9_-]+\](?: \[ep:[A-Za-z0-9_-]+\])*"
-_PARTY = rf"(?:{OWNER}|\[\[{SLUG.pattern}\]\])"
+_PARTY = rf"(?:{OWNER}|\[\[{SLUG.pattern}(?:\|{_SHOWN})?\]\])"
 _DECIDED = (
     rf"(?P<day>{_DATE}) · (?P<subject>[^:]+?): (?P<stance>proposed|decided|rejected) "
     rf"(?P<choice>\S.*?) \((?P<who>{_PARTY}(?:, {_PARTY})*)\) (?P<citations>{_CITES})"
@@ -300,7 +308,9 @@ def parse_loop(line: str) -> Loop | None:
 
 
 def _party(text: str) -> str:
-    return text.removeprefix("[[").removesuffix("]]")
+    """`me`, or the slug a party's link goes to."""
+    link = LINK.fullmatch(text)
+    return link["slug"] if link else text
 
 
 def _date(text: str) -> date | None:
