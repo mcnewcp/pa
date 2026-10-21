@@ -130,6 +130,22 @@ Its fences:
 
 `check-librarian.sh` starts the VM as a run does and checks every fence from inside it. That includes two short sessions on Haiku, one with no flags and one with every flag that tries to reopen a tool (bypass mode, the shell and web tools named, an MCP server). Each must have exactly the five file tools. The wizard runs it.
 
+## Hand-run tests with the real model
+
+The suite skips the tests that call a real model unless asked, since they cost money and depend on the model. Run them by hand on the devbox:
+
+```sh
+PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
+PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
+```
+
+The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
+
+1. After chats that say Okie is Ben Okafor, that the two Chris Lees are different people, and that a roofer's estimate came in, and that answer a bare "yes" to the assistant's restatement of a changed Thanksgiving plan. The test checks the merge (one page, both names, links rewritten, the chat cited), the split (noted on both pages with the chat's citation), the closed loop, and the decision citing the "yes". It also checks that nothing the assistant said unconfirmed reaches the wiki.
+2. After new mail and a note from both Chris Lees and from Okie. The test checks that the split still holds and the merge too.
+
+The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost. Two runs cost about $<cost>.
+
 ## Evals in the VM
 
 ```sh
