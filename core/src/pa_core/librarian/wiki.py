@@ -129,6 +129,8 @@ LINK = re.compile(rf"\[\[(?P<slug>{SLUG.pattern})(?:\|(?P<shown>{_SHOWN}))?\]\]"
 """A link to a person, organization, or topic by slug, whether or not it has a page yet:
 `[[slug]]`, or `[[slug|text]]` showing `text` in its place (as a link rewritten from an alias
 keeps the name it was written with)."""
+PLACEHOLDER = re.compile(r"<[^<>\n]+>")
+"""A template's `<placeholder>`, which a page or day log written from it replaces."""
 NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
 """Outside information the librarian couldn't find in L0, marked inline where it's missing."""
 

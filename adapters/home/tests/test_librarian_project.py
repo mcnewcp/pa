@@ -276,6 +276,24 @@ def test_a_template_left_unfilled_fails_lint(tmp_path: Path, template: str):
 
 
 @pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
+@pytest.mark.parametrize("line", ["summary: ", "aliases: ", "# "])
+def test_a_page_with_one_placeholder_left_in_fails_lint(tmp_path: Path, template: str, line: str):
+    """Free text that no other rule checks: one placeholder left there still fails lint."""
+    text = (TEMPLATES / template).read_text()
+    [left] = [
+        placeholder
+        for source in text.splitlines()
+        if source.startswith(line)
+        for placeholder in PLACEHOLDER.findall(source)
+    ]
+    filled = PLACEHOLDER.sub(lambda m: m[0] if m[0] == left else _fill(m), text)
+
+    errors = _lint_one(tmp_path, WIKI_PATHS[template], filled)
+
+    assert errors and all("placeholder" in error for error in errors), errors
+
+
+@pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
 def test_each_page_template_lists_its_types_allowed_statuses(template: str):
     [page_type] = [t for t in PAGE_TYPES.values() if t.type == template.removesuffix(".md")]
     [status] = [

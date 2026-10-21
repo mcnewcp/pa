@@ -9,8 +9,8 @@ An error fails the run. The rules so far:
 - **Day logs** hold only observation lines (and blank lines).
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields
   and valid values; the type's sections, in order, with only a `# <title>` before them;
-  well-formed decision and loop lines in Decisions and Open loops; and a citation on every
-  other line.
+  well-formed decision and loop lines in Decisions and Open loops; a citation on every other
+  line; and no template `<placeholder>` left in its summary, aliases, or title.
 - **Citations** name episodes that are in L0.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
@@ -54,6 +54,7 @@ from pa_core.librarian.wiki import (
     PAGE_NAME,
     PAGE_TYPES,
     PERSON,
+    PLACEHOLDER,
     FieldValue,
     Page,
     PageFormatError,
@@ -287,6 +288,12 @@ def _frontmatter_problems(fields: Mapping[str, FieldValue], page_type: PageType)
     summary = fields.get("summary")
     if "summary" in fields and not (isinstance(summary, str) and summary):
         yield "`summary` must be one line of text"
+    if isinstance(summary, str) and (placeholder := PLACEHOLDER.search(summary)):
+        yield f"`summary` still holds the template's placeholder {placeholder[0]}"
+    aliases = fields.get("aliases")
+    for alias in aliases if isinstance(aliases, tuple) else ():
+        if placeholder := PLACEHOLDER.search(alias):
+            yield f"`aliases` still holds the template's placeholder {placeholder[0]}"
     updated = fields.get("updated")
     if "updated" in fields and not (isinstance(updated, str) and _is_date(updated)):
         yield f"`updated` must be a date, YYYY-MM-DD, not {updated!r}"
@@ -313,6 +320,12 @@ def _sections(page: Page, page_type: PageType) -> Iterator[Finding]:
                 page.path,
                 f"text before its first section: only a `# <title>` line may come before "
                 f"the sections, got {line!r}",
+                number,
+            )
+        elif placeholder := PLACEHOLDER.search(line):
+            yield Finding(
+                page.path,
+                f"its title still holds the template's placeholder {placeholder[0]}",
                 number,
             )
 
