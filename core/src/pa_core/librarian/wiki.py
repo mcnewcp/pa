@@ -46,6 +46,8 @@ class PageType:
     list_field: str | None = None
     """The list of identifiers it adds to its frontmatter, if any: a person's email addresses,
     an organization's mail domains."""
+    identifier: str | None = None
+    """What one of those identifiers is, with its article: "an address", "a domain"."""
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -60,6 +62,7 @@ PERSON = PageType(
     sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
     statuses=("active", "inactive"),
     list_field="emails",
+    identifier="an address",
 )
 ORGANIZATION = PageType(
     folder="orgs",
@@ -68,6 +71,7 @@ ORGANIZATION = PageType(
     sections=(CURRENT_STATE, OPEN_LOOPS, NOTES),
     statuses=("active", "inactive"),
     list_field="domains",
+    identifier="a domain",
 )
 TOPIC = PageType(
     folder="topics",
@@ -89,12 +93,44 @@ OWNER = "me"
 DAY_LOG_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 PAGE_NAME = re.compile(rf"{SLUG.pattern}\.md")
 
+
+def is_page_name(name: str) -> bool:
+    """Whether `name` is a page's file name, `<slug>.md`; never a `CLAUDE.md`, in any case."""
+    return PAGE_NAME.fullmatch(name) is not None and name.lower() != "claude.md"
+
+
+def day_of(name: str) -> date | None:
+    """The day a day log's file name, `YYYY-MM-DD.md`, is for; None if it names no real day."""
+    if not DAY_LOG_NAME.fullmatch(name):
+        return None
+    try:
+        return date.fromisoformat(name.removesuffix(".md"))
+    except ValueError:
+        return None
+
+
+def folder_files(tree: Path, folder: str) -> list[Path]:
+    """The regular files directly in `folder` of the wiki at `tree`, by name, never following a
+    symbolic link; none when the folder isn't a directory. Lint reports anything else."""
+    directory = tree / folder
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    return [
+        entry for entry in sorted(directory.iterdir()) if entry.is_file() and not entry.is_symlink()
+    ]
+
+
 # Deliberately stricter than evals' citations.py, which forgives spaces in what an answer cites;
 # lint holds the wiki to the exact form.
 CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")
 """A citation of one episode, `[ep:<episode_id>]`: plain text, never a wikilink."""
-LINK = re.compile(rf"\[\[({SLUG.pattern})\]\]")
-"""A link to a person, organization, or topic by slug, whether or not it has a page yet."""
+_SHOWN = r"[^\[\]|\n]+"
+LINK = re.compile(rf"\[\[(?P<slug>{SLUG.pattern})(?:\|(?P<shown>{_SHOWN}))?\]\]")
+"""A link to a person, organization, or topic by slug, whether or not it has a page yet:
+`[[slug]]`, or `[[slug|text]]` showing `text` in its place (as a link rewritten from an alias
+keeps the name it was written with)."""
+PLACEHOLDER = re.compile(r"<[^<>\n]+>")
+"""A template's `<placeholder>`, which a page or day log written from it replaces."""
 NEEDS_LOOKUP = re.compile(r"\[needs lookup: (?P<question>[^\]]+)\]")
 """Outside information the librarian couldn't find in L0, marked inline where it's missing."""
 
@@ -112,6 +148,11 @@ class Observation:
     citations: tuple[str, ...]
 
 
+def links(text: str) -> list[str]:
+    """The slugs `text` links, in order, piped links included."""
+    return [match["slug"] for match in LINK.finditer(text)]
+
+
 def parse_observation(line: str) -> Observation | None:
     """The observation `line` holds, or None if it isn't one.
 
@@ -121,10 +162,10 @@ def parse_observation(line: str) -> Observation | None:
     match = _OBSERVATION.fullmatch(line)
     if match is None:
         return None
-    links = tuple(LINK.findall(match["text"]))
-    if not links:
+    linked = tuple(links(match["text"]))
+    if not linked:
         return None
-    return Observation(match["text"], links, tuple(CITATION.findall(match["citations"])))
+    return Observation(match["text"], linked, tuple(CITATION.findall(match["citations"])))
 
 
 def slugify(text: str) -> str:
@@ -139,11 +180,11 @@ def citations(text: str) -> list[str]:
     return CITATION.findall(text)
 
 
-# Decision and loop lines. A party is `me` or a `[[slug]]`; `<who>` is parties joined by ", ".
+# Decision and loop lines. A party is `me` or a link; `<who>` is parties joined by ", ".
 
 _DATE = r"\d{4}-\d{2}-\d{2}"
 _CITES = r"\[ep:[A-Za-z0-9_-]+\](?: \[ep:[A-Za-z0-9_-]+\])*"
-_PARTY = rf"(?:{OWNER}|\[\[{SLUG.pattern}\]\])"
+_PARTY = rf"(?:{OWNER}|\[\[{SLUG.pattern}(?:\|{_SHOWN})?\]\])"
 _DECIDED = (
     rf"(?P<day>{_DATE}) · (?P<subject>[^:]+?): (?P<stance>proposed|decided|rejected) "
     rf"(?P<choice>\S.*?) \((?P<who>{_PARTY}(?:, {_PARTY})*)\) (?P<citations>{_CITES})"
@@ -273,7 +314,9 @@ def parse_loop(line: str) -> Loop | None:
 
 
 def _party(text: str) -> str:
-    return text.removeprefix("[[").removesuffix("]]")
+    """`me`, or the slug a party's link goes to."""
+    link = LINK.fullmatch(text)
+    return link["slug"] if link else text
 
 
 def _date(text: str) -> date | None:
@@ -288,25 +331,19 @@ def day_logs(tree: Path) -> dict[date, tuple[str, ...]]:
 
     Only regular files named for a real day count; lint reports anything else.
     """
-    folder = tree / DAYS
     logs: dict[date, tuple[str, ...]] = {}
-    if not folder.is_dir() or folder.is_symlink():
-        return logs
-    for entry in sorted(folder.iterdir()):
-        if entry.is_symlink() or not entry.is_file() or not DAY_LOG_NAME.fullmatch(entry.name):
-            continue
-        try:
-            day = date.fromisoformat(entry.name.removesuffix(".md"))
-        except ValueError:
+    for entry in folder_files(tree, DAYS):
+        day = day_of(entry.name)
+        if day is None:
             continue
         text = entry.read_text(encoding="utf-8", errors="replace")
         logs[day] = tuple(line for line in text.splitlines() if line.strip())
     return logs
 
 
-def reference_counts(tree: Path) -> dict[str, int]:
-    """For each slug linked from an observation, the number of distinct days it's linked on,
-    over every day log in the wiki at `tree`. The owner, `me`, isn't counted."""
+def linked_days(tree: Path) -> dict[str, list[date]]:
+    """For each slug linked from an observation, the distinct days it's linked on, in order,
+    over every day log in the wiki at `tree`. The owner, `me`, is never linked."""
     days: dict[str, set[date]] = defaultdict(set)
     for day, lines in day_logs(tree).items():
         for line in lines:
@@ -314,7 +351,13 @@ def reference_counts(tree: Path) -> dict[str, int]:
             for slug in observation.links if observation else ():
                 if slug != OWNER:
                     days[slug].add(day)
-    return {slug: len(linked) for slug, linked in days.items()}
+    return {slug: sorted(linked) for slug, linked in days.items()}
+
+
+def reference_counts(tree: Path) -> dict[str, int]:
+    """For each slug linked from an observation, the number of distinct days it's linked on,
+    over every day log in the wiki at `tree`. The owner, `me`, isn't counted."""
+    return {slug: len(days) for slug, days in linked_days(tree).items()}
 
 
 # Pages
@@ -369,6 +412,25 @@ class Page:
     def aliases(self) -> tuple[str, ...]:
         value = self.fields.get("aliases", ())
         return value if isinstance(value, tuple) else ()
+
+    @property
+    def page_type(self) -> PageType:
+        return PAGE_TYPES[self.folder]
+
+    @property
+    def identifiers(self) -> tuple[str, ...]:
+        """Its list of identifiers (a person's `emails`, an organization's `domains`), as
+        written; none for a topic, or when the field isn't a list (lint reports that)."""
+        key = self.page_type.list_field
+        value = self.fields.get(key, ()) if key else ()
+        return value if isinstance(value, tuple) else ()
+
+    @property
+    def title(self) -> str | None:
+        """Its name, from the `# <name>` line before its sections, if it has one."""
+        if self.preamble and self.preamble[0][1].startswith("# "):
+            return self.preamble[0][1].removeprefix("# ").strip()
+        return None
 
     def section(self, name: str) -> Section | None:
         return next((s for s in self.sections if s.name == name), None)
@@ -467,11 +529,8 @@ def pages(tree: Path) -> list[Page]:
     """Every readable page in the wiki at `tree`, by folder, then slug."""
     found: list[Page] = []
     for folder in PAGE_FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in sorted(directory.iterdir()):
-            if entry.is_symlink() or not entry.is_file() or not PAGE_NAME.fullmatch(entry.name):
+        for entry in folder_files(tree, folder):
+            if not is_page_name(entry.name):
                 continue
             text = entry.read_text(encoding="utf-8", errors="replace")
             try:

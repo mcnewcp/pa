@@ -136,6 +136,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Carry on with the replay in TARGET from its last committed batch.",
     )
+    seed = librarian_commands.add_parser(
+        "seed",
+        help="Start the data root's fresh wiki as a copy of an eval wiki replayed over the "
+        "same episodes (such as after reseeding the data root with that corpus), so the next "
+        "run takes only what's captured after.",
+    )
+    seed.add_argument(
+        "eval_wiki",
+        type=Path,
+        metavar="EVAL_WIKI",
+        help="The eval wiki: a directory holding the replay's wiki/ (and its run log), such as "
+        "evals/wikis/scale/<librarian version>.",
+    )
+    seed.add_argument(
+        "--captured-through",
+        type=datetime.fromisoformat,
+        help="Count the episodes captured up to this time (ISO 8601; the owner's time zone if "
+        "it has no offset) as in the wiki, else all of L0: the reseed's capture time.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -157,6 +176,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _backup(data_root)
         elif args.command == "renormalize":
             _renormalize(data_root)
+        elif args.command == "librarian" and args.librarian_command == "seed":
+            _seed(data_root, args.eval_wiki, args.captured_through)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -218,6 +239,18 @@ def _run_librarian(data_root: DataRoot) -> None:
     )
 
 
+def _seed(data_root: DataRoot, eval_wiki: Path, captured_through: datetime | None) -> None:
+    if captured_through is not None and captured_through.utcoffset() is None:
+        captured_through = captured_through.replace(tzinfo=load_time_zone())
+    commit = librarian.seed(
+        data_root,
+        eval_wiki.expanduser().resolve(),
+        owner=load_owner(),
+        captured_through=captured_through,
+    )
+    print(f"librarian: seeded the wiki from {eval_wiki}; committed {commit[:8]}")
+
+
 def _replay(
     target: Path,
     corpus: list[Path],
@@ -272,14 +305,21 @@ def _replay(
     print(f"librarian replay: committed {len(outcome.runs)} batches into {target}")
 
 
-def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
-    owner = load_owner()
+def _render_target(target: Path, project: str) -> Path:
+    """`target`, resolved, once it's known to be outside the repository: a rendered project
+    names the owner."""
     target = target.expanduser().resolve()
     require_outside_repository(
         target,
         "The render target",
-        "A rendered agent project names the owner, so it must live outside the repository.",
+        f"A rendered {project} names the owner, so it must live outside the repository.",
     )
+    return target
+
+
+def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
+    owner = load_owner()
+    target = _render_target(target, "agent project")
     render_agent_project(
         target,
         owner=owner,
@@ -297,11 +337,6 @@ def _render_librarian_project(target: Path, *, l0: PurePosixPath, wiki: PurePosi
                 f"{name} must be an absolute path, as the librarian's session sees it (got {path})"
             )
     owner = load_owner()
-    target = target.expanduser().resolve()
-    require_outside_repository(
-        target,
-        "The render target",
-        "A rendered librarian project names the owner, so it must live outside the repository.",
-    )
+    target = _render_target(target, "librarian project")
     render_librarian_project(target, owner=owner, l0=l0, wiki=wiki)
     print(f"rendered the librarian project into {target}")

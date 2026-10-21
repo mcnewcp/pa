@@ -9,7 +9,7 @@ configuration: in production it reaches the librarian's VM, and tests point it a
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path, PurePath
 
@@ -44,6 +44,10 @@ class ClaudeSessionRunner:
     `command` starts them there). `paths` are where the sessions see L0 and the wiki (the paths
     the project was rendered with). Sessions keep their transcripts, so a session can be resumed
     from the same project.
+
+    A session that runs out of time is killed with every process its command started. One
+    running somewhere that doesn't kill (in a sandbox, the VM) is killed there too by `halt`,
+    before its result is returned, so nothing writes to the wiki once the run has moved on.
     """
 
     def __init__(
@@ -57,6 +61,7 @@ class ClaudeSessionRunner:
         effort: str,
         max_turns: int,
         timeout_seconds: float,
+        halt: Callable[[], None] = lambda: None,
         environ: Mapping[str, str] = os.environ,
     ) -> None:
         self._command = list(command)
@@ -67,6 +72,7 @@ class ClaudeSessionRunner:
         self._effort = effort
         self._max_turns = max_turns
         self._timeout_seconds = timeout_seconds
+        self._halt = halt
         self._environ = environ
         self._phases: dict[str, Phase] = {}
         """The phase of each session started, by its id, for when it's resumed."""
@@ -116,6 +122,7 @@ class ClaudeSessionRunner:
                 env=without_capture(self._environ),
             )
         except ClaudeCliTimeoutError as error:
+            self._halt()
             session = f"the {phase} session" if phase else "a session"
             return SessionResult(
                 ok=False,

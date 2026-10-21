@@ -4,8 +4,9 @@ wired to its home adapters.
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
-renders the librarian project into a temporary directory, the sessions' working directory, and
-runs the sessions with the configured command.
+renders the librarian project as committed (the project its librarian version names) into a
+temporary directory, the sessions' working directory, and runs the sessions with the configured
+command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -14,6 +15,9 @@ With a sandbox configured (the librarian's VM), each run (each replay) is wrappe
   writable, and nothing else) and prints, as a JSON object with the keys `l0`, `project` and
   `wiki`, where the sessions see them. The project is rendered for those paths after it starts,
   into the directory it was given.
+- `<sandbox> kill` kills every session process in it, when a session runs out of time: killing
+  the command that started a session there doesn't reach it, and it must be dead before the run
+  discards what it wrote.
 - `<sandbox> stop` takes it down afterwards, whatever happened, even after a failed start.
 """
 
@@ -23,7 +27,7 @@ import json
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,7 +38,14 @@ from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
-from pa_core.librarian.run import Librarian, RunOutcome, SessionPaths, run_librarian
+from pa_core.librarian.run import (
+    Librarian,
+    RunOutcome,
+    SessionPaths,
+    WikiSeedError,
+    run_librarian,
+    seed_wiki,
+)
 from pa_core.librarian.version import librarian_version
 from pa_core.owner import Owner
 from pa_home.agent import wall_clock
@@ -67,16 +78,18 @@ def run(
     clock: Callable[[], datetime] = wall_clock,
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, telling it the clock's
-    time as "now". `project` is the librarian project's source."""
+    time as "now". `project` is the librarian project's source, run as committed
+    (`project_files`)."""
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    with _runner(data_root.l0, data_root.wiki, owner, config, project) as runner:
+    files = project_files(project)
+    with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
         return run_librarian(
             store=FilesystemL0(data_root.l0),
             owner=owner,
             time_zone=time_zone,
             repository=repository,
             runner=runner,
-            librarian=_librarian(config, project),
+            librarian=_librarian(config, files),
             now=clock().astimezone(time_zone),
             page_threshold=config.page_threshold,
             loop_age_days=config.loop_age_days,
@@ -115,14 +128,15 @@ def replay(
         )
     with _l0(data_root, corpus, owner, as_of or clock()) as l0:
         repository = GitWikiRepository.open(layout.tree, layout.git_dir)
-        with _runner(l0, layout.tree, owner, config, project) as runner:
+        files = project_files(project)
+        with _runner(l0, layout.tree, owner, config, files) as runner:
             return replay_librarian(
                 store=FilesystemL0(l0),
                 owner=owner,
                 time_zone=time_zone,
                 repository=repository,
                 runner=runner,
-                librarian=_librarian(config, project),
+                librarian=_librarian(config, files),
                 run_log=layout.run_log,
                 batch_days=batch_days,
                 as_of=as_of,
@@ -130,6 +144,32 @@ def replay(
                 loop_age_days=config.loop_age_days,
                 progress=progress,
             )
+
+
+def seed(
+    data_root: DataRoot,
+    eval_wiki: Path,
+    *,
+    owner: Owner,
+    captured_through: datetime | None = None,
+    clock: Callable[[], datetime] = wall_clock,
+) -> str:
+    """Seeds the data root's fresh wiki from `eval_wiki` (a replay's target, or an eval wiki
+    kept in the evals tree: its `wiki/` and run log), replayed over the same episodes as the
+    data root's L0, such as the scale corpus the data root was reseeded with. The commit's
+    cursor takes every episode captured up to `captured_through` (all of L0 without it: seed
+    right after the reseed). Returns the commit."""
+    source = ReplayTarget(eval_wiki).tree
+    if not source.is_dir():
+        raise WikiSeedError(f"{eval_wiki} has no wiki/: it isn't an eval wiki")
+    return seed_wiki(
+        store=FilesystemL0(data_root.l0),
+        owner=owner,
+        repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
+        source=source,
+        now=clock(),
+        captured_through=captured_through,
+    )
 
 
 @contextmanager
@@ -162,9 +202,10 @@ def _copy_into_inbox(corpus: Sequence[Path], inbox: Path) -> None:
                 shutil.copyfile(payload, inbox / relative)
 
 
-def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
+def _librarian(config: LibrarianConfig, files: Mapping[str, bytes]) -> Librarian:
+    """The librarian that runs the project made of `files`: the same files the sessions run."""
     return Librarian(
-        version=librarian_version(project_files(project), model=config.model, effort=config.effort),
+        version=librarian_version(files, model=config.model, effort=config.effort),
         model=config.model,
         effort=config.effort,
     )
@@ -172,17 +213,17 @@ def _librarian(config: LibrarianConfig, project: Path) -> Librarian:
 
 @contextmanager
 def _runner(
-    l0: Path, wiki: Path, owner: Owner, config: LibrarianConfig, project: Path
+    l0: Path, wiki: Path, owner: Owner, config: LibrarianConfig, files: Mapping[str, bytes]
 ) -> Iterator[ClaudeSessionRunner]:
-    """A session runner in the librarian project, rendered for where the sessions see `l0` and
-    `wiki`: in the sandbox, if one is configured, else on the host."""
+    """A session runner in the librarian project made of `files`, rendered for where the
+    sessions see `l0` and `wiki`: in the sandbox, if one is configured, else on the host."""
     with tempfile.TemporaryDirectory(prefix="pa-librarian-") as directory:
         rendered = Path(directory) / "project"
         rendered.mkdir()
         with _sandbox(config.sandbox, l0=l0, project=rendered, wiki=wiki) as seen:
             paths = SessionPaths(l0=seen.l0, wiki=seen.wiki)
             render_librarian_project(
-                rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, source=project
+                rendered, owner=owner, l0=paths.l0, wiki=paths.wiki, files=files
             )
             yield ClaudeSessionRunner(
                 command=config.command,
@@ -193,7 +234,20 @@ def _runner(
                 effort=config.effort,
                 max_turns=config.max_turns,
                 timeout_seconds=config.timeout_seconds,
+                halt=_halt(config.sandbox),
             )
+
+
+def _halt(sandbox: Sequence[str] | None) -> Callable[[], None]:
+    """What kills a timed-out session where it runs: in the sandbox, `<sandbox> kill`. Without
+    one, killing its command's processes killed it already."""
+    if sandbox is None:
+        return lambda: None
+
+    def halt() -> None:
+        _sandbox_command(sandbox, "kill")
+
+    return halt
 
 
 @dataclass(frozen=True)

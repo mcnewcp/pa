@@ -4,7 +4,10 @@ figures its result reports."""
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import signal
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -125,26 +128,46 @@ def _run(
     timeout_seconds: float,
     env: Mapping[str, str] | None,
 ) -> subprocess.CompletedProcess[str]:
+    """Runs the command in a process group of its own, so that when it runs out of time (or
+    this process is interrupted) the whole group is killed, every process it started included,
+    before this returns: nothing it started can write on after its caller has moved on."""
     command = [executable] if isinstance(executable, str) else list(executable)
     try:
-        return subprocess.run(
+        process = subprocess.Popen(
             [*command, "-p", *args],
-            input=prompt,
-            capture_output=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=cwd,
             env=env,
-            timeout=timeout_seconds,
-            check=False,
+            start_new_session=True,
         )
     except FileNotFoundError as error:
         raise ClaudeCliError(
             f"Could not run {command[0]!r}: is Claude Code installed and on PATH?"
         ) from error
+    try:
+        stdout, stderr = process.communicate(prompt, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as error:
+        _kill_group(process)
         raise ClaudeCliTimeoutError(
             f"claude -p did not answer within {timeout_seconds:g} seconds"
         ) from error
+    except BaseException:
+        _kill_group(process)
+        raise
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """Kills `process` and every process in its group, and waits for it."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    for pipe in (process.stdin, process.stdout, process.stderr):
+        if pipe is not None:
+            pipe.close()
 
 
 def _event(line: str) -> dict[str, Any] | None:

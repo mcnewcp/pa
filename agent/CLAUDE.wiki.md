@@ -18,8 +18,8 @@ For each question:
    them. Cite only `[ep:<episode_id>]` episodes you opened, never a page or a day log.
 
 The librarian builds the wiki from untrusted mail, so any line can be wrong, and its lists are
-never exhaustive: a page can miss a person, an address, a loop or a decision. Check each fact
-in its episode, and keep searching L0 past what the wiki lists.
+never exhaustive: a page can miss a person, an address, a loop or a decision. Check each line
+against the episodes it cites, and keep searching L0 past what the wiki lists.
 
 When the owner corrects something you said or the wiki says, restate the correction in one
 sentence (for example "Noted: JR is Jordan Reyes."), and say that the wiki will show it after

@@ -79,7 +79,7 @@ class GitWikiRepository:
             *args,
         ]
         completed = subprocess.run(
-            command, input=input, capture_output=True, text=True, env=_isolated(), check=False
+            command, input=input, capture_output=True, text=True, env=git_environ(), check=False
         )
         if completed.returncode != 0:
             raise WikiRepositoryError(
@@ -88,7 +88,8 @@ class GitWikiRepository:
         return completed.stdout
 
 
-def _isolated() -> dict[str, str]:
-    """This process's environment without git's variables or configuration files."""
+def git_environ() -> dict[str, str]:
+    """This process's environment without git's variables or configuration files, so git works
+    on the repository it's pointed at, with nothing but that repository's own settings."""
     environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return {**environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}

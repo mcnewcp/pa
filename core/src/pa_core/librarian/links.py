@@ -2,7 +2,10 @@
 
 After a merge, the merged-away name lives on as an alias of the page it was merged into, and
 the day logs and pages still link it. Once a run's sessions pass, the host rewrites every
-`[[<alias>]]` to `[[<slug>]]`, day logs included, so no link is left stale (spec #56).
+`[[<alias>]]` to `[[<slug>|<alias>]]`, day logs included, so no link is left stale (spec #56).
+The rewritten link goes to the page but still shows the name it was written with, so a line
+such as the merge's own observation, "[[okie]] is [[ben-okafor]]", keeps saying what it said:
+"[[ben-okafor|okie]] is [[ben-okafor]]". A piped link keeps the text it shows.
 
 An alias links by its slug ("Okie" by `okie`). A link is rewritten only when that slug has no
 page of its own and is an alias of exactly one page; the owner's `me` is never rewritten.
@@ -10,9 +13,11 @@ page of its own and is an alias of exactly one page; the owner's `me` is never r
 
 from __future__ import annotations
 
+import re
+from functools import partial
 from pathlib import Path
 
-from pa_core.librarian.wiki import FOLDERS, LINK, OWNER, pages, slugify
+from pa_core.librarian.wiki import FOLDERS, LINK, OWNER, folder_files, pages, slugify
 
 
 def alias_targets(tree: Path) -> dict[str, str]:
@@ -20,13 +25,20 @@ def alias_targets(tree: Path) -> dict[str, str]:
     the page it's an alias of."""
     found = pages(tree)
     slugs = {page.slug for page in found}
-    claimed: dict[str, set[str]] = {}
+    aliased_by: dict[str, set[str]] = {}
     for page in found:
         for alias in page.aliases:
             slug = slugify(alias)
             if slug and slug != OWNER and slug not in slugs:
-                claimed.setdefault(slug, set()).add(page.slug)
-    return {alias: next(iter(owners)) for alias, owners in claimed.items() if len(owners) == 1}
+                aliased_by.setdefault(slug, set()).add(page.slug)
+    return {alias: next(iter(by)) for alias, by in aliased_by.items() if len(by) == 1}
+
+
+def _rewritten(targets: dict[str, str], link: re.Match[str]) -> str:
+    slug = link["slug"]
+    if slug not in targets:
+        return link[0]
+    return f"[[{targets[slug]}|{link['shown'] or slug}]]"
 
 
 def rewrite_alias_links(tree: Path) -> list[str]:
@@ -37,14 +49,11 @@ def rewrite_alias_links(tree: Path) -> list[str]:
         return []
     changed: list[str] = []
     for folder in FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in sorted(directory.iterdir()):
-            if entry.is_symlink() or not entry.is_file() or entry.suffix != ".md":
+        for entry in folder_files(tree, folder):
+            if entry.suffix != ".md":
                 continue
             text = entry.read_text(encoding="utf-8")
-            rewritten = LINK.sub(lambda m: f"[[{targets.get(m[1], m[1])}]]", text)
+            rewritten = LINK.sub(partial(_rewritten, targets), text)
             if rewritten != text:
                 entry.write_text(rewritten, encoding="utf-8")
                 changed.append(f"{folder}/{entry.name}")

@@ -2,6 +2,7 @@
 # Usage: librarian-sandbox.sh start <l0> <project> <wiki>
 #        librarian-sandbox.sh stop
 #        librarian-sandbox.sh claude <arg>...
+#        librarian-sandbox.sh kill
 #
 # The librarian's VM as the sandbox its sessions run in: what PA_LIBRARIAN_SANDBOX names for
 # `pa librarian run` and `pa librarian replay` (pa_home.librarian; librarian.sh sets it).
@@ -17,13 +18,19 @@
 # PA_LIBRARIAN_TOKEN passed through stdin, ahead of the prompt, into CLAUDE_CODE_OAUTH_TOKEN: it
 # is never on the VM's disk or a command line.
 #
+# kill kills every process of the librarian's user in the VM and waits until none is left: pa
+# calls it when a session runs out of time, since killing `incus exec` on the devbox doesn't stop
+# what it started in the VM, and the session must be dead before the run discards its writes.
+#
 # stop deletes the sessions' state (their transcripts hold private data, and a snapshot would
 # keep them), stops the VM, and takes the shares off again. Safe to run at any time.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 select_vm librarian
 
-usage() { die "usage: librarian-sandbox.sh start <l0> <project> <wiki> | stop | claude <arg>..."; }
+usage() {
+  die "usage: librarian-sandbox.sh start <l0> <project> <wiki> | stop | claude <arg>... | kill"
+}
 
 # share DEVICE SOURCE PATH READONLY attaches SOURCE at PATH in the VM as a disk device.
 share() {
@@ -126,11 +133,27 @@ claude() {
         exec "$0" "$@"' "$PA_LIB_VM_CLAUDE" "$@"
 }
 
+kill_sessions() {
+  (($# == 0)) || usage
+  vm_running || return 0
+  for _ in $(seq 30); do
+    # pkill and pgrep exit 1 when no process matches.
+    incus exec "$PA_VM" -- pkill -KILL -u "$PA_USER" </dev/null || true
+    incus exec "$PA_VM" -- pgrep -u "$PA_USER" >/dev/null </dev/null || {
+      log "killed the sessions in $PA_VM"
+      return 0
+    }
+    sleep 1
+  done
+  die "$PA_USER's processes in $PA_VM won't die"
+}
+
 command=${1:-}
 (($#)) && shift
 case $command in
   start) start "$@" ;;
   stop) stop "$@" ;;
   claude) claude "$@" ;;
+  kill) kill_sessions "$@" ;;
   *) usage ;;
 esac

@@ -12,7 +12,10 @@ from typing import Any
 
 import pytest
 
+from pa_home.claude_session import FILE_TOOLS as SESSION_TOOLS
+
 LIB = Path(__file__).resolve().parents[1] / "lib.sh"
+SETTINGS_PATH = "librarian/.claude/settings.json"
 
 
 def lib(script: str, *, stdin: str = "", home: Path | None = None) -> subprocess.CompletedProcess:
@@ -126,6 +129,20 @@ def test_only_addresses_in_the_apis_published_range_count_as_the_apis():
 
 
 FILE_TOOLS = ["Edit", "Glob", "Grep", "Read", "Write"]
+
+
+def test_every_list_of_the_librarians_file_tools_names_the_same_five():
+    """The tools a session is started with (`--tools`), the ones the librarian project's
+    settings allow, the ones the check expects, and none the VM's managed settings deny."""
+    deploy = LIB.parent
+    project_settings = json.loads((deploy.parents[1] / SETTINGS_PATH).read_text())
+    managed = json.loads((deploy / "librarian" / "managed-settings.json").read_text())
+    in_lib = lib('echo "${PA_LIBRARIAN_TOOLS[@]}"').stdout.split()
+
+    assert sorted(SESSION_TOOLS) == FILE_TOOLS
+    assert sorted(project_settings["permissions"]["allow"]) == FILE_TOOLS
+    assert sorted(in_lib) == FILE_TOOLS
+    assert not set(FILE_TOOLS) & set(managed["permissions"]["deny"])
 
 
 def session(

@@ -32,6 +32,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -627,13 +628,60 @@ def test_in_a_git_checkout_the_librarian_version_is_of_the_project_as_committed(
     with (project / "CLAUDE.md").open("a") as claude_md:
         claude_md.write("\nOne more rule.\n")
     assert version() == first
+    # And the sessions run the project the version names: as committed.
+    assert all("One more rule" not in s["claude_md"] for s in sessions(data_root))
     in_checkout("add", "librarian/CLAUDE.md")
     in_checkout("commit", "--quiet", "--message", "One more rule")
     assert version() != first
+    assert "One more rule" in sessions(data_root)[-1]["claude_md"]
     # The committed project hashes as the same files outside a checkout would.
     copied = tmp_path / "copied"
     shutil.copytree(project, copied, ignore=shutil.ignore_patterns("scratch.md"))
     assert project_files(copied) == project_files(project)
+
+
+# A session that outlives its timeout: it makes the usual mess, then writes once more, later.
+LATE = [
+    *MESS,
+    {"sleep": 2},
+    {"write": "days/2026-10-02.md", "text": "- written late about [[someone]] [ep:%s]\n"},
+]
+
+
+def run_out_of_time(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """A committed run, then a run whose observation outlives a 1-second timeout; returns the
+    wiki as committed, after asserting the run failed within the timeout, not the session's
+    own time."""
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before = tree_state(data_root / "wiki")
+    ingest(data_root, {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")})
+    script(
+        data_root,
+        observation=[{**a, "text": a["text"] % HOTEL_EMAIL_ID} if "text" in a else a for a in LATE],
+    )
+    monkeypatch.setenv("PA_LIBRARIAN_TIMEOUT_SECONDS", "1")
+    started = time.monotonic()
+
+    assert run_librarian() != 0
+
+    assert time.monotonic() - started < 1.9
+    return before
+
+
+def test_a_timed_out_session_is_killed_with_every_process_it_started(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The command runs `claude` as a child, as librarian-sandbox.sh runs `incus exec`.
+    wrapper = tmp_path / "wrapper"
+    wrapper.write_text(f'#!/bin/sh\n"{os.environ["PA_LIBRARIAN_COMMAND"]}" "$@"\n')
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(wrapper))
+
+    before = run_out_of_time(data_root, monkeypatch)
+
+    time.sleep(2.5)
+    assert tree_state(data_root / "wiki") == before
 
 
 def test_what_an_interrupted_run_left_in_the_wiki_is_never_committed(data_root: Path):
@@ -1042,6 +1090,24 @@ CONSOLIDATION_FAILURES = {
     "a domain that isn't in L0": (
         pages_with(ORG, "domains: []", "domains: [northshorelodge.example]"),
         "northshorelodge.example, which isn't in L0",
+    ),
+    "a domain on two pages": (
+        [
+            *pages_with(ORG, "domains: []", "domains: [example.net]"),
+            {
+                "write": "orgs/lodge.md",
+                "text": wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[ORG].replace(
+                    "domains: []", "domains: [Example.NET]"
+                ),
+            },
+        ],
+        "a domain belongs on one page",
+    ),
+    "the owner's address on a page": (
+        pages_with(
+            PERSON, "emails: [dkim@example.net]", "emails: [dkim@example.net, Argus@example.com]"
+        ),
+        "Argus@example.com, one of the owner's addresses",
     ),
     "an address on two pages": (
         [
@@ -1517,6 +1583,20 @@ WARNINGS = {
         f"{TOPIC}: a duplicate candidate: it shares the alias dave with {PERSON}",
         {},
     ),
+    "an alias that's another page's slug": (
+        _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, North Shore Lodge]"),
+        f"{TOPIC}: a duplicate candidate: its alias North Shore Lodge is the slug of {ORG}",
+        {},
+    ),
+    "an alias that's another page's name": (
+        lambda pages: (
+            pages.update({"topics/kitchen-remodel.md": KITCHEN}),
+            _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, kitchen]")(pages),
+        ),
+        f"{TOPIC}: a duplicate candidate: its alias kitchen is the name of "
+        "topics/kitchen-remodel.md",
+        {},
+    ),
     "near-identical slugs": (
         lambda pages: pages.update({"topics/weddings.md": KITCHEN}),
         f"topics/weddings.md: a duplicate candidate: its slug is nearly {TOPIC}'s",
@@ -1630,13 +1710,19 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert run_librarian() == 0
     assert "[[dave]]" in wiki_files(data_root)["index.md"]
     # The next merges it into david-kim, which takes "Dave" as an alias; a page still links
-    # [[dave]], and so do the day logs. The session's file tools can't remove a file, so it
-    # empties dave's page, and the host removes it.
+    # [[dave]], in a line and as a loop's party, and so do the day logs, the merge's own among
+    # them. The session's file tools can't remove a file, so it empties dave's page, and the
+    # host removes it.
     ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
-    topic = pages[TOPIC].replace("The block closes", "[[dave]] says the block closes")
+    toast = f"- [ ] [[dave|Dave]] → me: the toast · promised {days_ago(1)} [ep:{HOTEL_EMAIL_ID}]"
+    topic = (
+        pages[TOPIC]
+        .replace("The block closes", "[[dave]] says the block closes")
+        .replace("\n## Notes", f"{toast}\n\n## Notes")
+    )
     script(
         data_root,
-        observation=[{"observe": True, "links": {"RSVP": ["dave"]}}],
+        observation=[{"observe": True, "links": {"RSVP": ["dave", "david-kim"]}}],
         consolidation=[
             {"write": "people/dave.md", "text": "\n"},
             {"write": PERSON, "text": pages[PERSON]},
@@ -1649,19 +1735,60 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
 
     files = wiki_files(data_root)
     assert "people/dave.md" not in files
+    # Each link now goes to the page, still showing the name it was written with.
     assert files["days/2026-09-30.md"] == (
-        f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
+        f"- email about Hotel block with [[david-kim|dave]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
     )
     [rsvp] = sessions(data_root, "observation")[-1]["episodes"]
     assert files["days/2026-10-02.md"] == (
-        f"- email about RSVP with [[david-kim]] [ep:{rsvp['id']}]\n"
+        f"- email about RSVP with [[david-kim|dave]] and [[david-kim]] [ep:{rsvp['id']}]\n"
     )
-    assert "[[david-kim]] says the block closes" in files[TOPIC]
+    assert "[[david-kim|dave]] says the block closes" in files[TOPIC]
+    assert "- [ ] [[david-kim|Dave]] → me: the toast" in files[TOPIC]
     # A page's own slug and other pages' links stay as they are.
     assert files[PERSON] == pages[PERSON]
     assert "[[north-shore-lodge]] → me" in files[TOPIC]
     assert "[[dave]]" not in files["index.md"]
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # A piped link counts for the page it goes to.
+    ingest(data_root, wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    script(data_root, observation=[{"observe": True, "links": {"Menu": ["wedding"]}}])
+    assert run_librarian() == 0
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    assert {"slug": "david-kim", "days": 2, "reaches_threshold": False, "page": PERSON} in counts
+    assert "dave" not in {count["slug"] for count in counts}
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+
+
+# An emptied file the host may not remove: no merge explains it, or it's outside the layout.
+EMPTIED = {
+    "a page no surviving page takes as an alias": ("people/mallory.md", "people/mallory.md"),
+    "an empty CLAUDE.md among pages": ("people/CLAUDE.md", "CLAUDE.md"),
+    "an empty claude.md a page takes as an alias": ("people/claude.md", "CLAUDE.md"),
+    "an empty dotfile among pages": ("people/.dave.md", "people/.dave.md"),
+    "an empty file that isn't Markdown": ("people/dave.txt", "people/dave.txt"),
+}
+
+
+@pytest.mark.parametrize("emptied", EMPTIED, ids=list(EMPTIED))
+def test_an_emptied_file_no_merge_explains_is_left_for_lint_and_fails_the_run(
+    data_root: Path, capsys, emptied: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(data_root, {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")})
+    path, reason = EMPTIED[emptied]
+    # David Kim's page goes by Dave and Claude, so `dave` and `claude` are aliases on it.
+    pages = pages_with(PERSON, "aliases: [Dave, David Kim]", "aliases: [Dave, David Kim, Claude]")
+    script(data_root, consolidation=[*pages, {"write": path, "text": ""}])
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    assert reason in capsys.readouterr().err
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
 
 
 # Lint errors already in the last commit
@@ -2131,19 +2258,108 @@ def test_a_rebuilt_wiki_moved_into_the_data_root_carries_on_where_the_replay_sto
     assert observed_subjects(data_root)[-1] == ["Gift"]
 
 
+# Seeding a data root's wiki from an eval wiki (#75)
+
+
+def eval_wiki(data_root: Path, tmp_path: Path) -> Path:
+    """An eval wiki replayed over the data root's L0: the replay's wiki and run log, without
+    its git directory, as the evals tree keeps one."""
+    target = tmp_path / "eval-wiki"
+    assert replay(target) == 0
+    shutil.rmtree(target / "wiki.git")
+    return target
+
+
+def seed(*args: str) -> int:
+    return main(["librarian", "seed", *args])
+
+
+def test_a_wiki_seeded_from_an_eval_wiki_carries_on_after_the_reseed(
+    data_root: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, REPLAYED)
+    source = eval_wiki(data_root, tmp_path)
+    replayed = len(sessions(data_root, "observation"))
+
+    assert seed(str(source)) == 0
+
+    assert wiki_files(data_root) == {
+        p.relative_to(source / "wiki").as_posix(): p.read_text()
+        for p in sorted((source / "wiki").rglob("*"))
+        if p.is_file()
+    }
+    assert "Cursor" in trailers(commit_messages(data_root)[0])
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # Everything in L0 at the seed is in the wiki already; only what's captured after is new.
+    capsys.readouterr()
+    assert run_librarian() == 0
+    assert "no new episodes" in capsys.readouterr().out
+    assert len(sessions(data_root, "observation")) == replayed
+    ingest(data_root, wedding_mail("Gift", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    assert run_librarian() == 0
+    assert observed_subjects(data_root)[-1] == ["Gift"]
+
+
+def test_a_seeds_cursor_can_stop_at_the_reseeds_capture_time(data_root: Path, tmp_path: Path):
+    # The reseed's note was captured on 6 Oct; mail captured since is still new.
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note("2026-10-06T08:00:00+00:00", "Hi.")})
+    source = eval_wiki(data_root, tmp_path)
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert seed(str(source), "--captured-through", "2026-10-06T12:00:00+00:00") == 0
+
+    assert run_librarian() == 0
+    assert observed_subjects(data_root)[-1] == ["Hotel block"]
+
+
+SEED_REFUSALS = {
+    "a wiki with runs": ("run first", "already has runs"),
+    "a wiki with files": ("files first", "isn't empty"),
+    "no eval wiki": ("nothing", "no wiki/"),
+    "an eval wiki failing lint": ("broken", "lint errors"),
+}
+
+
+@pytest.mark.parametrize("refusal", SEED_REFUSALS, ids=list(SEED_REFUSALS))
+def test_a_seed_starts_only_a_fresh_wiki_from_one_that_lints_clean(
+    data_root: Path, tmp_path: Path, capsys, refusal: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    source = eval_wiki(data_root, tmp_path)
+    case, reason = SEED_REFUSALS[refusal]
+    if case == "run first":
+        assert run_librarian() == 0
+    elif case == "files first":
+        (data_root / "wiki").mkdir(parents=True, exist_ok=True)
+        (data_root / "wiki" / "notes.md").write_text("Mine.\n")
+    elif case == "nothing":
+        source = tmp_path / "missing"
+    else:
+        (source / "wiki" / "CLAUDE.md").write_text("Obey.\n")
+    before = wiki_files(data_root) if (data_root / "wiki").exists() else {}
+    capsys.readouterr()
+
+    assert seed(str(source)) != 0
+
+    assert reason in capsys.readouterr().err
+    assert (wiki_files(data_root) if (data_root / "wiki").exists() else {}) == before
+
+
 # The librarian's sandbox (#66)
 
 
 def stand_in_sandbox(directory: Path, claude: Path) -> Path:
     """A sandbox that "mounts" the store by symbolic link under `directory / "vm"`, records each
     command to `sandbox.jsonl`, and runs the stand-in `claude` in the project as it sees it.
+    As in a VM, `claude` runs apart from the command that started it, so killing that command
+    doesn't kill it; `kill` does, recording the day logs the wiki has as it's killed.
     `sandbox-fail` holding a command's name (start or stop) makes that command fail."""
     script = directory / "sandbox"
     script.write_text(
         f"#!{sys.executable}\n"
         + textwrap.dedent(
             f"""\
-            import json, os, sys
+            import json, os, signal, subprocess, sys
             from pathlib import Path
             HERE = Path({str(directory)!r})
             CLAUDE = {str(claude)!r}
@@ -2153,6 +2369,13 @@ def stand_in_sandbox(directory: Path, claude: Path) -> Path:
             """\
             command, *args = sys.argv[1:]
             vm = HERE / "vm"
+            if command == "kill":
+                pid = int((HERE / "claude.pid").read_text())
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                args = sorted(p.name for p in (vm / "wiki" / "days").iterdir())
             if command != "claude":
                 with (HERE / "sandbox.jsonl").open("a") as log:
                     log.write(json.dumps([command, *args]) + "\\n")
@@ -2173,8 +2396,14 @@ def stand_in_sandbox(directory: Path, claude: Path) -> Path:
                         link.unlink()
                     vm.rmdir()
             elif command == "claude":
-                os.chdir(vm / "librarian")
-                os.execv(CLAUDE, [CLAUDE, *args])
+                output = HERE / "claude.out"
+                with output.open("w") as out:
+                    session = subprocess.Popen([CLAUDE, *args], cwd=vm / "librarian",
+                                               stdout=out, start_new_session=True)
+                    (HERE / "claude.pid").write_text(str(session.pid))
+                    code = session.wait()
+                sys.stdout.write(output.read_text())
+                sys.exit(code)
             """
         )
     )
@@ -2234,6 +2463,19 @@ def test_a_failed_run_still_takes_the_sandbox_down(data_root: Path, sandbox: Pat
 
     assert [command for command, *_ in sandbox_commands(sandbox)] == ["start", "stop"]
     assert cursor(data_root) is None
+
+
+def test_a_timed_out_session_in_the_sandbox_is_killed_there_before_the_run_is_discarded(
+    data_root: Path, sandbox: Path, monkeypatch: pytest.MonkeyPatch
+):
+    before = run_out_of_time(data_root, monkeypatch)
+
+    time.sleep(2.5)
+    assert tree_state(data_root / "wiki") == before
+    commands = sandbox_commands(sandbox)
+    assert [command for command, *_ in commands] == ["start", "stop", "start", "kill", "stop"]
+    # Killed while its mess was still in the wiki: before the discard.
+    assert commands[3] == ["kill", "2026-09-30.md", "2026-10-01.md"]
 
 
 def test_a_sandbox_that_fails_to_start_runs_no_session_and_is_still_taken_down(

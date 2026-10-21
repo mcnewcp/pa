@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -31,10 +32,9 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.batch import production_batch
-from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
 from pa_core.librarian.run import CURSOR_FIELD, RunOutcome, last_cursor
-from pa_core.librarian.wiki import NOTES, Page, citations, day_logs, pages, slugify
+from pa_core.librarian.wiki import NOTES, Page, citations, day_logs, links, pages, slugify
 from pa_core.owner import Owner
 from pa_home import librarian
 from pa_home.config import DataRoot, load_librarian_config
@@ -81,18 +81,18 @@ def seed_corrections_fixture(root: Path) -> dict[str, str]:
     with the seed's cursor, so the next run takes only what's delivered after it. Returns
     every fixture payload's episode id, by its file stem."""
     ids = episode_ids()
-    data_root = DataRoot(root)
     deliver_stage(root, "seed")
-    for source in sorted((FIXTURE / "wiki").rglob("*.md")):
-        target = data_root.wiki / source.relative_to(FIXTURE / "wiki")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        text = source.read_text(encoding="utf-8")
-        target.write_text(_PLACEHOLDER.sub(lambda m: f"[ep:{ids[m[1]]}]", text), encoding="utf-8")
-    write_index(data_root.wiki)
-    seeded = production_batch(FilesystemL0(data_root.l0), after=None, time_zone=TIME_ZONE)
-    assert seeded is not None
-    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    repository.commit(f"Seed the corrections fixture's wiki\n\n{CURSOR_FIELD}: {seeded.cursor}\n")
+    with tempfile.TemporaryDirectory(prefix="pa-corrections-") as directory:
+        # Laid out as an eval wiki is, with the citations filled in, then seeded as one.
+        seed = Path(directory)
+        for source in sorted((FIXTURE / "wiki").rglob("*.md")):
+            target = seed / "wiki" / source.relative_to(FIXTURE / "wiki")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            text = source.read_text(encoding="utf-8")
+            target.write_text(
+                _PLACEHOLDER.sub(lambda m: f"[ep:{ids[m[1]]}]", text), encoding="utf-8"
+            )
+        librarian.seed(DataRoot(root), seed, owner=OWNER, clock=lambda: RUN_CLOCKS[0])
     return ids
 
 
@@ -128,6 +128,7 @@ def test_the_seeded_wiki_lints_clean_and_the_next_run_takes_exactly_the_chats(tm
     report = lint(
         data_root.wiki,
         l0=L0Metadata.of(store.envelopes()),
+        owner=OWNER,
         thresholds=Thresholds(today=RUN_CLOCKS[0].date(), page_threshold=3, loop_age_days=30),
     )
     assert report.errors == ()
@@ -184,6 +185,25 @@ def test_the_checks_find_every_correction_missing_from_the_starting_wiki(tmp_pat
         "no current decision for Thanksgiving in Duluth cites the owner's yes",
         "hosting Thanksgiving is still a current decision",
     ]
+
+
+def test_the_checks_read_links_as_the_wiki_does_piped_or_not(tmp_path: Path):
+    ids = seed_corrections_fixture(tmp_path)
+    wiki = DataRoot(tmp_path).wiki
+    # The host's rewrite goes to Ben Okafor's page, still showing "okie"; a piped link to
+    # okie still links okie.
+    for day, old, new in (
+        ("2026-10-04", "[[okie]]", "[[ben-okafor|okie]]"),
+        ("2026-10-08", "[[okie]]", "[[okie|Okie]]"),
+    ):
+        log = wiki / "days" / f"{day}.md"
+        assert old in log.read_text()
+        log.write_text(log.read_text().replace(old, new))
+
+    problems = corrections_problems(wiki, ids)
+
+    assert "days/2026-10-04.md still links [[okie]]" not in problems
+    assert "days/2026-10-08.md still links [[okie]]" in problems
 
 
 @pytest.mark.skipif(
@@ -245,7 +265,7 @@ def corrections_problems(wiki: Path, ids: dict[str, str]) -> list[str]:
     problems += [
         f"{p.relative_to(wiki)} still links [[okie]]"
         for p, t in text.items()
-        if "[[okie]]" in t and (ben is None or ben.slug != "okie")
+        if "okie" in links(t) and (ben is None or ben.slug != "okie")
     ]
 
     # The split: two pages, each saying so with the chat's citation.
@@ -298,12 +318,12 @@ def later_problems(wiki: Path, ids: dict[str, str]) -> list[str]:
         ("practice-moved", coach, accountant),
     ):
         line = logged.get(ids[name], "")
-        if page and f"[[{page.slug}]]" not in line:
+        if page and page.slug not in links(line):
             problems.append(f"the observation of {name} doesn't link [[{page.slug}]]: {line!r}")
-        if other and page and other.slug != page.slug and f"[[{other.slug}]]" in line:
+        if other and page and other.slug != page.slug and other.slug in links(line):
             problems.append(f"the observation of {name} links the other Chris Lee: {line!r}")
     for path in sorted(wiki.rglob("*.md")):
-        if "[[okie]]" in path.read_text(encoding="utf-8") and "okie" not in found:
+        if "okie" in links(path.read_text(encoding="utf-8")) and "okie" not in found:
             problems.append(f"{path.relative_to(wiki)} links [[okie]] again")
     return problems
 

@@ -5,14 +5,18 @@
 # The devbox runs two VMs: the assistant's (pa-home) and the librarian's (pa-librarian). PA_VM,
 # PA_PROFILE, PA_BRIDGE and PA_USER name the one a script works on: the assistant's, unless the
 # script takes --vm and is given another (take_vm_option).
-PA_VM=pa-home
-PA_PROFILE=pa
+PA_ASSISTANT_VM=pa-home
+PA_ASSISTANT_PROFILE=pa
+PA_ASSISTANT_BRIDGE=pabr0
+PA_ASSISTANT_USER=assistant
+PA_VM=$PA_ASSISTANT_VM
+PA_PROFILE=$PA_ASSISTANT_PROFILE
 PA_POOL=pa
 PA_POOL_SIZE=120GiB
-PA_BRIDGE=pabr0
+PA_BRIDGE=$PA_ASSISTANT_BRIDGE
 PA_IMAGE=images:ubuntu/26.04/cloud
 PA_REPO_URL=https://github.com/mcnewcp/pa.git
-PA_USER=assistant
+PA_USER=$PA_ASSISTANT_USER
 PA_VM_ROLE=assistant
 PA_REPO_DIR=/home/assistant/pa
 
@@ -115,8 +119,8 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 select_vm() {
   case $1 in
     assistant)
-      PA_VM=pa-home PA_PROFILE=pa PA_BRIDGE=pabr0 PA_USER=assistant
-      PA_VM_PROFILE_FILE=$DEPLOY_DIR/profile.yaml
+      PA_VM=$PA_ASSISTANT_VM PA_PROFILE=$PA_ASSISTANT_PROFILE PA_BRIDGE=$PA_ASSISTANT_BRIDGE
+      PA_USER=$PA_ASSISTANT_USER PA_VM_PROFILE_FILE=$DEPLOY_DIR/profile.yaml
       ;;
     librarian)
       PA_VM=$PA_LIBRARIAN_VM PA_PROFILE=$PA_LIBRARIAN_PROFILE PA_BRIDGE=$PA_LIBRARIAN_BRIDGE

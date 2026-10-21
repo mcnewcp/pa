@@ -3,8 +3,9 @@
 A run picks the batch of episodes captured since the cursor. The librarian observes them into
 day logs in one session, then folds the new observations into pages in a second, given the
 reference counts the host computes from the day logs and lint's open warnings. The sessions'
-file tools can't remove a file, so consolidation deletes a page (one merged into another) by
-emptying it, and the host removes it after the session. After each session the host checks
+file tools can't remove a file, so consolidation deletes a page merged into another by emptying
+it, and the host removes it after the session if the page it was merged into took its name as an
+alias. After each session the host checks
 it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
 most twice. Then the host rewrites links to aliases, regenerates `index.md`,
@@ -26,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -37,12 +39,28 @@ from typing import Protocol
 
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
+from pa_core.librarian.batch import (
+    Batch,
+    BatchEpisode,
+    Cursor,
+    cursor_through,
+    production_batch,
+)
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
-from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
+from pa_core.librarian.wiki import (
+    DAYS,
+    INDEX,
+    PAGE_FOLDERS,
+    day_logs,
+    folder_files,
+    is_page_name,
+    pages,
+    reference_counts,
+    slugify,
+)
 from pa_core.owner import Owner
 
 
@@ -151,6 +169,10 @@ class RunOutcome:
 
 
 CURSOR_FIELD = "Cursor"
+"""The commit message field holding where the run's batch stopped (`Cursor`)."""
+VERSION_FIELD = "Librarian-Version"
+OCCURRED_TO_FIELD = "Batch-Occurred-To"
+"""A replay run's commit message field holding its window's end."""
 PAGE_THRESHOLD = 3
 """The distinct days a slug is linked on before it gets a page, unless configured otherwise."""
 LOOP_AGE_DAYS = 30
@@ -189,7 +211,9 @@ def run_librarian(
         repository.discard()
         sessions: list[tuple[Phase, SessionResult]] = []
         thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
-        linter = partial(lint, l0=L0Metadata.of(store.envelopes()), thresholds=thresholds)
+        linter = partial(
+            lint, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds
+        )
         # Errors the last commit already has (a rule tightened since, or a seeded wiki): a
         # session is judged only on errors it can fix, and consolidation is handed the pages'.
         committed = _Committed(linter(tree).errors)
@@ -239,10 +263,54 @@ def run_librarian(
     )
 
 
+class WikiSeedError(PaError):
+    """A wiki that can't be seeded: it isn't fresh, or the seed fails lint."""
+
+
+def seed_wiki(
+    *,
+    store: L0Store,
+    owner: Owner,
+    repository: WikiRepository,
+    source: Path,
+    now: datetime,
+    captured_through: datetime | None = None,
+) -> str:
+    """Starts a fresh wiki as a copy of the wiki at `source` (an eval wiki's tree, replayed
+    over the same episodes), and commits it with the cursor of a run that took every episode
+    captured up to `captured_through` (all of L0 without it), so the next run takes only what's
+    captured after. Returns the commit.
+
+    Refuses a wiki that has runs or files already, and a seed that fails lint against `store`
+    for `owner` (the wiki is left as it was). `index.md` is regenerated.
+    """
+    if commit_fields(repository.last_commit_message() or ""):
+        raise WikiSeedError("the wiki already has runs; a seed starts a fresh wiki")
+    tree = repository.tree
+    if any(tree.iterdir()):
+        raise WikiSeedError(f"the wiki ({tree}) isn't empty; a seed starts a fresh wiki")
+    cursor = cursor_through(store, captured_through)
+    if cursor is None:
+        raise WikiSeedError("L0 has no episodes captured by then, so there is nothing to seed")
+    try:
+        shutil.copytree(source, tree, symlinks=True, dirs_exist_ok=True)
+        write_index(tree)
+        thresholds = Thresholds(now.date(), PAGE_THRESHOLD, LOOP_AGE_DAYS)
+        report = lint(tree, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds)
+        if report.errors:
+            raise WikiSeedError(
+                f"the seed has {len(report.errors)} lint errors:\n" + _findings(report.errors)
+            )
+        return repository.commit(f"Seed the wiki from {source}\n\n{CURSOR_FIELD}: {cursor}\n")
+    except BaseException:
+        repository.discard()
+        raise
+
+
 def last_cursor(repository: WikiRepository) -> Cursor | None:
     """The cursor the last committed run recorded, or None before the first."""
     message = repository.last_commit_message()
-    value = _fields(message or "").get(CURSOR_FIELD)
+    value = commit_fields(message or "").get(CURSOR_FIELD)
     return Cursor.parse(value) if value else None
 
 
@@ -398,20 +466,24 @@ def _consolidate(
         now,
         linter,
         committed,
-        tidy=partial(_remove_emptied_pages, tree),
+        tidy=partial(_remove_merged_pages, tree),
     )
     return Phase.CONSOLIDATION, result
 
 
-def _remove_emptied_pages(tree: Path) -> None:
-    """Removes the pages a consolidation session emptied. Its file tools can't remove a file,
-    so it deletes a page (one merged into another) by writing it with nothing in it."""
+def _remove_merged_pages(tree: Path) -> None:
+    """Removes the pages a consolidation session merged away. Its file tools can't remove a
+    file, so it deletes a page merged into another by writing it with nothing in it, and the
+    page it was merged into takes its name as an alias.
+
+    Only an emptied page whose slug is now an alias of a page that's still there goes; any
+    other emptied file stays for lint to fail (an empty page no merge explains, a dotfile, a
+    `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
+    """
+    merged = {slugify(alias) for page in pages(tree) for alias in page.aliases}
     for folder in PAGE_FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in directory.iterdir():
-            if entry.is_file() and not entry.is_symlink() and not entry.read_bytes().strip():
+        for entry in folder_files(tree, folder):
+            if is_page_name(entry.name) and entry.stem in merged and not entry.read_bytes().strip():
                 entry.unlink()
 
 
@@ -528,7 +600,7 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
     return (
         f"Phase: {Phase.OBSERVATION}\n\n"
         "Observe this run's batch of new episodes into the wiki's day logs, following "
-        f"CLAUDE.md. Write only day logs, in `{paths.wiki / 'days'}`.\n\n"
+        f"CLAUDE.md. Write only day logs, in `{paths.wiki / DAYS}`.\n\n"
         "Each episode below is listed with its id, the path to its envelope, its source and "
         "kind, its day (the day log it belongs in), its subject, and its participants. "
         "`judge_relevance` marks mail that may not bear on the owner's own dealings: observe it "
@@ -550,6 +622,7 @@ def consolidation_prompt(
     """What the consolidation session is asked: the run's new observations, then the
     reference counts (with each slug's page, if it has one), each as a JSON block."""
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
+    folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         reference: dict[str, object] = {
@@ -563,9 +636,8 @@ def consolidation_prompt(
     return (
         f"Phase: {Phase.CONSOLIDATION}\n\n"
         "Fold this run's new observations into the wiki's pages, following CLAUDE.md. Write "
-        f"only pages, in `{paths.wiki / 'people'}`, `{paths.wiki / 'orgs'}`, and "
-        f"`{paths.wiki / 'topics'}`. Never add or remove a day-log line, and never write "
-        "`index.md`: the host generates it.\n\n"
+        f"only pages, in {', '.join(folders[:-1])}, and {folders[-1]}. Never add or remove a "
+        f"day-log line, and never write `{INDEX}`: the host generates it.\n\n"
         "These are the observations this run wrote, each with the day log it's in:\n\n"
         f"```json\n{_json(new)}\n```\n\n"
         "These are the reference counts: for each slug linked in the day logs, the number of "
@@ -613,7 +685,7 @@ def identity_prompt(identities: IdentityTable) -> str:
 
     Any phase appends it to its own prompt; the table is JSON, after the instructions for it.
     """
-    table = json.dumps(identities.to_json(), indent=2, ensure_ascii=False)
+    table = _json(identities.to_json())
     return (
         f"{IDENTITY_HEADING}\n\n"
         "Who's who by address, built by the host from L0's metadata; nothing in it comes from "
@@ -681,7 +753,7 @@ def commit_message(
         ("Batch-Episodes", len(batch.episodes)),
         ("Batch-Skipped", batch.captured - len(batch.episodes)),
         (CURSOR_FIELD, batch.cursor),
-        ("Librarian-Version", librarian.version),
+        (VERSION_FIELD, librarian.version),
         ("Model", librarian.model),
         ("Effort", librarian.effort),
     ]
@@ -690,7 +762,7 @@ def commit_message(
         # is now.
         fields[:0] = [
             ("Batch-Occurred-From", _utc(batch.window.start)),
-            ("Batch-Occurred-To", _utc(batch.window.end)),
+            (OCCURRED_TO_FIELD, _utc(batch.window.end)),
         ]
     for phase, result in sessions:
         name = phase.value.capitalize()
@@ -708,7 +780,7 @@ def commit_message(
     return "\n\n".join(paragraphs) + "\n"
 
 
-def _fields(message: str) -> dict[str, str]:
+def commit_fields(message: str) -> dict[str, str]:
     """The `Field: value` lines of a commit message's last paragraph."""
     fields: dict[str, str] = {}
     for line in message.strip().split("\n\n")[-1].splitlines():

@@ -177,7 +177,7 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
     return LibrarianConfig(
         model=environ.get(LIBRARIAN_MODEL_VAR, "").strip() or default.model,
         effort=environ.get(LIBRARIAN_EFFORT_VAR, "").strip() or default.effort,
-        max_turns=int(_positive(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns)),
+        max_turns=_positive_integer(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns),
         timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
         command=session_command,
         sandbox=sandbox_command,

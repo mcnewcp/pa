@@ -121,6 +121,17 @@ def production_batch(store: L0Store, *, after: Cursor | None, time_zone: tzinfo)
     )
 
 
+def cursor_through(store: L0Store, captured_through: datetime | None = None) -> Cursor | None:
+    """The cursor of a run that took every episode captured up to `captured_through` (all of
+    L0 without it): the last of them by capture time, then id. None if there are none."""
+    taken = [
+        _position(e)
+        for e in store.envelopes()
+        if captured_through is None or e.captured_at <= captured_through
+    ]
+    return max(taken, default=None)
+
+
 def replay_batch(
     store: L0Store, window: Window, *, time_zone: tzinfo, last: bool = False
 ) -> Batch | None:

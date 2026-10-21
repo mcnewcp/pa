@@ -1,7 +1,8 @@
 """Rendering the librarian project: a filled-in copy of `librarian/` for one instance.
 
-The source project is shared by both instances and names none of them; a rendered copy carries
-the owner and the paths the session sees L0 and the wiki at, and nothing else differs.
+The source project is shared by both instances and names none of them; a rendered copy of it as
+committed (the files its version is a hash of) carries the owner and the paths the session sees
+L0 and the wiki at, and nothing else differs.
 """
 
 import json
@@ -16,7 +17,12 @@ from pa_core.librarian.wiki import PAGE_TYPES, parse_decision, parse_loop, parse
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
 from pa_home.cli import main
-from pa_home.librarian_project import LIBRARIAN_PROJECT, WIKI_SCHEMA, render_librarian_project
+from pa_home.librarian_project import (
+    LIBRARIAN_PROJECT,
+    WIKI_SCHEMA,
+    project_files,
+    render_librarian_project,
+)
 from pa_home.project import SETTINGS, ProjectRenderError
 
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
@@ -62,10 +68,11 @@ def test_a_rendered_project_differs_from_the_source_only_where_instance_values_g
     tmp_path: Path,
 ):
     target = _render(tmp_path)
+    committed = project_files()
 
-    assert _files(target) == _files(LIBRARIAN_PROJECT)
-    for path in _files(LIBRARIAN_PROJECT):
-        source_lines = (LIBRARIAN_PROJECT / path).read_text().splitlines()
+    assert _files(target) == sorted(Path(path) for path in committed)
+    for path, content in committed.items():
+        source_lines = content.decode().splitlines()
         rendered_lines = (target / path).read_text().splitlines()
         assert len(rendered_lines) == len(source_lines), path
         for source, rendered in zip(source_lines, rendered_lines, strict=True):
@@ -150,7 +157,7 @@ def test_the_render_command_fills_in_the_owner_and_the_paths_the_session_sees(
     assert "Argus McNevans" in claude_md and "`argus@example.com`" in claude_md
     settings = json.loads((target / SETTINGS).read_text())
     assert settings["permissions"]["additionalDirectories"] == [str(L0), str(WIKI)]
-    assert (target / "wiki-schema.md").read_text() == WIKI_SCHEMA.read_text()
+    assert (target / "wiki-schema.md").read_bytes() == project_files()[WIKI_SCHEMA.name]
     assert str(target.resolve()) in capsys.readouterr().out
 
 
@@ -248,7 +255,8 @@ def _lint_one(tmp_path: Path, wiki_path: str, text: str) -> list[str]:
         ),
     )
     thresholds = Thresholds(today=date(2026, 10, 5), page_threshold=3, loop_age_days=30)
-    return [str(finding) for finding in lint(tree, l0=l0, thresholds=thresholds).errors]
+    report = lint(tree, l0=l0, owner=OWNER, thresholds=thresholds)
+    return [str(finding) for finding in report.errors]
 
 
 def test_there_are_templates_for_each_page_type_and_the_day_log():
@@ -265,6 +273,24 @@ def test_a_filled_in_template_passes_lint(tmp_path: Path, template: str):
 @pytest.mark.parametrize("template", sorted(WIKI_PATHS))
 def test_a_template_left_unfilled_fails_lint(tmp_path: Path, template: str):
     assert _lint_one(tmp_path, WIKI_PATHS[template], (TEMPLATES / template).read_text())
+
+
+@pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])
+@pytest.mark.parametrize("line", ["summary: ", "aliases: ", "# "])
+def test_a_page_with_one_placeholder_left_in_fails_lint(tmp_path: Path, template: str, line: str):
+    """Free text that no other rule checks: one placeholder left there still fails lint."""
+    text = (TEMPLATES / template).read_text()
+    [left] = [
+        placeholder
+        for source in text.splitlines()
+        if source.startswith(line)
+        for placeholder in PLACEHOLDER.findall(source)
+    ]
+    filled = PLACEHOLDER.sub(lambda m: m[0] if m[0] == left else _fill(m), text)
+
+    errors = _lint_one(tmp_path, WIKI_PATHS[template], filled)
+
+    assert errors and all("placeholder" in error for error in errors), errors
 
 
 @pytest.mark.parametrize("template", ["person.md", "organization.md", "topic.md"])

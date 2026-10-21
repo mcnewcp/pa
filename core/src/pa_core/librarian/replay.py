@@ -47,14 +47,16 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch
 from pa_core.librarian.run import (
     LOOP_AGE_DAYS,
+    OCCURRED_TO_FIELD,
     PAGE_THRESHOLD,
+    VERSION_FIELD,
     Librarian,
     LibrarianRunError,
     Phase,
     RunOutcome,
     SessionRunner,
     WikiRepository,
-    _fields,
+    commit_fields,
     run_librarian,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
@@ -141,9 +143,6 @@ def read_run_log(path: Path) -> list[RunLogEntry]:
     return entries
 
 
-_TO, _VERSION = "Batch-Occurred-To", "Librarian-Version"
-
-
 class ReplayError(LibrarianRunError):
     """A replay that can't start or resume."""
 
@@ -210,19 +209,19 @@ def replay_librarian(
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
     """Where the last committed replay run's window ended, or None in a fresh wiki."""
-    fields = _fields(repository.last_commit_message() or "")
-    if _TO not in fields:
+    fields = commit_fields(repository.last_commit_message() or "")
+    if OCCURRED_TO_FIELD not in fields:
         if fields:
             raise ReplayError(
                 "the wiki's last commit isn't a replay's run, so a replay can't resume it"
             )
         return None
-    if fields.get(_VERSION) != librarian.version:
+    if fields.get(VERSION_FIELD) != librarian.version:
         raise ReplayError(
-            f"the wiki was replayed by librarian version {fields.get(_VERSION)}, not this one "
+            f"the wiki was replayed by librarian version {fields.get(VERSION_FIELD)}, not this one "
             f"({librarian.version}); replay into a fresh wiki instead"
         )
-    return datetime.fromisoformat(fields[_TO])
+    return datetime.fromisoformat(fields[OCCURRED_TO_FIELD])
 
 
 def _windows(
