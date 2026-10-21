@@ -1664,6 +1664,37 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
 
+# An emptied file the host may not remove: no merge explains it, or it's outside the layout.
+EMPTIED = {
+    "a page no surviving page takes as an alias": ("people/mallory.md", "people/mallory.md"),
+    "an empty CLAUDE.md among pages": ("people/CLAUDE.md", "CLAUDE.md"),
+    "an empty claude.md a page takes as an alias": ("people/claude.md", "CLAUDE.md"),
+    "an empty dotfile among pages": ("people/.dave.md", "people/.dave.md"),
+    "an empty file that isn't Markdown": ("people/dave.txt", "people/dave.txt"),
+}
+
+
+@pytest.mark.parametrize("emptied", EMPTIED, ids=list(EMPTIED))
+def test_an_emptied_file_no_merge_explains_is_left_for_lint_and_fails_the_run(
+    data_root: Path, capsys, emptied: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    ingest(data_root, {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")})
+    path, reason = EMPTIED[emptied]
+    # David Kim's page goes by Dave and Claude, so `dave` and `claude` are aliases on it.
+    pages = pages_with(PERSON, "aliases: [Dave, David Kim]", "aliases: [Dave, David Kim, Claude]")
+    script(data_root, consolidation=[*pages, {"write": path, "text": ""}])
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    assert reason in capsys.readouterr().err
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
 # Lint errors already in the last commit
 
 BROKEN_TOPIC = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[TOPIC].replace(

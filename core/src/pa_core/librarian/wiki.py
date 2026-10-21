@@ -89,6 +89,33 @@ OWNER = "me"
 DAY_LOG_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
 PAGE_NAME = re.compile(rf"{SLUG.pattern}\.md")
 
+
+def is_page_name(name: str) -> bool:
+    """Whether `name` is a page's file name, `<slug>.md`; never a `CLAUDE.md`, in any case."""
+    return PAGE_NAME.fullmatch(name) is not None and name.lower() != "claude.md"
+
+
+def day_of(name: str) -> date | None:
+    """The day a day log's file name, `YYYY-MM-DD.md`, is for; None if it names no real day."""
+    if not DAY_LOG_NAME.fullmatch(name):
+        return None
+    try:
+        return date.fromisoformat(name.removesuffix(".md"))
+    except ValueError:
+        return None
+
+
+def folder_files(tree: Path, folder: str) -> list[Path]:
+    """The regular files directly in `folder` of the wiki at `tree`, by name, never following a
+    symbolic link; none when the folder isn't a directory. Lint reports anything else."""
+    directory = tree / folder
+    if not directory.is_dir() or directory.is_symlink():
+        return []
+    return [
+        entry for entry in sorted(directory.iterdir()) if entry.is_file() and not entry.is_symlink()
+    ]
+
+
 # Deliberately stricter than evals' citations.py, which forgives spaces in what an answer cites;
 # lint holds the wiki to the exact form.
 CITATION = re.compile(r"\[ep:([A-Za-z0-9_-]+)\]")

@@ -3,8 +3,9 @@
 A run picks the batch of episodes captured since the cursor. The librarian observes them into
 day logs in one session, then folds the new observations into pages in a second, given the
 reference counts the host computes from the day logs and lint's open warnings. The sessions'
-file tools can't remove a file, so consolidation deletes a page (one merged into another) by
-emptying it, and the host removes it after the session. After each session the host checks
+file tools can't remove a file, so consolidation deletes a page merged into another by emptying
+it, and the host removes it after the session if the page it was merged into took its name as an
+alias. After each session the host checks
 it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
 most twice. Then the host rewrites links to aliases, regenerates `index.md`,
@@ -42,7 +43,16 @@ from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
-from pa_core.librarian.wiki import DAYS, PAGE_FOLDERS, day_logs, pages, reference_counts
+from pa_core.librarian.wiki import (
+    DAYS,
+    PAGE_FOLDERS,
+    day_logs,
+    folder_files,
+    is_page_name,
+    pages,
+    reference_counts,
+    slugify,
+)
 from pa_core.owner import Owner
 
 
@@ -398,20 +408,24 @@ def _consolidate(
         now,
         linter,
         committed,
-        tidy=partial(_remove_emptied_pages, tree),
+        tidy=partial(_remove_merged_pages, tree),
     )
     return Phase.CONSOLIDATION, result
 
 
-def _remove_emptied_pages(tree: Path) -> None:
-    """Removes the pages a consolidation session emptied. Its file tools can't remove a file,
-    so it deletes a page (one merged into another) by writing it with nothing in it."""
+def _remove_merged_pages(tree: Path) -> None:
+    """Removes the pages a consolidation session merged away. Its file tools can't remove a
+    file, so it deletes a page merged into another by writing it with nothing in it, and the
+    page it was merged into takes its name as an alias.
+
+    Only an emptied page whose slug is now an alias of a page that's still there goes; any
+    other emptied file stays for lint to fail (an empty page no merge explains, a dotfile, a
+    `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
+    """
+    merged = {slugify(alias) for page in pages(tree) for alias in page.aliases}
     for folder in PAGE_FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in directory.iterdir():
-            if entry.is_file() and not entry.is_symlink() and not entry.read_bytes().strip():
+        for entry in folder_files(tree, folder):
+            if is_page_name(entry.name) and entry.stem in merged and not entry.read_bytes().strip():
                 entry.unlink()
 
 
