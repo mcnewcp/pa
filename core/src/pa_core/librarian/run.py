@@ -45,6 +45,7 @@ from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
 from pa_core.librarian.wiki import (
     DAYS,
+    INDEX,
     PAGE_FOLDERS,
     day_logs,
     folder_files,
@@ -161,6 +162,10 @@ class RunOutcome:
 
 
 CURSOR_FIELD = "Cursor"
+"""The commit message field holding where the run's batch stopped (`Cursor`)."""
+VERSION_FIELD = "Librarian-Version"
+OCCURRED_TO_FIELD = "Batch-Occurred-To"
+"""A replay run's commit message field holding its window's end."""
 PAGE_THRESHOLD = 3
 """The distinct days a slug is linked on before it gets a page, unless configured otherwise."""
 LOOP_AGE_DAYS = 30
@@ -254,7 +259,7 @@ def run_librarian(
 def last_cursor(repository: WikiRepository) -> Cursor | None:
     """The cursor the last committed run recorded, or None before the first."""
     message = repository.last_commit_message()
-    value = _fields(message or "").get(CURSOR_FIELD)
+    value = commit_fields(message or "").get(CURSOR_FIELD)
     return Cursor.parse(value) if value else None
 
 
@@ -544,7 +549,7 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
     return (
         f"Phase: {Phase.OBSERVATION}\n\n"
         "Observe this run's batch of new episodes into the wiki's day logs, following "
-        f"CLAUDE.md. Write only day logs, in `{paths.wiki / 'days'}`.\n\n"
+        f"CLAUDE.md. Write only day logs, in `{paths.wiki / DAYS}`.\n\n"
         "Each episode below is listed with its id, the path to its envelope, its source and "
         "kind, its day (the day log it belongs in), its subject, and its participants. "
         "`judge_relevance` marks mail that may not bear on the owner's own dealings: observe it "
@@ -566,6 +571,7 @@ def consolidation_prompt(
     """What the consolidation session is asked: the run's new observations, then the
     reference counts (with each slug's page, if it has one), each as a JSON block."""
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
+    folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         reference: dict[str, object] = {
@@ -579,9 +585,8 @@ def consolidation_prompt(
     return (
         f"Phase: {Phase.CONSOLIDATION}\n\n"
         "Fold this run's new observations into the wiki's pages, following CLAUDE.md. Write "
-        f"only pages, in `{paths.wiki / 'people'}`, `{paths.wiki / 'orgs'}`, and "
-        f"`{paths.wiki / 'topics'}`. Never add or remove a day-log line, and never write "
-        "`index.md`: the host generates it.\n\n"
+        f"only pages, in {', '.join(folders[:-1])}, and {folders[-1]}. Never add or remove a "
+        f"day-log line, and never write `{INDEX}`: the host generates it.\n\n"
         "These are the observations this run wrote, each with the day log it's in:\n\n"
         f"```json\n{_json(new)}\n```\n\n"
         "These are the reference counts: for each slug linked in the day logs, the number of "
@@ -629,7 +634,7 @@ def identity_prompt(identities: IdentityTable) -> str:
 
     Any phase appends it to its own prompt; the table is JSON, after the instructions for it.
     """
-    table = json.dumps(identities.to_json(), indent=2, ensure_ascii=False)
+    table = _json(identities.to_json())
     return (
         f"{IDENTITY_HEADING}\n\n"
         "Who's who by address, built by the host from L0's metadata; nothing in it comes from "
@@ -697,7 +702,7 @@ def commit_message(
         ("Batch-Episodes", len(batch.episodes)),
         ("Batch-Skipped", batch.captured - len(batch.episodes)),
         (CURSOR_FIELD, batch.cursor),
-        ("Librarian-Version", librarian.version),
+        (VERSION_FIELD, librarian.version),
         ("Model", librarian.model),
         ("Effort", librarian.effort),
     ]
@@ -706,7 +711,7 @@ def commit_message(
         # is now.
         fields[:0] = [
             ("Batch-Occurred-From", _utc(batch.window.start)),
-            ("Batch-Occurred-To", _utc(batch.window.end)),
+            (OCCURRED_TO_FIELD, _utc(batch.window.end)),
         ]
     for phase, result in sessions:
         name = phase.value.capitalize()
@@ -724,7 +729,7 @@ def commit_message(
     return "\n\n".join(paragraphs) + "\n"
 
 
-def _fields(message: str) -> dict[str, str]:
+def commit_fields(message: str) -> dict[str, str]:
     """The `Field: value` lines of a commit message's last paragraph."""
     fields: dict[str, str] = {}
     for line in message.strip().split("\n\n")[-1].splitlines():
