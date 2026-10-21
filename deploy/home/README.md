@@ -144,7 +144,7 @@ The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the ow
 1. After chats that say Okie is Ben Okafor, that the two Chris Lees are different people, and that a roofer's estimate came in, and that answer a bare "yes" to the assistant's restatement of a changed Thanksgiving plan. The test checks the merge (one page, both names, links rewritten, the chat cited), the split (noted on both pages with the chat's citation), the closed loop, and the decision citing the "yes". It also checks that nothing the assistant said unconfirmed reaches the wiki.
 2. After new mail and a note from both Chris Lees and from Okie. The test checks that the split still holds and the merge too.
 
-The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost. Two runs cost about $<cost>.
+The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost: the two runs come to about $1 on Opus 5.5 at medium effort.
 
 ## Evals in the VM
 

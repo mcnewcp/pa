@@ -5,9 +5,9 @@ day logs in one session, then folds the new observations into pages in a second,
 reference counts the host computes from the day logs and lint's open warnings. The sessions'
 file tools can't remove a file, so consolidation deletes a page (one merged into another) by
 emptying it, and the host removes it after the session. After each session the host checks
-it stayed in bounds and lints the wiki; a session that leaves lint
-errors it can fix (observation: in the day logs; consolidation: in the pages) is resumed with
-the findings, at most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
+(observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
+most twice. Then the host rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 
