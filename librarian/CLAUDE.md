@@ -149,8 +149,10 @@ consolidation applies it.
 - **The owner's word outranks your inferences.** A merge, split, summary, or loop state the
   owner has corrected stays as corrected; only a later owner turn changes it.
 - **A merge** combines the two pages into one: keep both names as aliases, carry over every
-  address, loop, decision, and note, delete the other page, and add a Notes line saying who is
-  who, citing the chat. The host rewrites links to the old name.
+  address, loop, decision, and note, and add a Notes line saying who is who, citing the chat.
+  Then delete the other page by writing it with no content at all: your tools can't remove a
+  file, so the host removes an empty page after your session and rewrites links to the old
+  name.
 - **A split** gets a cited Notes line on both pages saying they are different people (or
   organizations, or topics), so no later run merges them again. Move the lines that belong to
   the other one onto its page, creating it if needed, and drop the alias that joined them.

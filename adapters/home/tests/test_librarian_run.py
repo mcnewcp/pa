@@ -1630,14 +1630,15 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert run_librarian() == 0
     assert "[[dave]]" in wiki_files(data_root)["index.md"]
     # The next merges it into david-kim, which takes "Dave" as an alias; a page still links
-    # [[dave]], and so do the day logs.
+    # [[dave]], and so do the day logs. The session's file tools can't remove a file, so it
+    # empties dave's page, and the host removes it.
     ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
     topic = pages[TOPIC].replace("The block closes", "[[dave]] says the block closes")
     script(
         data_root,
         observation=[{"observe": True, "links": {"RSVP": ["dave"]}}],
         consolidation=[
-            {"delete": "people/dave.md"},
+            {"write": "people/dave.md", "text": "\n"},
             {"write": PERSON, "text": pages[PERSON]},
             {"write": ORG, "text": pages[ORG]},
             {"write": TOPIC, "text": topic},
@@ -1647,6 +1648,7 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     assert run_librarian() == 0
 
     files = wiki_files(data_root)
+    assert "people/dave.md" not in files
     assert files["days/2026-09-30.md"] == (
         f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL_EMAIL_ID}]\n"
     )
