@@ -32,6 +32,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -637,6 +638,50 @@ def test_in_a_git_checkout_the_librarian_version_is_of_the_project_as_committed(
     copied = tmp_path / "copied"
     shutil.copytree(project, copied, ignore=shutil.ignore_patterns("scratch.md"))
     assert project_files(copied) == project_files(project)
+
+
+# A session that outlives its timeout: it makes the usual mess, then writes once more, later.
+LATE = [
+    *MESS,
+    {"sleep": 2},
+    {"write": "days/2026-10-02.md", "text": "- written late about [[someone]] [ep:%s]\n"},
+]
+
+
+def run_out_of_time(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """A committed run, then a run whose observation outlives a 1-second timeout; returns the
+    wiki as committed, after asserting the run failed within the timeout, not the session's
+    own time."""
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    before = tree_state(data_root / "wiki")
+    ingest(data_root, {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")})
+    script(
+        data_root,
+        observation=[{**a, "text": a["text"] % HOTEL_EMAIL_ID} if "text" in a else a for a in LATE],
+    )
+    monkeypatch.setenv("PA_LIBRARIAN_TIMEOUT_SECONDS", "1")
+    started = time.monotonic()
+
+    assert run_librarian() != 0
+
+    assert time.monotonic() - started < 1.9
+    return before
+
+
+def test_a_timed_out_session_is_killed_with_every_process_it_started(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The command runs `claude` as a child, as librarian-sandbox.sh runs `incus exec`.
+    wrapper = tmp_path / "wrapper"
+    wrapper.write_text(f'#!/bin/sh\n"{os.environ["PA_LIBRARIAN_COMMAND"]}" "$@"\n')
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(wrapper))
+
+    before = run_out_of_time(data_root, monkeypatch)
+
+    time.sleep(2.5)
+    assert tree_state(data_root / "wiki") == before
 
 
 def test_what_an_interrupted_run_left_in_the_wiki_is_never_committed(data_root: Path):
