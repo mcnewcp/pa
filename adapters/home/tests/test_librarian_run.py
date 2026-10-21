@@ -1565,6 +1565,20 @@ WARNINGS = {
         f"{TOPIC}: a duplicate candidate: it shares the alias dave with {PERSON}",
         {},
     ),
+    "an alias that's another page's slug": (
+        _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, North Shore Lodge]"),
+        f"{TOPIC}: a duplicate candidate: its alias North Shore Lodge is the slug of {ORG}",
+        {},
+    ),
+    "an alias that's another page's name": (
+        lambda pages: (
+            pages.update({"topics/kitchen-remodel.md": KITCHEN}),
+            _edit(TOPIC, "aliases: [Dave's wedding]", "aliases: [Dave's wedding, kitchen]")(pages),
+        ),
+        f"{TOPIC}: a duplicate candidate: its alias kitchen is the name of "
+        "topics/kitchen-remodel.md",
+        {},
+    ),
     "near-identical slugs": (
         lambda pages: pages.update({"topics/weddings.md": KITCHEN}),
         f"topics/weddings.md: a duplicate candidate: its slug is nearly {TOPIC}'s",

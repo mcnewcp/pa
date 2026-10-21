@@ -20,7 +20,8 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
 - **Orphan pages**, which nothing in the wiki links to.
 - **Aging loops**: open past their due date, or open longer than the loop age (30 days unless
   configured otherwise).
-- **Duplicate candidates**: pages sharing an alias, or with near-identical slugs.
+- **Duplicate candidates**: pages sharing an alias, a page with an alias that's another page's
+  slug or name, or pages with near-identical slugs.
 - **Slugs without pages**: linked on enough days to reach the page threshold, but with no page.
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
@@ -60,6 +61,7 @@ from pa_core.librarian.wiki import (
     parse_loop,
     parse_observation,
     read_page,
+    slugify,
 )
 
 
@@ -418,15 +420,33 @@ def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Find
 
 
 def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
-    """Two pages that may be one: a shared alias, or near-identical slugs."""
+    """Two pages that may be one: a shared alias, an alias that's another page's slug or name,
+    or near-identical slugs."""
     aliased: dict[str, str] = {}
     """The first page with each alias, by its folded form."""
     for page in pages:
-        for alias in dict.fromkeys(" ".join(a.split()).casefold() for a in page.aliases):
+        for alias in dict.fromkeys(_folded(a) for a in page.aliases):
             first = aliased.setdefault(alias, page.path)
             if first != page.path:
                 yield Finding(
                     page.path, f"a duplicate candidate: it shares the alias {alias} with {first}"
+                )
+    by_slug = {page.slug: page for page in pages}
+    by_name = {_folded(page.title): page for page in pages if page.title}
+    for page in pages:
+        for alias in dict.fromkeys(page.aliases):
+            named = by_slug.get(slugify(alias))
+            if named is not None and named is not page:
+                yield Finding(
+                    page.path,
+                    f"a duplicate candidate: its alias {alias} is the slug of {named.path}",
+                )
+                continue
+            named = by_name.get(_folded(alias))
+            if named is not None and named is not page:
+                yield Finding(
+                    page.path,
+                    f"a duplicate candidate: its alias {alias} is the name of {named.path}",
                 )
     for index, page in enumerate(pages):
         for other in pages[:index]:
@@ -434,6 +454,10 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path, f"a duplicate candidate: its slug is nearly {other.path}'s"
                 )
+
+
+def _folded(name: str) -> str:
+    return " ".join(name.split()).casefold()
 
 
 def _nearly(first: str, second: str) -> bool:

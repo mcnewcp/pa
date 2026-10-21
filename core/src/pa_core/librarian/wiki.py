@@ -407,6 +407,13 @@ class Page:
         value = self.fields.get("aliases", ())
         return value if isinstance(value, tuple) else ()
 
+    @property
+    def title(self) -> str | None:
+        """Its name, from the `# <name>` line before its sections, if it has one."""
+        if self.preamble and self.preamble[0][1].startswith("# "):
+            return self.preamble[0][1].removeprefix("# ").strip()
+        return None
+
     def section(self, name: str) -> Section | None:
         return next((s for s in self.sections if s.name == name), None)
 
