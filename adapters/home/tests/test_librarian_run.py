@@ -2216,13 +2216,15 @@ def test_a_rebuilt_wiki_moved_into_the_data_root_carries_on_where_the_replay_sto
 def stand_in_sandbox(directory: Path, claude: Path) -> Path:
     """A sandbox that "mounts" the store by symbolic link under `directory / "vm"`, records each
     command to `sandbox.jsonl`, and runs the stand-in `claude` in the project as it sees it.
+    As in a VM, `claude` runs apart from the command that started it, so killing that command
+    doesn't kill it; `kill` does, recording the day logs the wiki has as it's killed.
     `sandbox-fail` holding a command's name (start or stop) makes that command fail."""
     script = directory / "sandbox"
     script.write_text(
         f"#!{sys.executable}\n"
         + textwrap.dedent(
             f"""\
-            import json, os, sys
+            import json, os, signal, subprocess, sys
             from pathlib import Path
             HERE = Path({str(directory)!r})
             CLAUDE = {str(claude)!r}
@@ -2232,6 +2234,13 @@ def stand_in_sandbox(directory: Path, claude: Path) -> Path:
             """\
             command, *args = sys.argv[1:]
             vm = HERE / "vm"
+            if command == "kill":
+                pid = int((HERE / "claude.pid").read_text())
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                args = sorted(p.name for p in (vm / "wiki" / "days").iterdir())
             if command != "claude":
                 with (HERE / "sandbox.jsonl").open("a") as log:
                     log.write(json.dumps([command, *args]) + "\\n")
@@ -2252,8 +2261,14 @@ def stand_in_sandbox(directory: Path, claude: Path) -> Path:
                         link.unlink()
                     vm.rmdir()
             elif command == "claude":
-                os.chdir(vm / "librarian")
-                os.execv(CLAUDE, [CLAUDE, *args])
+                output = HERE / "claude.out"
+                with output.open("w") as out:
+                    session = subprocess.Popen([CLAUDE, *args], cwd=vm / "librarian",
+                                               stdout=out, start_new_session=True)
+                    (HERE / "claude.pid").write_text(str(session.pid))
+                    code = session.wait()
+                sys.stdout.write(output.read_text())
+                sys.exit(code)
             """
         )
     )
@@ -2313,6 +2328,19 @@ def test_a_failed_run_still_takes_the_sandbox_down(data_root: Path, sandbox: Pat
 
     assert [command for command, *_ in sandbox_commands(sandbox)] == ["start", "stop"]
     assert cursor(data_root) is None
+
+
+def test_a_timed_out_session_in_the_sandbox_is_killed_there_before_the_run_is_discarded(
+    data_root: Path, sandbox: Path, monkeypatch: pytest.MonkeyPatch
+):
+    before = run_out_of_time(data_root, monkeypatch)
+
+    time.sleep(2.5)
+    assert tree_state(data_root / "wiki") == before
+    commands = sandbox_commands(sandbox)
+    assert [command for command, *_ in commands] == ["start", "stop", "start", "kill", "stop"]
+    # Killed while its mess was still in the wiki: before the discard.
+    assert commands[3] == ["kill", "2026-09-30.md", "2026-10-01.md"]
 
 
 def test_a_sandbox_that_fails_to_start_runs_no_session_and_is_still_taken_down(

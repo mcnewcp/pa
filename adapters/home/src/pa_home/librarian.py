@@ -15,6 +15,9 @@ With a sandbox configured (the librarian's VM), each run (each replay) is wrappe
   writable, and nothing else) and prints, as a JSON object with the keys `l0`, `project` and
   `wiki`, where the sessions see them. The project is rendered for those paths after it starts,
   into the directory it was given.
+- `<sandbox> kill` kills every session process in it, when a session runs out of time: killing
+  the command that started a session there doesn't reach it, and it must be dead before the run
+  discards what it wrote.
 - `<sandbox> stop` takes it down afterwards, whatever happened, even after a failed start.
 """
 
@@ -198,7 +201,20 @@ def _runner(
                 effort=config.effort,
                 max_turns=config.max_turns,
                 timeout_seconds=config.timeout_seconds,
+                halt=_halt(config.sandbox),
             )
+
+
+def _halt(sandbox: Sequence[str] | None) -> Callable[[], None]:
+    """What kills a timed-out session where it runs: in the sandbox, `<sandbox> kill`. Without
+    one, killing its command's processes killed it already."""
+    if sandbox is None:
+        return lambda: None
+
+    def halt() -> None:
+        _sandbox_command(sandbox, "kill")
+
+    return halt
 
 
 @dataclass(frozen=True)

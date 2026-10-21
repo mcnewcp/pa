@@ -35,7 +35,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`) |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
-| `librarian-sandbox.sh start\|stop\|claude` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
+| `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 
@@ -110,6 +110,7 @@ deploy/home/librarian.sh replay ~/.local/share/pa-home-synthetic/replays/<name> 
   - it starts the VM and writes `api.anthropic.com` into its `/etc/hosts`, at an address the devbox resolved and checked against the API's range;
   - it refuses a wiki that isn't on a `nosuid,nodev,noexec` filesystem (the data root's `wiki/`, or a directory under `replays/`), a project inside the wiki, and a VM that's already running, so runs never overlap.
 - **claude**, for each session: it runs Claude Code in the VM as `librarian`, in the project, with the setup token passed through stdin into `CLAUDE_CODE_OAUTH_TOKEN`. The token is never on the VM's disk or a command line.
+- **kill**, when a session runs out of time: it kills every process of `librarian` in the VM and waits until none is left, before the run discards what the session wrote. Killing `incus exec` on the devbox, which `pa` does first, doesn't stop what it started in the VM.
 - **stop**, afterwards, even after a failure:
   - it deletes `~/.claude` in the VM, since the sessions' transcripts hold private data and a snapshot would keep them;
   - it stops the VM and takes the shares off, so the VM at rest shares nothing.
