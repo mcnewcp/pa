@@ -38,7 +38,14 @@ from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
-from pa_core.librarian.run import Librarian, RunOutcome, SessionPaths, run_librarian
+from pa_core.librarian.run import (
+    Librarian,
+    RunOutcome,
+    SessionPaths,
+    WikiSeedError,
+    run_librarian,
+    seed_wiki,
+)
 from pa_core.librarian.version import librarian_version
 from pa_core.owner import Owner
 from pa_home.agent import wall_clock
@@ -137,6 +144,32 @@ def replay(
                 loop_age_days=config.loop_age_days,
                 progress=progress,
             )
+
+
+def seed(
+    data_root: DataRoot,
+    eval_wiki: Path,
+    *,
+    owner: Owner,
+    captured_through: datetime | None = None,
+    clock: Callable[[], datetime] = wall_clock,
+) -> str:
+    """Seeds the data root's fresh wiki from `eval_wiki` (a replay's target, or an eval wiki
+    kept in the evals tree: its `wiki/` and run log), replayed over the same episodes as the
+    data root's L0, such as the scale corpus the data root was reseeded with. The commit's
+    cursor takes every episode captured up to `captured_through` (all of L0 without it: seed
+    right after the reseed). Returns the commit."""
+    source = ReplayTarget(eval_wiki).tree
+    if not source.is_dir():
+        raise WikiSeedError(f"{eval_wiki} has no wiki/: it isn't an eval wiki")
+    return seed_wiki(
+        store=FilesystemL0(data_root.l0),
+        owner=owner,
+        repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
+        source=source,
+        now=clock(),
+        captured_through=captured_through,
+    )
 
 
 @contextmanager

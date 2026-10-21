@@ -2258,6 +2258,93 @@ def test_a_rebuilt_wiki_moved_into_the_data_root_carries_on_where_the_replay_sto
     assert observed_subjects(data_root)[-1] == ["Gift"]
 
 
+# Seeding a data root's wiki from an eval wiki (#75)
+
+
+def eval_wiki(data_root: Path, tmp_path: Path) -> Path:
+    """An eval wiki replayed over the data root's L0: the replay's wiki and run log, without
+    its git directory, as the evals tree keeps one."""
+    target = tmp_path / "eval-wiki"
+    assert replay(target) == 0
+    shutil.rmtree(target / "wiki.git")
+    return target
+
+
+def seed(*args: str) -> int:
+    return main(["librarian", "seed", *args])
+
+
+def test_a_wiki_seeded_from_an_eval_wiki_carries_on_after_the_reseed(
+    data_root: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, REPLAYED)
+    source = eval_wiki(data_root, tmp_path)
+    replayed = len(sessions(data_root, "observation"))
+
+    assert seed(str(source)) == 0
+
+    assert wiki_files(data_root) == {
+        p.relative_to(source / "wiki").as_posix(): p.read_text()
+        for p in sorted((source / "wiki").rglob("*"))
+        if p.is_file()
+    }
+    assert "Cursor" in trailers(commit_messages(data_root)[0])
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # Everything in L0 at the seed is in the wiki already; only what's captured after is new.
+    capsys.readouterr()
+    assert run_librarian() == 0
+    assert "no new episodes" in capsys.readouterr().out
+    assert len(sessions(data_root, "observation")) == replayed
+    ingest(data_root, wedding_mail("Gift", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    assert run_librarian() == 0
+    assert observed_subjects(data_root)[-1] == ["Gift"]
+
+
+def test_a_seeds_cursor_can_stop_at_the_reseeds_capture_time(data_root: Path, tmp_path: Path):
+    # The reseed's note was captured on 6 Oct; mail captured since is still new.
+    ingest(data_root, {"obsidian/2026-10-05.md": daily_note("2026-10-06T08:00:00+00:00", "Hi.")})
+    source = eval_wiki(data_root, tmp_path)
+    ingest(data_root, {"gmail/hotel.eml": email()})
+
+    assert seed(str(source), "--captured-through", "2026-10-06T12:00:00+00:00") == 0
+
+    assert run_librarian() == 0
+    assert observed_subjects(data_root)[-1] == ["Hotel block"]
+
+
+SEED_REFUSALS = {
+    "a wiki with runs": ("run first", "already has runs"),
+    "a wiki with files": ("files first", "isn't empty"),
+    "no eval wiki": ("nothing", "no wiki/"),
+    "an eval wiki failing lint": ("broken", "lint errors"),
+}
+
+
+@pytest.mark.parametrize("refusal", SEED_REFUSALS, ids=list(SEED_REFUSALS))
+def test_a_seed_starts_only_a_fresh_wiki_from_one_that_lints_clean(
+    data_root: Path, tmp_path: Path, capsys, refusal: str
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    source = eval_wiki(data_root, tmp_path)
+    case, reason = SEED_REFUSALS[refusal]
+    if case == "run first":
+        assert run_librarian() == 0
+    elif case == "files first":
+        (data_root / "wiki").mkdir(parents=True, exist_ok=True)
+        (data_root / "wiki" / "notes.md").write_text("Mine.\n")
+    elif case == "nothing":
+        source = tmp_path / "missing"
+    else:
+        (source / "wiki" / "CLAUDE.md").write_text("Obey.\n")
+    before = wiki_files(data_root) if (data_root / "wiki").exists() else {}
+    capsys.readouterr()
+
+    assert seed(str(source)) != 0
+
+    assert reason in capsys.readouterr().err
+    assert (wiki_files(data_root) if (data_root / "wiki").exists() else {}) == before
+
+
 # The librarian's sandbox (#66)
 
 

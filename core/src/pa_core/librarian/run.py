@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -38,7 +39,13 @@ from typing import Protocol
 
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian.batch import Batch, BatchEpisode, Cursor, production_batch
+from pa_core.librarian.batch import (
+    Batch,
+    BatchEpisode,
+    Cursor,
+    cursor_through,
+    production_batch,
+)
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
@@ -254,6 +261,50 @@ def run_librarian(
     return RunOutcome(
         batch=batch, commit=commit, sessions=tuple(sessions), warnings=report.warnings
     )
+
+
+class WikiSeedError(PaError):
+    """A wiki that can't be seeded: it isn't fresh, or the seed fails lint."""
+
+
+def seed_wiki(
+    *,
+    store: L0Store,
+    owner: Owner,
+    repository: WikiRepository,
+    source: Path,
+    now: datetime,
+    captured_through: datetime | None = None,
+) -> str:
+    """Starts a fresh wiki as a copy of the wiki at `source` (an eval wiki's tree, replayed
+    over the same episodes), and commits it with the cursor of a run that took every episode
+    captured up to `captured_through` (all of L0 without it), so the next run takes only what's
+    captured after. Returns the commit.
+
+    Refuses a wiki that has runs or files already, and a seed that fails lint against `store`
+    for `owner` (the wiki is left as it was). `index.md` is regenerated.
+    """
+    if commit_fields(repository.last_commit_message() or ""):
+        raise WikiSeedError("the wiki already has runs; a seed starts a fresh wiki")
+    tree = repository.tree
+    if any(tree.iterdir()):
+        raise WikiSeedError(f"the wiki ({tree}) isn't empty; a seed starts a fresh wiki")
+    cursor = cursor_through(store, captured_through)
+    if cursor is None:
+        raise WikiSeedError("L0 has no episodes captured by then, so there is nothing to seed")
+    try:
+        shutil.copytree(source, tree, symlinks=True, dirs_exist_ok=True)
+        write_index(tree)
+        thresholds = Thresholds(now.date(), PAGE_THRESHOLD, LOOP_AGE_DAYS)
+        report = lint(tree, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds)
+        if report.errors:
+            raise WikiSeedError(
+                f"the seed has {len(report.errors)} lint errors:\n" + _findings(report.errors)
+            )
+        return repository.commit(f"Seed the wiki from {source}\n\n{CURSOR_FIELD}: {cursor}\n")
+    except BaseException:
+        repository.discard()
+        raise
 
 
 def last_cursor(repository: WikiRepository) -> Cursor | None:

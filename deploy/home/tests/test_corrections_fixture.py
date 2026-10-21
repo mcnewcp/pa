@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -31,7 +32,6 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.batch import production_batch
-from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
 from pa_core.librarian.run import CURSOR_FIELD, RunOutcome, last_cursor
 from pa_core.librarian.wiki import NOTES, Page, citations, day_logs, links, pages, slugify
@@ -81,18 +81,18 @@ def seed_corrections_fixture(root: Path) -> dict[str, str]:
     with the seed's cursor, so the next run takes only what's delivered after it. Returns
     every fixture payload's episode id, by its file stem."""
     ids = episode_ids()
-    data_root = DataRoot(root)
     deliver_stage(root, "seed")
-    for source in sorted((FIXTURE / "wiki").rglob("*.md")):
-        target = data_root.wiki / source.relative_to(FIXTURE / "wiki")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        text = source.read_text(encoding="utf-8")
-        target.write_text(_PLACEHOLDER.sub(lambda m: f"[ep:{ids[m[1]]}]", text), encoding="utf-8")
-    write_index(data_root.wiki)
-    seeded = production_batch(FilesystemL0(data_root.l0), after=None, time_zone=TIME_ZONE)
-    assert seeded is not None
-    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    repository.commit(f"Seed the corrections fixture's wiki\n\n{CURSOR_FIELD}: {seeded.cursor}\n")
+    with tempfile.TemporaryDirectory(prefix="pa-corrections-") as directory:
+        # Laid out as an eval wiki is, with the citations filled in, then seeded as one.
+        seed = Path(directory)
+        for source in sorted((FIXTURE / "wiki").rglob("*.md")):
+            target = seed / "wiki" / source.relative_to(FIXTURE / "wiki")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            text = source.read_text(encoding="utf-8")
+            target.write_text(
+                _PLACEHOLDER.sub(lambda m: f"[ep:{ids[m[1]]}]", text), encoding="utf-8"
+            )
+        librarian.seed(DataRoot(root), seed, owner=OWNER, clock=lambda: RUN_CLOCKS[0])
     return ids
 
 
