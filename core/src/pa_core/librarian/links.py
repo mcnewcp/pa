@@ -25,13 +25,13 @@ def alias_targets(tree: Path) -> dict[str, str]:
     the page it's an alias of."""
     found = pages(tree)
     slugs = {page.slug for page in found}
-    claimed: dict[str, set[str]] = {}
+    aliased_by: dict[str, set[str]] = {}
     for page in found:
         for alias in page.aliases:
             slug = slugify(alias)
             if slug and slug != OWNER and slug not in slugs:
-                claimed.setdefault(slug, set()).add(page.slug)
-    return {alias: next(iter(owners)) for alias, owners in claimed.items() if len(owners) == 1}
+                aliased_by.setdefault(slug, set()).add(page.slug)
+    return {alias: next(iter(by)) for alias, by in aliased_by.items() if len(by) == 1}
 
 
 def _rewritten(targets: dict[str, str], link: re.Match[str]) -> str:

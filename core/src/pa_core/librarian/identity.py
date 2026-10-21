@@ -35,12 +35,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pa_core.envelope import Envelope, Kind, Role
-from pa_core.librarian.wiki import ORGANIZATION, PERSON, slugify
+from pa_core.librarian.wiki import ORGANIZATION, OWNER, PERSON, slugify
 from pa_core.owner import Owner
 from pa_core.selection import SKIPPED, category
-
-OWNER_SLUG = "me"
-"""The owner's slug: the owner never gets a page."""
 
 PERSONAL_MAIL_DOMAINS = frozenset(
     {
@@ -94,7 +91,7 @@ class OwnerIdentity:
     addresses: tuple[str, ...]
     organizations: tuple[str, ...]
     """The slugs of the organizations at the owner's addresses."""
-    slug: str = OWNER_SLUG
+    slug: str = OWNER
 
 
 @dataclass(frozen=True)
@@ -253,29 +250,29 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
 
     # Slugs go to people and organizations in the order first seen, so they stay put as L0 grows.
     slugs = _Slugs()
-    claims = [(org_first[domain], ORGANIZATION.type, domain) for domain in domains]
+    seen = [(org_first[domain], ORGANIZATION.type, domain) for domain in domains]
     named_orgs = set(own.values())
-    claims += [
+    seen += [
         (position[addresses[0]], PERSON.type, key)
         for key, addresses in groups.items()
         if key not in named_orgs
     ]
     org_slugs: dict[str, str] = {}
     person_slugs: dict[str, str] = {}
-    for _, kind, claimant in sorted(claims):
+    for _, kind, holder in sorted(seen):
         if kind == ORGANIZATION.type:
-            name = _commonest(spellings[own[claimant]]) if claimant in own else ""
-            base = slugify(name) if name else _domain_label(claimant)
-            org_slugs[claimant] = slugs.claim(base, f"{kind}:{claimant}")
+            name = _commonest(spellings[own[holder]]) if holder in own else ""
+            base = slugify(name) if name else _domain_label(holder)
+            org_slugs[holder] = slugs.assign(base, f"{kind}:{holder}")
         else:
-            name = _commonest(spellings[claimant])
-            base = slugify(name) if name else _address_slug(groups[claimant][0])
-            person_slugs[claimant] = slugs.claim(base, f"{kind}:{claimant}")
+            name = _commonest(spellings[holder])
+            base = slugify(name) if name else _address_slug(groups[holder][0])
+            person_slugs[holder] = slugs.assign(base, f"{kind}:{holder}")
 
     owner_names = {_key(n) for n in (owner.name, *owner.other_names)}
     members: dict[str, set[str]] = {domain: set() for domain in domains}
     for address in owner.email_addresses:
-        _join(members, address, OWNER_SLUG)
+        _join(members, address, OWNER)
     people: list[PersonIdentity] = []
     for key, slug in person_slugs.items():
         addresses = groups[key]
@@ -318,15 +315,17 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
 
 
 class _Slugs:
-    """Hands out slugs in one namespace: the first to claim one gets it, later ones a number."""
+    """Hands out slugs in one namespace: the first to ask for one gets it, later ones a
+    number."""
 
     def __init__(self) -> None:
-        self._claimants: dict[str, str] = {OWNER_SLUG: "\0owner"}
+        self._holders: dict[str, str] = {OWNER: "\0owner"}
 
-    def claim(self, base: str, claimant: str) -> str:
+    def assign(self, base: str, holder: str) -> str:
+        """The slug for `holder` (the same one each time it asks), from `base`."""
         base = base or "unnamed"
         slug, number = base, 1
-        while self._claimants.setdefault(slug, claimant) != claimant:
+        while self._holders.setdefault(slug, holder) != holder:
             number += 1
             slug = f"{base}-{number}"
         return slug
