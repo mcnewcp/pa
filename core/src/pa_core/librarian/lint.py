@@ -40,7 +40,6 @@ from pathlib import Path
 
 from pa_core.envelope import Envelope
 from pa_core.librarian.wiki import (
-    DAY_LOG_NAME,
     DAYS,
     DECISION_FORMAT,
     DECISIONS,
@@ -50,8 +49,6 @@ from pa_core.librarian.wiki import (
     NEEDS_LOOKUP,
     OPEN_LOOPS,
     ORGANIZATION,
-    OWNER,
-    PAGE_NAME,
     PAGE_TYPES,
     PERSON,
     PLACEHOLDER,
@@ -60,7 +57,11 @@ from pa_core.librarian.wiki import (
     PageFormatError,
     PageType,
     citations,
+    day_of,
+    is_page_name,
+    linked_days,
     links,
+    pages,
     parse_decision,
     parse_loop,
     parse_observation,
@@ -156,13 +157,13 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
     for file in files:
         for rule in _RULES:
             errors.extend(rule(file, l0))
-    pages = _readable_pages(files)
-    errors.extend(_identifiers(pages, l0, owner))
+    found = pages(tree)
+    errors.extend(_identifiers(found, l0, owner))
     warnings = [
-        *_orphans(files, pages),
-        *_aging_loops(pages, thresholds),
-        *_duplicate_candidates(pages),
-        *_slugs_without_pages(files, pages, thresholds),
+        *_orphans(files, found),
+        *_aging_loops(found, thresholds),
+        *_duplicate_candidates(found),
+        *_slugs_without_pages(tree, found, thresholds),
         *_needs_lookup(files),
     ]
     return LintReport(errors=tuple(errors), warnings=tuple(warnings))
@@ -192,9 +193,9 @@ def _folder(folder: Path, files: list[WikiFile]) -> Iterator[Finding]:
             yield _misplaced(entry, path)
         elif entry.name.lower() == "claude.md":
             yield Finding(path, "a CLAUDE.md is never allowed in the wiki")
-        elif folder.name == DAYS and not _is_day_log_name(entry.name):
+        elif folder.name == DAYS and day_of(entry.name) is None:
             yield Finding(path, "isn't a day log: day logs are named YYYY-MM-DD.md")
-        elif folder.name != DAYS and not PAGE_NAME.fullmatch(entry.name):
+        elif folder.name != DAYS and not is_page_name(entry.name):
             yield Finding(path, "isn't a page: pages are named <slug>.md")
         else:
             yield from _read(entry, path, files)
@@ -208,16 +209,6 @@ def _misplaced(entry: Path, path: str) -> Finding:
     if entry.is_dir() and path.count("/"):
         return Finding(path, "is a directory; the wiki's folders hold only Markdown files")
     return Finding(path, _NOT_IN_LAYOUT)
-
-
-def _is_day_log_name(name: str) -> bool:
-    if not DAY_LOG_NAME.fullmatch(name):
-        return False
-    try:
-        date.fromisoformat(name.removesuffix(".md"))
-    except ValueError:
-        return False
-    return True
 
 
 def _read(entry: Path, path: str, files: list[WikiFile]) -> Iterator[Finding]:
@@ -356,18 +347,6 @@ def _section_lines(page: Page) -> Iterator[Finding]:
                 )
 
 
-def _readable_pages(files: Iterable[WikiFile]) -> list[Page]:
-    """The pages among `files` whose frontmatter can be read."""
-    found: list[Page] = []
-    for file in files:
-        if file.path.partition("/")[0] in PAGE_TYPES:
-            try:
-                found.append(read_page(file.path, "\n".join(file.lines)))
-            except PageFormatError:
-                continue
-    return found
-
-
 def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterator[Finding]:
     """A page's addresses and domains are in L0's metadata, none is on two pages, and none of
     its addresses is the owner's."""
@@ -501,25 +480,15 @@ def _nearly(first: str, second: str) -> bool:
 
 
 def _slugs_without_pages(
-    files: Sequence[WikiFile], pages: Sequence[Page], thresholds: Thresholds
+    tree: Path, pages: Sequence[Page], thresholds: Thresholds
 ) -> Iterator[Finding]:
     """A slug linked on enough days to need a page that has none."""
-    days: dict[str, list[str]] = defaultdict(list)
-    """The day logs linking each slug, in order."""
-    for file in files:
-        if not file.is_day_log:
-            continue
-        for line in file.lines:
-            observation = parse_observation(line)
-            for slug in observation.links if observation else ():
-                if slug != OWNER and file.path not in days[slug]:
-                    days[slug].append(file.path)
     with_pages = {page.slug for page in pages}
-    for slug, logs in sorted(days.items()):
-        if len(logs) >= thresholds.page_threshold and slug not in with_pages:
+    for slug, days in sorted(linked_days(tree).items()):
+        if len(days) >= thresholds.page_threshold and slug not in with_pages:
             yield Finding(
-                logs[-1],
-                f"`{slug}` is linked on {len(logs)} days, reaching the page threshold of "
+                f"{DAYS}/{days[-1].isoformat()}.md",
+                f"`{slug}` is linked on {len(days)} days, reaching the page threshold of "
                 f"{thresholds.page_threshold}, but has no page",
             )
 

@@ -331,25 +331,19 @@ def day_logs(tree: Path) -> dict[date, tuple[str, ...]]:
 
     Only regular files named for a real day count; lint reports anything else.
     """
-    folder = tree / DAYS
     logs: dict[date, tuple[str, ...]] = {}
-    if not folder.is_dir() or folder.is_symlink():
-        return logs
-    for entry in sorted(folder.iterdir()):
-        if entry.is_symlink() or not entry.is_file() or not DAY_LOG_NAME.fullmatch(entry.name):
-            continue
-        try:
-            day = date.fromisoformat(entry.name.removesuffix(".md"))
-        except ValueError:
+    for entry in folder_files(tree, DAYS):
+        day = day_of(entry.name)
+        if day is None:
             continue
         text = entry.read_text(encoding="utf-8", errors="replace")
         logs[day] = tuple(line for line in text.splitlines() if line.strip())
     return logs
 
 
-def reference_counts(tree: Path) -> dict[str, int]:
-    """For each slug linked from an observation, the number of distinct days it's linked on,
-    over every day log in the wiki at `tree`. The owner, `me`, isn't counted."""
+def linked_days(tree: Path) -> dict[str, list[date]]:
+    """For each slug linked from an observation, the distinct days it's linked on, in order,
+    over every day log in the wiki at `tree`. The owner, `me`, is never linked."""
     days: dict[str, set[date]] = defaultdict(set)
     for day, lines in day_logs(tree).items():
         for line in lines:
@@ -357,7 +351,13 @@ def reference_counts(tree: Path) -> dict[str, int]:
             for slug in observation.links if observation else ():
                 if slug != OWNER:
                     days[slug].add(day)
-    return {slug: len(linked) for slug, linked in days.items()}
+    return {slug: sorted(linked) for slug, linked in days.items()}
+
+
+def reference_counts(tree: Path) -> dict[str, int]:
+    """For each slug linked from an observation, the number of distinct days it's linked on,
+    over every day log in the wiki at `tree`. The owner, `me`, isn't counted."""
+    return {slug: len(days) for slug, days in linked_days(tree).items()}
 
 
 # Pages
@@ -529,11 +529,8 @@ def pages(tree: Path) -> list[Page]:
     """Every readable page in the wiki at `tree`, by folder, then slug."""
     found: list[Page] = []
     for folder in PAGE_FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in sorted(directory.iterdir()):
-            if entry.is_symlink() or not entry.is_file() or not PAGE_NAME.fullmatch(entry.name):
+        for entry in folder_files(tree, folder):
+            if not is_page_name(entry.name):
                 continue
             text = entry.read_text(encoding="utf-8", errors="replace")
             try:

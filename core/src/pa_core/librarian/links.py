@@ -17,7 +17,7 @@ import re
 from functools import partial
 from pathlib import Path
 
-from pa_core.librarian.wiki import FOLDERS, LINK, OWNER, pages, slugify
+from pa_core.librarian.wiki import FOLDERS, LINK, OWNER, folder_files, pages, slugify
 
 
 def alias_targets(tree: Path) -> dict[str, str]:
@@ -49,11 +49,8 @@ def rewrite_alias_links(tree: Path) -> list[str]:
         return []
     changed: list[str] = []
     for folder in FOLDERS:
-        directory = tree / folder
-        if not directory.is_dir() or directory.is_symlink():
-            continue
-        for entry in sorted(directory.iterdir()):
-            if entry.is_symlink() or not entry.is_file() or entry.suffix != ".md":
+        for entry in folder_files(tree, folder):
+            if entry.suffix != ".md":
                 continue
             text = entry.read_text(encoding="utf-8")
             rewritten = LINK.sub(partial(_rewritten, targets), text)
