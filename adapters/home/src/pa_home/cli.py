@@ -272,14 +272,21 @@ def _replay(
     print(f"librarian replay: committed {len(outcome.runs)} batches into {target}")
 
 
-def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
-    owner = load_owner()
+def _render_target(target: Path, project: str) -> Path:
+    """`target`, resolved, once it's known to be outside the repository: a rendered project
+    names the owner."""
     target = target.expanduser().resolve()
     require_outside_repository(
         target,
         "The render target",
-        "A rendered agent project names the owner, so it must live outside the repository.",
+        f"A rendered {project} names the owner, so it must live outside the repository.",
     )
+    return target
+
+
+def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
+    owner = load_owner()
+    target = _render_target(target, "agent project")
     render_agent_project(
         target,
         owner=owner,
@@ -297,11 +304,6 @@ def _render_librarian_project(target: Path, *, l0: PurePosixPath, wiki: PurePosi
                 f"{name} must be an absolute path, as the librarian's session sees it (got {path})"
             )
     owner = load_owner()
-    target = target.expanduser().resolve()
-    require_outside_repository(
-        target,
-        "The render target",
-        "A rendered librarian project names the owner, so it must live outside the repository.",
-    )
+    target = _render_target(target, "librarian project")
     render_librarian_project(target, owner=owner, l0=l0, wiki=wiki)
     print(f"rendered the librarian project into {target}")

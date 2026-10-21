@@ -13,13 +13,13 @@ never attached with `--add-dir`, which would load skills from it).
 
 from __future__ import annotations
 
-import os
 import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path, PurePath
 
 from pa_core.owner import Owner
+from pa_home.git_wiki import git_environ
 from pa_home.project import REPOSITORY, SETTINGS, render_project
 
 LIBRARIAN_PROJECT = REPOSITORY / "librarian"
@@ -52,7 +52,7 @@ def project_files(project: Path = LIBRARIAN_PROJECT) -> dict[str, bytes]:
 def _committed(project: Path) -> dict[str, bytes] | None:
     """`project`'s files at HEAD, or None if no git checkout tracks it."""
     # The checkout is the one `project` is in, whatever the environment says.
-    environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    environ = git_environ()
 
     def git(*args: str, input: bytes | None = None) -> bytes | None:
         try:
