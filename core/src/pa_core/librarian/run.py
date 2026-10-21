@@ -2,10 +2,12 @@
 
 A run picks the batch of episodes captured since the cursor. The librarian observes them into
 day logs in one session, then folds the new observations into pages in a second, given the
-reference counts the host computes from the day logs and lint's open warnings. After each
-session the host checks it stayed in bounds and lints the wiki; a session that leaves lint
-errors it can fix (observation: in the day logs; consolidation: in the pages) is resumed with
-the findings, at most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+reference counts the host computes from the day logs and lint's open warnings. The sessions'
+file tools can't remove a file, so consolidation deletes a page (one merged into another) by
+emptying it, and the host removes it after the session. After each session the host checks
+it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
+(observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
+most twice. Then the host rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 
@@ -387,9 +389,30 @@ def _consolidate(
             )
 
     result = _session(
-        Phase.CONSOLIDATION, prompt, require_bounds, fixable, tree, runner, now, linter, committed
+        Phase.CONSOLIDATION,
+        prompt,
+        require_bounds,
+        fixable,
+        tree,
+        runner,
+        now,
+        linter,
+        committed,
+        tidy=partial(_remove_emptied_pages, tree),
     )
     return Phase.CONSOLIDATION, result
+
+
+def _remove_emptied_pages(tree: Path) -> None:
+    """Removes the pages a consolidation session emptied. Its file tools can't remove a file,
+    so it deletes a page (one merged into another) by writing it with nothing in it."""
+    for folder in PAGE_FOLDERS:
+        directory = tree / folder
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        for entry in directory.iterdir():
+            if entry.is_file() and not entry.is_symlink() and not entry.read_bytes().strip():
+                entry.unlink()
 
 
 type Linter = Callable[[Path], LintReport]
@@ -409,8 +432,11 @@ def _session(
     now: datetime,
     linter: Linter,
     committed: _Committed,
+    *,
+    tidy: Callable[[], None] = lambda: None,
 ) -> SessionResult:
-    """Runs `phase`'s session on `prompt`, then checks its bounds and lints the wiki. A session
+    """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
+    it. A session
     that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
     MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
     the session's result, its cost and turns added up over its attempts."""
@@ -420,6 +446,7 @@ def _session(
             result = attempts[-1]
             if not result.ok:
                 raise LibrarianRunError(f"the {phase} session failed: {result.error}")
+            tidy()
             require_bounds()
             errors = [e for e in linter(tree).errors if judged(e)]
             if not errors:

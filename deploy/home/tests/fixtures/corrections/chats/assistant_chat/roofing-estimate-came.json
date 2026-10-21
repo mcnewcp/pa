@@ -1,0 +1,16 @@
+{
+  "session_id": "7c1e9a52-3b6d-4f08-a2d4-5e9b0c71f3a6",
+  "message_id": "b93d1e7a-5c28-4f60-8a4b-2e7f0d9c6b14",
+  "started_at": "2026-10-15T00:35:48.000Z",
+  "ended_at": "2026-10-15T00:36:10.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "Dana from Summit Roofing sent the written estimate for the flashing yesterday. $1,850."
+    },
+    {
+      "role": "assistant",
+      "text": "Thanks: Summit Roofing's written estimate for the flashing repair came in yesterday, at $1,850. That will show in the wiki after the next librarian run."
+    }
+  ]
+}
