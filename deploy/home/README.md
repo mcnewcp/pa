@@ -166,7 +166,7 @@ iCloud is a two-way sync off the owner's devices, which the spec first ruled out
 On the Mac, clone into Obsidian's iCloud folder, with the git directory outside iCloud, since iCloud's sync can corrupt one:
 
 ```sh
-vault=~/Library/Mobile\ Documents/iCloud~md~obsidian/Documents/pa-wiki
+vault="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/pa-wiki"
 git clone --separate-git-dir ~/.pa-wiki.git devbox:.local/share/pa-home-synthetic/wiki.git "$vault"
 cd "$vault"
 git remote set-url --push origin no-push      # pushing fails
