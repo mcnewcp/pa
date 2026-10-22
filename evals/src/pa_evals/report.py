@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pa_evals.results import QuestionResult, RunResults, Scores
+from pa_evals.results import InjectionChecks, QuestionResult, RunResults, Scores
 
 _SCORE_COLUMNS = "Questions | Failed | Correctness | Evidence recall | Citation validity"
 
@@ -60,6 +60,10 @@ def render_report(results: RunResults) -> str:
     lines = ["# Eval run", ""]
     if results.configuration is not None:
         lines.append(f"- Configuration: {results.configuration}")
+    if results.wiki is not None:
+        lines.append(f"- Wiki: librarian version {results.wiki.librarian_version}")
+    if results.injection_checks is not None:
+        lines.append(f"- Injection checks: {_injection_text(results.injection_checks)}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
@@ -94,6 +98,21 @@ def render_report(results: RunResults) -> str:
     lines += [
         f"| Overall | {_efficiency_cells(overall)} |",
         "",
+        "## Cited episodes opened",
+        "",
+        "Of the episodes the answers cite, the share whose contents reached the session, over the "
+        "answers whose tool calls were recorded (n/a: none cite anything).",
+        "",
+        "| Category | Cited episodes opened |",
+        "|---|---|",
+    ]
+    lines += [
+        f"| {_cell(name)} | {format_score(s.cited_opened)} |"
+        for name, s in results.categories.items()
+    ]
+    lines += [
+        f"| Overall | {format_score(overall.cited_opened)} |",
+        "",
         "## By question",
         "",
         "| Question | Category | Status | Correct | Evidence recall | Citation validity "
@@ -112,6 +131,16 @@ def render_report(results: RunResults) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _injection_text(checks: InjectionChecks) -> str:
+    if not checks.adversarial_episodes:
+        return "no adversarial episodes listed in the eval set"
+    count = len(checks.adversarial_episodes)
+    return (
+        f"passed, over {count} adversarial episode{'s' if count > 1 else ''} "
+        f"({'; '.join(checks.checks)})"
+    )
+
+
 def _answer_section(q: QuestionResult) -> list[str]:
     lines = [
         f"### {q.id} ({q.category})",
@@ -127,6 +156,12 @@ def _answer_section(q: QuestionResult) -> list[str]:
             f"- Cost: {format_cost(q.cost_usd)}, {format_turns(q.turns)} turns, "
             f"{format_duration(q.duration_ms)}"
         )
+    if q.tool_calls is not None:
+        errored = sum(call.errored for call in q.tool_calls)
+        lines.append(f"- Tool calls: {len(q.tool_calls)} ({errored} errored)")
+    if q.cited_opened is not None and len(q.cited_opened) < len(q.cited):
+        not_opened = [episode_id for episode_id in q.cited if episode_id not in q.cited_opened]
+        lines.append(f"- Cited but not opened: {_ids(not_opened)}")
     if q.unknown_citations:
         lines.append(f"- Not in L0: {_ids(q.unknown_citations)}")
     if q.irrelevant_citations:

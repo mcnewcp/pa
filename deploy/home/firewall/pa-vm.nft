@@ -1,9 +1,12 @@
 #!/usr/sbin/nft -f
-# Fences the PA VM's bridge (pabr0): the VM reaches the public internet and nothing of the
-# owner's. A table of its own, so it never touches Incus's, Docker's or Tailscale's rules, and a
-# drop here is final whatever their chains accept. Reloading replaces the table atomically.
+# Fences the PA VMs' bridges. The assistant's VM (pabr0) reaches the public internet and nothing
+# of the owner's. The librarian's VM (palib0) reaches TCP 443 in the Anthropic API's published
+# range and nothing else; its NIC's Incus ACL fences it already, and this is a second fence,
+# independent of it. A table of its own, so it never touches Incus's, Docker's or Tailscale's
+# rules, and a drop here is final whatever their chains accept. Reloading replaces the table
+# atomically.
 #
-# The bridge has IPv6 off (incus-setup.sh), so IPv6 from the VM is dropped outright.
+# Both bridges have IPv6 off (incus-setup.sh), so IPv6 from either VM is dropped outright.
 
 table inet pa_vm
 delete table inet pa_vm
@@ -23,9 +26,17 @@ table inet pa_vm {
 
 	# Whatever the VM sends to the devbox itself, at any of its addresses (bridge, LAN, tailnet,
 	# Docker), is delivered locally and comes through here. Only DNS and DHCP get through.
+	# Keep in step with PA_API_RANGE in lib.sh.
+	set anthropic_api4 {
+		type ipv4_addr
+		flags interval
+		elements = { 160.79.104.0/23 }
+	}
+
 	chain input {
 		type filter hook input priority filter - 10; policy accept;
 		iifname "pabr0" jump from_vm_to_devbox
+		iifname "palib0" jump from_librarian_to_devbox
 	}
 
 	chain from_vm_to_devbox {
@@ -36,10 +47,25 @@ table inet pa_vm {
 		counter drop
 	}
 
-	# Whatever the VM sends through the devbox to somewhere else.
+	# The librarian's bridge has no DNS: only DHCP gets through.
+	chain from_librarian_to_devbox {
+		ct state established,related accept
+		udp dport 67 accept comment "DHCP"
+		counter drop
+	}
+
+	# Whatever a VM sends through the devbox to somewhere else.
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
 		iifname "pabr0" meta nfproto ipv6 counter drop
 		iifname "pabr0" ip daddr @private4 counter drop
+		iifname "palib0" jump from_librarian_out
+	}
+
+	chain from_librarian_out {
+		meta nfproto ipv6 counter drop
+		ip daddr != @anthropic_api4 counter drop
+		meta l4proto != tcp counter drop
+		tcp dport != 443 counter drop
 	}
 }

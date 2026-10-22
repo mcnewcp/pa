@@ -185,13 +185,20 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VM on the devbox (#27, #30, #31, #33): the steps only the owner can do, and the deploy
-# scripts for the rest. Every stage checks its result, and re-running skips what's done.
-# Run it on the devbox: deploy/home/setup-wizard.sh
+# Sets up the PA VMs on the devbox (#27, #30, #31, #33, #66): the steps only the owner can do, and
+# the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
+# Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
+# the librarian's VM alone.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TOTAL_STAGES=19
+ASSISTANT_STAGES=19
+LIBRARIAN_STAGES=7
+case ${1:-} in
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES)); only_librarian=false ;;
+  --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
+  *) printf 'usage: setup-wizard.sh [--librarian]\n' >&2; exit 2 ;;
+esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
 run() {
@@ -236,7 +243,8 @@ in_project() {
   incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_PROJECT") && $1"
 }
 
-banner "PA VM setup"
+# The assistant's VM, pa-home.
+assistant_stages() {
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 stage "Remove the LXD snap"
@@ -289,6 +297,7 @@ pause
 stage "Firewall on the VM's bridge"
 say "Drops everything from the VM to private and tailnet ranges and to the devbox itself,"
 say "except DNS and DHCP. Loads at every boot, before Incus; if it fails, the VM stays down."
+note "It fences the librarian's bridge too, once that exists (the librarian's stages)."
 run "$DEPLOY_DIR/install-firewall.sh"
 systemctl is-enabled --quiet pa-vm-firewall.service && ok "pa-vm-firewall.service is enabled"
 pause
@@ -320,9 +329,9 @@ pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
-say "L0 goes in read-only at $PA_VM_L0, enforced on the devbox so even root in the VM can't"
-say "write it. inbox/assistant_chat/ goes in writable at $PA_VM_CHAT_INBOX: the VM's only"
-say "way back. Nothing else of the data root goes in."
+say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
+say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
@@ -494,11 +503,103 @@ else
   SKIPPED+=("Remote Control isn't listed: check incus exec $PA_VM -- journalctl -u $PA_VM_RC_UNIT")
 fi
 pause
+}
+
+# The librarian's VM, pa-librarian (docs/research/librarian-sandbox-spike.md).
+librarian_stages() {
+
+# ── L1 ────────────────────────────────────────────────────────────────────
+stage "The librarian's bridge and egress ACL"
+say "A bridge of its own, $PA_LIBRARIAN_BRIDGE, IPv4 only and with no DNS: its dnsmasq serves"
+say "DHCP only, since a resolver that forwards lookups is a way out. Its ACL, $PA_LIBRARIAN_ACL,"
+say "lets out TCP 443 to the API's published range, $PA_API_RANGE, and drops all else."
+run "$DEPLOY_DIR/incus-setup.sh" --vm librarian
+ok "bridge $PA_LIBRARIAN_BRIDGE and ACL $PA_LIBRARIAN_ACL are ready"
+pause
+
+# ── L2 ────────────────────────────────────────────────────────────────────
+stage "Firewall on the librarian's bridge"
+say "The same firewall as the assistant's, re-run: a second fence beside the ACL lets the"
+say "librarian's VM reach only DHCP on the devbox and TCP 443 in the API's range, and ufw and"
+say "Docker let exactly that through. Safe to re-run."
+run "$DEPLOY_DIR/install-firewall.sh"
+systemctl is-enabled --quiet pa-vm-firewall.service && ok "pa-vm-firewall.service is enabled"
+pause
+
+# ── L3 ────────────────────────────────────────────────────────────────────
+stage "Create the librarian's VM"
+say "Ubuntu 26.04, 2 vCPU, 3 GiB RAM, 10 GiB disk, user $PA_LIBRARIAN_USER, no Tailscale."
+say "It's left stopped: each librarian run starts it and stops it again."
+note "The first run downloads the image and waits for cloud-init: a few minutes."
+run "$DEPLOY_DIR/create-vm.sh" --vm librarian
+ok "$PA_LIBRARIAN_VM exists"
+pause
+
+# ── L4 ────────────────────────────────────────────────────────────────────
+stage "Give the wiki filesystems of their own"
+say "The librarian's VM writes the wiki as it likes, and the devbox commits it with git. Like"
+say "the inbox directory, the wiki ($PA_WIKI_SIZE) and the replays directory replays build"
+say "their wikis in ($PA_REPLAYS_SIZE) become filesystems of their own, mounted nosuid,nodev,noexec"
+say "at every boot before Incus. The wiki's git directory stays outside, on the devbox."
+run "$DEPLOY_DIR/install-wiki.sh"
+ok "$PA_WIKI and $PA_REPLAYS are filesystems of their own"
+pause
+
+# ── L5 ────────────────────────────────────────────────────────────────────
+stage "Install Claude Code in the librarian's VM"
+say "Snapshots the VM, then downloads Claude Code $PA_LIBRARIAN_CLAUDE_VERSION on the devbox,"
+say "checks its signature and checksum, and pushes it in with the managed settings: every"
+say "tool but the file tools denied, bypass mode locked out, memory and updates off."
+run "$DEPLOY_DIR/update.sh" --vm librarian
+pause
+
+# ── L6 ────────────────────────────────────────────────────────────────────
+stage "The librarian's setup token"
+if [[ -f $PA_LIBRARIAN_TOKEN && $(stat -c %a "$PA_LIBRARIAN_TOKEN") == 600 ]]; then
+  ok "the setup token is saved at $PA_LIBRARIAN_TOKEN"
+else
+  say "The librarian runs on your subscription with a setup token, which can only make model"
+  say "requests. It stays on the devbox, mode 0600, and reaches each session through stdin."
+  step "In another terminal on the devbox, run: claude setup-token"
+  step "Sign in in the browser it opens, then copy the token it prints (sk-ant-oat01-…)."
+  step "Paste it below, then press Enter on an empty line. Spaces and line breaks are dropped."
+  printf '\n'
+  token=""
+  while IFS= read -rs line && [[ -n $line ]]; do token+=$line; done
+  token=$(tr -d '[:space:]' <<<"$token")
+  [[ $token == sk-ant-oat01-* ]] || { printf '  %s✗ that isn'"'"'t a setup token%s\n' "$RED" "$RESET"; exit 1; }
+  mkdir -p "$(dirname "$PA_LIBRARIAN_TOKEN")"
+  (umask 077 && printf '%s\n' "$token" >"$PA_LIBRARIAN_TOKEN")
+  ok "saved at $PA_LIBRARIAN_TOKEN, mode 0600"
+fi
+pause
+
+# ── L7 ────────────────────────────────────────────────────────────────────
+stage "Librarian check"
+say "Starts the librarian's VM as a run does, then checks from inside it: L0 and the project"
+say "read-only, the wiki writable, nothing else shared and no git directory; the API reachable"
+say "and the web, the devbox and the LAN not; and two short sessions on Haiku, one with every"
+say "flag that tries to reopen a tool, each with exactly the file tools. Then stops it."
+printf '\n'
+if "$DEPLOY_DIR/check-librarian.sh"; then
+  ok "every fence holds"
+else
+  SKIPPED+=("librarian check failed: fix and re-run deploy/home/check-librarian.sh")
+fi
+pause
+}
+
+banner "PA VM setup"
+$only_librarian || assistant_stages
+librarian_stages
 
 finish
+if ! $only_librarian; then
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
+fi
+note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
 printf '\n'

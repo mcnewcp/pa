@@ -3,17 +3,33 @@
 from __future__ import annotations
 
 import os
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.errors import PaError
+from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
+from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
+from pa_core.librarian.wiki import TREE as WIKI_TREE
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
+TIME_ZONE_VAR = "PA_TIME_ZONE"
+# The librarian: its model and effort, the caps on each session, the sandbox its sessions run
+# in, and the command that runs `claude` there.
+LIBRARIAN_MODEL_VAR = "PA_LIBRARIAN_MODEL"
+LIBRARIAN_EFFORT_VAR = "PA_LIBRARIAN_EFFORT"
+LIBRARIAN_MAX_TURNS_VAR = "PA_LIBRARIAN_MAX_TURNS"
+LIBRARIAN_TIMEOUT_VAR = "PA_LIBRARIAN_TIMEOUT_SECONDS"
+LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
+LIBRARIAN_SANDBOX_VAR = "PA_LIBRARIAN_SANDBOX"
+LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
+LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -41,6 +57,38 @@ class DataRoot:
     @property
     def catalog(self) -> Path:
         return self.path / "catalog" / "catalog.sqlite"
+
+    @property
+    def wiki(self) -> Path:
+        """L1: the librarian's wiki."""
+        return self.path / WIKI_TREE
+
+    @property
+    def wiki_git(self) -> Path:
+        """The wiki's git directory, beside the wiki and never inside it."""
+        return self.path / WIKI_GIT_DIR
+
+
+@dataclass(frozen=True)
+class LibrarianConfig:
+    """How the librarian's sessions run."""
+
+    model: str = "claude-opus-5-5"
+    effort: str = "medium"
+    max_turns: int = 200
+    """The most turns one session may take."""
+    timeout_seconds: float = 3600
+    """The longest one session may run."""
+    command: tuple[str, ...] = ("claude",)
+    """What runs `claude` for a session: the CLI itself, or a command that reaches its VM."""
+    sandbox: tuple[str, ...] | None = None
+    """The command that sets up the sandbox the sessions run in, such as the librarian's VM, for
+    a run or a replay, and takes it down afterwards (`pa_home.librarian`). None runs the
+    sessions on the host."""
+    page_threshold: int = PAGE_THRESHOLD
+    """The distinct days a slug must be linked on in the day logs before it gets a page."""
+    loop_age_days: int = LOOP_AGE_DAYS
+    """How long a loop may stay open before lint warns about it."""
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
@@ -94,6 +142,52 @@ def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:
     )
 
 
+def load_time_zone(environ: Mapping[str, str] = os.environ) -> ZoneInfo:
+    """The owner's time zone, which decides each episode's day in the wiki."""
+    name = environ.get(TIME_ZONE_VAR, "").strip()
+    if not name:
+        raise ConfigError(
+            f"The owner's time zone is missing: set {TIME_ZONE_VAR} to an IANA time zone, "
+            "such as America/Chicago."
+        )
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise ConfigError(
+            f"{TIME_ZONE_VAR} is not a known IANA time zone, such as America/Chicago: {name!r}"
+        ) from error
+
+
+def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianConfig:
+    """The librarian's configuration: Opus 5.5 at medium effort unless configured otherwise.
+
+    With a sandbox, sessions run `claude` through it (`<sandbox> claude`) unless a command is
+    configured too.
+    """
+    default = LibrarianConfig()
+    command = environ.get(LIBRARIAN_COMMAND_VAR, "").strip()
+    sandbox = environ.get(LIBRARIAN_SANDBOX_VAR, "").strip()
+    sandbox_command = tuple(shlex.split(sandbox)) if sandbox else None
+    if command:
+        session_command = tuple(shlex.split(command))
+    elif sandbox_command:
+        session_command = (*sandbox_command, "claude")
+    else:
+        session_command = default.command
+    return LibrarianConfig(
+        model=environ.get(LIBRARIAN_MODEL_VAR, "").strip() or default.model,
+        effort=environ.get(LIBRARIAN_EFFORT_VAR, "").strip() or default.effort,
+        max_turns=_positive_integer(environ, LIBRARIAN_MAX_TURNS_VAR, default.max_turns),
+        timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
+        command=session_command,
+        sandbox=sandbox_command,
+        page_threshold=_positive_integer(
+            environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
+        ),
+        loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, default.loop_age_days),
+    )
+
+
 def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
     """Refuses to go on unless restic's repository and password are configured."""
     missing = [
@@ -106,6 +200,28 @@ def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
             f"Backup configuration is missing: set {' and '.join(missing)}. "
             "These are restic's own variables: the repository to back up to and its password."
         )
+
+
+def _positive(environ: Mapping[str, str], var: str, default: float) -> float:
+    value = environ.get(var, "").strip()
+    if not value:
+        return default
+    try:
+        number = float(value)
+    except ValueError:
+        number = 0.0
+    if not number > 0:
+        raise ConfigError(f"{var} must be a positive number (got {value!r}).")
+    return number
+
+
+def _positive_integer(environ: Mapping[str, str], var: str, default: int) -> int:
+    value = environ.get(var, "").strip()
+    if not value:
+        return default
+    if not value.isdigit() or int(value) < 1:
+        raise ConfigError(f"{var} must be a whole number of at least 1 (got {value!r}).")
+    return int(value)
 
 
 def _comma_separated(environ: Mapping[str, str], var: str) -> tuple[str, ...]:

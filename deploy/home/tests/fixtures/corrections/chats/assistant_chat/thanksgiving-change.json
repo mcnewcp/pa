@@ -1,0 +1,16 @@
+{
+  "session_id": "2a8f4d1c-9e63-4b07-b5c2-7d0e1f9a8c35",
+  "message_id": "5d7c2b9e-1f84-4a36-9c0d-6e3a8b2f4d71",
+  "started_at": "2026-10-15T01:02:20.000Z",
+  "ended_at": "2026-10-15T01:02:44.000Z",
+  "turns": [
+    {
+      "role": "owner",
+      "text": "Change of plans on Thanksgiving."
+    },
+    {
+      "role": "assistant",
+      "text": "To confirm: you've decided to drive up to Mara's parents' in Duluth for Thanksgiving instead of hosting at your place? Once you confirm, it will show in the wiki after the next librarian run."
+    }
+  ]
+}

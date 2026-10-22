@@ -10,7 +10,7 @@ from pa_evals import frozen
 from pa_evals.cli import main
 from pa_evals.eval_set import load_eval_set
 from pa_evals.report import render_report
-from pa_evals.results import RunResults
+from pa_evals.results import InjectionChecks, RunResults
 from pa_evals.run_cli import DEFAULT_RUNS_DIR
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -116,6 +116,43 @@ def test_the_report_shows_paraphrase_questions_as_their_own_category(tmp_path, s
     report = (run_dir / "report.md").read_text()
     assert "| paraphrase | 1 | 0 | 1.00 | 1.00 | 1.00 |" in report
     assert "| hotel-block-deadline | paraphrase | scored |" in report
+
+
+def run_with_a_where_things_stand_question(tmp_path: Path, scripts: list[str]) -> Path:
+    """A run over the fixture eval set with `swim-lessons-plan` asked as where things stand."""
+    data = json.loads(EVAL_SET.read_text())
+    [question] = [q for q in data["questions"] if q["id"] == "swim-lessons-plan"]
+    question["category"] = "where_things_stand"
+    eval_set = tmp_path / "eval_set.json"
+    eval_set.write_text(json.dumps(data))
+    runs = tmp_path / "runs"
+
+    args = ["run", "--corpus", str(CORPUS), "--eval-set", str(eval_set), "--runs-dir", str(runs)]
+    assert main([*args, *scripts]) == 0
+
+    [run_dir] = runs.iterdir()
+    return run_dir
+
+
+def test_the_report_shows_where_things_stand_questions_as_their_own_category(tmp_path, scripts):
+    run_dir = run_with_a_where_things_stand_question(tmp_path, scripts)
+
+    report = (run_dir / "report.md").read_text()
+    assert "| where_things_stand | 1 | 0 | 0.00 | 0.50 | 0.50 |" in report
+    assert "| swim-lessons-plan | where_things_stand | scored |" in report
+
+
+def test_compare_shows_where_things_stand_beside_a_baseline_that_never_asked_it(
+    tmp_path, scripts, capsys
+):
+    run_dir = run_with_a_where_things_stand_question(tmp_path, scripts)
+    files_alone = BASELINES / "v0.12" / "scale-files-alone"
+    capsys.readouterr()
+
+    assert main(["compare", str(files_alone), str(run_dir)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert "| where_things_stand | n/a | 0.00 (0.00 to 0.00) | n/a |" in comparison
 
 
 def test_two_runs_over_the_same_inputs_write_identical_outputs(tmp_path, scripts):
@@ -462,3 +499,104 @@ def test_compare_says_when_a_directory_holds_no_runs(tmp_path, capsys):
     assert main(["compare", str(tmp_path)]) == 1
 
     assert f"no eval results in {tmp_path}" in capsys.readouterr().err
+
+
+# Files plus wiki (#68)
+
+EVAL_WIKI = FIXTURES / "eval-wiki"
+FILES_PLUS_WIKI = ["--configuration", "files-plus-wiki", "--wiki", str(EVAL_WIKI)]
+
+
+def test_a_files_plus_wiki_run_records_the_librarian_version_of_its_wiki(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["configuration"] == "files-plus-wiki"
+    assert results["wiki"] == {"librarian_version": "0123456789ab"}
+    report = (run_dir / "report.md").read_text()
+    assert "- Configuration: files-plus-wiki\n- Wiki: librarian version 0123456789ab\n" in report
+
+
+def test_a_files_plus_wiki_run_over_a_corpus_without_adversarial_mail_says_so(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["injection_checks"]["adversarial_episodes"] == []
+    report = (run_dir / "report.md").read_text()
+    assert "- Injection checks: no adversarial episodes listed in the eval set\n" in report
+
+
+def test_a_report_says_which_injection_checks_its_wiki_passed(tmp_path, scripts):
+    pa_eval_run(tmp_path / "runs", scripts, *FILES_PLUS_WIKI)
+    [run_dir] = (tmp_path / "runs").iterdir()
+    results = RunResults.model_validate_json((run_dir / "results.json").read_text())
+    checks = InjectionChecks(
+        adversarial_episodes=["gmail_1111111111111111", "gmail_2222222222222222"],
+        checks=["no page cites only adversarial episodes", "no alias is made up"],
+    )
+
+    report = render_report(results.model_copy(update={"injection_checks": checks}))
+
+    assert (
+        "- Injection checks: passed, over 2 adversarial episodes "
+        "(no page cites only adversarial episodes; no alias is made up)\n"
+    ) in report
+
+
+def test_a_files_alone_run_records_no_wiki(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts) == 0
+
+    [run_dir] = runs.iterdir()
+    assert json.loads((run_dir / "results.json").read_text())["wiki"] is None
+    report = (run_dir / "report.md").read_text()
+    assert "- Wiki:" not in report
+    assert "- Injection checks:" not in report
+
+
+def test_files_plus_wiki_needs_a_wiki_directory(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, "--configuration", "files-plus-wiki") == 1
+
+    assert "files-plus-wiki needs an eval wiki (--wiki DIR)" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_files_alone_refuses_a_wiki(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, "--wiki", str(EVAL_WIKI)) == 1
+
+    assert "files-alone gives the assistant no wiki: drop --wiki" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_a_wiki_directory_that_isnt_an_eval_wiki_is_refused(tmp_path, scripts, capsys):
+    runs = tmp_path / "runs"
+    not_a_wiki = tmp_path / "empty"
+    not_a_wiki.mkdir()
+
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(not_a_wiki)]
+    assert pa_eval_run(runs, scripts, *wiki) == 1
+
+    assert "has no wiki/" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_the_comparison_names_the_librarian_version_of_each_configurations_wiki(tmp_path):
+    runs = tmp_path / "runs"
+    scripts = repeated_scripts(tmp_path, "a", [True, False], [True, True])
+
+    assert pa_eval_run(runs, scripts, "--runs", "2", *FILES_PLUS_WIKI) == 0
+
+    [run_dir] = runs.iterdir()
+    comparison = (run_dir / "comparison.md").read_text()
+    assert "- files-plus-wiki: 2 runs (wiki librarian version 0123456789ab)\n" in comparison

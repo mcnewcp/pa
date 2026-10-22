@@ -29,8 +29,9 @@ from pa_evals.agent import (
     ScriptedAnswer,
 )
 from pa_evals.comparison import COMPARISON, write_runs
-from pa_evals.configurations import CONFIGURATIONS, DEFAULT_CONFIGURATION
+from pa_evals.configurations import CONFIGURATIONS, DEFAULT_CONFIGURATION, Configuration
 from pa_evals.eval_set import load_eval_set
+from pa_evals.eval_wiki import EvalWiki, load_eval_wiki
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.report import format_cost, format_score
@@ -258,6 +259,13 @@ def add_run_command(commands: Any) -> None:
         + ".",
     )
     run.add_argument(
+        "--wiki",
+        type=Path,
+        metavar="DIR",
+        help="For --configuration files-plus-wiki: the eval wiki, a replay's wiki/ and "
+        "run-log.jsonl (kept in evals/wikis/<corpus>/<librarian version>/).",
+    )
+    run.add_argument(
         "--runs",
         type=_at_least_one,
         default=1,
@@ -276,9 +284,10 @@ def _run(args: argparse.Namespace) -> int:
     eval_set = load_eval_set(eval_set_path)
     if args.only:
         eval_set = eval_set.only(*args.only)
+    configuration = CONFIGURATIONS[args.configuration]
+    wiki = _wiki(configuration, args.wiki)
     agent = AGENTS[args.agent].build(args)
     judge = JUDGES[args.judge].build(args)
-    configuration = CONFIGURATIONS[args.configuration]
     setup = _setup(args)
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
@@ -289,6 +298,7 @@ def _run(args: argparse.Namespace) -> int:
             judge,
             concurrency=args.concurrency,
             configuration=configuration,
+            wiki=wiki,
             setup=setup,
         )
         overall = results.overall
@@ -328,6 +338,13 @@ def _corpus(corpus: str, eval_set: Path | None) -> tuple[tuple[Path, ...], Path]
 
 class CorpusChoiceError(PaError):
     """A `--corpus` that names no corpus, or a corpus directory given without its eval set."""
+
+
+def _wiki(configuration: Configuration, directory: Path | None) -> EvalWiki | None:
+    """The eval wiki in `--wiki DIR`, which a configuration with a wiki needs and no other
+    takes."""
+    configuration.require_wiki_choice(wiki_given=directory is not None)
+    return None if directory is None else load_eval_wiki(directory)
 
 
 def _setup(args: argparse.Namespace) -> dict[str, str]:

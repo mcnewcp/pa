@@ -1,8 +1,9 @@
 """The agent runner interface: how the harness asks the agent one question.
 
 A runner answers in free text and cites evidence as `[ep:<episode_id>]`, with what the answer
-cost where it knows (dollars, turns, and duration). Anything it raises
-(including AgentTimeoutError) is recorded as a failed result for that question; the run goes on.
+cost where it knows (dollars, turns, and duration) and the tool calls it made to get there.
+Anything it raises (including AgentTimeoutError) is recorded as a failed result for that
+question; the run goes on.
 The harness cannot interrupt a runner, so a runner enforces its own timeout.
 """
 
@@ -11,11 +12,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from pa_core.owner import Owner
 from pa_evals.script import Script
-from pa_home.agent import AgentAnswer, AgentError, AgentTimeoutError, ClaudeAgent
+from pa_home.agent import AgentAnswer, AgentError, AgentTimeoutError, ClaudeAgent, ToolCall
 from pa_home.config import DataRoot
 
 __all__ = [
@@ -26,6 +28,7 @@ __all__ = [
     "AgentTimeoutError",
     "ClaudeAgentRunner",
     "ScriptedAgent",
+    "ToolCall",
 ]
 
 
@@ -41,6 +44,9 @@ class AgentRequest:
     data_root: DataRoot
     """The throwaway data root the corpus was ingested into (read-only for the assistant)."""
     owner: Owner
+    wiki: Path | None = None
+    """The eval wiki's read-only tree beside the throwaway L0, in a files-plus-wiki run; None
+    in files alone."""
 
 
 class AgentRunner(Protocol):
@@ -60,6 +66,7 @@ class ClaudeAgentRunner:
             request.question,
             owner=request.owner,
             l0=request.data_root.l0,
+            wiki=request.wiki,
             now=request.as_of,
         )
 
@@ -71,7 +78,7 @@ class ScriptedAgent:
     """A fake agent that answers each question id with a scripted answer, or raises its error.
 
     A question id may have a list of answers instead, one per run, played in order. An answer
-    scripted as text has no cost, turns, or duration.
+    scripted as text has no cost, turns, duration, or tool calls.
 
     Every request it receives is recorded in `requests`.
     """

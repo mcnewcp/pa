@@ -113,15 +113,18 @@ def test_no_calendar_event_in_the_extension_lies_after_the_as_of_time(scale, que
 def test_the_new_questions_match_the_agreed_mix(questions):
     counts = Counter(question.category for question in questions.questions)
 
-    assert len(questions.questions) == 15
+    # v0.12's 15, then v0.12.1's 6 (an overdue sweep, a pending-decisions sweep, and four
+    # "where does X stand"), which the wiki should help with.
+    assert len(questions.questions) == 21
     assert counts == {
         "timeline_narrative": 3,
         "attribution": 2,
-        "open_loops": 3,
+        "open_loops": 3 + 1,
         "entity_resolution": 2,
         "connection": 3,
         "single_fact_recall": 1,  # told only to the assistant
         "abstention": 1,
+        "where_things_stand": 5,
     }
 
 

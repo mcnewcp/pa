@@ -3,7 +3,9 @@
 Each configuration's correctness per category is the mean over its runs, with the spread from
 the lowest run to the highest. A difference from the first configuration counts only when it is
 larger than the spread of either side, so a single run (no spread to go by) never counts. Cost,
-turns, and duration are medians over every answer in every run that reports them.
+turns, and duration are medians over every answer in every run that reports them. The share of
+cited episodes opened pools the citations of every answer in every run whose tool calls were
+recorded.
 """
 
 from __future__ import annotations
@@ -19,11 +21,12 @@ from pa_core.errors import PaError
 from pa_evals.report import (
     format_cost,
     format_duration,
+    format_score,
     format_turns,
     new_run_dir,
     write_results,
 )
-from pa_evals.results import QuestionResult, RunResults, median
+from pa_evals.results import QuestionResult, RunResults, cited_opened, median
 
 OVERALL = "Overall"
 COMPARISON = "comparison.md"
@@ -136,8 +139,11 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     lines = ["# Eval comparison", ""]
     for label, runs in configurations.items():
         names = sorted({run.configuration for run in runs if run.configuration} - {label})
-        named = f" (configuration {', '.join(names)})" if names else ""
-        lines.append(f"- {_cell(label)}: {len(runs)} run{'s' if len(runs) != 1 else ''}{named}")
+        versions = sorted({run.wiki.librarian_version for run in runs if run.wiki})
+        notes = [f"configuration {', '.join(names)}"] if names else []
+        notes += [f"wiki librarian version {', '.join(versions)}"] if versions else []
+        noted = f" ({'; '.join(notes)})" if notes else ""
+        lines.append(f"- {_cell(label)}: {len(runs)} run{'s' if len(runs) != 1 else ''}{noted}")
     lines += [
         "",
         "## Correctness by category",
@@ -177,6 +183,23 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     for category in [*categories, OVERALL]:
         cells = [
             _efficiency(_answers(runs, None if category == OVERALL else category))
+            for runs in configurations.values()
+        ]
+        lines.append(f"| {_cell(category)} | {' | '.join(cells)} |")
+
+    lines += [
+        "",
+        "## Cited episodes opened",
+        "",
+        "Of the episodes cited by every answer in every run whose tool calls were recorded, the "
+        "share whose contents reached the session (n/a: none cite anything).",
+        "",
+        f"| Category | {' | '.join(_cell(label) for label in labels)} |",
+        f"|---|{'---|' * len(labels)}",
+    ]
+    for category in [*categories, OVERALL]:
+        cells = [
+            format_score(cited_opened(_answers(runs, None if category == OVERALL else category)))
             for runs in configurations.values()
         ]
         lines.append(f"| {_cell(category)} | {' | '.join(cells)} |")

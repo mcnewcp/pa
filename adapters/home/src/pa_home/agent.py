@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -12,10 +12,17 @@ from pathlib import Path
 from typing import Any
 
 from pa_core.errors import PaError
-from pa_core.exchange_capture import CAPTURE_VARS
 from pa_core.owner import Owner
 from pa_home.agent_project import AGENT_PROJECT, render_agent_project
-from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError, run_print
+from pa_home.claude_cli import (
+    ClaudeCliError,
+    ClaudeCliTimeoutError,
+    now_statement,
+    result_number,
+    run_print_stream,
+    without_capture,
+)
+from pa_home.project import SETTINGS
 
 DEFAULT_TIMEOUT_SECONDS = 600
 
@@ -42,8 +49,22 @@ class AgentTimeoutError(AgentError):
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """One tool the session called on its way to the answer."""
+
+    tool: str
+    """The tool's name, as Claude Code names it (`Read`, `Bash`, `Grep`, ...)."""
+    input: Mapping[str, Any]
+    """What the tool was called with, as the session passed it."""
+    errored: bool = False
+    """Whether the tool's result was an error."""
+    output: str = ""
+    """What the tool returned to the session, as text ("" if it returned none)."""
+
+
+@dataclass(frozen=True)
 class AgentAnswer:
-    """The agent's answer, with what the session cost, as `claude -p` reports it.
+    """The agent's answer, with what the session cost and did, as `claude -p` reports it.
 
     A figure the CLI didn't report is None.
     """
@@ -55,6 +76,9 @@ class AgentAnswer:
     """The session's turns (`num_turns`)."""
     duration_ms: int | None = None
     """The session's wall-clock time in milliseconds (`duration_ms`)."""
+    tool_calls: tuple[ToolCall, ...] | None = None
+    """The session's tool calls, in the order it made them. None where they weren't recorded
+    (an answer that didn't come from a session, such as a scripted one)."""
 
 
 class AsOfMethod(StrEnum):
@@ -74,16 +98,6 @@ DEFAULT_AS_OF_METHOD = AsOfMethod.SYSTEM_PROMPT
 def wall_clock() -> datetime:
     """The current local time, with its UTC offset."""
     return datetime.now().astimezone()
-
-
-def now_statement(now: datetime) -> str:
-    """What the agent is told about the current time."""
-    offset = now.strftime("%z")
-    return (
-        f"The current date and time is {now:%A, %B} {now.day}, {now:%Y, %H:%M} "
-        f"(UTC{offset[:3]}:{offset[3:]}; {now.isoformat()}). Treat it as now. It overrides "
-        "any other date you may see, including today's date in your environment."
-    )
 
 
 class ClaudeAgent:
@@ -114,15 +128,22 @@ class ClaudeAgent:
         self._clock = clock
 
     def answer(
-        self, question: str, *, owner: Owner, l0: Path, now: datetime | None = None
+        self,
+        question: str,
+        *,
+        owner: Owner,
+        l0: Path,
+        wiki: Path | None = None,
+        now: datetime | None = None,
     ) -> AgentAnswer:
         """The agent's answer to `question`, asked at `now` (default: the clock's time).
+
+        Given a `wiki`, the agent reads it beside `l0` and is told how to find its way with it;
+        without one, it reads L0 alone.
 
         Raises ValueError if that time has no UTC offset, since the agent is told it with one.
         """
         now = now or self._clock()
-        if now.utcoffset() is None:
-            raise ValueError(f"the agent's now must have a UTC offset (got {now.isoformat()})")
         statement = now_statement(now)
         prompt = question
         # Auto, the mode the Claude app starts sessions in, so eval sessions run as the owner's do.
@@ -139,40 +160,87 @@ class ClaudeAgent:
             workdir = Path(directory) / "project"
             scratch = Path(directory) / "scratch"
             scratch.mkdir()
-            render_agent_project(workdir, owner=owner, l0=l0, scratch=scratch, source=self._project)
+            render_agent_project(
+                workdir, owner=owner, l0=l0, scratch=scratch, wiki=wiki, source=self._project
+            )
             # claude -p never trusts a folder, so it drops a project's allow rules and
             # additional directories. Passing the same file as flag settings keeps them.
-            args += ["--settings", str(workdir / ".claude" / "settings.json")]
+            args += ["--settings", str(workdir / SETTINGS)]
             try:
-                result = run_print(
+                session = run_print_stream(
                     self._executable,
                     args,
                     prompt=prompt,
                     cwd=workdir,
                     timeout_seconds=self._timeout_seconds,
-                    env=_without_capture(os.environ),
+                    # An eval session's exchanges are never captured.
+                    env=without_capture(os.environ),
                 )
             except ClaudeCliTimeoutError as error:
                 raise AgentTimeoutError(str(error)) from error
             except ClaudeCliError as error:
                 raise AgentError(str(error)) from error
+        result = session.result
         return AgentAnswer(
             text=str(result.get("result", "")),
-            cost_usd=_number(result, "total_cost_usd", float),
-            turns=_number(result, "num_turns", int),
-            duration_ms=_number(result, "duration_ms", int),
+            cost_usd=result_number(result, "total_cost_usd", float),
+            turns=result_number(result, "num_turns", int),
+            duration_ms=result_number(result, "duration_ms", int),
+            tool_calls=tool_calls(session.events),
         )
 
 
-def _number[N: (int, float)](result: dict[str, Any], key: str, kind: type[N]) -> N | None:
-    """`result[key]` as a `kind`, or None if it's missing or not a number."""
-    value = result.get(key)
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return kind(value)
+def tool_calls(events: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
+    """The tool calls in a session's stream-JSON `events`, in the order they were made.
+
+    A call errored when its result says so; a call left without a result did not, and has no
+    output.
+    """
+    calls: list[tuple[str, ToolCall]] = []
+    results: dict[str, Mapping[str, Any]] = {}
+    for event in events:
+        for block in _content(event):
+            if block.get("type") == "tool_use":
+                name, arguments = block.get("name"), block.get("input")
+                calls.append(
+                    (
+                        str(block.get("id")),
+                        ToolCall(
+                            str(name),
+                            dict(arguments) if isinstance(arguments, Mapping) else {},
+                        ),
+                    )
+                )
+            elif block.get("type") == "tool_result":
+                results[str(block.get("tool_use_id"))] = block
+    return tuple(
+        ToolCall(
+            call.tool,
+            call.input,
+            errored=results.get(call_id, {}).get("is_error") is True,
+            output=_text(results.get(call_id, {}).get("content")),
+        )
+        for call_id, call in calls
+    )
 
 
-def _without_capture(environ: Mapping[str, str]) -> dict[str, str]:
-    """`environ` with exchange capture turned off: an eval session's exchanges are never
-    captured, so the assistant's answers can't come back into L0 as if the owner had said them."""
-    return {name: value for name, value in environ.items() if name not in CAPTURE_VARS}
+def _text(content: Any) -> str:
+    """A tool result's content as text: a string as it is, or a list's text blocks joined."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, Mapping) and block.get("type") == "text"
+        )
+    return ""
+
+
+def _content(event: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The content blocks of an assistant or user message event (none for any other event)."""
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if not isinstance(content, list):
+        return []
+    return [block for block in content if isinstance(block, Mapping)]
