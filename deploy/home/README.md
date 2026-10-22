@@ -143,6 +143,49 @@ Its fences:
 
 `check-librarian.sh` starts the VM as a run does and checks every fence from inside it. That includes two short sessions on Haiku, one with no flags and one with every flag that tries to reopen a tool (bypass mode, the shell and web tools named, an MCP server). Each must have exactly the five file tools. The wizard runs it.
 
+### Live runs
+
+In v0.12.1 the wiki changes only when a run is started by hand; nightly runs come in v0.13. After chatting from the phone, land the chats and run the librarian:
+
+```sh
+deploy/home/ingest.sh && deploy/home/librarian.sh run
+```
+
+- The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
+- `git --git-dir ~/.local/share/pa-home-synthetic/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run.
+- A failed run leaves the wiki as it was, and its episodes stay new for the next run.
+
+### The Obsidian view
+
+The owner browses the wiki read-only in Obsidian, on the Mac and the phone, through a clone of `wiki.git` pulled over SSH on the tailnet. Only pulls go over it: nothing is ever pushed back, and there's no Obsidian Sync or any other two-way sync. Citations are plain `[ep:…]` text, so the graph view shows only people, organizations, topics and day logs.
+
+On the Mac:
+
+```sh
+git clone devbox:.local/share/pa-home-synthetic/wiki.git ~/Obsidian/pa-wiki
+cd ~/Obsidian/pa-wiki
+git remote set-url --push origin no-push      # pushing fails
+echo .obsidian/ >> .git/info/exclude          # Obsidian's settings stay out of git
+git pull --ff-only                            # to refresh
+```
+
+Then use "Open folder as vault" on `~/Obsidian/pa-wiki`.
+
+On the phone (iOS), use Working Copy and Obsidian:
+
+1. In Working Copy, make an SSH key, and add it to `~/.ssh/authorized_keys` on the devbox restricted to fetching the wiki:
+
+   ```
+   restrict,command="git-upload-pack .local/share/pa-home-synthetic/wiki.git" ssh-ed25519 AAAA… working-copy
+   ```
+
+   Whatever the phone asks for, the key can only run `git-upload-pack` on the wiki, so it can fetch but never push or get a shell.
+2. Clone `devbox:.local/share/pa-home-synthetic/wiki.git` in Working Copy.
+3. In Obsidian, create an empty vault named `pa-wiki` on the phone. Then in Working Copy, link the clone to that vault's folder ("Link Repository to Directory").
+4. To refresh, pull in Working Copy.
+
+A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
+
 ## Hand-run tests with the real model
 
 The suite skips the tests that call a real model unless asked, since they cost money and depend on the model. Run them by hand on the devbox:
