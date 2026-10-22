@@ -173,10 +173,10 @@ Then use "Open folder as vault" on `~/Obsidian/pa-wiki`.
 
 On the phone (iOS), use Working Copy and Obsidian:
 
-1. In Working Copy, make an SSH key, and add it to `~/.ssh/authorized_keys` on the devbox restricted to fetching the wiki:
+1. In Working Copy, make an SSH key (Settings, SSH Keys) and copy its public key, a single line starting `ssh-ed25519`. On the devbox, add that line to `~/.ssh/authorized_keys` behind options that limit it to fetching the wiki. Paste the key between the single quotes, in place of `<public key>`:
 
-   ```
-   restrict,command="git-upload-pack .local/share/pa-home-synthetic/wiki.git" ssh-ed25519 AAAA… working-copy
+   ```sh
+   echo 'restrict,command="git-upload-pack .local/share/pa-home-synthetic/wiki.git" <public key>' >> ~/.ssh/authorized_keys
    ```
 
    Whatever the phone asks for, the key can only run `git-upload-pack` on the wiki, so it can fetch but never push or get a shell.
