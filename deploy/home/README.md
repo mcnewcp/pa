@@ -159,8 +159,8 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 
 The owner browses the wiki read-only in Obsidian, on the Mac and the phone. The Mac pulls a clone of `wiki.git` over SSH on the tailnet, and iCloud Drive carries the clone's files to the phone. Nothing is ever pushed back to the devbox, and the librarian is the wiki's only writer. Citations are plain `[ep:…]` text, so the graph view shows only people, organizations, topics and day logs.
 
-iCloud is a two-way sync off the owner's devices, which the spec first ruled out (#56, story 109). The owner chose it on 2026-10-22, with Advanced Data Protection on, over Working Copy Pro (#75):
-- Apple holds an end-to-end encrypted copy.
+iCloud is a two-way sync off the owner's devices, which the spec first ruled out (#56, story 109). The owner chose it on 2026-10-22, over Working Copy Pro (#75):
+- Apple holds an encrypted copy. It's end-to-end encrypted only if Advanced Data Protection is on.
 - An edit made on the phone syncs back only as far as the Mac's clone, never to the devbox.
 
 On the Mac, clone into Obsidian's iCloud folder, with the git directory outside iCloud, since iCloud's sync can corrupt one:
