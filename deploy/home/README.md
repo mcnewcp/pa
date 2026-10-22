@@ -157,32 +157,26 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 
 ### The Obsidian view
 
-The owner browses the wiki read-only in Obsidian, on the Mac and the phone, through a clone of `wiki.git` pulled over SSH on the tailnet. Only pulls go over it: nothing is ever pushed back, and there's no Obsidian Sync or any other two-way sync. Citations are plain `[ep:…]` text, so the graph view shows only people, organizations, topics and day logs.
+The owner browses the wiki read-only in Obsidian, on the Mac and the phone. The Mac pulls a clone of `wiki.git` over SSH on the tailnet, and iCloud Drive carries the clone's files to the phone. Nothing is ever pushed back to the devbox, and the librarian is the wiki's only writer. Citations are plain `[ep:…]` text, so the graph view shows only people, organizations, topics and day logs.
 
-On the Mac:
+iCloud is a two-way sync off the owner's devices, which the spec first ruled out (#56, story 109). The owner chose it on 2026-10-22, with Advanced Data Protection on, over Working Copy Pro (#75):
+- Apple holds an end-to-end encrypted copy.
+- An edit made on the phone syncs back only as far as the Mac's clone, never to the devbox.
+
+On the Mac, clone into Obsidian's iCloud folder, with the git directory outside iCloud, since iCloud's sync can corrupt one:
 
 ```sh
-git clone devbox:.local/share/pa-home-synthetic/wiki.git ~/Obsidian/pa-wiki
-cd ~/Obsidian/pa-wiki
+vault=~/Library/Mobile\ Documents/iCloud~md~obsidian/Documents/pa-wiki
+git clone --separate-git-dir ~/.pa-wiki.git devbox:.local/share/pa-home-synthetic/wiki.git "$vault"
+cd "$vault"
 git remote set-url --push origin no-push      # pushing fails
-echo .obsidian/ >> .git/info/exclude          # Obsidian's settings stay out of git
-git pull --ff-only                            # to refresh
+echo .obsidian/ >> ~/.pa-wiki.git/info/exclude   # Obsidian's settings stay out of git
+git pull --ff-only                            # to refresh, on the Mac
 ```
 
-Then use "Open folder as vault" on `~/Obsidian/pa-wiki`.
-
-On the phone (iOS), use Working Copy and Obsidian:
-
-1. In Working Copy, make an SSH key (Settings, SSH Keys) and copy its public key, a single line starting `ssh-ed25519`. On the devbox, add that line to `~/.ssh/authorized_keys` behind options that limit it to fetching the wiki. Paste the key between the single quotes, in place of `<public key>`:
-
-   ```sh
-   echo 'restrict,command="git-upload-pack .local/share/pa-home-synthetic/wiki.git" <public key>' >> ~/.ssh/authorized_keys
-   ```
-
-   Whatever the phone asks for, the key can only run `git-upload-pack` on the wiki, so it can fetch but never push or get a shell.
-2. Clone `devbox:.local/share/pa-home-synthetic/wiki.git` in Working Copy.
-3. In Obsidian, create an empty vault named `pa-wiki` on the phone. Then in Working Copy, link the clone to that vault's folder ("Link Repository to Directory").
-4. To refresh, pull in Working Copy.
+- **Mac:** `pa-wiki` shows up among Obsidian's iCloud vaults.
+- **Phone:** Obsidian lists the same vault once iCloud has synced it. The phone sees a refresh only after the Mac pulls.
+- **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
 
