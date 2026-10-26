@@ -130,8 +130,10 @@ class ClaudeAgent:
     Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
     in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
     up, with a fresh scratch directory beside it. What the session may do comes from the
-    project's settings.json in auto permission mode, as in chat. Exchange capture is always
-    off: the session's environment drops its settings, whatever the caller's environment says.
+    project's settings.json in auto permission mode, as in chat, and in the home VM from its
+    managed settings and sandbox too, which every session there runs under. Exchange capture
+    is always off: the session's environment drops its settings, whatever the caller's
+    environment says.
     """
 
     def __init__(

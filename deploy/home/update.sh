@@ -4,11 +4,14 @@
 #
 # Snapshots a PA VM, then updates it. Roll back with rollback.sh (with the same --vm).
 #
-# The assistant's VM: puts the repo at <ref> and runs `uv sync`, then renders the agent project
-# for the instance owner into a stable directory, reading L0 and the status where the VM mounts
-# them, and the wiki too once the librarian has run into it (render-agent-project.sh), and
-# installs the Remote Control unit, restarting it once the wizard has enabled it. The first run
-# installs uv and Claude Code and clones the repo.
+# The assistant's VM: as root, puts the repo at <ref> in /opt/pa and runs `uv sync`, so the code
+# and the interpreter the hooks run with are root's and read-only to the assistant; puts owner.env
+# in as root's; installs the fences (install-assistant-fences.sh: the managed settings, the
+# sandbox, the assistant's layout); renders the agent project as root into a stable directory,
+# reading L0 and the status where the VM mounts them, and the wiki too once the librarian has run
+# into it (render-agent-project.sh); and installs the Remote Control unit, restarting it once the
+# wizard has enabled it. The first run installs uv (root's) and Claude Code (the assistant's) and
+# clones the repo.
 #
 # The librarian's VM: installs Claude Code at PA_LIBRARIAN_CLAUDE_VERSION, downloaded and
 # verified on the devbox (install-librarian-claude.sh), and the managed settings. It needs no
@@ -37,31 +40,45 @@ rc_unit stop &>/dev/null || true
 trap 'log "the update failed, leaving $PA_VM_RC_UNIT stopped: fix and re-run, or rollback.sh"' ERR
 
 log "deploying $ref"
-as_assistant "$PA_REPO_URL" "$PA_REPO_DIR" "$ref" <<'EOF'
+incus exec "$PA_VM" -- bash -s -- "$PA_REPO_URL" "$PA_REPO_DIR" "$ref" "$PA_VM_UV" \
+  "$PA_VM_PYTHON_DIR" <<'EOF'
 set -euo pipefail
-repo_url=$1 repo_dir=$2 ref=$3
-bin=$HOME/.local/bin
+repo_url=$1 repo_dir=$2 ref=$3 uv=$4 python_dir=$5
+umask 022
 
-[[ -x $bin/uv ]] || curl -fsSL https://astral.sh/uv/install.sh | sh
-[[ -x $bin/claude ]] || curl -fsSL https://claude.ai/install.sh | bash
+[[ -x $uv ]] || curl -fsSL https://astral.sh/uv/install.sh |
+  env UV_INSTALL_DIR="${uv%/*}" UV_NO_MODIFY_PATH=1 sh >/dev/null
 
 [[ -d $repo_dir/.git ]] || git clone --quiet "$repo_url" "$repo_dir"
 cd "$repo_dir"
 git fetch --quiet origin "$ref"
 git checkout --quiet --detach FETCH_HEAD
-"$bin/uv" sync --locked
+# The assistant reads the commit (an eval run records it) from a checkout that isn't its own.
+git config --system --replace-all safe.directory "$repo_dir" "^$repo_dir\$"
+# Any interpreter uv installs goes where the assistant can run it and not change it.
+UV_PYTHON_INSTALL_DIR=$python_dir "$uv" sync --locked --compile-bytecode
+chmod -R go-w,a+rX "$repo_dir"
+[[ ! -d $python_dir ]] || chmod -R go-w,a+rX "$python_dir"
 
 echo "deployed $(git rev-parse HEAD)"
 EOF
 
-# The instance's values reach the VM as its environment: the owner from owner.env, and the paths
-# the store is mounted at.
-# shellcheck disable=SC2016 # $1 is expanded by the shell in the VM
-incus exec "$PA_VM" -- runuser -u "$PA_USER" -- \
-  sh -c 'umask 077 && mkdir -p "${1%/*}" && cat >"$1"' sh "$PA_VM_OWNER_ENV" <"$PA_OWNER_ENV"
+# Claude Code is the assistant's for now; its managed settings turn its updates off.
+as_assistant <<'EOF'
+set -euo pipefail
+[[ -x $HOME/.local/bin/claude ]] || curl -fsSL https://claude.ai/install.sh | bash
+EOF
+
+# The instance's values reach the VM as its environment: the owner from owner.env, root's, and
+# the paths the store is mounted at.
+incus exec "$PA_VM" -- install -d -m 0755 "$(dirname "$PA_VM_OWNER_ENV")"
+incus file push --quiet --uid 0 --gid 0 --mode 0644 "$PA_OWNER_ENV" "$PA_VM$PA_VM_OWNER_ENV"
+
+"$DEPLOY_DIR/install-assistant-fences.sh"
 
 log "rendering the agent project into $PA_VM_PROJECT"
-as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" "$PA_VM_L0" "$PA_VM_SCRATCH" \
-  "$PA_VM_WIKI" "$PA_VM_STATUS_FILE" <"$DEPLOY_DIR/render-agent-project.sh"
+incus exec "$PA_VM" -- bash -s -- "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" \
+  "$PA_VM_L0" "$PA_VM_SCRATCH" "$PA_VM_WIKI" "$PA_VM_STATUS_FILE" \
+  <"$DEPLOY_DIR/render-agent-project.sh"
 
 "$DEPLOY_DIR/install-remote-control.sh"

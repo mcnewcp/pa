@@ -19,9 +19,10 @@ import pytest
 DEPLOY = Path(__file__).resolve().parents[1]
 DRAFT_EVALS = DEPLOY / "draft-evals.sh"
 
-VM_CUTS = "/home/assistant/.cache/pa-eval/cuts"
-VM_DRAFTS = "/home/assistant/.cache/pa-eval/drafts"
-VM_OWNER_ENV = "/home/assistant/.config/pa/owner.env"
+VM_CUTS = "/srv/pa/eval/cuts"
+VM_DRAFTS = "/srv/pa/eval/drafts"
+VM_EVAL_TMP = "/srv/pa/eval/tmp"
+VM_OWNER_ENV = "/etc/pa/owner.env"
 CUT_NAME = "20261026T120000Z"
 
 STAND_IN_INCUS = """\
@@ -94,8 +95,8 @@ def recorded(calls: Path) -> list[dict]:
 
 
 def as_assistant(call: dict) -> list[str]:
-    """The arguments of the script run as the assistant: the repository, owner.env, then the
-    `pa-eval draft` options."""
+    """The arguments of the script run as the assistant: the repository, owner.env, the
+    session's TMPDIR, then the `pa-eval draft` options."""
     _bash, _s, _dashes, *arguments = shlex.split(call["argv"][-1])
     return arguments
 
@@ -134,8 +135,10 @@ def test_a_draft_pushes_the_cut_drafts_in_the_vm_and_comes_back_under_the_data_r
         "./l0/episodes/gmail/2026-10/gmail_0123456789abcdef.json",
     ]
     assert ask["argv"][:6] == ["exec", "pa-home", "--", "runuser", "-l", "assistant"]
-    repository, owner_env, *options = as_assistant(ask)
-    assert (repository, owner_env) == ("/home/assistant/pa", VM_OWNER_ENV)
+    repository, owner_env, tmp, *options = as_assistant(ask)
+    assert (repository, owner_env) == ("/opt/pa", VM_OWNER_ENV)
+    # Outside the assistant's home, whose CLAUDE.md files the managed settings exclude.
+    assert tmp == VM_EVAL_TMP
     [vm_draft] = [options[i + 1] for i, option in enumerate(options) if option == "--out"]
     assert vm_draft.startswith(f"{VM_DRAFTS}/draft-")
     assert options == [
@@ -165,7 +168,7 @@ def test_a_cut_already_in_the_vm_is_reused(tmp_path: Path, calls: Path, cut: Pat
 
     assert result.returncode == 0, result.stderr
     _check, ask, _pull = recorded(calls)
-    assert as_assistant(ask)[2:6] == ["--agent", "claude", "--agent-model", "sonnet"]
+    assert as_assistant(ask)[3:7] == ["--agent", "claude", "--agent-model", "sonnet"]
     assert "pushed the cut" not in result.stderr
 
 
@@ -189,7 +192,7 @@ def test_a_second_pass_pushes_the_draft_and_the_notes_and_revises_with_the_vms_c
     assert f"cat > {VM_DRAFTS}/revise.json" in push_draft["argv"][-1]
     assert bytes.fromhex(push_notes["stdin"]) == notes.read_bytes()
     assert f"cat > {VM_DRAFTS}/notes.md" in push_notes["argv"][-1]
-    options = as_assistant(ask)[2:]
+    options = as_assistant(ask)[3:]
     assert options[options.index("--revise") + 1] == f"{VM_DRAFTS}/revise.json"
     assert options[options.index("--notes") + 1] == f"{VM_DRAFTS}/notes.md"
     assert len(list(drafts.glob("draft-*.json"))) == 2

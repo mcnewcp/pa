@@ -19,7 +19,9 @@ import pytest
 DEPLOY = Path(__file__).resolve().parents[1]
 RUN_EVALS = DEPLOY / "run-evals.sh"
 EVAL_WIKI = DEPLOY.parents[1] / "evals" / "tests" / "fixtures" / "eval-wiki"
-VM_EVAL_WIKI = "/home/assistant/.cache/pa-eval/eval-wiki"
+VM_EVAL_WIKI = "/srv/pa/eval/eval-wiki"
+VM_RUNS = "/srv/pa/eval/runs"
+VM_EVAL_TMP = "/srv/pa/eval/tmp"
 
 STAND_IN_INCUS = """\
 import json, os, shlex, sys
@@ -41,7 +43,7 @@ if "-T" in words and words[words.index("-T") - 1] == "mv":
     with open(vm_dirs, "a") as listed:
         listed.write(words[-1] + "\\n")
 if command.startswith("bash -s"):
-    print("run directory: /home/assistant/.cache/pa-eval/runs/2026-10-19T000000Z")
+    print("run directory: /srv/pa/eval/runs/2026-10-19T000000Z")
 """
 
 
@@ -93,9 +95,12 @@ def recorded(calls: Path) -> list[dict]:
 
 
 def pa_eval_args(call: dict) -> list[str]:
-    """The `pa-eval run` options of the call that runs it as the assistant."""
-    _bash, _s, _dashes, repo, *options = shlex.split(call["argv"][-1])
-    assert repo == "/home/assistant/pa"
+    """The `pa-eval run` options of the call that runs it as the assistant, from root's code,
+    with its throwaway data root and rendered projects outside the assistant's home, whose
+    CLAUDE.md files the managed settings exclude."""
+    _bash, _s, _dashes, repo, tmp, *options = shlex.split(call["argv"][-1])
+    assert repo == "/opt/pa"
+    assert tmp == VM_EVAL_TMP
     return options
 
 
@@ -131,7 +136,15 @@ def test_a_files_plus_wiki_run_pushes_the_eval_wiki_and_asks_with_the_vms_copy(
     ]
     assert push["argv"][:6] == ["exec", "pa-home", "--", "runuser", "-l", "assistant"]
     assert f"tar -C {VM_EVAL_WIKI} -xf -" in push["argv"][-1]
-    assert pa_eval_args(ask) == [*options, "--wiki", VM_EVAL_WIKI, "--corpus", "scale"]
+    assert pa_eval_args(ask) == [
+        *options,
+        "--wiki",
+        VM_EVAL_WIKI,
+        "--corpus",
+        "scale",
+        "--runs-dir",
+        VM_RUNS,
+    ]
     assert pull["argv"][:3] == ["file", "pull", "-r"]
     assert pull["argv"][-1] == f"{tmp_path / 'runs'}/"
     assert (tmp_path / "runs").is_dir()
@@ -147,7 +160,7 @@ def test_the_wiki_option_can_be_given_with_an_equals_sign(
     assert result.returncode == 0, result.stderr
     push, ask, _ = recorded(calls)
     assert "run-log.jsonl" in pushed(push)
-    assert pa_eval_args(ask) == [*options, "--wiki", VM_EVAL_WIKI]
+    assert pa_eval_args(ask) == [*options, "--wiki", VM_EVAL_WIKI, "--runs-dir", VM_RUNS]
 
 
 def test_a_run_without_a_wiki_pushes_nothing(tmp_path: Path, calls: Path):
@@ -155,7 +168,8 @@ def test_a_run_without_a_wiki_pushes_nothing(tmp_path: Path, calls: Path):
 
     assert result.returncode == 0, result.stderr
     ask, _ = recorded(calls)
-    assert pa_eval_args(ask) == ["--agent", "claude", "--judge", "model"]
+    # The run directory goes beside the cuts, since the code is root's (#92).
+    assert pa_eval_args(ask) == ["--agent", "claude", "--judge", "model", "--runs-dir", VM_RUNS]
 
 
 def test_a_wiki_directory_that_isnt_an_eval_wiki_stops_before_the_vm_is_touched(
@@ -175,9 +189,8 @@ def test_a_wiki_directory_that_isnt_an_eval_wiki_stops_before_the_vm_is_touched(
 
 # Runs over a cut (#90): the cut is pushed into the VM once and reused, the eval set each run.
 
-VM_CUTS = "/home/assistant/.cache/pa-eval/cuts"
-VM_EVAL_SET = "/home/assistant/.cache/pa-eval/eval-set.json"
-VM_RUNS = "/home/assistant/.cache/pa-eval/runs"
+VM_CUTS = "/srv/pa/eval/cuts"
+VM_EVAL_SET = "/srv/pa/eval/eval-set.json"
 CUT_NAME = "20261026T120000Z"
 
 

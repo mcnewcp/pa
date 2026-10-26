@@ -190,10 +190,10 @@ def test_any_tool_beyond_the_file_tools_fails_even_one_no_list_names():
 
 def test_a_missing_file_tool_fails():
     assert fence_problems(session(tools=["Read"])).stdout.splitlines() == [
-        "it lacks the file tool Edit",
-        "it lacks the file tool Glob",
-        "it lacks the file tool Grep",
-        "it lacks the file tool Write",
+        "it lacks the tool Edit",
+        "it lacks the tool Glob",
+        "it lacks the tool Grep",
+        "it lacks the tool Write",
     ]
 
 

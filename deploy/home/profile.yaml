@@ -18,6 +18,11 @@ config:
       - ca-certificates
       - curl
       - git
+      # Claude Code's Bash sandbox, and AppArmor, whose pa-bwrap profile lets bubblewrap run
+      # (install-assistant-fences.sh).
+      - bubblewrap
+      - socat
+      - apparmor
     runcmd:
       - curl -fsSL https://tailscale.com/install.sh | sh
 devices:

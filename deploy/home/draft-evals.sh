@@ -72,18 +72,19 @@ fi
 before=$(inbox_listing)
 
 # Only what the draft amounts to is printed (its question and episode counts), never what it says.
-as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "${args[@]}" <<'EOF'
+as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_EVAL_TMP" "${args[@]}" <<'EOF'
 set -euo pipefail
 cd "$1"
 owner_env=$2
-shift 2
+# The session's throwaway copy of the cut and its rendered project go in TMPDIR: on the VM's disk,
+# since /tmp in the VM is in memory, and outside the assistant's home, whose CLAUDE.md files the
+# managed settings exclude.
+export TMPDIR=$3
+shift 3
 set -a
 # shellcheck disable=SC1090 # owner.env is the instance's
 source "$owner_env"
 set +a
-# The session's throwaway copy of the cut and its rendered project go in TMPDIR: on the VM's disk,
-# since /tmp in the VM is in memory.
-export TMPDIR=$HOME/.cache/pa-eval
 mkdir -p "$TMPDIR"
 .venv/bin/pa-eval draft "$@"
 EOF

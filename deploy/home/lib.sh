@@ -18,7 +18,12 @@ PA_IMAGE=images:ubuntu/26.04/cloud
 PA_REPO_URL=https://github.com/mcnewcp/pa.git
 PA_USER=$PA_ASSISTANT_USER
 PA_VM_ROLE=assistant
-PA_REPO_DIR=/home/assistant/pa
+# The code in the assistant's VM, and the venv its hooks run with: root's, and read-only to the
+# assistant, like the interpreters uv installs for it (#92). uv itself is root's too.
+PA_REPO_DIR=/opt/pa
+PA_VM_PYTHON_DIR=/opt/pa-python
+PA_VM_UV=/usr/local/bin/uv
+PA_VM_HOOK_PYTHON=$PA_REPO_DIR/.venv/bin/python
 
 # The librarian's VM: no Tailscale, a bridge of its own with no DNS (its dnsmasq serves DHCP
 # only), and an Incus ACL on its NIC that lets out TCP 443 to the Anthropic API's published
@@ -129,20 +134,44 @@ PA_VM_WIKI=/srv/pa/wiki
 # The status, read-only too: the directory, and the file the agent project names.
 PA_VM_STATUS=/srv/pa/status
 PA_VM_STATUS_FILE=$PA_VM_STATUS/status.json
-# The VM's copy of owner.env, and the agent project rendered from it.
-PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
-PA_VM_PROJECT=/home/assistant/agent
-PA_VM_SCRATCH=/home/assistant/scratch
+# The assistant's home directory. It writes there only through Claude Code itself: the managed
+# settings deny its tools the home directory, and its sandboxed shell writes only to scratch.
+PA_VM_HOME=/home/assistant
+# The VM's copy of owner.env, root's, and the agent project root renders from it: root's and
+# read-only to the assistant, outside its home so no directory above it is the assistant's.
+# Scratch is the one directory the assistant writes, outside its home too.
+PA_VM_OWNER_ENV=/etc/pa/owner.env
+PA_VM_PROJECT=/srv/pa/agent
+PA_VM_SCRATCH=/srv/pa/scratch
+# Evals' own directory, the assistant's: outside its home, whose CLAUDE.md files the managed
+# settings exclude, since a run renders an agent project for each question in its TMPDIR here.
+PA_VM_EVAL=/srv/pa/eval
+PA_VM_EVAL_TMP=$PA_VM_EVAL/tmp
 # Where run-evals.sh pushes the eval wiki a files-plus-wiki run asks with, replaced each run.
-PA_VM_EVAL_WIKI=/home/assistant/.cache/pa-eval/eval-wiki
+PA_VM_EVAL_WIKI=$PA_VM_EVAL/eval-wiki
 # Where it pushes the cuts runs over a cut ask against, each once and kept for reuse, and the
-# eval set asked over one (replaced each run); and where such a run writes its run directory.
-PA_VM_EVAL_CUTS=/home/assistant/.cache/pa-eval/cuts
-PA_VM_EVAL_SET=/home/assistant/.cache/pa-eval/eval-set.json
-PA_VM_EVAL_RUNS=/home/assistant/.cache/pa-eval/runs
+# eval set asked over one (replaced each run); and where a run writes its run directory.
+PA_VM_EVAL_CUTS=$PA_VM_EVAL/cuts
+PA_VM_EVAL_SET=$PA_VM_EVAL/eval-set.json
+PA_VM_EVAL_RUNS=$PA_VM_EVAL/runs
 # Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
 # owner's notes a second pass revises.
-PA_VM_EVAL_DRAFTS=/home/assistant/.cache/pa-eval/drafts
+PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
+# The policy the assistant can't change (#81, #92), root's and mode 0644: the web, MCP, and the
+# tools that schedule prompts or reach out denied; the file tools kept out of everything but
+# scratch; only its hooks; Bash in Claude Code's sandbox; memory, connectors and updates off.
+# Every session in the VM runs under it, eval sessions too. The assistant's user settings are a
+# root-owned {} in front of it, since no setting turns user settings off.
+PA_VM_MANAGED_SETTINGS=/etc/claude-code/managed-settings.json
+PA_VM_USER_SETTINGS=$PA_VM_HOME/.claude/settings.json
+# The only tools a session in the VM may have, whatever its flags, in a headless session. A
+# Remote Control session adds AskUserQuestion, EnterPlanMode and ExitPlanMode.
+PA_ASSISTANT_TOOLS=(Bash Edit Read ToolSearch Write)
+# The sandbox's packages, and the AppArmor profile that lets bubblewrap make its user namespace,
+# in place of Ubuntu's bwrap-userns-restrict, under which every sandboxed command fails.
+PA_VM_SANDBOX_PACKAGES=(bubblewrap socat apparmor)
+PA_VM_BWRAP_PROFILE=/etc/apparmor.d/pa-bwrap
+PA_VM_UBUNTU_BWRAP_PROFILE=/etc/apparmor.d/bwrap-userns-restrict
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
@@ -169,6 +198,9 @@ DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
 # The librarian VM's managed settings, as the repo has them.
 PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
+# The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.
+PA_ASSISTANT_MANAGED_SETTINGS=$DEPLOY_DIR/managed-settings.json
+PA_BWRAP_PROFILE=$DEPLOY_DIR/apparmor/pa-bwrap
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -431,12 +463,13 @@ wait_for_agent() {
 # PA_LIBRARIAN_TOOLS: the only tools a librarian session may have, whatever its flags.
 PA_LIBRARIAN_TOOLS=(Edit Glob Grep Read Write)
 
-# session_fence_problems reads what `claude -p --output-format stream-json --verbose` printed for
-# a session in the librarian's VM, and prints each way the session got past its fences, one per
-# line: a tool other than PA_LIBRARIAN_TOOLS (any tool a later release adds included), an MCP
-# server that connected, or bypass mode. It prints nothing when the fences held, and fails if
-# the session never started or didn't finish.
+# session_fence_problems [TOOL...] reads what `claude -p --output-format stream-json --verbose`
+# printed for a session in a VM, and prints each way the session got past its fences, one per
+# line: a tool other than the TOOLs (PA_LIBRARIAN_TOOLS if none are given; any tool a later
+# release adds included) or one of them missing, an MCP server that connected, or bypass mode. It
+# prints nothing when the fences held, and fails if the session never started or didn't finish.
 session_fence_problems() {
+  (($#)) || set -- "${PA_LIBRARIAN_TOOLS[@]}"
   python3 -c '
 import json, sys
 allowed = set(sys.argv[1:])
@@ -460,14 +493,70 @@ tools = init.get("tools") or []
 for tool in sorted(set(tools) - allowed):
     print(f"it has the tool {tool}")
 for tool in sorted(allowed - set(tools)):
-    print(f"it lacks the file tool {tool}")
+    print(f"it lacks the tool {tool}")
 for server in init.get("mcp_servers") or []:
     if server.get("status") == "connected":
         name = server.get("name")
         print(f"the MCP server {name} connected")
 if init.get("permissionMode") == "bypassPermissions":
     print("it runs in bypass mode")
-' "${PA_LIBRARIAN_TOOLS[@]}"
+' "$@"
+}
+
+# sandbox_probe SCRATCH DIR... prints a shell command that reports, one line each, its
+# NoNewPrivs line (1 in Claude Code's sandbox), whether it could write a file in SCRATCH and in
+# each DIR ("wrote DIR" or "refused DIR", leaving nothing behind), and whether `sudo` ran. The
+# isolation check has a session in the VM run it with Bash.
+sandbox_probe() {
+  local dirs
+  dirs=$(printf ' %q' "$@")
+  printf '%s\n' "grep '^NoNewPrivs:' /proc/self/status; for d in$dirs; do f=\$d/.pa-sandbox-probe; if touch \"\$f\" 2>/dev/null; then rm -f \"\$f\"; echo \"wrote \$d\"; else echo \"refused \$d\"; fi; done; if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi"
+}
+
+# sandbox_probe_problems SCRATCH DIR... reads what `claude -p --output-format stream-json
+# --verbose` printed for a session that ran `sandbox_probe SCRATCH DIR...` with Bash, and prints
+# each way its shell got past the sandbox, one per line: Bash outside the sandbox (or failing in
+# it, as it does under Ubuntu's bubblewrap profile), scratch unwritable, a DIR written, or sudo
+# run. It prints nothing when the sandbox held, and fails if the session never ran the probe.
+sandbox_probe_problems() {
+  python3 -c '
+import json, sys
+scratch, denied = sys.argv[1], sys.argv[2:]
+calls, results = [], {}
+for line in sys.stdin:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    message = event.get("message") if isinstance(event, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use" and block.get("name") == "Bash":
+            calls.append(block.get("id"))
+        elif block.get("type") == "tool_result":
+            results[block.get("tool_use_id")] = block
+ran = [results[call] for call in calls if call in results]
+if not ran:
+    sys.exit("the session never ran the probe in Bash")
+content = ran[0].get("content")
+if isinstance(content, list):
+    content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+lines = str(content or "").splitlines()
+privileges = [line for line in lines if line.startswith("NoNewPrivs:")]
+if privileges != ["NoNewPrivs:\t1"]:
+    seen = privileges[0] if privileges else (lines[0] if lines else "no output")
+    print(f"Bash didn'"'"'t run in the sandbox: {seen[:200]}")
+    sys.exit(0)
+if f"wrote {scratch}" not in lines:
+    print(f"the sandboxed shell couldn'"'"'t write {scratch}")
+for path in denied:
+    if f"refused {path}" not in lines:
+        print(f"the sandboxed shell wrote {path}")
+if "sudo refused" not in lines:
+    print("sudo ran in the sandboxed shell")
+' "$@"
 }
 
 # backup_mount_unit_name prints the name of the backup drive's mount unit, which systemd

@@ -1,9 +1,11 @@
 """The exchange capture hook, fired from a rendered agent project the way Claude Code fires it.
 
-Claude Code runs each `Stop` hook in the project's settings.json when the assistant finishes a
-reply: the command with its arguments (no shell), the hook input as JSON on stdin, and its own
-environment plus CLAUDE_PROJECT_DIR. These tests do the same with transcripts recorded from
-Claude Code 2.1.x (see core/tests/test_exchange_capture.py).
+Claude Code runs each `Stop` hook in the home VM's managed settings, the only hooks that run
+there (#92), when the assistant finishes a reply: the command with its arguments (no shell), the
+hook input as JSON on stdin, and its own environment plus CLAUDE_PROJECT_DIR. The hook runs the
+rendered project's script with the code's interpreter. These tests do the same, with the VM's
+project and interpreter standing for a project rendered here and this interpreter, and with
+transcripts recorded from Claude Code 2.1.x (see core/tests/test_exchange_capture.py).
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -21,6 +24,9 @@ from pa_core.owner import Owner
 from pa_home.agent_project import render_agent_project
 from pa_home.cli import main
 
+MANAGED_SETTINGS = Path(__file__).parents[3] / "deploy" / "home" / "managed-settings.json"
+VM_PROJECT = "/srv/pa/agent"
+VM_PYTHON = "/opt/pa/.venv/bin/python"
 TRANSCRIPTS = Path(__file__).parents[3] / "core" / "tests" / "fixtures" / "claude_code_transcripts"
 TWO_EXCHANGES = (TRANSCRIPTS / "two_exchanges.jsonl").read_text()
 SESSION_ID = "3f0c9a7e-5b21-4d8e-a6f3-91c2e7d40b58"
@@ -82,8 +88,12 @@ def session(project: Path, tmp_path: Path) -> Session:
 def fire_stop_hooks(
     project: Path, transcript: Path, final_reply: str, env: dict[str, str]
 ) -> list[subprocess.CompletedProcess[str]]:
-    """Runs each Stop hook in the project's settings.json as Claude Code does."""
-    settings = json.loads((project / ".claude" / "settings.json").read_text())
+    """Runs each Stop hook in the VM's managed settings as Claude Code does, in `project`."""
+    settings = json.loads(
+        MANAGED_SETTINGS.read_text()
+        .replace(VM_PROJECT, str(project))
+        .replace(VM_PYTHON, sys.executable)
+    )
     hook_input = {
         "session_id": SESSION_ID,
         "transcript_path": str(transcript),
