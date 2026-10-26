@@ -121,7 +121,7 @@ def test_a_draft_over_a_cut_loads_as_an_eval_set_with_opaque_ids_under_the_data_
             question("abstention", []),
         ],
     )
-    out = data_root.path / "evals" / "drafts" / cut.name / "draft-1.json"
+    out = data_root.evals / "drafts" / cut.name / "draft-1.json"
 
     assert draft(cut, out, reply) == 0
 
@@ -151,7 +151,7 @@ def test_a_draft_citing_an_episode_missing_from_the_cut_is_rejected(
             question("attribution", [MISSING, SWIM_NOTE]),
         ],
     )
-    out = data_root.path / "evals" / "drafts" / cut.name / "draft-1.json"
+    out = data_root.evals / "drafts" / cut.name / "draft-1.json"
 
     assert draft(cut, out, reply) == 1
 
@@ -165,7 +165,7 @@ def test_a_reply_that_isnt_a_draft_is_rejected_without_quoting_it(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys
 ):
     reply = reply_file(tmp_path, [question("made-up-category", [DEADLINE_EMAIL])])
-    out = data_root.path / "evals" / "drafts" / "draft-1.json"
+    out = data_root.evals / "drafts" / "draft-1.json"
 
     assert draft(cut, out, reply) == 1
 
@@ -178,7 +178,7 @@ def test_a_reply_that_isnt_a_draft_is_rejected_without_quoting_it(
 def test_a_second_pass_revises_the_draft_as_the_owner_left_it_by_their_notes(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None
 ):
-    drafts = data_root.path / "evals" / "drafts" / cut.name
+    drafts = data_root.evals / "drafts" / cut.name
     first = drafts / "draft-1.json"
     reply = reply_file(
         tmp_path,
@@ -257,7 +257,7 @@ def test_the_drafting_prompt_gives_each_sources_watermark_at_the_cut(tmp_path: P
 def test_a_second_pass_over_a_draft_the_owner_broke_is_refused_without_quoting_it(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys
 ):
-    drafts = data_root.path / "evals" / "drafts"
+    drafts = data_root.evals / "drafts"
     first = drafts / "draft-1.json"
     reply = reply_file(tmp_path, [question("single_fact_recall", [DEADLINE_EMAIL])])
     assert draft(cut, first, reply) == 0
@@ -281,7 +281,7 @@ def test_a_draft_is_never_written_over(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys
 ):
     reply = reply_file(tmp_path, [question("single_fact_recall", [DEADLINE_EMAIL])])
-    out = data_root.path / "evals" / "draft.json"
+    out = data_root.evals / "draft.json"
     out.parent.mkdir(parents=True)
     out.write_text("the owner's edits\n")
 
@@ -332,7 +332,7 @@ def test_the_drafting_session_runs_with_capture_off_and_without_the_wiki(
     # Capture is on in the caller's environment, as it is in the VM's Remote Control unit.
     monkeypatch.setenv("PA_CAPTURE_EXCHANGES", "1")
     monkeypatch.setenv("PA_CAPTURE_INBOX", str(tmp_path / "inbox"))
-    out = data_root.path / "evals" / "drafts" / cut.name / "draft-1.json"
+    out = data_root.evals / "drafts" / cut.name / "draft-1.json"
 
     exit_code = main(
         [
@@ -373,7 +373,7 @@ def test_drafts_and_notes_inside_the_repository_are_refused(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys, which: str
 ):
     reply = reply_file(tmp_path, [question("single_fact_recall", [DEADLINE_EMAIL])])
-    private = data_root.path / "evals" / "drafts"
+    private = data_root.evals / "drafts"
     out = INSIDE / "draft.json" if which == "--out" else private / "draft-2.json"
     revise = INSIDE / "draft-1.json" if which == "--revise" else private / "draft-1.json"
     notes = INSIDE / "notes.md" if which == "--notes" else private / "notes.md"

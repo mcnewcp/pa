@@ -22,21 +22,26 @@ from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
 from pa_home.capture import capture_cycle
 from pa_home.collectors import Collector
+from pa_home.collectors.gmail import GmailClient, GmailCollector, count_by_category
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
+    GMAIL_CLIENT_VAR,
+    GMAIL_TOKEN_VAR,
+    ConfigError,
     DataRoot,
     load_capture_config,
     load_data_root,
+    load_gmail_config,
     load_librarian_config,
     load_owner,
     load_time_zone,
-    require_backup_config,
     require_outside_repository,
 )
 from pa_home.cut import take_cut
 from pa_home.filesystem_l0 import FilesystemL0
+from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
-from pa_home.lock import data_root_lock
+from pa_home.lock import LockHeld, data_root_lock
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -55,11 +60,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         choices=FORMATS,
         help="Read each file as this format, whatever its suffix (.eml, .ics, .md, .json).",
     )
-    commands.add_parser(
+    capture = commands.add_parser(
         "capture",
         help="Run a capture cycle: collect each configured source into the inbox, ingest, and "
         "publish each source's watermark once its payloads have landed. Skips if another run "
         "holds the data root's lock.",
+    )
+    capture.add_argument(
+        "--backfill",
+        type=datetime.fromisoformat,
+        metavar="WINDOW_START",
+        help="Backfill instead: capture each source's history from WINDOW_START on (ISO 8601; "
+        "the owner's time zone if it has no offset), such as two months back. Collections then "
+        "carry on from the backfill.",
+    )
+    gmail = commands.add_parser("gmail", help="Set up and check Gmail's capture.")
+    gmail_commands = gmail.add_subparsers(dest="gmail_command", required=True)
+    gmail_auth = gmail_commands.add_parser(
+        "auth",
+        help="Ask for your consent to read Gmail (read-only) in a browser, and save the token "
+        f"at {GMAIL_TOKEN_VAR}, readable only by you. Also how to re-auth a dead token. On a "
+        "headless machine, forward the port over SSH first.",
+    )
+    gmail_auth.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_AUTH_PORT,
+        help=f"The local port the consent redirects to (default {DEFAULT_AUTH_PORT}).",
+    )
+    gmail_dry_run = gmail_commands.add_parser(
+        "dry-run",
+        help="Count the messages a backfill from WINDOW_START would capture, by category, from "
+        "their labels alone, without fetching any message. Prints counts only.",
+    )
+    gmail_dry_run.add_argument(
+        "--window-start",
+        type=datetime.fromisoformat,
+        required=True,
+        help="ISO 8601; the owner's time zone if it has no offset.",
     )
     commands.add_parser(
         "status",
@@ -75,7 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
-    commands.add_parser("backup", help="Back up L0 to the configured restic repository.")
+    commands.add_parser(
+        "backup",
+        help="Back up L0, the wiki's git directory, and the private eval directory to the "
+        "configured restic repository, and record the outcome in the status. Skips if another "
+        "run holds the data root's lock.",
+    )
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
     )
@@ -221,11 +264,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resume=args.resume,
             )
             return 0
+        if args.command == "gmail" and args.gmail_command == "auth":
+            _gmail_auth(args.port)
+            return 0
+        if args.command == "gmail":
+            _gmail_dry_run(args.window_start)
+            return 0
         data_root = load_data_root()
         if args.command == "ingest":
             _ingest(data_root)
         elif args.command == "capture":
-            return _capture(data_root)
+            return _capture(data_root, args.backfill)
         elif args.command == "status":
             _print_status(data_root)
         elif args.command == "cut":
@@ -282,12 +331,25 @@ def _inspect(paths: list[Path], fmt: str | None) -> int:
     return status
 
 
-def _capture(data_root: DataRoot) -> int:
+def open_gmail(token: Path) -> GmailClient:
+    """The owner's Gmail account, read through the token at `token`."""
+    return GoogleGmailClient(token)
+
+
+def _capture(data_root: DataRoot, window_start: datetime | None = None) -> int:
     owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
     collectors: list[Collector] = []
+    if config.gmail_token is not None:
+        collectors.append(GmailCollector(open_gmail(config.gmail_token)))
     if config.vault is not None:
         collectors.append(VaultCollector(config.vault.path, config.vault.daily_notes, time_zone))
-    outcome = capture_cycle(data_root, collectors=collectors, owner=owner, cadences=config.cadences)
+    outcome = capture_cycle(
+        data_root,
+        collectors=collectors,
+        owner=owner,
+        cadences=config.cadences,
+        window_start=None if window_start is None else _in_time_zone(window_start, time_zone),
+    )
     if outcome.skipped:
         print("capture: skipped: another run holds the data root's lock")
         return 0
@@ -309,6 +371,35 @@ def _capture(data_root: DataRoot) -> int:
     for source, watermark in outcome.published.items():
         print(f"capture: {source}: watermark {_moment(watermark, time_zone)}")
     return 1 if outcome.failed else 0
+
+
+def _gmail_auth(port: int) -> None:
+    config = load_gmail_config()
+    if config.client is None:
+        raise ConfigError(
+            f"{GMAIL_CLIENT_VAR} is not set: set it to the OAuth client (a Desktop app client's "
+            "JSON) downloaded from your Cloud project, such as ~/.config/pa/gmail-client.json."
+        )
+    authorize(config.client, config.token, port=port)
+    print("gmail: consent given; the token is saved, readable only by you")
+
+
+def _gmail_dry_run(window_start: datetime) -> None:
+    time_zone = load_time_zone()
+    start = _in_time_zone(window_start, time_zone)
+    counts = count_by_category(open_gmail(load_gmail_config().token), start, datetime.now(UTC))
+    by_category = ", ".join(f"{category} {count}" for category, count in counts.items())
+    print(
+        f"gmail: {counts.total()} messages since {start.astimezone(time_zone).date()}: "
+        f"{by_category}"
+    )
+
+
+def _in_time_zone(moment: datetime, time_zone: ZoneInfo) -> datetime:
+    """`moment`, taken in `time_zone` when it has no offset of its own."""
+    if moment.utcoffset() is None:
+        return moment.replace(tzinfo=time_zone)
+    return moment
 
 
 def _print_status(data_root: DataRoot) -> None:
@@ -374,9 +465,13 @@ def _rebuild_catalog(data_root: DataRoot) -> None:
 
 
 def _backup(data_root: DataRoot) -> None:
-    require_backup_config()
-    snapshot_id = back_up(data_root.l0)
-    print(f"backed up L0 to snapshot {snapshot_id[:8]}")
+    try:
+        with data_root_lock(data_root):
+            snapshot_id = back_up(data_root)
+    except LockHeld:
+        print("backup: skipped: another run holds the data root's lock")
+        return
+    print(f"backup: took snapshot {snapshot_id[:8]}")
 
 
 def _renormalize(data_root: DataRoot) -> None:

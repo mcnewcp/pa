@@ -3,7 +3,7 @@
 The vault copy is a directory the headless Sync client keeps; the collector only reads it. A
 daily note is captured once its day has ended in the owner's time zone, and again whenever its
 bytes change, so a correction to an old note lands as its new version. Today's note is never
-captured.
+captured. After a backfill, notes for days before its window are left alone.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 class VaultState(BaseModel):
     captured: dict[str, str] = {}
     """Each captured note's vault path, and the SHA-256 of the bytes last captured for it."""
+    first_day: date | None = None
+    """The first day of the backfill's window: notes for earlier days are left alone."""
 
 
 class VaultCollector:
@@ -41,18 +43,35 @@ class VaultCollector:
         self.time_zone = time_zone
 
     def collect(self, inbox: SourceInbox, state: Path, *, now: Callable[[], datetime]) -> None:
+        self._capture(inbox, state, read_state(state / _STATE, VaultState), now=now)
+
+    def backfill(
+        self,
+        inbox: SourceInbox,
+        state: Path,
+        *,
+        window_start: datetime,
+        now: Callable[[], datetime],
+    ) -> None:
+        saved = read_state(state / _STATE, VaultState)
+        first_day = window_start.astimezone(self.time_zone).date()
+        self._capture(inbox, state, saved.model_copy(update={"first_day": first_day}), now=now)
+
+    def _capture(
+        self, inbox: SourceInbox, state: Path, saved: VaultState, *, now: Callable[[], datetime]
+    ) -> None:
         folder = self.vault / self.daily_notes
         if not folder.is_dir():
             raise CollectionError("the vault copy's daily-notes folder doesn't exist")
-        saved = read_state(state / _STATE, VaultState)
         captured = dict(saved.captured)
         today = now().astimezone(self.time_zone).date()
+        first_day = saved.first_day or date.min
         for note in sorted(folder.rglob("*.md")):
             vault_path = note.relative_to(self.vault).as_posix()
             day = _day(note)
             # A link could point outside the vault; a note is a file the Sync client wrote.
             skip = note.is_symlink() or not note.is_file() or _hidden(note.relative_to(folder))
-            if skip or day is None or day >= today:
+            if skip or day is None or not first_day <= day < today:
                 continue
             text = note.read_bytes()
             digest = hashlib.sha256(text).hexdigest()
@@ -62,7 +81,7 @@ class VaultCollector:
             header = f"Vault-Path: {vault_path}\nCaptured-At: {read_at}\n\n".encode()
             inbox.write(day.isoformat(), header + text)
             captured[vault_path] = digest
-        write_state(state / _STATE, VaultState(captured=captured))
+        write_state(state / _STATE, saved.model_copy(update={"captured": captured}))
 
 
 def _day(note: Path) -> date | None:
