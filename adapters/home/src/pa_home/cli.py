@@ -32,8 +32,10 @@ from pa_home.config import (
     require_backup_config,
     require_outside_repository,
 )
+from pa_home.cut import take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.librarian_project import render_librarian_project
+from pa_home.lock import data_root_lock
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -50,6 +52,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "status",
         help="Print how current the PA is: each source's watermark, cadence, and failures, and "
         "the last ingest, librarian run, and backup. Prints no content.",
+    )
+    commands.add_parser(
+        "cut",
+        help="Cut the store now, for real-data evals: every episode captured by now, the wiki "
+        "at its last commit, and the status file, under the data root's cuts/. Refused while "
+        "another run holds the data root's lock.",
     )
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
@@ -205,6 +213,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _capture(data_root)
         elif args.command == "status":
             _print_status(data_root)
+        elif args.command == "cut":
+            _cut(data_root)
         elif args.command == "catalog":
             _rebuild_catalog(data_root)
         elif args.command == "backup":
@@ -313,6 +323,15 @@ def _print_status(data_root: DataRoot) -> None:
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
     return value.astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
+
+
+def _cut(data_root: DataRoot) -> None:
+    with data_root_lock(data_root):
+        cut = take_cut(data_root, now=datetime.now(UTC))
+    wiki = "no wiki" if cut.manifest.wiki is None else f"wiki at {cut.manifest.wiki.commit[:12]}"
+    status = "status file" if cut.manifest.status else "no status file"
+    print(f"cut: {cut.path}")
+    print(f"cut: {cut.manifest.episodes} episodes, {wiki}, {status}")
 
 
 def _rebuild_catalog(data_root: DataRoot) -> None:
