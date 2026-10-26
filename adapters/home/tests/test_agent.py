@@ -251,6 +251,19 @@ def test_given_a_wiki_the_agent_reads_it_beside_l0_and_is_told_how(tmp_path: Pat
     assert "--add-dir" not in seen["argv"]
 
 
+def test_given_a_status_file_the_agent_reads_it_and_is_told_how(tmp_path: Path, l0: Path):
+    status = tmp_path / "data" / "status" / "status.json"
+    status.parent.mkdir(parents=True)
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("Has Dave written back?", owner=OWNER, l0=l0, status=status)
+
+    seen = _seen(tmp_path)
+    directories = seen["settings"]["permissions"]["additionalDirectories"]
+    assert directories[0] == str(l0) and directories[-1] == str(status.parent)
+    assert f"`{status}`" in seen["claude_md"] and "watermark" in seen["claude_md"]
+
+
 def test_without_a_wiki_the_agent_reads_l0_alone(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
 

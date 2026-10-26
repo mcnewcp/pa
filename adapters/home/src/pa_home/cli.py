@@ -145,6 +145,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     render.add_argument(
         "--wiki", type=Path, help="The wiki the assistant reads beside L0 (default: none)."
     )
+    render.add_argument(
+        "--status",
+        type=Path,
+        help="The status file that says how current L0 and the wiki are, in a read-only "
+        "directory of its own (default: none).",
+    )
     librarian_project = commands.add_parser(
         "librarian-project", help="Manage the librarian project the librarian's sessions run in."
     )
@@ -247,7 +253,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "agent-project":
-            _render_agent_project(args.target, l0=args.l0, scratch=args.scratch, wiki=args.wiki)
+            _render_agent_project(
+                args.target, l0=args.l0, scratch=args.scratch, wiki=args.wiki, status=args.status
+            )
             return 0
         if args.command == "librarian-project":
             _render_librarian_project(args.target, l0=args.l0, wiki=args.wiki)
@@ -483,12 +491,13 @@ def _renormalize(data_root: DataRoot) -> None:
 
 
 def _run_librarian(data_root: DataRoot) -> None:
-    outcome = librarian.run(
-        data_root,
-        owner=load_owner(),
-        time_zone=load_time_zone(),
-        config=load_librarian_config(),
-    )
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    try:
+        with data_root_lock(data_root):
+            outcome = librarian.run(data_root, owner=owner, time_zone=time_zone, config=config)
+    except LockHeld:
+        print("librarian: skipped: another run holds the data root's lock")
+        return
     if outcome.batch is None or outcome.commit is None:
         print("librarian: no new episodes since the last run")
         return
@@ -581,7 +590,9 @@ def _render_target(target: Path, project: str) -> Path:
     return target
 
 
-def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path | None) -> None:
+def _render_agent_project(
+    target: Path, *, l0: Path, scratch: Path, wiki: Path | None, status: Path | None
+) -> None:
     owner = load_owner()
     target = _render_target(target, "agent project")
     render_agent_project(
@@ -590,6 +601,7 @@ def _render_agent_project(target: Path, *, l0: Path, scratch: Path, wiki: Path |
         l0=l0.expanduser().resolve(),
         scratch=scratch.expanduser().resolve(),
         wiki=wiki.expanduser().resolve() if wiki else None,
+        status=status.expanduser().resolve() if status else None,
     )
     print(f"rendered the agent project into {target}")
 

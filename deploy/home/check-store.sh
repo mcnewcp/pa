@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Checks the store's mounts from inside the PA VM: L0 and the wiki are readable where the rendered
-# agent project says they are and unwritable even by root, and the VM's inbox directory is the
-# only part of the data root it can write; on the devbox, that inbox directory is a filesystem of
-# its own that nothing written into it can run from, and the VM is shared exactly those three
-# directories. No VM is shared the vault copy or the headless Sync client's state (#87). Exits
+# Checks the store's mounts from inside the PA VM: L0, the wiki and the status are readable where
+# the rendered agent project says they are and unwritable even by root, and the VM's inbox
+# directory is the only part of the data root it can write; on the devbox, that inbox directory
+# is a filesystem of its own that nothing written into it can run from, and the VM is shared
+# exactly those four directories. No VM is shared the vault copy or the headless Sync client's state (#87). Exits
 # non-zero if any check fails.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -90,6 +90,37 @@ for user in "$PA_USER" root; do
   fi
 done
 
+echo "In $PA_VM, the status is readable at the rendered path, once there is one:"
+if incus exec "$PA_VM" -- grep -qF "\`$PA_VM_STATUS_FILE\`" "$PA_VM_PROJECT/CLAUDE.md" 2>/dev/null; then
+  pass "$PA_VM_PROJECT/CLAUDE.md points the assistant at $PA_VM_STATUS_FILE"
+else
+  fail "$PA_VM_PROJECT/CLAUDE.md doesn't name $PA_VM_STATUS_FILE (run update.sh)"
+fi
+if ! incus exec "$PA_VM" -- test -f "$PA_VM_STATUS_FILE" 2>/dev/null; then
+  printf '  SKIP  %s\n' "no status file yet: run pa capture on the devbox"
+elif in_vm_as "$PA_USER" cat "$PA_VM_STATUS_FILE"; then
+  pass "$PA_USER reads $PA_VM_STATUS_FILE"
+else
+  fail "$PA_USER can't read $PA_VM_STATUS_FILE"
+fi
+
+echo "In $PA_VM, the status can't be written, even as root:"
+for user in "$PA_USER" root; do
+  if in_vm_as "$user" touch "$PA_VM_STATUS/.write-check"; then
+    fail "$user created a file in $PA_VM_STATUS"
+    incus exec "$PA_VM" -- rm -f "$PA_VM_STATUS/.write-check"
+  else
+    pass "$user can't create a file in $PA_VM_STATUS"
+  fi
+  incus exec "$PA_VM" -- test -f "$PA_VM_STATUS_FILE" 2>/dev/null || continue
+  # shellcheck disable=SC2016 # $1 is expanded by the shell in the VM
+  if in_vm_as "$user" sh -c ': >>"$1"' sh "$PA_VM_STATUS_FILE"; then
+    fail "$user opened $PA_VM_STATUS_FILE for writing"
+  else
+    pass "$user can't change the status file"
+  fi
+done
+
 echo "In $PA_VM, the inbox directory is writable, and it reaches the devbox:"
 probe=.store-check-$$
 if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
@@ -119,10 +150,10 @@ else
   fail "$PA_CHAT_INBOX isn't a mount of its own (run install-chat-inbox.sh)"
 fi
 
-echo "The VM is shared L0, the inbox directory and the wiki, and nothing else:"
+echo "The VM is shared L0, the inbox directory, the wiki and the status, and nothing else:"
 problems=$(incus query "/1.0/instances/$PA_VM" | store_share_problems)
 if [[ -z $problems ]]; then
-  pass "the devbox shares L0 and the wiki read-only, inbox/assistant_chat, and nothing else"
+  pass "the devbox shares L0, the wiki and the status read-only, inbox/assistant_chat, and nothing else"
 else
   while read -r problem; do fail "$problem"; done <<<"$problems"
 fi

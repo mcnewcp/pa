@@ -38,7 +38,7 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"#!{sys.executable}\n"
         + textwrap.dedent(
             """\
-            import json, sys
+            import json, os, sys
             argv = sys.argv[1:]
             sys.stdin.read()
             assert argv[argv.index("--output-format") + 1] == "stream-json"
@@ -48,8 +48,12 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             settings = json.load(open(".claude/settings.json"))
             directories = settings["permissions"]["additionalDirectories"]
             l0 = directories[0]
-            wiki = directories[2] if len(directories) > 2 else None
+            # After L0 and scratch: the wiki (with its index), then the status's directory.
+            wiki = next((d for d in directories[2:] if os.path.isfile(f"{d}/index.md")), None)
             index = open(f"{wiki}/index.md").readline().strip().replace(" ", "_") if wiki else None
+            status = next((d for d in directories[2:] if os.path.isfile(f"{d}/status.json")), None)
+            sources = json.load(open(f"{status}/status.json"))["sources"] if status else {}
+            watermarks = ",".join(sorted({s["watermark"] for s in sources.values()}))
             opened = f"{l0}/episodes/gmail/2026-09/gmail_94f6b4cbc55a3b85.json"
             def tool(id, name, input, result, is_error=False):
                 return [
@@ -82,7 +86,8 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 ],
                 {"type": "result", "subtype": "success", "is_error": False,
                  "result": f"[{model}] {told} [ep:gmail_94f6b4cbc55a3b85] "
-                           f"[ep:gmail_424bdea9b0d82720] l0={l0} wiki={wiki} index={index}",
+                           f"[ep:gmail_424bdea9b0d82720] l0={l0} wiki={wiki} index={index} "
+                           f"watermarks={watermarks}",
                  "total_cost_usd": 0.031, "num_turns": 5, "duration_ms": 12000},
             ]
             for event in events:
@@ -125,6 +130,9 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     assert answers["day-of-week"].startswith("[sonnet] ")
     assert "Saturday, October 10, 2026, 09:00" in answers["day-of-week"]
     assert "Tuesday, October 6, 2026, 20:00" in answers["swim-instructor"]
+    # Each session reads a status file with every watermark at its question's as-of time.
+    assert answers["day-of-week"].endswith(" watermarks=2026-10-10T09:00:00-05:00")
+    assert answers["swim-instructor"].endswith(" watermarks=2026-10-06T20:00:00-05:00")
     figures = {(q["cost_usd"], q["turns"], q["duration_ms"]) for q in results["questions"]}
     assert figures == {(0.031, 5, 12000)}
     [_, read] = results["questions"][0]["tool_calls"]

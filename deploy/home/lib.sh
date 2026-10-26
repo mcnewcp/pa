@@ -63,11 +63,14 @@ PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
 # (evals/runs/), and drafts of the real-data eval set with the owner's notes
 # (evals/drafts/<cut>/). The nightly backup takes it whole.
 PA_EVALS=$PA_DATA_ROOT/evals
-# The three parts of it the VM sees.
+# The parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
 # The wiki's working tree; its git directory (wiki.git beside it) is never shared.
 PA_WIKI=$PA_DATA_ROOT/wiki
+# The status file's directory (DataRoot.status): the file is replaced by a rename, so the VM is
+# shared the directory, never the file.
+PA_STATUS=$PA_DATA_ROOT/status
 PA_WIKI_GIT=$PA_DATA_ROOT/wiki.git
 # The librarian's VM writes the wiki as its own user and as it likes, so the wiki is a
 # filesystem of its own too, like the inbox directory (install-wiki.sh). So is the directory
@@ -118,11 +121,14 @@ PA_BACKUP_MOUNT=/mnt/pa-backup
 PA_BACKUP_REPOSITORY=$PA_BACKUP_MOUNT/restic
 PA_BACKUP_PASSWORD_FILE=$HOME/.config/pa/restic.password
 
-# Where the VM sees the store: L0 and the wiki read-only, and its own inbox directory, its only
-# way back.
+# Where the VM sees the store: L0, the wiki and the status read-only, and its own inbox directory,
+# its only way back.
 PA_VM_L0=/srv/pa/l0
 PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
 PA_VM_WIKI=/srv/pa/wiki
+# The status, read-only too: the directory, and the file the agent project names.
+PA_VM_STATUS=/srv/pa/status
+PA_VM_STATUS_FILE=$PA_VM_STATUS/status.json
 # The VM's copy of owner.env, and the agent project rendered from it.
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
@@ -147,6 +153,7 @@ PA_SHARES=(
   "pa-l0|$PA_L0|$PA_VM_L0|true"
   "pa-chat-inbox|$PA_CHAT_INBOX|$PA_VM_CHAT_INBOX|false"
   "pa-wiki|$PA_WIKI|$PA_VM_WIKI|true"
+  "pa-status|$PA_STATUS|$PA_VM_STATUS|true"
 )
 
 # Where the librarian's VM sees what a run gives it (librarian-sandbox.sh start): L0 and the
