@@ -70,14 +70,17 @@ def capture_cycle(
     owner: Owner,
     cadences: Mapping[Source, timedelta],
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    window_start: datetime | None = None,
 ) -> CycleOutcome:
     """Run one capture cycle over `data_root`, or skip it if another run holds the lock.
 
-    `cadences` gives each collected source's expected cadence, for the status.
+    `cadences` gives each collected source's expected cadence, for the status. With
+    `window_start`, the cycle is a backfill: each collector captures its source's history from
+    then on instead of collecting what's new.
     """
     try:
         with data_root_lock(data_root):
-            return _cycle(data_root, collectors, owner, cadences, now)
+            return _cycle(data_root, collectors, owner, cadences, now, window_start)
     except LockHeld:
         return CycleOutcome(skipped=True)
 
@@ -88,6 +91,7 @@ def _cycle(
     owner: Owner,
     cadences: Mapping[Source, timedelta],
     now: Callable[[], datetime],
+    window_start: datetime | None,
 ) -> CycleOutcome:
     outcome = CycleOutcome()
     status = read_status(data_root.status)
@@ -100,8 +104,12 @@ def _cycle(
         started = now()
         inbox = SourceInbox(data_root.inbox, source)
         current = sources.get(source) or SourceStatus(cadence=cadences[source])
+        state = data_root.state / source
         try:
-            collector.collect(inbox, data_root.state / source, now=now)
+            if window_start is None:
+                collector.collect(inbox, state, now=now)
+            else:
+                collector.backfill(inbox, state, window_start=window_start, now=now)
         except Exception as error:
             reason = failure_reason(error)
             outcome.failures[source] = reason

@@ -158,6 +158,41 @@ def test_a_cycle_publishes_the_watermark_once_its_notes_have_landed(
     assert files_under(data_root.state / "obsidian") != []
 
 
+def test_a_backfill_captures_the_finished_notes_inside_its_window_and_no_earlier(
+    data_root: DataRoot, vault: Path
+):
+    write_note(vault, "2026-08-05", "## Errands\nBefore the window.\n")
+    write_note(vault, "2026-08-07", "## Errands\nThe window's first day.\n")
+    write_note(vault, "2026-10-05", "## Swim lessons\nSigned up for Tuesdays.\n")
+    write_note(vault, "2026-10-06", "## Errands\nStill writing this one.\n")
+    clock = Clock(datetime(2026, 10, 6, 9, 0, tzinfo=CHICAGO))
+    window_start = datetime(2026, 8, 7, 0, 0, tzinfo=CHICAGO)
+
+    capture_cycle(
+        data_root,
+        collectors=[VaultCollector(vault, "Daily", CHICAGO)],
+        owner=OWNER,
+        cadences=CADENCES,
+        now=clock,
+        window_start=window_start,
+    )
+
+    assert sorted(note.native_id for note in notes_in_l0(data_root)) == [
+        "Daily/2026-08-07.md",
+        "Daily/2026-10-05.md",
+    ]
+    # Collections carry on from the backfill without reaching back before its window.
+    write_note(vault, "2026-08-05", "## Errands\nBefore the window, edited.\n")
+    clock.now = datetime(2026, 10, 7, 1, 0, tzinfo=CHICAGO)
+    run_cycle(data_root, vault, clock)
+
+    assert sorted(note.native_id for note in notes_in_l0(data_root)) == [
+        "Daily/2026-08-07.md",
+        "Daily/2026-10-05.md",
+        "Daily/2026-10-06.md",
+    ]
+
+
 class FailingCollector:
     """A collector whose source is down; its error message quotes what it was reading."""
 
@@ -166,6 +201,16 @@ class FailingCollector:
 
     def collect(self, inbox: SourceInbox, state: Path, *, now: Callable[[], datetime]) -> None:
         raise ValueError("could not parse 'Dinner with Jay at Bellwether'")
+
+    def backfill(
+        self,
+        inbox: SourceInbox,
+        state: Path,
+        *,
+        window_start: datetime,
+        now: Callable[[], datetime],
+    ) -> None:
+        self.collect(inbox, state, now=now)
 
 
 def test_a_failed_collection_keeps_the_old_watermark_and_records_why_without_content(

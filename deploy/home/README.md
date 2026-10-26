@@ -14,6 +14,7 @@ Run the wizard on the devbox. It walks through the steps only the owner can do a
 ```sh
 deploy/home/setup-wizard.sh              # both VMs
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
+deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
 ```
 
 The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
@@ -38,6 +39,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
+| `gmail.sh auth\|dry-run …` | Runs `pa gmail` on the devbox: the consent (and re-auth), and the dry run's counts ([Gmail](#gmail)) |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -182,6 +184,31 @@ git pull --ff-only                            # to refresh, on the Mac
 - **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
+
+## Gmail
+
+The capture cycle (`pa capture`) collects the owner's one Gmail account through the Gmail API, read-only (`gmail.readonly`), when `PA_GMAIL_TOKEN` is set. Every message but spam, trash, and drafts lands in `inbox/gmail/` as its raw bytes, attachments included, behind an `X-Gmail-Labels` header in Takeout's names, so Promotions and Social are captured but never offered to the librarian, and the owner's sent mail passes the forged-mail check. Mail is never reconciled: what the owner deletes or archives in Gmail stays in L0.
+
+- **The OAuth client** comes from the owner's own Google Cloud project: a Desktop app client, the project published "In production" and left unverified, for personal use, so its refresh token doesn't expire weekly. It's at `~/.config/pa/gmail-client.json` (`PA_GMAIL_CLIENT`), mode 0600.
+- **The token** is at `~/.config/pa/gmail-token.json` (`PA_GMAIL_TOKEN`), mode 0600, never in the store or the repository. A collection refuses a token anyone else can read.
+- **Setup** is the wizard's Gmail stages, run once in the go-live ticket: `deploy/home/setup-wizard.sh --gmail`.
+- **Backfill first.** A collection reads Gmail's history from the position the backfill recorded, and fails until there is one: `pa capture --backfill <window start>` (ISO 8601; the owner's time zone without an offset). A position Gmail no longer keeps (the devbox off for a week or more) leads to a listing of the time since the last collection, and ingest collapses what's already in L0.
+- **The dry run** counts what a backfill would capture, by category, from labels alone, without fetching any message, and prints counts only:
+
+  ```sh
+  deploy/home/gmail.sh dry-run --window-start 2026-09-01
+  ```
+
+### Re-auth
+
+The token dies after six months unused or a password change. Gmail's watermark in `pa status` then goes stale, and its last failure says to run `pa gmail auth`. To re-auth, forward the consent's port from the machine with the browser, then ask for consent again on the devbox:
+
+```sh
+ssh -L 8765:localhost:8765 <devbox>   # on the machine with the browser, left open
+deploy/home/gmail.sh auth             # on the devbox; open the address it prints
+```
+
+Google warns that the app isn't verified: it's the owner's own, so click through (Advanced → Go to the app). The wizard's stage G2 (`setup-wizard.sh --gmail`) walks the same steps. The next capture cycle carries on from the stored history position.
 
 ## Hand-run tests with the real model
 
