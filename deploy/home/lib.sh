@@ -74,6 +74,31 @@ PA_CHAT_INBOX_SIZE=1G
 PA_CHAT_INBOX_FLAGS=(nosuid nodev noexec)
 PA_OWN_FILESYSTEM_FLAGS=("${PA_CHAT_INBOX_FLAGS[@]}")
 
+# The vault copy (#87): Obsidian's headless Sync client keeps the owner's vault here, pull-only,
+# for the vault collector to read. It's outside the data root, no VM is shared it, and nothing in
+# the PA writes it. vault.env tells the capture cycle where it is and which folder holds the daily
+# notes (PA_VAULT_DIR, PA_VAULT_DAILY_NOTES); the wizard writes it.
+PA_VAULT=$HOME/.local/share/pa-vault
+PA_VAULT_ENV=$HOME/.config/pa/vault.env
+# The client is a pinned release: vault-sync/package.json pins it, and its lockfile pins every
+# dependency with its checksum. It runs on a pinned Node 22, which the devbox checks against the
+# checksum below (from the release's SHASUMS256.txt, signed by a Node releaser). Both are
+# installed under PA_VAULT_SYNC_DIR by install-vault-sync.sh. Bump them deliberately: the client
+# is in open beta.
+PA_VAULT_SYNC_VERSION=0.0.14
+PA_VAULT_SYNC_DIR=$HOME/.local/share/pa/vault-sync
+PA_NODE_VERSION=22.23.4
+PA_NODE_SHA256=1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+PA_NODE_DIST=https://nodejs.org/dist
+PA_NODE_CACHE=$HOME/.cache/pa/node
+# The client's own state: its login, each vault's encryption key, and a sync log that names
+# notes. Like the copy, it's shared into no VM, and development sessions don't read it.
+PA_VAULT_SYNC_CONFIG=$HOME/.config/obsidian-headless
+# The unit that runs it, continuously, as the devbox user, and the name its changes carry in the
+# vault's version history (it makes none).
+PA_VAULT_SYNC_UNIT=pa-vault-sync.service
+PA_VAULT_DEVICE_NAME=pa-devbox
+
 # Where the VM sees the store: L0 and the wiki read-only, and its own inbox directory, its only
 # way back.
 PA_VM_L0=/srv/pa/l0
@@ -217,6 +242,42 @@ for source, (path, readonly) in expected.items():
 for source, device in shared.items():
     at = device.get("path")
     print(f"{source} is shared too, at {at}")
+' "$@"
+}
+
+# render_vault_sync_unit prints the vault sync unit (vault-sync/pa-vault-sync.service), for the
+# devbox user, with the client installed under PA_VAULT_SYNC_DIR.
+render_vault_sync_unit() {
+  sed -e "s|@USER@|$USER|g" -e "s|@RUNNER@|$PA_VAULT_SYNC_DIR/bin/pa-vault-sync|g" \
+    -e "s|@VAULT@|$PA_VAULT|g" -e "s|@CONFIG@|$PA_VAULT_SYNC_CONFIG|g" \
+    "$DEPLOY_DIR/vault-sync/pa-vault-sync.service"
+}
+
+# vault_share_problems reads every VM as `incus query /1.0/instances?recursion=1` prints them,
+# and prints each VM shared the vault copy or the client's state, one per line: shared it, a
+# directory in it, or a directory holding it. It prints nothing when no VM is.
+vault_share_problems() { shared_into_vms "$PA_VAULT" "$PA_VAULT_SYNC_CONFIG"; }
+
+# shared_into_vms PATH... reads every VM as `incus query /1.0/instances?recursion=1` prints them,
+# and prints each VM shared a PATH, a directory in it, or a directory holding it, one per line.
+shared_into_vms() {
+  python3 -c '
+import json, os, sys
+def within(path, directory):
+    return os.path.commonpath([path, directory]) == directory
+paths = [os.path.normpath(p) for p in sys.argv[1:]]
+for vm in sorted(json.load(sys.stdin), key=lambda vm: vm["name"]):
+    devices = vm.get("expanded_devices") or {}
+    for path in paths:
+        for name in sorted(devices):
+            device = devices[name]
+            source = device.get("source", "")
+            if device.get("type") != "disk" or not source.startswith("/"):
+                continue
+            source = os.path.normpath(source)
+            if within(source, path) or within(path, source):
+                vm_name, at = vm["name"], device.get("path")
+                print(f"{vm_name} is shared {path} (as {source}, at {at})")
 ' "$@"
 }
 
