@@ -1,8 +1,10 @@
 # Assistant fences spike (#81)
 
-Run on 2026-10-24 and 2026-10-25 on the devbox, in a throwaway Incus VM, `pa-fence-spike`: Ubuntu 26.04, 2 vCPU, 4 GiB. It was built from a profile derived from the assistant's (`profile.yaml`), with Tailscale left out. It ran Claude Code 2.1.308, the `stable` channel that day, downloaded and verified on the devbox as `install-librarian-claude.sh` does, and pushed to `/usr/local/bin/claude`, owned by root.
+Run from 2026-10-24 to 2026-10-26 on the devbox, in a throwaway Incus VM, `pa-fence-spike`: Ubuntu 26.04, 2 vCPU, 4 GiB. It was built from a profile derived from the assistant's (`profile.yaml`), with Tailscale left out. It ran Claude Code 2.1.308, the `stable` channel that day, downloaded and verified on the devbox as `install-librarian-claude.sh` does, and pushed to `/usr/local/bin/claude`, owned by root.
 
 Each fence was first shown in headless sessions (`claude -p --output-format stream-json`), on Haiku and on the librarian's setup token, since the fences don't depend on the model or the login. Then the owner logged in with the subscription and drove Remote Control sessions from the phone and from claude.ai/code on the Mac, in manual and auto mode. Those sessions ran on Opus 5.5.
+
+The VM, its profile, its ACL and its inbox were deleted at 15:06 UTC on 2026-10-26, and the owner's login went with the VM.
 
 The VM's layout, as the fenced assistant would have it:
 
@@ -24,9 +26,9 @@ The VM's layout, as the fenced assistant would have it:
 | # | Fence | Result |
 |---|---|---|
 | 1 | Remote Control from the phone and the Mac, with egress only to TCP 443 in Anthropic's API range, DNS off, and the hostnames pinned | **Pass.** Two hostnames are needed |
-| 2 | The subscription login refreshes its token unattended for a day | **Pending** (below) |
+| 2 | The subscription login refreshes its token unattended for a day | **Pass**: three refreshes in 37 hours, through `platform.claude.com` |
 | 3 | Bash runs in Claude Code's sandbox, fails closed, has no unsandboxed escape, and writes only to scratch | **Pass**, with an AppArmor profile for bubblewrap |
-| 4 | Root-owned managed settings deny the web tools, MCP, Remote Control's own tools, and the tools that schedule prompts or reach out remotely, whatever the flags | **Pass**, for 12 flag sets. Remote Control's own two tools were found from the phone and denied since: *pending a phone session to confirm* |
+| 4 | Root-owned managed settings deny the web tools, MCP, Remote Control's own tools, and the tools that schedule prompts or reach out remotely, whatever the flags | **Pass**, for 12 flag sets. Remote Control's own two tools were found from the phone, denied, and gone from a later phone session |
 | 5 | Every way a prompt can reach a session other than the owner typing it is denied or never captured | **Pass**, for the 12 found |
 | 6 | Neither Bash nor the file tools can write the chat inbox, the agent project, the hook, or the managed settings, also through a symlink in scratch | **Pass** |
 | 7 | A real exchange from the phone lands in the inbox, through the capture helper, with the prompt and reply from hook events | **Pass** |
@@ -40,7 +42,7 @@ No fence failed, so nothing here stops the milestone.
 The VM sat on the librarian's bridge, `palib0`, whose dnsmasq serves DHCP only, behind an ACL of its own that is a copy of `pa-librarian-egress`: TCP 443 to `160.79.104.0/23`, everything else dropped and logged, both ways. The devbox pinned names into `/etc/hosts` after checking that each resolved into the range.
 
 - **Hostnames to pin: `api.anthropic.com` and `platform.claude.com`.** TLS client hellos, captured in the VM, named only these two:
-  - `platform.claude.com` was used only by the login, for the OAuth code exchange.
+  - `platform.claude.com` serves the login's OAuth code exchange and every token refresh (below), so it stays pinned.
   - Everything else went to `api.anthropic.com`: sessions, Remote Control's registration and polling, and each session's own connection (`--sdk-url https://api.anthropic.com/v1/code/sessions/…`).
   - The VM never contacted `claude.ai`, even during the login, which the owner's browser does.
 
@@ -49,7 +51,7 @@ The VM sat on the librarian's bridge, `palib0`, whose dnsmasq serves DHCP only, 
   - `http-intake.logs.us5.datadoghq.com`: telemetry, 120 lookups, until `DISABLE_TELEMETRY` was set.
   - `github.com`, `raw.githubusercontent.com` and `downloads.claude.ai`: from the interactive login session only. They are the official marketplace's auto-install and the release notes. `CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL` is now set.
 
-  Nothing else was looked up in two days of sessions.
+  Nothing else was looked up in two days of sessions. Over the last 37 hours, Remote Control idle and then three phone sessions, the VM made no lookup at all.
 - **Environment settings that break Remote Control.**
   - `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` does: `claude remote-control` exits with `Error: Remote Control requires feature-flag evaluation, which is disabled because CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set.`
   - The docs also name `DISABLE_GROWTHBOOK` (not tried).
@@ -67,7 +69,12 @@ The VM sat on the librarian's bridge, `palib0`, whose dnsmasq serves DHCP only, 
 
 ### Token refresh
 
-*Pending: the VM stays up for a day.* The login wrote `~/.claude/.credentials.json` at 00:56 UTC on 2026-10-25, with an access token expiring at 08:56 UTC and a refresh token. The check is that the file is rewritten with a later expiry, and that a phone session still works, after more than a day.
+The login wrote `~/.claude/.credentials.json` at 00:56 UTC on 2026-10-25, with an access token good for 8 hours and a refresh token. The VM then stayed up with Remote Control running and no session in use until 14:59 UTC on 2026-10-26.
+- **Refreshes.** Claude Code contacted `platform.claude.com` three times: at 14:41 on the 25th, at 03:36 on the 26th, and at 14:59 on the 26th, as the owner opened a session. Each time was some hours after the token had expired, so the refresh happens when it's needed, not on a timer. The file was rewritten at the last one, owned by the assistant, mode 0600, with a new 8-hour expiry.
+- **Remote Control stayed up throughout.** The service never restarted, its journal shows no error after it started on the 25th, and it polled `api.anthropic.com` 4–12 times an hour.
+- **The session after it worked.** The owner opened a new phone session 38 hours after the login, and its three exchanges were captured.
+
+So an unattended day costs nothing, and the egress fence must let the refresh through: losing `platform.claude.com` would end Remote Control once the access token expired.
 
 ## The sandbox
 
@@ -183,6 +190,7 @@ These are the settings verified above. The file is `/etc/claude-code/managed-set
   - **Without managed settings,** a headless session in 2.1.308 gets 25 tools, among them `CronCreate`, `ScheduleWakeup`, `RemoteTrigger`, `SendMessage`, `ListAgents`, `Monitor`, `PushNotification`, `Workflow` and `DesignSync`, which is new since #57.
   - **With them,** a headless session gets exactly `Bash, Edit, Read, ToolSearch, Write`.
   - **A Remote Control session also gets** `AskUserQuestion`, `EnterPlanMode`, `ExitPlanMode`, and two tools of Remote Control's own, without an `mcp__` prefix: `SendUserFile` and `FetchInboxMessage`. Both were allowed in the owner's first sessions. Asked to remind the owner in two minutes, the assistant ran `sleep 120` in the foreground and then called `SendUserFile` with `"status": "proactive"`, which failed only because the session wasn't on a project thread. `SendUserFile` is a way out of the VM that nothing needs, and `FetchInboxMessage` reads messages from other sessions, so both are denied now.
+  - **Under the final settings,** a phone session listed exactly `AskUserQuestion, Bash, Edit, Read, ToolSearch, Write, EnterPlanMode, ExitPlanMode`.
 
   A later release can add tools, so the check must fail on any tool outside the expected set rather than trust this list.
 - **Flags change nothing.** Twelve flag sets were tried:
@@ -227,7 +235,7 @@ So each path is closed before a session starts, not filtered in the hook:
 | `Monitor` | denied | Not in the tools. The docs say `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` doesn't cover it. In 2.1.308 it's also unavailable while `DISABLE_TELEMETRY` is set |
 | Background subagents | `Agent` and `Task` denied | Not in the tools. The docs list their reports among `UserPromptSubmit`'s triggers |
 | Messages from other local sessions | `SendMessage` and `ListAgents` denied; `crossSessionInbound: "refuse"`; no Unix sockets in the sandbox | With `SendMessage` allowed, a message was delivered but never reached the session's prompt hook under `refuse`, and did reach it without that setting |
-| Remote Control's own tools: `FetchInboxMessage` reads those messages, `SendUserFile` reaches out | denied | Found in the owner's tool list from the phone |
+| Remote Control's own tools: `FetchInboxMessage` reads those messages, `SendUserFile` reaches out | denied | Found in the owner's tool list from the phone, and gone from it once denied |
 | Background sessions and agent view: `claude --bg`, `claude agents` | `CLAUDE_CODE_DISABLE_AGENT_VIEW` | From the sandboxed shell: `'--bg' is disabled` |
 | Remote triggers and cloud routines | `RemoteTrigger` denied; the egress fence | Routines run in Anthropic's cloud, not in the VM, and could reach it only as a new session, which the owner starts |
 | Channels | `channelsEnabled: false`; MCP denied | Needs `--channels` on the command line, which is the unit's |
@@ -258,7 +266,7 @@ So each path is closed before a session starts, not filtered in the hook:
 
   `encode_exchange` holds the payload to the `assistant_chat` schema first. Nothing reads the transcript. Both events carry `session_id` and `prompt_id`, the same in a turn's `UserPromptSubmit` and `Stop`. So `prompt_id` should be the exchange's message id: a recapture then gets the same episode id, as today. The spike's prototype used a random id instead.
 - **From the phone and the Mac**, in manual and in auto mode, every finished turn landed as one exchange:
-  - 8 exchanges from 9 prompts;
+  - 11 exchanges from 12 prompts, the last three after the token refresh;
   - one with the assistant's question and the owner's answer (`Long`) between the prompt and the reply;
   - one sent from the Mac into the session the phone started.
 - **An interrupted turn is never written.** `Stop` doesn't fire when the owner presses stop. The prompt stays pending, and the session's next prompt replaces it. Shown from the phone and headless (`SIGINT` mid-turn). `StopFailure`, for API errors, isn't hooked, so a failed turn isn't written either.
@@ -273,7 +281,7 @@ So each path is closed before a session starts, not filtered in the hook:
 
   They wrote scratch and `/tmp/claude-1001`. Through symlinks in scratch (to `~/.claude/CLAUDE.md`, to a file in the inbox, and to `~/.claude/rules/` through a link to `~/.claude`), every write was refused with `Permission to edit … has been denied`. The docs say a deny rule applies when either the requested or the resolved path matches.
 - **Ownership is a second fence** for everything but the home directory. The inbox, the project, the hook, its interpreter, the helper and the managed settings belong to root or to `capture`, so writing them fails at the OS even where no deny rule names them. The deny rules are the only fence for the home directory, which the assistant owns and Claude Code writes.
-- **From the phone**, in auto mode, a request to write `~/.claude/CLAUDE.md` and `touch ~/x` was declined by the model itself, with no tool call, so it didn't test the fence. *Pending: a phone session told to make the calls anyway.* The tool path is the same as headless, under the same managed settings.
+- **From the phone**, in auto mode, a request to write `~/.claude/CLAUDE.md` and `touch ~/x` was declined by the model itself, with no tool call, so it didn't test the fence. Told to make the calls anyway as a test, it refused again, and Anthropic's safeguards flagged the request. So the phone can't drive this test, and the setup shouldn't try. The evidence is the headless runs: a phone session is the same binary under the same managed settings and sandbox, and its tool list matches theirs plus Remote Control's interaction tools.
 
 ## The share
 
@@ -343,6 +351,6 @@ None of it is writable by the assistant's tools.
    - **The file tools:** a Write to the inbox and to `~/.claude/CLAUDE.md` is refused.
    - **The files:** the managed settings match the repo's copy, mode 0644, owned by root, and the project, the hook and the helper belong to root.
 
-   A Remote Control session's tool list can't be read headlessly, so the owner's setup run asks for it once from the phone.
+   A Remote Control session's tool list can't be read headlessly, so the owner's setup run asks for it once from the phone. Writes are tested headlessly only: a phone session refuses to attempt them.
 
 Nothing here changes ADR-0007. ADR-0004's consequences change once the capture ticket lands: only the helper, as the capture user, writes the inbox. An ADR should record capture by a separate user through a root-owned helper and hook events, as #80 planned.
