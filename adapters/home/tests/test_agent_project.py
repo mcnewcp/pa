@@ -6,6 +6,7 @@ differs.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ import pytest
 from pa_core.owner import Owner
 from pa_home.agent_project import (
     AGENT_PROJECT,
-    WIKI_SECTION,
+    SECTIONS,
     AgentProjectError,
     render_agent_project,
 )
@@ -37,9 +38,20 @@ def instance(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _render(instance: dict[str, Path], owner: Owner = OWNER, *, wiki: Path | None = None) -> Path:
+def _render(
+    instance: dict[str, Path],
+    owner: Owner = OWNER,
+    *,
+    wiki: Path | None = None,
+    status: Path | None = None,
+) -> Path:
     render_agent_project(
-        instance["target"], owner=owner, l0=instance["l0"], scratch=instance["scratch"], wiki=wiki
+        instance["target"],
+        owner=owner,
+        l0=instance["l0"],
+        scratch=instance["scratch"],
+        wiki=wiki,
+        status=status,
     )
     return instance["target"]
 
@@ -87,7 +99,7 @@ def test_a_rendered_project_differs_from_the_source_only_where_instance_values_g
     """Without a wiki, too: the project the assistant ran in before the wiki."""
     target = _render(instance)
 
-    source_files = [path for path in _files(AGENT_PROJECT) if path != Path(WIKI_SECTION)]
+    source_files = [path for path in _files(AGENT_PROJECT) if path.as_posix() not in SECTIONS]
     assert _files(target) == source_files
     for path in source_files:
         source_lines = (AGENT_PROJECT / path).read_text().splitlines()
@@ -138,7 +150,78 @@ def test_with_a_wiki_the_project_holds_the_schema_shared_with_the_librarian(
     target = _render(instance, wiki=tmp_path / "data" / "wiki")
 
     assert (target / "wiki-schema.md").read_text() == WIKI_SCHEMA.read_text()
-    assert not (target / WIKI_SECTION).exists()
+    for section in SECTIONS:
+        assert not (target / section).exists(), section
+
+
+def _status(tmp_path: Path) -> Path:
+    return tmp_path / "data" / "status" / "status.json"
+
+
+def test_with_a_status_the_rendered_claude_md_says_to_read_it_and_scope_claims_by_it(
+    tmp_path: Path, instance
+):
+    status = _status(tmp_path)
+
+    text = (_render(instance, status=status) / "CLAUDE.md").read_text()
+    claude_md = " ".join(text.split())  # phrases may wrap across lines
+
+    # Read the status, at the instance's path.
+    assert f"Read the status file, `{status}`" in claude_md
+    # Scope absence claims by source and watermark, as the spec's example does.
+    for value in (
+        "Scope every absence claim by source and watermark",
+        "Nothing from Jay in email since Friday, synced 6:10 this morning.",
+    ):
+        assert value in claude_md, value
+    # Say when a source is stale: further behind now than its cadence allows.
+    assert "further behind now than its cadence allows" in claude_md
+    # A missing status file or watermark means currency is unknown, never fresh.
+    assert "can't tell how current" in claude_md
+    assert "${" not in text, "a placeholder was left unfilled"
+
+
+def test_with_a_status_but_no_wiki_the_project_says_nothing_of_a_wiki(tmp_path: Path, instance):
+    claude_md = (_render(instance, status=_status(tmp_path)) / "CLAUDE.md").read_text()
+    claude_md = claude_md.replace(str(tmp_path), "")  # its name is the test's
+
+    for value in ("wiki", "librarian", "current_through"):
+        assert value not in claude_md, value
+
+
+def test_with_a_status_and_a_wiki_l0_is_searched_directly_past_the_wikis_current_through_time(
+    tmp_path: Path, instance
+):
+    target = _render(instance, wiki=tmp_path / "data" / "wiki", status=_status(tmp_path))
+    claude_md = " ".join((target / "CLAUDE.md").read_text().split())
+
+    assert "`wiki.current_through`" in claude_md
+    assert "search L0 directly" in claude_md
+
+
+def test_with_a_wiki_but_no_status_the_project_says_nothing_of_one(tmp_path: Path, instance):
+    claude_md = (_render(instance, wiki=tmp_path / "data" / "wiki") / "CLAUDE.md").read_text()
+    claude_md = claude_md.replace(str(tmp_path), "")  # its name is the test's
+
+    for value in ("status", "watermark", "current_through"):
+        assert value not in claude_md, value
+
+
+def test_with_a_status_the_settings_attach_its_directory_last(tmp_path: Path, instance):
+    wiki, status = tmp_path / "data" / "wiki", _status(tmp_path)
+
+    alone = json.loads((_render(instance, status=status) / SETTINGS).read_text())
+    shutil.rmtree(instance["target"])
+    both = json.loads((_render(instance, wiki=wiki, status=status) / SETTINGS).read_text())
+
+    l0, scratch = str(instance["l0"]), str(instance["scratch"])
+    assert alone["permissions"]["additionalDirectories"] == [l0, scratch, str(status.parent)]
+    assert both["permissions"]["additionalDirectories"] == [
+        l0,
+        scratch,
+        str(wiki),
+        str(status.parent),
+    ]
 
 
 def test_without_a_wiki_the_project_says_nothing_of_one(instance):
@@ -220,6 +303,22 @@ def test_wiki_paths_with_json_or_template_characters_render_intact(tmp_path: Pat
     assert f"`{path}`" in (target / "CLAUDE.md").read_text()
 
 
+@pytest.mark.parametrize(
+    "path", ['/data/"quoted"/status', "/data/back\\slash/status", "/data/dollar$sign/status"]
+)
+def test_status_paths_with_json_or_template_characters_render_intact(tmp_path: Path, path: str):
+    target = tmp_path / "rendered"
+    status = Path(path) / "status.json"
+
+    render_agent_project(
+        target, owner=OWNER, l0=tmp_path / "l0", scratch=tmp_path / "scratch", status=status
+    )
+
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"][-1] == path
+    assert f"`{status}`" in (target / "CLAUDE.md").read_text()
+
+
 def test_rendering_refuses_a_target_that_already_has_files(instance):
     instance["target"].mkdir()
     (instance["target"] / "notes.txt").write_text("keep me")
@@ -294,6 +393,19 @@ def test_the_render_command_attaches_a_given_wiki(instance, owner_env, tmp_path:
     settings = json.loads((target / SETTINGS).read_text())
     assert settings["permissions"]["additionalDirectories"][2] == str(wiki.resolve())
     assert f"`{wiki.resolve()}`" in (target / "CLAUDE.md").read_text()
+
+
+def test_the_render_command_points_the_project_at_a_given_status_file(
+    instance, owner_env, tmp_path: Path
+):
+    status = _status(tmp_path)
+
+    assert main([*_render_command(instance), "--status", str(status)]) == 0
+
+    target = instance["target"]
+    settings = json.loads((target / SETTINGS).read_text())
+    assert settings["permissions"]["additionalDirectories"][-1] == str(status.parent.resolve())
+    assert f"`{status.resolve()}`" in (target / "CLAUDE.md").read_text()
 
 
 def test_the_render_command_needs_the_owner(

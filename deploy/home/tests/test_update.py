@@ -104,6 +104,7 @@ def test_root_renders_the_agent_project_behind_the_managed_settings(tmp_path: Pa
         "/srv/pa/l0",
         "/srv/pa/scratch",
         "/srv/pa/wiki",
+        "/srv/pa/status/status.json",
     ]
 
 

@@ -2,11 +2,12 @@ import contextlib
 import shutil
 import stat
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from pa_core.status import Status, read_status
 from pa_evals.agent import (
     AgentAnswer,
     AgentRequest,
@@ -209,6 +210,63 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     assert seen["hotel-block-deadline"] == (eval_set.as_of, "Argus McNevans", all_episodes)
     assert seen["day-of-week"][0] == datetime.fromisoformat("2026-10-10T09:00:00-05:00")
     assert results.ingest == IngestCounts(ingested=4, unchanged=0, quarantined=0)
+
+
+class StatusReadingAgent:
+    """Reads the status file it's given, and the modes of it and its directory."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, tuple[Status, list[int]]] = {}
+
+    def answer(self, request: AgentRequest) -> AgentAnswer:
+        assert request.status is not None
+        modes = [path.stat().st_mode for path in (request.status, request.status.parent)]
+        self.seen[request.question_id] = (read_status(request.status), modes)
+        return AgentAnswer("Oct 9.")
+
+
+def test_a_frozen_corpus_run_gives_the_agent_a_status_with_every_watermark_at_the_as_of_time(
+    eval_set,
+):
+    agent = StatusReadingAgent()
+
+    run_eval(CORPUS, eval_set.only("hotel-block-deadline"), agent, ScriptedJudge({}))
+
+    status, modes = agent.seen["hotel-block-deadline"]
+    assert set(status.sources) == {"gmail", "icloud_calendar", "obsidian"}
+    for source in status.sources.values():
+        assert source.watermark == eval_set.as_of
+        assert source.cadence == timedelta(minutes=15)
+        assert source.last_failure is None
+    assert status.updated_at == eval_set.as_of
+    # Files alone: no wiki, so nothing is current through anything.
+    assert status.wiki.current_through is None
+    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    assert [mode & writable for mode in modes] == [0, 0]
+
+
+def test_a_question_with_its_own_as_of_time_gets_a_status_at_that_time(eval_set):
+    agent = StatusReadingAgent()
+
+    run_eval(CORPUS, eval_set.only("hotel-block-deadline", "day-of-week"), agent, ScriptedJudge({}))
+
+    own = datetime.fromisoformat("2026-10-10T09:00:00-05:00")
+    watermarks = {
+        question: {source.watermark for source in status.sources.values()}
+        for question, (status, _) in agent.seen.items()
+    }
+    assert watermarks == {"hotel-block-deadline": {eval_set.as_of}, "day-of-week": {own}}
+
+
+def test_with_a_wiki_the_status_says_the_wiki_is_current_through_the_corpuss_capture(eval_set):
+    agent = StatusReadingAgent()
+
+    run_with_the_eval_wiki(eval_set, agent)
+
+    status, _ = agent.seen["hotel-block-deadline"]
+    # Every episode of a frozen corpus is captured at the set's as-of time, and the eval wiki
+    # was replayed over all of them.
+    assert status.wiki.current_through == eval_set.as_of
 
 
 def split_corpus(tmp_path: Path) -> tuple[Path, Path]:

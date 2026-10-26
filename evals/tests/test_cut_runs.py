@@ -42,7 +42,9 @@ def eval_set() -> EvalSet:
     return load_eval_set(EVAL_SET)
 
 
-def make_cut(data_root: DataRoot, eval_set: EvalSet, *, wiki: bool = True) -> Cut:
+def make_cut(
+    data_root: DataRoot, eval_set: EvalSet, *, wiki: bool = True, status: bool = True
+) -> Cut:
     """A cut of a data root holding the fixture corpus, captured the day before the set's
     as-of time, its wiki (the eval wiki's tree, committed by a run), and a status file."""
     shutil.copytree(CORPUS, data_root.inbox)
@@ -54,8 +56,9 @@ def make_cut(data_root: DataRoot, eval_set: EvalSet, *, wiki: bool = True) -> Cu
         repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
         shutil.copytree(EVAL_WIKI / "wiki", data_root.wiki, dirs_exist_ok=True)
         repository.commit(f"Observe a batch\n\nLibrarian-Version: {LIBRARIAN_VERSION}\n")
-    status = Status(sources={"gmail": SourceStatus(watermark=captured, cadence=timedelta(hours=1))})
-    write_status(data_root.status, status, at=captured)
+    if status:
+        sources = {"gmail": SourceStatus(watermark=captured, cadence=timedelta(hours=1))}
+        write_status(data_root.status, Status(sources=sources), at=captured)
     return take_cut(data_root, now=eval_set.as_of)
 
 
@@ -103,6 +106,8 @@ def test_a_run_over_a_cut_lays_its_l0_and_status_with_nothing_writable(eval_set,
             root = request.data_root
             for path in [root.l0, *root.l0.rglob("*"), root.status.parent, root.status]:
                 laid[path.relative_to(root.path).as_posix()] = path.stat().st_mode
+            # The agent is given the cut's status as it was, not one laid at the as-of time.
+            assert request.status == root.status
             status.append(root.status.read_bytes())
             return AgentAnswer("Oct 9.")
 
@@ -112,6 +117,15 @@ def test_a_run_over_a_cut_lays_its_l0_and_status_with_nothing_writable(eval_set,
     assert status == [cut.status.read_bytes()]
     writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
     assert {path for path, mode in laid.items() if mode & writable} == set()
+
+
+def test_a_cut_without_a_status_file_gives_the_agent_none(tmp_path, eval_set):
+    cut = make_cut(DataRoot(tmp_path / "pa-data"), eval_set, status=False)
+    agent = ScriptedAgent({"hotel-block-deadline": "Oct 9."})
+
+    run_eval(cut, eval_set.only("hotel-block-deadline"), agent, ScriptedJudge({}))
+
+    assert [request.status for request in agent.requests] == [None]
 
 
 def test_a_run_over_a_cut_leaves_the_cut_as_it_was(eval_set, cut):

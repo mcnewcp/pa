@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Mounts the store into the PA VM: L0 and the wiki read-only, enforced on the host so even root in
-# the VM can't write them, and the VM's own inbox directory writable, its only way back. Nothing
-# else of the data root goes in (never the wiki's git directory). Safe to re-run; a device whose
-# settings changed is replaced.
+# Mounts the store into the PA VM: L0, the wiki and the status read-only, enforced on the host so
+# even root in the VM can't write them, and the VM's own inbox directory writable, its only way
+# back. Nothing else of the data root goes in (never the wiki's git directory). Safe to re-run; a
+# device whose settings changed is replaced.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -33,6 +33,8 @@ share() {
 # The wiki directory is shared before the librarian's first run, so the VM's mount is there from
 # the start; the librarian fills it in place.
 mkdir -p "$PA_WIKI"
+# So is the status's, before the first capture cycle writes the status file into it.
+mkdir -p "$PA_STATUS"
 for entry in "${PA_SHARES[@]}"; do
   IFS='|' read -r device source path readonly <<<"$entry"
   share "$device" "$source" "$path" "$readonly"

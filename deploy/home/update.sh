@@ -8,10 +8,10 @@
 # and the interpreter the hooks run with are root's and read-only to the assistant; puts owner.env
 # in as root's; installs the fences (install-assistant-fences.sh: the managed settings, the
 # sandbox, the assistant's layout); renders the agent project as root into a stable directory,
-# reading L0 where the VM mounts it, and the wiki too once the librarian has run into it
-# (render-agent-project.sh); and installs the Remote Control unit, restarting it once the wizard
-# has enabled it. The first run installs uv (root's) and Claude Code (the assistant's) and clones
-# the repo.
+# reading L0 and the status where the VM mounts them, and the wiki too once the librarian has run
+# into it (render-agent-project.sh); and installs the Remote Control unit, restarting it once the
+# wizard has enabled it. The first run installs uv (root's) and Claude Code (the assistant's) and
+# clones the repo.
 #
 # The librarian's VM: installs Claude Code at PA_LIBRARIAN_CLAUDE_VERSION, downloaded and
 # verified on the devbox (install-librarian-claude.sh), and the managed settings. It needs no
@@ -78,6 +78,7 @@ incus file push --quiet --uid 0 --gid 0 --mode 0644 "$PA_OWNER_ENV" "$PA_VM$PA_V
 
 log "rendering the agent project into $PA_VM_PROJECT"
 incus exec "$PA_VM" -- bash -s -- "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" \
-  "$PA_VM_L0" "$PA_VM_SCRATCH" "$PA_VM_WIKI" <"$DEPLOY_DIR/render-agent-project.sh"
+  "$PA_VM_L0" "$PA_VM_SCRATCH" "$PA_VM_WIKI" "$PA_VM_STATUS_FILE" \
+  <"$DEPLOY_DIR/render-agent-project.sh"
 
 "$DEPLOY_DIR/install-remote-control.sh"
