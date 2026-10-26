@@ -12,8 +12,11 @@ See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh              # both VMs
+deploy/home/setup-wizard.sh              # both VMs, the vault copy, then the backup drive
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
+deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
+deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
+deploy/home/setup-wizard.sh --backup     # the backup drive and its repository alone
 ```
 
 The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
@@ -26,18 +29,24 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `seed-data-root.sh [--corpus argus\|scale]` | Creates the instance's data root on the devbox from a frozen synthetic corpus (Argus's unless `--corpus scale`), with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
-| `mount-store.sh` | Mounts L0 and the wiki into the VM read-only and `inbox/assistant_chat/` writable |
+| `mount-store.sh` | Mounts L0, the wiki and the status into the VM read-only and `inbox/assistant_chat/` writable |
 | `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
 | `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
-| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`) |
+| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
+| `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
+| `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
+| `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
+| `gmail.sh auth\|dry-run …` | Runs `pa gmail` on the devbox: the consent (and re-auth), and the dry run's counts ([Gmail](#gmail)) |
+| `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
+| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -54,15 +63,16 @@ The firewall loads at boot from `pa-vm-firewall.service`, after Docker and befor
 
 The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
 
-Three directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
+Four directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
 
 | On the devbox | In the VM | |
 |---|---|---|
 | `l0/` | `/srv/pa/l0` | Read-only. Enforced on the devbox, so even root in the VM can't write it |
 | `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode, or quarantines it ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
 | `wiki/` | `/srv/pa/wiki` | Read-only, like L0. The librarian keeps it on the devbox; `mount-store.sh` creates it empty if it doesn't exist yet |
+| `status/` | `/srv/pa/status` | Read-only, like L0. It holds `status.json`, which the capture cycle, the librarian and the backup replace by a rename, so the directory is shared, never the file; `mount-store.sh` creates it empty if it doesn't exist yet |
 
-`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
+`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0` and the status file `/srv/pa/status/status.json`, with `/home/assistant/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
 
 The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes, so root in the VM could leave root-owned files there, setuid programs and device nodes included, or fill the devbox's disk. So that directory is a filesystem of its own (`install-chat-inbox.sh`): a 1 GiB ext4 image, `chat-inbox.img` in the data root, loop-mounted `nosuid,nodev,noexec` by a systemd mount unit. Nothing in it can run, setuid or not, or act as a device, and the VM can't write more than 1 GiB. The unit mounts it at boot before Incus, and Incus requires it: if it can't be mounted, Incus doesn't start and the VM stays down instead of sharing the bare directory.
 
@@ -93,6 +103,43 @@ deploy/home/update.sh <ref>   # the assistant's project points at the wiki once 
 
 `seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
 
+## The backup
+
+`backup.sh` runs `pa backup`, which takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
+
+- **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
+- **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
+- **Configuration.** `pa backup` reads restic's own variables. `backup.sh` sets `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` to the drive's, and ignores any restic variables already in the environment.
+- **The lock and the status.** `pa backup` takes the data root's lock, so it never snapshots a half-run capture or librarian run. It skips, and exits 0, while another run holds the lock. Each backup records its last success or its last failure in the status, and `pa status` prints both. A missing drive shows as a missing repository ("is the backup drive mounted?"). Other failures are a wrong password, a repository restic has locked, an incomplete snapshot, or restic's exit code. `pa backup` never prints restic's own output, since that can name files under the data root. To see it, run restic by hand.
+- **A cloud copy, later,** is a second restic repository: run `pa backup` again with that repository's variables, or `restic copy` the drive's snapshots into it. Neither needs a change here.
+
+### Restoring
+
+Restic needs the repository and its password. On a new devbox, first install restic, plug in the SSD, and run `install-backup-drive.sh <UUID>`. Then write the password from your password manager to `~/.config/pa/restic.password`, mode 0600.
+
+```sh
+export RESTIC_REPOSITORY=/mnt/pa-backup/restic RESTIC_PASSWORD_FILE=~/.config/pa/restic.password
+restic snapshots                                   # one per backup; the newest is "latest"
+restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/ and evals/, as backed up
+```
+
+To bring back a whole data root, start from an empty one. Move the old one aside if it's still there, and stop anything that runs against it.
+
+```sh
+data_root=~/.local/share/pa-home-synthetic          # the instance's data root (lib.sh's PA_DATA_ROOT)
+mkdir -p "$data_root" && restic restore latest --target "$data_root"
+# owner.env: write the instance owner again (PA_OWNER_NAME, PA_OWNER_EMAILS, PA_TIME_ZONE, ...)
+deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh   # the VMs' own filesystems
+git --git-dir "$data_root/wiki.git" --work-tree "$data_root/wiki" checkout -f main   # the wiki's files
+PA_DATA_DIR=$data_root uv run pa catalog rebuild    # the catalog, from L0
+```
+
+L0 then holds every episode it held at the snapshot, byte for byte. The wiki is at its last commit before the snapshot, and its cursor is where that commit left it, so the next librarian run takes everything captured after.
+
+To bring back a single file deleted by mistake, restore just that file: `restic restore latest --target "$data_root" --include /l0/<path>`.
+
+Check the repository itself now and then (`restic check`). It reads the repository's structure, not every file's data, unless given `--read-data`.
+
 ## Remote Control
 
 `pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a session lands in the inbox for `ingest.sh`.
@@ -113,7 +160,10 @@ Don't chat during an eval run: the run fails if the inbox changes while it runs,
 ```sh
 deploy/home/ingest.sh && deploy/home/librarian.sh run
 deploy/home/librarian.sh replay ~/.local/share/pa-home-synthetic/replays/<name>   # a rebuild, or an eval wiki
+deploy/home/librarian.sh replay <replays>/<name> --window-start <time>              # a backfill's window only
 ```
+
+With `--window-start` (ISO 8601), the first batch is the window start's week, from the window start, and nothing that occurred before it is ever offered. The run log records it, so `--resume` keeps it.
 
 `librarian.sh` sets `PA_LIBRARIAN_SANDBOX` to `librarian-sandbox.sh`, which `pa` calls around the run (or the whole replay):
 
@@ -154,6 +204,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
 - `git --git-dir ~/.local/share/pa-home-synthetic/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
+- `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another run holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
 
 ### The Obsidian view
 
@@ -179,6 +230,59 @@ git pull --ff-only                            # to refresh, on the Mac
 - **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
+
+## The vault copy
+
+The vault collector reads the owner's daily notes from a copy of their Obsidian vault on the devbox, at `~/.local/share/pa-vault`. Obsidian's headless Sync client keeps it, pull-only, as `pa-vault-sync.service`. Set it up with `setup-wizard.sh --vault`:
+
+1. **Sync.** The owner subscribes to Obsidian Sync, moves the vault out of iCloud on the Mac and sets it up on Sync, end-to-end encrypted, then sets the phone up from Sync, off iCloud ([Switch to Obsidian Sync](https://obsidian.md/help/sync/switch)). Obsidian advises against Sync on a folder iCloud syncs too.
+2. **The client.** `install-vault-sync.sh` installs it under `~/.local/share/pa/vault-sync/`:
+   - Node `PA_NODE_VERSION` (22) from nodejs.org, checked against `PA_NODE_SHA256` in `lib.sh` before it's unpacked;
+   - `obsidian-headless` at `PA_VAULT_SYNC_VERSION`, with `npm ci` from `vault-sync/package-lock.json`, which pins every package with its checksum. better-sqlite3's install script fetches its prebuilt binary from its GitHub releases.
+
+   The client is in open beta, so bump either pin deliberately: change `lib.sh` and regenerate the lockfile (`npm install --package-lock-only --ignore-scripts` in `vault-sync/`), then run `install-vault-sync.sh`, which restarts the service.
+3. **Login.** `ob login` (`~/.local/share/pa/vault-sync/bin/ob`) takes the Obsidian account's email, password and 2FA code. The client keeps its login, each vault's encryption key and a sync log in `~/.config/obsidian-headless/`, mode 0700.
+4. **Setup.** `ob sync-setup --vault <name> --path ~/.local/share/pa-vault --device-name pa-devbox` asks for the vault's encryption password, and `ob sync-config --path ~/.local/share/pa-vault --mode pull-only` sets pull-only before the first sync. The wizard then writes `~/.config/pa/vault.env`: `PA_VAULT_DIR` and `PA_VAULT_DAILY_NOTES`, the daily-notes folder relative to the vault, as Obsidian's Daily notes settings name it. The capture cycle reads them.
+5. **The service.** `install-vault-sync.sh --enable` starts the unit.
+
+What holds it:
+
+- **Pull-only.** The client downloads what the owner's devices change and ignores any change made on the devbox, so nothing written into the copy ever reaches them. (`mirror-remote` would revert such a change instead; the spec chose pull-only.) The unit runs `pa-vault-sync run`, which refuses to sync a vault that isn't set up pull-only, with status 78. The unit doesn't restart on that, nor on the client's "not logged in" (2) or "no sync set up" (3). It restarts on anything else, forever, 30 seconds apart.
+- **Nothing in the PA writes the copy.** The collector only reads it. The unit runs as the devbox user and can write only the copy and the client's state (`ProtectSystem=strict`, `ProtectHome=read-only`).
+- **No VM sees it.** The copy and the client's state are outside the data root, and no VM is shared them. `check-store.sh` and `check-vault-sync.sh` both fail if any VM is shared either, a directory in them, or a directory holding them.
+- **Note names stay out of the journal.** The client prints each note it downloads by name, so the unit drops its output; its errors still reach the journal. Its own log, in `~/.config/obsidian-headless/sync/<vault id>/sync.log`, keeps every name. That log, the journal and the copy are real content: a development session reads only `check-vault-sync.sh`, which reports counts and times.
+
+To check it, run `check-vault-sync.sh`. It checks the pins, pull-only, the unit (enabled, running, how many restarts), the modes, that no VM is shared the copy, and how many daily notes there are and when the newest changed. The wizard's last stage proves the two directions from the phone:
+
+- a daily note edited on the phone reaches the copy within minutes;
+- a file written into the copy (`pa-pull-only-check.md`, removed afterwards) never shows on the phone or the Mac.
+
+Re-auth: if the client's login is revoked, the unit stops with status 2. Run `ob login`, then `sudo systemctl restart pa-vault-sync`. If the vault's encryption password changes, run `ob sync-unlink --path ~/.local/share/pa-vault`, then `setup-wizard.sh --vault` again: its sync stage sets the vault up afresh, pull-only.
+
+## Gmail
+
+The capture cycle (`pa capture`) collects the owner's one Gmail account through the Gmail API, read-only (`gmail.readonly`), when `PA_GMAIL_TOKEN` is set. Every message but spam, trash, and drafts lands in `inbox/gmail/` as its raw bytes, attachments included, behind an `X-Gmail-Labels` header in Takeout's names, so Promotions and Social are captured but never offered to the librarian, and the owner's sent mail passes the forged-mail check. Mail is never reconciled: what the owner deletes or archives in Gmail stays in L0.
+
+- **The OAuth client** comes from the owner's own Google Cloud project: a Desktop app client, the project published "In production" and left unverified, for personal use, so its refresh token doesn't expire weekly. It's at `~/.config/pa/gmail-client.json` (`PA_GMAIL_CLIENT`), mode 0600.
+- **The token** is at `~/.config/pa/gmail-token.json` (`PA_GMAIL_TOKEN`), mode 0600, never in the store or the repository. A collection refuses a token anyone else can read.
+- **Setup** is the wizard's Gmail stages, run once in the go-live ticket: `deploy/home/setup-wizard.sh --gmail`.
+- **Backfill first.** A collection reads Gmail's history from the position the backfill recorded, and fails until there is one: `pa capture --backfill <window start>` (ISO 8601; the owner's time zone without an offset). A position Gmail no longer keeps (the devbox off for a week or more) leads to a listing of the time since the last collection, and ingest collapses what's already in L0.
+- **The dry run** counts what a backfill would capture, by category, from labels alone, without fetching any message, and prints counts only:
+
+  ```sh
+  deploy/home/gmail.sh dry-run --window-start 2026-09-01
+  ```
+
+### Re-auth
+
+The token dies after six months unused or a password change. Gmail's watermark in `pa status` then goes stale, and its last failure says to run `pa gmail auth`. To re-auth, forward the consent's port from the machine with the browser, then ask for consent again on the devbox:
+
+```sh
+ssh -L 8765:localhost:8765 <devbox>   # on the machine with the browser, left open
+deploy/home/gmail.sh auth             # on the devbox; open the address it prints
+```
+
+Google warns that the app isn't verified: it's the owner's own, so click through (Advanced → Go to the app). The wizard's stage G2 (`setup-wizard.sh --gmail`) walks the same steps. The next capture cycle carries on from the stored history position.
 
 ## Hand-run tests with the real model
 
@@ -211,6 +315,31 @@ uv run pa-eval compare evals/baselines/v0.12/scale-files-alone evals/runs/<run> 
 A files-plus-wiki run's `--wiki` is an eval wiki on the devbox: a replay's `wiki/` and `run-log.jsonl` (`pa librarian replay`), kept in `evals/wikis/<corpus>/<librarian version>/` and committed when a reported result uses it, never with its `wiki.git/`. `run-evals.sh` pushes that copy into the VM (replacing the last one) and points the run at it; the run lays it beside its throwaway L0 with nothing writable, and its report names the librarian version that built it.
 
 The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
+
+### Real-data runs over a cut
+
+```sh
+PA_DATA_DIR=<data root> uv run pa cut          # cuts/<as-of>/ under the data root, as of now
+deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet \
+  --cut <data root>/cuts/<as-of> --eval-set <data root>/evals/<set>.json --runs 3 \
+  [--configuration files-plus-wiki]           # the cut's own wiki; no --wiki
+```
+
+A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`~/.cache/pa-eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut is refused before anything runs.
+
+### Drafting the real-data eval set
+
+```sh
+deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> [--agent-model sonnet]
+                                              # <data root>/evals/drafts/<as-of>/draft-<time>.json
+deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> \
+  --revise <data root>/evals/drafts/<as-of>/draft-<time>.json \
+  --notes <data root>/evals/drafts/<as-of>/notes.md   # a second pass: a new draft beside it
+```
+
+A headless session in the assistant's VM reads the cut's L0 (a read-only copy, never the cut's wiki), with exchange capture off, and drafts about 25 questions (`--questions N`), each with an expected answer and evidence episode ids. It's asked at the cut's as-of time, as the owner in the VM's `owner.env`, with the prompt versioned in `evals/src/pa_evals/draft_prompts/`. Questions get opaque ids (`r01`, `r02`, ...), and a draft naming an episode that isn't in the cut is thrown away whole. The draft comes back mode 0600 under `<data root>/evals/drafts/<as-of>/` (or `$PA_EVAL_DRAFTS_DIR/<as-of>/`), and is never written over.
+
+The owner corrects the draft in place, adds questions of their own, and, for a second pass, writes their notes beside it. The second pass revises the draft as the owner left it, keeps the ids of the questions it keeps, and numbers new ones after the last. Drafts and notes are refused inside this checkout, by `draft-evals.sh` and again by `pa-eval draft`; what either prints says how much was drafted, never what. The session may take up to an hour (`--timeout` seconds) before it fails.
 
 ## Updating and rolling back
 
@@ -301,3 +430,10 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    incus stop pa-librarian
    ```
 4. Reboot the devbox: `pa-librarian` stays stopped, the wiki and replays are mounted, and `check-librarian.sh` passes.
+
+## Acceptance run (#87)
+
+1. `setup-wizard.sh --vault` runs, and ends with `check-vault-sync.sh` passing: Node and the client at their pins, the vault pull-only, `pa-vault-sync.service` enabled and running, and no VM shared the copy.
+2. Its last stage shows a daily note edited on the phone reaching the copy within minutes, by the newest note's change time, and the wizard's `pa-pull-only-check.md` never reaching the phone.
+3. `check-store.sh` passes, its vault line included.
+4. Reboot the devbox: `check-vault-sync.sh` passes again.

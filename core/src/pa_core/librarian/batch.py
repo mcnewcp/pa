@@ -6,7 +6,8 @@ episodes new for the next.
 
 A replay batch is the episodes whose day falls in a window of whole days (a week, in a replay),
 ordered by when they occurred, then episode id. Replays batch by occurrence because eval ingest
-gives almost every episode the same capture time.
+gives almost every episode the same capture time. A windowed replay's first window starts at
+the window start, which may fall within a day: what occurred before it is never offered.
 
 Episode selection (`pa_core.selection`) decides which of them are offered:
 
@@ -77,10 +78,11 @@ class BatchEpisode:
 
 @dataclass(frozen=True)
 class Window:
-    """When a replay batch's episodes occurred: the days from `start` up to `end`.
+    """When a replay batch's episodes occurred: from `start` up to the day of `end`.
 
-    Both are midnights in the owner's time zone, except a replay's last window, which ends at
-    the replay's as-of time if it has one. The batch's sessions are told `end` is now.
+    Both are midnights in the owner's time zone, except that a windowed replay's first window
+    starts at the window start, and a replay's last window ends at the replay's as-of time if
+    it has one. The batch's sessions are told `end` is now.
     """
 
     start: datetime
@@ -136,20 +138,20 @@ def replay_batch(
     store: L0Store, window: Window, *, time_zone: tzinfo, last: bool = False
 ) -> Batch | None:
     """The episodes whose day (in `time_zone`) falls in `window`, or None if there are none.
+    None that occurred before the window's start is taken, even on its day.
 
     The `last` window of a replay also takes every episode after it (a calendar event booked
     for after the as-of time). The cursor is the last episode by capture time of everything up
     to the window's end, so a replayed wiki carries on in production where the replay stopped.
     """
     everything = list(store.envelopes())
-    first = window.start.astimezone(time_zone).date()
     end = window.end.astimezone(time_zone).date()
     days = {e.episode_id: episode_day(e, time_zone) for e in everything}
     taken = sorted(
         (
             e
             for e in everything
-            if days[e.episode_id] >= first and (last or days[e.episode_id] < end)
+            if _occurred_from(e, time_zone) >= window.start and (last or days[e.episode_id] < end)
         ),
         key=lambda e: (e.occurred_at.start, e.episode_id),
     )
@@ -192,6 +194,15 @@ def episode_day(envelope: Envelope, time_zone: tzinfo) -> date:
     if span.end is not None and _whole_days(span.start, span.end):
         return span.start.date()
     return span.start.astimezone(time_zone).date()
+
+
+def _occurred_from(envelope: Envelope, time_zone: tzinfo) -> datetime:
+    """When `envelope` occurred, for a window's start: the midnight (in `time_zone`) of its
+    day when it spans whole days (see `episode_day`), else when it started."""
+    span = envelope.occurred_at
+    if span.end is not None and _whole_days(span.start, span.end):
+        return datetime.combine(span.start.date(), time(), tzinfo=time_zone)
+    return span.start
 
 
 def _whole_days(start: datetime, end: datetime) -> bool:

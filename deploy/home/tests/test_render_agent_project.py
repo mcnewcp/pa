@@ -8,6 +8,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 DEPLOY = Path(__file__).resolve().parents[1]
 RENDER = DEPLOY / "render-agent-project.sh"
 
@@ -25,7 +27,7 @@ def render(tmp_path: Path, wiki: Path) -> list[str]:
     project, scratch = tmp_path / "agent", tmp_path / "scratch"
     project.mkdir()
     (project / "stale.md").write_text("from the last render\n")
-    args = [repo, owner_env, project, "/srv/pa/l0", scratch, wiki]
+    args = [repo, owner_env, project, "/srv/pa/l0", scratch, wiki, "/srv/pa/status/status.json"]
     completed = subprocess.run(
         ["bash", "-s", "--", *map(str, args)],
         stdin=RENDER.open(),
@@ -47,7 +49,22 @@ def test_with_a_wiki_the_agent_project_is_rendered_with_it(tmp_path: Path):
 
     args = render(tmp_path, wiki)
 
-    assert args[-2:] == ["--wiki", str(wiki)]
+    assert args[args.index("--wiki") + 1] == str(wiki)
+
+
+@pytest.mark.parametrize("with_wiki", [True, False])
+def test_the_agent_project_is_always_pointed_at_the_status_file(tmp_path: Path, with_wiki: bool):
+    """Before the first capture cycle there's no file yet; the assistant is told what that
+    means, so the project names it all the same."""
+    wiki = tmp_path / "wiki"
+    if with_wiki:
+        wiki.mkdir()
+        (wiki / "index.md").write_text("# Index\n\nNo pages yet.\n")
+
+    args = render(tmp_path, wiki)
+
+    assert args[args.index("--status") + 1] == "/srv/pa/status/status.json"
+    assert ("--wiki" in args) is with_wiki
 
 
 def test_without_a_wiki_the_agent_project_is_rendered_for_files_alone(tmp_path: Path):

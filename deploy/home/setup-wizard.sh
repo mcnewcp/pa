@@ -185,19 +185,28 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VMs on the devbox (#27, #30, #31, #33, #66): the steps only the owner can do, and
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89): the steps only the owner can do, and
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
-# the librarian's VM alone.
+# the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
+# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, or --backup
+# for the backup drive alone (#89).
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ASSISTANT_STAGES=19
 LIBRARIAN_STAGES=7
+VAULT_STAGES=8
+GMAIL_STAGES=3
+BACKUP_STAGES=2
+only_librarian=false only_vault=false only_gmail=false only_backup=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES)); only_librarian=false ;;
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian]\n' >&2; exit 2 ;;
+  --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
+  --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
+  --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
+  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --backup]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -589,17 +598,377 @@ fi
 pause
 }
 
-banner "PA VM setup"
-$only_librarian || assistant_stages
-librarian_stages
+# private_file PATH: PATH is a file only its owner can read.
+private_file() { [[ -f $1 && $(stat -c %a "$1") == 600 ]]; }
+
+# Gmail's capture (#86): the owner's Cloud project, and the consent. Run in the go-live ticket,
+# and again (stage G2) whenever the token dies.
+gmail_stages() {
+
+# ── G1 ────────────────────────────────────────────────────────────────────
+stage "Your Google Cloud project for Gmail"
+if private_file "$PA_GMAIL_CLIENT"; then
+  ok "the OAuth client is saved at $PA_GMAIL_CLIENT"
+else
+  say "The PA reads Gmail through the Gmail API, read-only, with an OAuth client from a Cloud"
+  say "project of your own. Published \"In production\" and left unverified, for personal use,"
+  say "its refresh token doesn't expire weekly, and no security assessment is needed."
+  open_url "https://console.cloud.google.com/projectcreate"
+  step "Create a project, say pa-gmail, signed in as the Gmail account to capture."
+  step "APIs & Services → Library: enable the Gmail API."
+  step "Google Auth Platform → Branding: an app name and your address. Audience: External."
+  step "Data Access → Add or remove scopes: .../auth/gmail.readonly, and nothing else."
+  step "Audience → Publish app, so it's \"In production\". Don't submit it for verification."
+  step "Clients → Create client → Desktop app. Download its JSON."
+  step "Copy the JSON to this devbox (scp), then give its path below."
+  printf '\n'
+  ask GMAIL_CLIENT_DOWNLOAD "Path of the downloaded client JSON on this devbox:"
+  [[ -f $GMAIL_CLIENT_DOWNLOAD ]] || { printf '  %s✗ no file there%s\n' "$RED" "$RESET"; exit 1; }
+  grep '"installed"' "$GMAIL_CLIENT_DOWNLOAD" >/dev/null ||
+    { printf '  %s✗ that isn'"'"'t a Desktop app client%s\n' "$RED" "$RESET"; exit 1; }
+  mkdir -p "$(dirname "$PA_GMAIL_CLIENT")"
+  chmod 700 "$(dirname "$PA_GMAIL_CLIENT")"
+  install -m 600 "$GMAIL_CLIENT_DOWNLOAD" "$PA_GMAIL_CLIENT"
+  rm -i "$GMAIL_CLIENT_DOWNLOAD"
+  ok "saved at $PA_GMAIL_CLIENT, mode 0600"
+fi
+pause
+
+# ── G2 ────────────────────────────────────────────────────────────────────
+stage "Consent: Gmail, read-only"
+if private_file "$PA_GMAIL_TOKEN" && ! confirm "A token is saved already. Ask for consent again (re-auth)?"; then
+  ok "the token is saved at $PA_GMAIL_TOKEN"
+else
+  say "The consent redirects to a loopback server on this devbox, port $PA_GMAIL_AUTH_PORT."
+  say "Google warns that the app isn't verified: it's your own, so click through once"
+  say "(Advanced → Go to the app) and allow reading your mail. Nothing can change it."
+  step "On the machine with your browser, forward the port in another terminal:"
+  note "    ssh -L $PA_GMAIL_AUTH_PORT:localhost:$PA_GMAIL_AUTH_PORT <this devbox>"
+  step "Open the address printed below in that machine's browser."
+  printf '\n'
+  run "$DEPLOY_DIR/gmail.sh" auth
+  private_file "$PA_GMAIL_TOKEN" && ok "the token is saved at $PA_GMAIL_TOKEN, mode 0600"
+fi
+pause
+
+# ── G3 ────────────────────────────────────────────────────────────────────
+stage "Gmail dry run"
+say "Counts what a two-month backfill would capture, by Gmail category, from labels alone:"
+say "no message is fetched, and nothing but counts is printed."
+if [[ -f $PA_OWNER_ENV ]]; then
+  run "$DEPLOY_DIR/gmail.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("Gmail dry run: needs $PA_OWNER_ENV, then deploy/home/gmail.sh dry-run --window-start <date>")
+fi
+pause
+}
+
+# The vault copy (#87): ob runs the installed headless client, for the owner's steps.
+ob() { "$PA_VAULT_SYNC_DIR/bin/ob" "$@"; }
+
+# vault_logged_in: the headless client is logged in to the owner's Obsidian account. Its list of
+# remote vaults names them, so it's dropped.
+vault_logged_in() { [[ -x $PA_VAULT_SYNC_DIR/bin/ob ]] && ob sync-list-remote --json >/dev/null 2>&1; }
+
+# vault_pull_only: the vault copy is set up to sync, pull-only.
+vault_pull_only() { "$PA_VAULT_SYNC_DIR/bin/pa-vault-sync" check "$PA_VAULT" >/dev/null 2>&1; }
+
+# vault_daily_notes: the daily-notes folder vault.env names, if it has.
+vault_daily_notes() {
+  [[ -f $PA_VAULT_ENV ]] || return 0
+  # shellcheck source=/dev/null # vault.env, written by the sync stage
+  (source "$PA_VAULT_ENV" && printf '%s' "${PA_VAULT_DAILY_NOTES:-}")
+}
+
+# newest_daily_note prints when the newest daily note in the copy last changed (seconds since the
+# epoch), or 0 if there's none yet. Never a name.
+newest_daily_note() {
+  local daily
+  daily=$(vault_daily_notes)
+  [[ -n $daily && -d $PA_VAULT/$daily ]] || { echo 0; return; }
+  find "$PA_VAULT/$daily" -type f -name '*.md' -not -path '*/.*' -printf '%T@\n' |
+    sort -n | awk '{last=$1} END {printf "%d\n", last}'
+}
+
+# daily_note_count prints how many daily notes the copy holds.
+daily_note_count() {
+  local daily
+  daily=$(vault_daily_notes)
+  [[ -n $daily && -d $PA_VAULT/$daily ]] || { echo 0; return; }
+  find "$PA_VAULT/$daily" -type f -name '*.md' -not -path '*/.*' | wc -l
+}
+
+# The vault copy on the devbox: Obsidian Sync and its headless client, pull-only (#87).
+vault_stages() {
+
+# ── V1 ────────────────────────────────────────────────────────────────────
+stage "Subscribe to Obsidian Sync"
+say "The devbox reads your daily notes from a copy of your vault, which Obsidian's headless Sync"
+say "client keeps, pull-only. Sync is a subscription on your Obsidian account."
+if vault_logged_in && vault_pull_only; then
+  ok "the devbox already syncs the vault, so you're subscribed"
+  pause
+else
+  open_url "https://obsidian.md/account/sync"
+  step "Log in to your Obsidian account (create one if you have none)."
+  step "Subscribe to Sync. Either plan works: the PA needs one vault."
+  pause "Press Enter once you're subscribed"
+fi
+
+# ── V2 ────────────────────────────────────────────────────────────────────
+stage "Move the vault from iCloud to Sync, on the Mac"
+if vault_pull_only; then
+  ok "the devbox already syncs the vault, so it's on Sync"
+else
+  say "Obsidian advises against running Sync on a folder iCloud syncs too, since the two conflict."
+  say "So the vault leaves iCloud first (obsidian.md/help/sync/switch), and Sync takes over."
+  step "On the phone, open the vault and let iCloud catch up. Then don't edit on the phone"
+  step "  until the next stage."
+  step "Back the vault up first: copy its folder somewhere outside iCloud, or run Time Machine."
+  step "In Obsidian on the Mac: the vault profile icon (bottom left) → Manage vaults…"
+  step "  Close the vault's window, and keep Manage vaults open."
+  step "More options next to the vault → Move vault → a folder outside iCloud, Desktop and"
+  step "  Documents, such as ~/vaults."
+  step "Open the vault. Settings → General → Account: log in. Settings → Core plugins: Sync on."
+  step "Settings → Sync → Remote vault: Choose → Create new vault. Name it, pick a region, and"
+  step "  give an encryption password: that makes it end-to-end encrypted. Keep the password in"
+  step "  your password manager: the devbox asks for it."
+  step "Connect, and unlock it with the password. Close the Start syncing prompt; set a device"
+  step "  name; then Start syncing, and wait for the green check."
+  open_url "https://obsidian.md/help/sync/switch"
+  if confirm "Is the vault out of iCloud, and synced with a green check?"; then
+    ok "the Mac syncs the vault through Obsidian Sync"
+  else
+    SKIPPED+=("moving the vault to Sync on the Mac (re-run: setup-wizard.sh --vault)")
+  fi
+fi
+pause
+
+# ── V3 ────────────────────────────────────────────────────────────────────
+stage "Switch the phone to Sync"
+if vault_pull_only; then
+  ok "the devbox already syncs the vault, so the phone is on Sync"
+else
+  say "The Mac's move took the vault out of iCloud, so the phone's iCloud copy goes as iCloud"
+  say "catches up. The phone gets the vault from Sync instead, kept on the phone, off iCloud."
+  step "Open Obsidian on the phone. In the vault switcher: Setup Obsidian Sync, and log in."
+  step "Connect next to the remote vault. Name the local vault as on the Mac, with Save in"
+  step "  iCloud Drive off, and Create. Unlock it with the encryption password."
+  step "Start syncing, and wait until it's done: the vault shows a vault icon, not a cloud."
+  step "If the switcher still lists the old iCloud vault, remove it from the list."
+  step "Edit a note on the phone, and see it on the Mac within a minute."
+  if confirm "Does the phone sync the vault, off iCloud?"; then
+    ok "the phone syncs the vault through Obsidian Sync"
+  else
+    SKIPPED+=("switching the phone to Sync (re-run: setup-wizard.sh --vault)")
+  fi
+fi
+pause
+
+# ── V4 ────────────────────────────────────────────────────────────────────
+stage "Install the headless Sync client"
+say "Obsidian's headless client, obsidian-headless $PA_VAULT_SYNC_VERSION, is in open beta, so it's"
+say "pinned, and so is the Node it runs on, $PA_NODE_VERSION. Both go under $PA_VAULT_SYNC_DIR,"
+say "checked against their pinned checksums, with the $PA_VAULT_SYNC_UNIT unit, not started yet."
+run "$DEPLOY_DIR/install-vault-sync.sh"
+ok "the client is installed"
+pause
+
+# ── V5 ────────────────────────────────────────────────────────────────────
+stage "Log the client in"
+if vault_logged_in; then
+  ok "the client is already logged in"
+else
+  say "The client logs in to your Obsidian account. Its login stays on the devbox, in"
+  say "$PA_VAULT_SYNC_CONFIG, the devbox user's alone; no VM is ever shared it."
+  step "Give your Obsidian account's email and password below, and a 2FA code if it asks."
+  printf '\n'
+  run ob login
+  vault_logged_in || { printf '  %s✗ the client isn'"'"'t logged in%s\n' "$RED" "$RESET"; exit 1; }
+  ok "the client is logged in"
+fi
+pause
+
+# ── V6 ────────────────────────────────────────────────────────────────────
+stage "Set up the sync, pull-only"
+if vault_pull_only; then
+  ok "$PA_VAULT already syncs pull-only"
+else
+  say "The copy goes in $PA_VAULT, outside the data root, and is set to pull-only before it"
+  say "first syncs: it downloads what your devices change and ignores any change made here, so"
+  say "nothing on the devbox ever reaches them."
+  step "Type the remote vault's name, as Settings → Sync shows it on the Mac."
+  step "If it's end-to-end encrypted, the client then asks for its encryption password."
+  printf '\n  %sRemote vault%s ' "$BOLD" "$RESET"
+  read -r remote || true
+  [[ -n $remote ]] || { printf '  %s✗ no vault named%s\n' "$RED" "$RESET"; exit 1; }
+  run ob sync-setup --vault "$remote" --path "$PA_VAULT" --device-name "$PA_VAULT_DEVICE_NAME"
+  run ob sync-config --path "$PA_VAULT" --mode pull-only >/dev/null
+  vault_pull_only || { printf '  %s✗ %s isn'"'"'t set up pull-only%s\n' "$RED" "$PA_VAULT" "$RESET"; exit 1; }
+  ok "$PA_VAULT syncs pull-only"
+fi
+printf '\n'
+say "The vault collector reads only your daily notes, from one folder: the one Obsidian's"
+say "Settings → Daily notes → New file location names, relative to the vault (such as Daily)."
+current=$(vault_daily_notes)
+if [[ -n $current ]]; then
+  printf '  %sDaily-notes folder%s %s[Enter keeps the current one]%s ' "$BOLD" "$RESET" "$DIM" "$RESET"
+else
+  printf '  %sDaily-notes folder%s ' "$BOLD" "$RESET"
+fi
+read -r daily || true
+daily=${daily:-$current}
+daily=${daily%/}
+if [[ -z $daily || $daily == /* || /$daily/ == */../* || $daily == *[\"\$\`\\]* ]]; then
+  printf '  %s✗ give a folder inside the vault, such as Daily%s\n' "$RED" "$RESET"; exit 1
+fi
+# Double quotes, so both bash and a systemd EnvironmentFile read it.
+mkdir -p "$(dirname "$PA_VAULT_ENV")"
+(umask 077 && printf 'PA_VAULT_DIR="%s"\nPA_VAULT_DAILY_NOTES="%s"\n' "$PA_VAULT" "$daily" >"$PA_VAULT_ENV")
+ok "wrote PA_VAULT_DIR and PA_VAULT_DAILY_NOTES to $PA_VAULT_ENV"
+pause
+
+# ── V7 ────────────────────────────────────────────────────────────────────
+stage "Start the sync service"
+say "$PA_VAULT_SYNC_UNIT runs the client continuously, as you, at every boot. It can write only"
+say "the copy and its own state, and it refuses to run unless the vault is set up pull-only."
+if systemctl is-enabled --quiet "$PA_VAULT_SYNC_UNIT" && systemctl is-active --quiet "$PA_VAULT_SYNC_UNIT"; then
+  ok "$PA_VAULT_SYNC_UNIT is already running"
+else
+  run "$DEPLOY_DIR/install-vault-sync.sh" --enable
+fi
+note "Waiting for the first sync to bring the daily notes (up to 10 minutes)…"
+for _ in $(seq 60); do
+  (($(daily_note_count) > 0)) && break
+  sleep 10
+done
+if (($(daily_note_count) > 0)); then
+  ok "$(daily_note_count) daily notes have arrived"
+else
+  warn "no daily notes yet: check the folder name, and journalctl -u $PA_VAULT_SYNC_UNIT"
+fi
+printf '\n'
+if "$DEPLOY_DIR/check-vault-sync.sh"; then
+  ok "the vault copy checks out"
+else
+  SKIPPED+=("vault sync check failed: fix and re-run deploy/home/check-vault-sync.sh")
+fi
+pause
+
+# ── V8 ────────────────────────────────────────────────────────────────────
+stage "Check from the phone"
+say "Two checks: an edit on the phone reaches the devbox within minutes, and a file written on"
+say "the devbox never reaches the phone."
+before=$(newest_daily_note)
+step "On the phone, edit a daily note (today's will do), and let Sync finish."
+pause "Press Enter once you've edited it"
+started=$(date +%s)
+for _ in $(seq 60); do
+  (($(newest_daily_note) > before)) && break
+  sleep 5
+done
+if (($(newest_daily_note) > before)); then
+  ok "the edit reached the devbox, $(($(date +%s) - started)) seconds after you pressed Enter"
+else
+  SKIPPED+=("the phone's edit didn't reach the devbox in 5 minutes: check deploy/home/check-vault-sync.sh")
+fi
+printf '\n'
+probe=$PA_VAULT/pa-pull-only-check.md
+note "Writing $(basename "$probe") into the copy, and giving Sync 2 minutes to (not) carry it…"
+printf 'Written on the devbox by the PA setup wizard. It must never reach your devices.\n' >"$probe"
+sleep 120
+step "On the phone and the Mac, search the vault for pa-pull-only-check."
+if confirm "Is it missing on both?"; then
+  ok "nothing written on the devbox reaches your devices"
+else
+  SKIPPED+=("the devbox's file reached your devices: stop $PA_VAULT_SYNC_UNIT, and delete pa-pull-only-check on the Mac")
+fi
+rm -f "$probe"
+pause
+}
+
+# The nightly backup's USB SSD and its restic repository (#89).
+backup_stages() {
+
+# ── B1 ────────────────────────────────────────────────────────────────────
+stage "The backup drive"
+if mountpoint -q "$PA_BACKUP_MOUNT"; then
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT"
+else
+  say "The nightly backup goes to your USB SSD on the devbox, mounted at $PA_BACKUP_MOUNT by its"
+  say "filesystem's UUID, so no other drive is ever mounted there. Without the drive the devbox"
+  say "still boots, and the status records each backup that finds no repository."
+  step "Plug the SSD into the devbox, and find it in the list below (TRAN usb, its SIZE and MODEL)."
+  step "If it has no ext4 filesystem yet, make one (this erases the drive), with its partition"
+  step "in place of sdX1: sudo mkfs.ext4 -L pa-backup /dev/sdX1, then run lsblk -f to see its UUID."
+  printf '\n'
+  run lsblk -o NAME,TRAN,SIZE,MODEL,FSTYPE,LABEL,UUID
+  printf '\n'
+  ask backup_uuid "The UUID of the SSD's ext4 filesystem:"
+  run "$DEPLOY_DIR/install-backup-drive.sh" "$backup_uuid"
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT, and will be at every boot"
+fi
+pause
+
+# ── B2 ────────────────────────────────────────────────────────────────────
+stage "The backup repository and its password"
+mountpoint -q "$PA_BACKUP_MOUNT" || { printf '  %s✗ the backup drive isn'"'"'t mounted at %s%s\n' "$RED" "$PA_BACKUP_MOUNT" "$RESET"; exit 1; }
+say "restic encrypts the backup with the password in $PA_BACKUP_PASSWORD_FILE, readable only"
+say "by you. Without it the backup can't be restored, so keep a copy in your password manager"
+say "too: it's what restores L0 after the devbox is lost."
+ensure_backup_password "$PA_BACKUP_PASSWORD_FILE"
+ok "the password is in $PA_BACKUP_PASSWORD_FILE, mode 0600"
+if confirm "Show the password now, to copy it into your password manager?"; then
+  printf '\n    %s%s%s\n\n' "$BOLD" "$(cat "$PA_BACKUP_PASSWORD_FILE")" "$RESET"
+else
+  note "It's in $PA_BACKUP_PASSWORD_FILE when you want it."
+fi
+if confirm "Is it saved in your password manager, as \"PA restic backup\"?"; then
+  ok "saved in your password manager"
+else
+  SKIPPED+=("save the restic password in your password manager, from $PA_BACKUP_PASSWORD_FILE")
+  warn "save the restic password in your password manager before you rely on the backup"
+fi
+init_backup_repository "$PA_BACKUP_REPOSITORY" "$PA_BACKUP_PASSWORD_FILE"
+ok "the restic repository is ready at $PA_BACKUP_REPOSITORY"
+note "deploy/home/backup.sh backs up to it, and pa status shows the last backup."
+pause
+}
+
+banner "PA setup"
+if $only_gmail; then
+  gmail_stages
+  finish
+  note "Gmail is captured once PA_GMAIL_TOKEN=$PA_GMAIL_TOKEN is in the capture's environment,"
+  note "after its backfill: pa capture --backfill <window start>."
+  printf '\n'
+  exit 0
+fi
+if $only_backup; then
+  backup_stages
+  finish
+  note "The backup runs by hand: deploy/home/backup.sh, and pa status shows the last one."
+  printf '\n'
+  exit 0
+fi
+if $only_vault; then
+  vault_stages
+else
+  $only_librarian || assistant_stages
+  librarian_stages
+  $only_librarian || vault_stages
+  $only_librarian || backup_stages
+fi
 
 finish
-if ! $only_librarian; then
+if ! $only_librarian && ! $only_vault; then
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
 fi
-note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
+$only_vault || note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
+$only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
+$only_librarian || $only_vault || note "The backup runs by hand: deploy/home/backup.sh."
 printf '\n'

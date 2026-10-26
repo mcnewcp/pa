@@ -47,15 +47,30 @@ PA_LIB_VM_MANAGED_SETTINGS=/etc/claude-code/managed-settings.json
 # mode 0600, and reaches each session through stdin, never the VM's disk or a command line.
 PA_LIBRARIAN_TOKEN=$HOME/.config/pa/librarian.token
 
+# Gmail's capture (gmail.sh): the OAuth client from the owner's own Cloud project (a Desktop app
+# client, published "In production" and unverified) and the read-only token `pa gmail auth`
+# saves. Both stay on the devbox, mode 0600, never in the store or the repository. The consent's
+# loopback redirect comes to this port, forwarded over SSH from the machine with the browser.
+PA_GMAIL_CLIENT=$HOME/.config/pa/gmail-client.json
+PA_GMAIL_TOKEN=$HOME/.config/pa/gmail-token.json
+PA_GMAIL_AUTH_PORT=8765
+
 # The instance's data root on the devbox: v0.11's, seeded from the synthetic corpus and
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
-# The three parts of it the VM sees.
+# Real-data evals' private files (DataRoot.evals): run directories from runs over a cut
+# (evals/runs/), and drafts of the real-data eval set with the owner's notes
+# (evals/drafts/<cut>/). The nightly backup takes it whole.
+PA_EVALS=$PA_DATA_ROOT/evals
+# The parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
 # The wiki's working tree; its git directory (wiki.git beside it) is never shared.
 PA_WIKI=$PA_DATA_ROOT/wiki
+# The status file's directory (DataRoot.status): the file is replaced by a rename, so the VM is
+# shared the directory, never the file.
+PA_STATUS=$PA_DATA_ROOT/status
 PA_WIKI_GIT=$PA_DATA_ROOT/wiki.git
 # The librarian's VM writes the wiki as its own user and as it likes, so the wiki is a
 # filesystem of its own too, like the inbox directory (install-wiki.sh). So is the directory
@@ -74,17 +89,60 @@ PA_CHAT_INBOX_SIZE=1G
 PA_CHAT_INBOX_FLAGS=(nosuid nodev noexec)
 PA_OWN_FILESYSTEM_FLAGS=("${PA_CHAT_INBOX_FLAGS[@]}")
 
-# Where the VM sees the store: L0 and the wiki read-only, and its own inbox directory, its only
-# way back.
+# The vault copy (#87): Obsidian's headless Sync client keeps the owner's vault here, pull-only,
+# for the vault collector to read. It's outside the data root, no VM is shared it, and nothing in
+# the PA writes it. vault.env tells the capture cycle where it is and which folder holds the daily
+# notes (PA_VAULT_DIR, PA_VAULT_DAILY_NOTES); the wizard writes it.
+PA_VAULT=$HOME/.local/share/pa-vault
+PA_VAULT_ENV=$HOME/.config/pa/vault.env
+# The client is a pinned release: vault-sync/package.json pins it, and its lockfile pins every
+# dependency with its checksum. It runs on a pinned Node 22, which the devbox checks against the
+# checksum below (from the release's SHASUMS256.txt, signed by a Node releaser). Both are
+# installed under PA_VAULT_SYNC_DIR by install-vault-sync.sh. Bump them deliberately: the client
+# is in open beta.
+PA_VAULT_SYNC_VERSION=0.0.14
+PA_VAULT_SYNC_DIR=$HOME/.local/share/pa/vault-sync
+PA_NODE_VERSION=22.23.4
+PA_NODE_SHA256=1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
+PA_NODE_DIST=https://nodejs.org/dist
+PA_NODE_CACHE=$HOME/.cache/pa/node
+# The client's own state: its login, each vault's encryption key, and a sync log that names
+# notes. Like the copy, it's shared into no VM, and development sessions don't read it.
+PA_VAULT_SYNC_CONFIG=$HOME/.config/obsidian-headless
+# The unit that runs it, continuously, as the devbox user, and the name its changes carry in the
+# vault's version history (it makes none).
+PA_VAULT_SYNC_UNIT=pa-vault-sync.service
+PA_VAULT_DEVICE_NAME=pa-devbox
+
+# The nightly backup (pa backup, backup.sh): a restic repository on the USB SSD, which is
+# mounted by its filesystem's UUID at PA_BACKUP_MOUNT (install-backup-drive.sh), and the
+# password it's encrypted with, kept here and in the owner's password manager.
+PA_BACKUP_MOUNT=/mnt/pa-backup
+PA_BACKUP_REPOSITORY=$PA_BACKUP_MOUNT/restic
+PA_BACKUP_PASSWORD_FILE=$HOME/.config/pa/restic.password
+
+# Where the VM sees the store: L0, the wiki and the status read-only, and its own inbox directory,
+# its only way back.
 PA_VM_L0=/srv/pa/l0
 PA_VM_CHAT_INBOX=/srv/pa/inbox/assistant_chat
 PA_VM_WIKI=/srv/pa/wiki
+# The status, read-only too: the directory, and the file the agent project names.
+PA_VM_STATUS=/srv/pa/status
+PA_VM_STATUS_FILE=$PA_VM_STATUS/status.json
 # The VM's copy of owner.env, and the agent project rendered from it.
 PA_VM_OWNER_ENV=/home/assistant/.config/pa/owner.env
 PA_VM_PROJECT=/home/assistant/agent
 PA_VM_SCRATCH=/home/assistant/scratch
 # Where run-evals.sh pushes the eval wiki a files-plus-wiki run asks with, replaced each run.
 PA_VM_EVAL_WIKI=/home/assistant/.cache/pa-eval/eval-wiki
+# Where it pushes the cuts runs over a cut ask against, each once and kept for reuse, and the
+# eval set asked over one (replaced each run); and where such a run writes its run directory.
+PA_VM_EVAL_CUTS=/home/assistant/.cache/pa-eval/cuts
+PA_VM_EVAL_SET=/home/assistant/.cache/pa-eval/eval-set.json
+PA_VM_EVAL_RUNS=/home/assistant/.cache/pa-eval/runs
+# Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
+# owner's notes a second pass revises.
+PA_VM_EVAL_DRAFTS=/home/assistant/.cache/pa-eval/drafts
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
@@ -95,6 +153,7 @@ PA_SHARES=(
   "pa-l0|$PA_L0|$PA_VM_L0|true"
   "pa-chat-inbox|$PA_CHAT_INBOX|$PA_VM_CHAT_INBOX|false"
   "pa-wiki|$PA_WIKI|$PA_VM_WIKI|true"
+  "pa-status|$PA_STATUS|$PA_VM_STATUS|true"
 )
 
 # Where the librarian's VM sees what a run gives it (librarian-sandbox.sh start): L0 and the
@@ -160,6 +219,58 @@ as_assistant() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "bash -s --$args"
 }
 
+# require_private stops unless the path ($2) is outside this checkout, after following links;
+# $1 says what it is. Real-data eval sets, drafts, notes, cuts, and run directories stay under the
+# data root, so nothing real is ever committed.
+require_private() {
+  local resolved repository
+  resolved=$(realpath -m -- "$2")
+  repository=$(realpath -- "$REPO_DIR")
+  case $resolved/ in
+    "$repository"/*)
+      die "the $1 ($resolved) is inside the repository ($repository): real-data eval sets, drafts, cuts, and run directories stay under the data root"
+      ;;
+  esac
+}
+
+# cut_name DIR prints the name of the cut in DIR (its as-of time), and stops unless DIR is a cut
+# as `pa cut` makes one.
+cut_name() {
+  local name
+  [[ -f $1/cut.json ]] || die "$1 isn't a cut: it has no cut.json (pa cut makes one)"
+  name=$(basename "$(realpath -- "$1")")
+  [[ $name =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "$1 isn't named as pa cut names a cut"
+  printf '%s\n' "$name"
+}
+
+# push_cut DIR pushes the cut in DIR to $PA_VM_EVAL_CUTS/<name> in the VM, unless it's there
+# already. A cut never changes, so the VM's copy is kept and reused. It's unpacked beside the
+# others and moved into place whole, so a push that stopped part way is never taken for the cut.
+push_cut() {
+  local name vm_cut partial
+  name=$(cut_name "$1")
+  vm_cut=$PA_VM_EVAL_CUTS/$name
+  if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $vm_cut" </dev/null; then
+    log "the cut $name is already in the VM: reusing $vm_cut"
+  else
+    partial=$PA_VM_EVAL_CUTS/.$name.partial
+    tar -C "$1" -cf - . |
+      incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+        "rm -rf $partial && mkdir -p $partial && tar -C $partial -xf - && mv -T $partial $vm_cut"
+    log "pushed the cut $name to $vm_cut"
+  fi
+}
+
+# push_file FILE VM_PATH writes FILE's contents to VM_PATH in the VM, as the assistant.
+push_file() {
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+    "mkdir -p ${2%/*} && cat > $2" <"$1"
+}
+
+# inbox_listing lists what's in the VM's inbox directory on the devbox, with sizes and times, so
+# a run can check its sessions captured nothing.
+inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
+
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
   [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
@@ -217,6 +328,42 @@ for source, (path, readonly) in expected.items():
 for source, device in shared.items():
     at = device.get("path")
     print(f"{source} is shared too, at {at}")
+' "$@"
+}
+
+# render_vault_sync_unit prints the vault sync unit (vault-sync/pa-vault-sync.service), for the
+# devbox user, with the client installed under PA_VAULT_SYNC_DIR.
+render_vault_sync_unit() {
+  sed -e "s|@USER@|$USER|g" -e "s|@RUNNER@|$PA_VAULT_SYNC_DIR/bin/pa-vault-sync|g" \
+    -e "s|@VAULT@|$PA_VAULT|g" -e "s|@CONFIG@|$PA_VAULT_SYNC_CONFIG|g" \
+    "$DEPLOY_DIR/vault-sync/pa-vault-sync.service"
+}
+
+# vault_share_problems reads every VM as `incus query /1.0/instances?recursion=1` prints them,
+# and prints each VM shared the vault copy or the client's state, one per line: shared it, a
+# directory in it, or a directory holding it. It prints nothing when no VM is.
+vault_share_problems() { shared_into_vms "$PA_VAULT" "$PA_VAULT_SYNC_CONFIG"; }
+
+# shared_into_vms PATH... reads every VM as `incus query /1.0/instances?recursion=1` prints them,
+# and prints each VM shared a PATH, a directory in it, or a directory holding it, one per line.
+shared_into_vms() {
+  python3 -c '
+import json, os, sys
+def within(path, directory):
+    return os.path.commonpath([path, directory]) == directory
+paths = [os.path.normpath(p) for p in sys.argv[1:]]
+for vm in sorted(json.load(sys.stdin), key=lambda vm: vm["name"]):
+    devices = vm.get("expanded_devices") or {}
+    for path in paths:
+        for name in sorted(devices):
+            device = devices[name]
+            source = device.get("source", "")
+            if device.get("type") != "disk" or not source.startswith("/"):
+                continue
+            source = os.path.normpath(source)
+            if within(source, path) or within(path, source):
+                vm_name, at = vm["name"], device.get("path")
+                print(f"{vm_name} is shared {path} (as {source}, at {at})")
 ' "$@"
 }
 
@@ -321,4 +468,61 @@ for server in init.get("mcp_servers") or []:
 if init.get("permissionMode") == "bypassPermissions":
     print("it runs in bypass mode")
 ' "${PA_LIBRARIAN_TOOLS[@]}"
+}
+
+# backup_mount_unit_name prints the name of the backup drive's mount unit, which systemd
+# derives from its mount point.
+backup_mount_unit_name() { systemd-escape -p --suffix=mount "$PA_BACKUP_MOUNT"; }
+
+# backup_mount_unit UUID prints the mount unit that mounts the filesystem with that UUID, and
+# only that one, at PA_BACKUP_MOUNT. It's wanted at boot, never required: a missing drive
+# leaves the mount point empty, and the backup records that as a missing repository.
+backup_mount_unit() {
+  [[ ${1:-} =~ ^[0-9A-Fa-f]+(-[0-9A-Fa-f]+)*$ ]] \
+    || die "the backup drive is named by its filesystem UUID, as lsblk -o UUID shows it (got '${1:-}')"
+  cat <<UNIT
+[Unit]
+Description=The PA's backup drive, found by its filesystem's UUID
+
+[Mount]
+What=/dev/disk/by-uuid/$1
+Where=$PA_BACKUP_MOUNT
+Options=nosuid,nodev,noexec,noatime
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# ensure_backup_password FILE makes FILE a new random restic password, readable only by the
+# owner, unless it holds one already: the password is made once, since a new one wouldn't
+# open the repository.
+ensure_backup_password() {
+  local file=$1
+  if [[ ! -s $file ]]; then
+    mkdir -p "$(dirname "$file")"
+    (umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' >"$file")
+    log "made a new restic password in $file"
+  fi
+  chmod 600 "$file"
+}
+
+# init_backup_repository REPOSITORY PASSWORD_FILE initializes a restic repository at
+# REPOSITORY, encrypted with the password in PASSWORD_FILE, unless one is there already, which
+# that password must open.
+init_backup_repository() {
+  local repository=$1 password_file=$2 code=0
+  RESTIC_REPOSITORY=$repository RESTIC_PASSWORD_FILE=$password_file \
+    restic cat config >/dev/null 2>&1 || code=$?
+  case $code in
+    0) log "the restic repository at $repository is already initialized" ;;
+    # restic's exit code for a repository that doesn't exist.
+    10)
+      RESTIC_REPOSITORY=$repository RESTIC_PASSWORD_FILE=$password_file restic init >/dev/null \
+        || die "restic couldn't initialize a repository at $repository"
+      log "initialized the restic repository at $repository"
+      ;;
+    12) die "the password in $password_file doesn't open the restic repository at $repository" ;;
+    *) die "restic couldn't open the repository at $repository (exit $code)" ;;
+  esac
 }

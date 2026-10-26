@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,6 +31,8 @@ class IngestSummary:
     ingested: int = 0
     unchanged: int = 0
     quarantined: int = 0
+    quarantined_from: Counter[str] = field(default_factory=Counter)
+    """How many were quarantined from each inbox directory (`""` for the inbox root)."""
     # Each payload left in the inbox because ingest may not remove it, and why.
     left: list[str] = field(default_factory=list)
 
@@ -65,7 +68,7 @@ def ingest(
     left in the inbox, not landed, so it doesn't land again on every run; the summary says why.
     """
     summary = IngestSummary()
-    for payload_file in _waiting_payloads(inbox):
+    for payload_file in waiting_payloads(inbox):
         inbox_name = payload_file.relative_to(inbox).as_posix()
         if not _removable(payload_file):
             summary.left.append(
@@ -75,9 +78,13 @@ def ingest(
         try:
             raw = _read_payload(payload_file)
         except MalformedPayloadError as error:
-            summary.add(_quarantine(store, inbox_name, b"", str(error), now()))
+            outcome = _quarantine(store, inbox_name, b"", str(error), now())
         else:
-            summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
+            outcome = _land(inbox_name, raw, store, catalog, owner, now())
+        summary.add(outcome)
+        if outcome is Outcome.QUARANTINED:
+            directory = PurePosixPath(inbox_name).parent.as_posix()
+            summary.quarantined_from[directory if directory != "." else ""] += 1
         try:
             payload_file.unlink()
         except PermissionError as error:
@@ -222,7 +229,7 @@ def is_hidden(inbox_name: PurePath) -> bool:
     return any(part.startswith(".") for part in inbox_name.parts)
 
 
-def _waiting_payloads(inbox: Path) -> list[Path]:
+def waiting_payloads(inbox: Path) -> list[Path]:
     """Raw payload files, and symbolic links, under the inbox, in path order.
 
     Symbolic links are listed so they are quarantined; the walk never follows one.

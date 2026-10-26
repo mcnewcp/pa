@@ -40,15 +40,21 @@ from pa_core.ingest import ingest, is_hidden
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
+    LibrarianRunError,
+    Phase,
     RunOutcome,
     SessionPaths,
+    SessionResult,
     WikiSeedError,
+    last_cursor,
     run_librarian,
     seed_wiki,
 )
 from pa_core.librarian.version import librarian_version
 from pa_core.owner import Owner
+from pa_core.status import LibrarianRun, WikiStatus, read_status, write_status
 from pa_home.agent import wall_clock
+from pa_home.capture import failure_reason
 from pa_home.claude_session import ClaudeSessionRunner
 from pa_home.config import DataRoot, LibrarianConfig
 from pa_home.filesystem_l0 import FilesystemL0
@@ -79,21 +85,76 @@ def run(
 ) -> RunOutcome:
     """Runs the librarian over the episodes captured since the last run, telling it the clock's
     time as "now". `project` is the librarian project's source, run as committed
-    (`project_files`)."""
+    (`project_files`).
+
+    Whatever happens, the run is recorded in the status: the time the wiki is current through
+    (its cursor's capture time) and the run's outcome, a failure's reason without content. The
+    caller holds the data root's lock, so the status holds still.
+    """
+    started = clock()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    files = project_files(project)
-    with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
-        return run_librarian(
-            store=FilesystemL0(data_root.l0),
-            owner=owner,
-            time_zone=time_zone,
-            repository=repository,
-            runner=runner,
-            librarian=_librarian(config, files),
-            now=clock().astimezone(time_zone),
-            page_threshold=config.page_threshold,
-            loop_age_days=config.loop_age_days,
+    try:
+        files = project_files(project)
+        with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
+            outcome = run_librarian(
+                store=FilesystemL0(data_root.l0),
+                owner=owner,
+                time_zone=time_zone,
+                repository=repository,
+                runner=runner,
+                librarian=_librarian(config, files),
+                now=started.astimezone(time_zone),
+                page_threshold=config.page_threshold,
+                loop_age_days=config.loop_age_days,
+            )
+    except Exception as error:
+        sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
+        failed = LibrarianRun(
+            at=started, succeeded=False, reason=_failure_reason(error), cost_usd=_cost(sessions)
         )
+        _record_run(data_root, repository, failed, clock)
+        raise
+    warnings = None if outcome.batch is None else len(outcome.warnings)
+    succeeded = LibrarianRun(
+        at=started, succeeded=True, cost_usd=_cost(outcome.sessions), warnings=warnings
+    )
+    _record_run(data_root, repository, succeeded, clock)
+    return outcome
+
+
+def _record_run(
+    data_root: DataRoot,
+    repository: GitWikiRepository,
+    run: LibrarianRun,
+    clock: Callable[[], datetime],
+) -> None:
+    """Writes `run` into the status as the wiki's last run, with the time the wiki is current
+    through as last committed."""
+    cursor = last_cursor(repository)
+    wiki = WikiStatus(current_through=None if cursor is None else cursor.captured_at, last_run=run)
+    status = read_status(data_root.status)
+    write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=clock())
+
+
+def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
+    """What the sessions cost together: None if any didn't report its cost."""
+    costs = [result.cost_usd for _, result in sessions]
+    if any(cost is None for cost in costs):
+        return None
+    return sum(cost for cost in costs if cost is not None)
+
+
+def _failure_reason(error: Exception) -> str:
+    """Why a run failed, without content: a run's error quotes pages, paths, and what the
+    session said, so it's named by where it failed alone."""
+    if isinstance(error, LibrarianRunError):
+        if error.sessions:
+            phase, _ = error.sessions[-1]
+            return f"the run failed in its {phase} session and was discarded"
+        return "the run failed and was discarded"
+    if isinstance(error, LibrarianSandboxError):
+        return "the librarian's sandbox could not be set up or taken down"
+    return failure_reason(error)
 
 
 def replay(
@@ -106,6 +167,7 @@ def replay(
     config: LibrarianConfig,
     batch_days: int = BATCH_DAYS,
     as_of: datetime | None = None,
+    window_start: datetime | None = None,
     resume: bool = False,
     project: Path = LIBRARIAN_PROJECT,
     clock: Callable[[], datetime] = wall_clock,
@@ -115,8 +177,9 @@ def replay(
 
     L0 is the `data_root`'s, or `corpus` (directories of raw payloads, one directory per source
     as in the inbox) ingested into a throwaway data root, captured at `as_of` (else the clock's
-    time). `target` must be new or empty, unless `resume`, when it must hold a replay to carry
-    on from its last committed run.
+    time). With a `window_start`, the first batch is the window start's week, and nothing that
+    occurred before it is offered. `target` must be new or empty, unless `resume`, when it
+    must hold a replay to carry on from its last committed run.
     """
     layout = ReplayTarget(target)
     if resume and not layout.git_dir.is_dir():
@@ -140,6 +203,7 @@ def replay(
                 run_log=layout.run_log,
                 batch_days=batch_days,
                 as_of=as_of,
+                window_start=window_start,
                 page_threshold=config.page_threshold,
                 loop_age_days=config.loop_age_days,
                 progress=progress,
