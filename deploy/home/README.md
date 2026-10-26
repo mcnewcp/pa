@@ -113,7 +113,10 @@ Don't chat during an eval run: the run fails if the inbox changes while it runs,
 ```sh
 deploy/home/ingest.sh && deploy/home/librarian.sh run
 deploy/home/librarian.sh replay ~/.local/share/pa-home-synthetic/replays/<name>   # a rebuild, or an eval wiki
+deploy/home/librarian.sh replay <replays>/<name> --window-start <time>              # a backfill's window only
 ```
+
+With `--window-start` (ISO 8601), the first batch is the window start's week, from the window start, and nothing that occurred before it is ever offered. The run log records it, so `--resume` keeps it.
 
 `librarian.sh` sets `PA_LIBRARIAN_SANDBOX` to `librarian-sandbox.sh`, which `pa` calls around the run (or the whole replay):
 
