@@ -17,6 +17,7 @@ GROUPS = {
     "assistant_stages": "ASSISTANT_STAGES",
     "librarian_stages": "LIBRARIAN_STAGES",
     "vault_stages": "VAULT_STAGES",
+    "gmail_stages": "GMAIL_STAGES",
 }
 
 
@@ -53,4 +54,4 @@ def test_an_unknown_option_is_refused_with_the_usage():
     )
 
     assert result.returncode == 2
-    assert "usage: setup-wizard.sh [--librarian | --vault]" in result.stderr
+    assert "usage: setup-wizard.sh [--librarian | --vault | --gmail]" in result.stderr

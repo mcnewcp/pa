@@ -47,6 +47,14 @@ PA_LIB_VM_MANAGED_SETTINGS=/etc/claude-code/managed-settings.json
 # mode 0600, and reaches each session through stdin, never the VM's disk or a command line.
 PA_LIBRARIAN_TOKEN=$HOME/.config/pa/librarian.token
 
+# Gmail's capture (gmail.sh): the OAuth client from the owner's own Cloud project (a Desktop app
+# client, published "In production" and unverified) and the read-only token `pa gmail auth`
+# saves. Both stay on the devbox, mode 0600, never in the store or the repository. The consent's
+# loopback redirect comes to this port, forwarded over SSH from the machine with the browser.
+PA_GMAIL_CLIENT=$HOME/.config/pa/gmail-client.json
+PA_GMAIL_TOKEN=$HOME/.config/pa/gmail-token.json
+PA_GMAIL_AUTH_PORT=8765
+
 # The instance's data root on the devbox: v0.11's, seeded from the synthetic corpus and
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
