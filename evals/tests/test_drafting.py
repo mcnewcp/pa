@@ -358,9 +358,12 @@ def test_the_drafting_session_runs_with_capture_off_and_without_the_wiki(
     argv = seen["argv"]
     assert "--no-session-persistence" in argv
     assert argv[argv.index("--model") + 1] == "sonnet"
-    # Asked at the cut's as-of time, in the owner's time zone, with the versioned prompt.
+    # Asked at the cut's as-of time, in the owner's time zone, told it as every eval session is
+    # (in the system prompt and before the versioned prompt; docs/adr/0003).
     assert "Tuesday, October 6, 2026, 20:00" in argv[argv.index("--append-system-prompt") + 1]
-    assert seen["prompt"].startswith("# Draft your owner's eval set")
+    preamble, prompt = seen["prompt"].split("\n\n", 1)
+    assert "Tuesday, October 6, 2026, 20:00" in preamble
+    assert prompt.startswith("# Draft your owner's eval set")
     assert "gmail, icloud_calendar, obsidian" in seen["prompt"]
     assert [q.id for q in load_eval_set(out, cut=cut).questions] == ["r01"]
 
