@@ -330,6 +330,22 @@ def test_now_is_appended_to_the_system_prompt(tmp_path: Path, l0: Path):
     assert seen["prompt"] == "What day of the week is it?"
 
 
+def test_the_agent_is_told_that_the_date_in_its_environment_is_not_now(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.BOTH)
+
+    agent.answer("Is the hotel block still open?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    preamble, _ = seen["prompt"].rsplit("\n\n", 1)
+    for statement in (system_prompt, preamble):
+        # Claude Code states the machine's date as "Today's date is <date>." in every session.
+        assert "Today's date is" in statement
+        assert "not now" in statement
+        # Date arithmetic is done from the as-of date, named again where it's asked for.
+        assert "days are left" in statement and "from Saturday, October 10, 2026" in statement
+
+
 def test_now_can_be_stated_in_a_message_before_the_question(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.PREAMBLE)
 
@@ -338,6 +354,21 @@ def test_now_can_be_stated_in_a_message_before_the_question(tmp_path: Path, l0: 
     seen = _seen(tmp_path)
     [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
     assert "2026" not in system_prompt
+    preamble, question = seen["prompt"].rsplit("\n\n", 1)
+    assert "Saturday, October 10, 2026, 09:00" in preamble
+    assert question == "What day of the week is it?"
+
+
+def test_by_default_now_is_stated_both_in_the_system_prompt_and_before_the_question(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "Saturday, October 10, 2026, 09:00" in system_prompt
     preamble, question = seen["prompt"].rsplit("\n\n", 1)
     assert "Saturday, October 10, 2026, 09:00" in preamble
     assert question == "What day of the week is it?"

@@ -22,15 +22,16 @@ CORPUS = FIXTURES / "corpus"
 EVAL_SET = FIXTURES / "eval_set.json"
 
 # Why the default won, as docs/adr/0003 records it.
-WHY_SYSTEM_PROMPT = (
-    "the default: it and a preamble both passed every as-of canary, and it leaves the question "
-    "exactly as asked and works in an interactive session too"
+WHY_BOTH = (
+    "the default: told in the system prompt and again before the question, it was the one "
+    "method to pass every as-of canary with Sonnet"
 )
 
 
 @pytest.fixture
 def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A `claude` on PATH that answers with the system prompt it was given."""
+    """A `claude` on PATH that answers with the system prompt it was given and what came
+    before the question in its message."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "claude"
@@ -40,7 +41,8 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             """\
             import json, sys
             argv = sys.argv[1:]
-            sys.stdin.read()
+            message = sys.stdin.read()
+            preamble = message.rsplit("\\n\\n", 1)[0] if "\\n\\n" in message else ""
             assert argv[argv.index("--output-format") + 1] == "stream-json"
             assert "--verbose" in argv
             told = argv[argv.index("--append-system-prompt") + 1]
@@ -81,7 +83,7 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                     for event in tool(f"t{number}", name, input, result, is_error=is_error)
                 ],
                 {"type": "result", "subtype": "success", "is_error": False,
-                 "result": f"[{model}] {told} [ep:gmail_94f6b4cbc55a3b85] "
+                 "result": f"[{model}] {told} preamble: {preamble} [ep:gmail_94f6b4cbc55a3b85] "
                            f"[ep:gmail_424bdea9b0d82720] l0={l0} wiki={wiki} index={index}",
                  "total_cost_usd": 0.031, "num_turns": 5, "duration_ms": 12000},
             ]
@@ -123,8 +125,13 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
     results = json.loads((run_dir / "results.json").read_text())
     answers = {q["id"]: q["answer"] for q in results["questions"]}
     assert answers["day-of-week"].startswith("[sonnet] ")
-    assert "Saturday, October 10, 2026, 09:00" in answers["day-of-week"]
-    assert "Tuesday, October 6, 2026, 20:00" in answers["swim-instructor"]
+    # Told the as-of time both in the system prompt and before the question, by default.
+    for question_id, as_of in [
+        ("day-of-week", "Saturday, October 10, 2026, 09:00"),
+        ("swim-instructor", "Tuesday, October 6, 2026, 20:00"),
+    ]:
+        system_prompt, preamble = answers[question_id].split(" preamble: ")
+        assert as_of in system_prompt and as_of in preamble
     figures = {(q["cost_usd"], q["turns"], q["duration_ms"]) for q in results["questions"]}
     assert figures == {(0.031, 5, 12000)}
     [_, read] = results["questions"][0]["tool_calls"]
@@ -137,14 +144,14 @@ def test_the_claude_runner_asks_each_question_at_its_as_of_time(
         "corpus": str(CORPUS),
         "agent": "claude",
         "agent model": "sonnet",
-        "as-of method": "system-prompt",
-        "why this as-of method": WHY_SYSTEM_PROMPT,
+        "as-of method": "both",
+        "why this as-of method": WHY_BOTH,
         "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
         "judge": "scripted",
     }
     report = (run_dir / "report.md").read_text()
-    assert "- As-of method: system-prompt" in report
-    assert f"- Why this as-of method: {WHY_SYSTEM_PROMPT}" in report
+    assert "- As-of method: both" in report
+    assert f"- Why this as-of method: {WHY_BOTH}" in report
     assert "- As-of methods compared in: docs/adr/0003-as-of-time-injection.md" in report
     assert "## Cited episodes opened" in report
     assert "| canary | 0.50 |" in report
