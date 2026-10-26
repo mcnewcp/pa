@@ -51,6 +51,8 @@ PA_LIBRARIAN_TOKEN=$HOME/.config/pa/librarian.token
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
+# Real-data evals' private files: run directories from runs over a cut, under evals/runs/.
+PA_EVALS=$PA_DATA_ROOT/evals
 # The three parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
@@ -110,6 +112,11 @@ PA_VM_PROJECT=/home/assistant/agent
 PA_VM_SCRATCH=/home/assistant/scratch
 # Where run-evals.sh pushes the eval wiki a files-plus-wiki run asks with, replaced each run.
 PA_VM_EVAL_WIKI=/home/assistant/.cache/pa-eval/eval-wiki
+# Where it pushes the cuts runs over a cut ask against, each once and kept for reuse, and the
+# eval set asked over one (replaced each run); and where such a run writes its run directory.
+PA_VM_EVAL_CUTS=/home/assistant/.cache/pa-eval/cuts
+PA_VM_EVAL_SET=/home/assistant/.cache/pa-eval/eval-set.json
+PA_VM_EVAL_RUNS=/home/assistant/.cache/pa-eval/runs
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service

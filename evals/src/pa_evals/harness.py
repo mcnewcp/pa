@@ -21,6 +21,7 @@ from pa_evals.eval_wiki import EvalWiki
 from pa_evals.injection import check_wiki, require_in_l0
 from pa_evals.judge import Judge, JudgeRequest
 from pa_evals.results import (
+    CutResult,
     IngestCounts,
     InjectionChecks,
     QuestionResult,
@@ -30,6 +31,7 @@ from pa_evals.results import (
     WikiResult,
 )
 from pa_home.config import DataRoot
+from pa_home.cut import Cut
 from pa_home.filesystem_l0 import FilesystemL0
 
 DEFAULT_CONCURRENCY = 4
@@ -40,7 +42,7 @@ class CorpusCopyError(PaError):
 
 
 def run_eval(
-    corpus: Path | Sequence[Path],
+    corpus: Path | Sequence[Path] | Cut,
     eval_set: EvalSet,
     agent: AgentRunner,
     judge: Judge,
@@ -51,6 +53,10 @@ def run_eval(
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
+
+    `corpus` may be a cut instead (`pa_home.cut`), which is asked as it is, with no ingest: its
+    L0 and its status file are copied into the throwaway data root with nothing in them
+    writable, and the results record the cut in place of the ingest.
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
     one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
@@ -75,12 +81,23 @@ def run_eval(
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
-        _copy_into_inbox(corpus, data_root.inbox)
-        store = FilesystemL0(data_root.l0)
-        with open_catalog(data_root.catalog, store) as catalog:
-            # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
-            summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
-            known = {entry.episode_id for entry in catalog.entries()}
+        counts = None
+        if isinstance(corpus, Cut):
+            _lay_cut(corpus, data_root)
+            store = FilesystemL0(data_root.l0)
+            known = {envelope.episode_id for envelope in store.envelopes()}
+        else:
+            _copy_into_inbox(corpus, data_root.inbox)
+            store = FilesystemL0(data_root.l0)
+            with open_catalog(data_root.catalog, store) as catalog:
+                # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
+                summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
+                known = {entry.episode_id for entry in catalog.entries()}
+            counts = IngestCounts(
+                ingested=summary.ingested,
+                unchanged=summary.unchanged,
+                quarantined=summary.quarantined,
+            )
         laid = None if wiki is None else _lay_wiki(wiki, data_root.wiki)
         checks = None
         if laid is not None:
@@ -105,9 +122,8 @@ def run_eval(
         wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
         injection_checks=checks,
         as_of=eval_set.as_of,
-        ingest=IngestCounts(
-            ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
-        ),
+        ingest=counts,
+        cut=_cut_result(corpus) if isinstance(corpus, Cut) else None,
         overall=Scores.over(questions),
         categories={name: Scores.over(results) for name, results in categories.items()},
         questions=questions,
@@ -218,13 +234,43 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
 
 def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     """Copy the eval wiki's tree to `target`, beside the throwaway L0, with nothing in it
-    writable: no file can be changed, and no directory can take a new file."""
+    writable."""
     shutil.copytree(wiki.tree, target)
-    for directory, _, files in target.walk(top_down=False):
+    _make_read_only(target)
+    return target
+
+
+def _lay_cut(cut: Cut, data_root: DataRoot) -> None:
+    """Copy the cut's L0 and status file into the throwaway data root, with nothing in them
+    writable. Its wiki is laid as the run's eval wiki, if the run has one."""
+    if cut.l0.is_dir():
+        shutil.copytree(cut.l0, data_root.l0)
+    else:
+        data_root.l0.mkdir()
+    _make_read_only(data_root.l0)
+    if cut.status is not None:
+        data_root.status.parent.mkdir()
+        shutil.copyfile(cut.status, data_root.status)
+        _make_read_only(data_root.status.parent)
+
+
+def _cut_result(cut: Cut) -> CutResult:
+    wiki = cut.manifest.wiki
+    return CutResult(
+        name=cut.name,
+        as_of=cut.as_of,
+        episodes=cut.manifest.episodes,
+        wiki_commit=None if wiki is None else wiki.commit,
+    )
+
+
+def _make_read_only(top: Path) -> None:
+    """Leave nothing under `top` writable: no file can be changed, and no directory can take a
+    new file."""
+    for directory, _, files in top.walk(top_down=False):
         for name in files:
             (directory / name).chmod(_READ_ONLY_FILE)
         directory.chmod(_READ_ONLY_DIRECTORY)
-    return target
 
 
 _READ_ONLY_FILE = 0o444
