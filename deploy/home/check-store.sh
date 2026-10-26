@@ -3,7 +3,8 @@
 # agent project says they are and unwritable even by root, and the VM's inbox directory is the
 # only part of the data root it can write; on the devbox, that inbox directory is a filesystem of
 # its own that nothing written into it can run from, and the VM is shared exactly those three
-# directories. Exits non-zero if any check fails.
+# directories. No VM is shared the vault copy or the headless Sync client's state (#87). Exits
+# non-zero if any check fails.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -136,6 +137,14 @@ if [[ $mounts == "$expected" ]]; then
   pass "the VM mounts only $(paste -sd ' ' <<<"$expected")"
 else
   fail "the VM mounts other shares:"$'\n'"$mounts"
+fi
+
+echo "No VM is shared the vault copy or the headless Sync client's state:"
+problems=$(incus query '/1.0/instances?recursion=1' | vault_share_problems)
+if [[ -z $problems ]]; then
+  pass "no VM is shared $PA_VAULT or $PA_VAULT_SYNC_CONFIG, or a directory holding them"
+else
+  while read -r problem; do fail "$problem"; done <<<"$problems"
 fi
 
 exit "$failed"
