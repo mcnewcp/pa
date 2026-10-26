@@ -2016,6 +2016,7 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
         "commit": first["commit"],
         "occurred_from": "2026-09-28T05:00:00+00:00",
         "occurred_to": "2026-10-05T05:00:00+00:00",
+        "window_start": None,
         "episodes": 1,
         "skipped": 0,
         "librarian_version": version,
@@ -2343,6 +2344,101 @@ def test_a_seed_starts_only_a_fresh_wiki_from_one_that_lints_clean(
 
     assert reason in capsys.readouterr().err
     assert (wiki_files(data_root) if (data_root / "wiki").exists() else {}) == before
+
+
+# Replaying a window of L0, for the backfill (#84)
+
+# REPLAYED, plus mail early in the week of 5 Oct, before a window that starts at noon on 6 Oct.
+BEFORE_THE_WINDOW = {
+    **REPLAYED,
+    **wedding_mail("Save the date", "Mon, 5 Oct 2026 09:00:00 -0500"),
+    **wedding_mail("Seating", "Tue, 6 Oct 2026 09:00:00 -0500"),
+}
+WINDOW_START = "2026-10-06T12:00:00"
+
+
+def test_a_windowed_replay_starts_at_the_window_starts_week_and_never_offers_earlier_episodes(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, BEFORE_THE_WINDOW)
+    target = tmp_path / "backfill"
+
+    assert replay(target, "--window-start", WINDOW_START) == 0
+
+    # The hotel mail (the week before) and the mail earlier in the window start's week, the
+    # same day's included, are never offered.
+    assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
+    assert [told_now(s) for s in sessions(data_root, "observation")] == [
+        "2026-10-12T00:00:00-05:00",
+        "2026-10-26T00:00:00-05:00",
+    ]
+    # The first batch is the rest of the window start's week, from the window start.
+    assert [(e["occurred_from"], e["occurred_to"], e["skipped"]) for e in run_log(target)] == [
+        ("2026-10-06T17:00:00+00:00", "2026-10-12T05:00:00+00:00", 0),
+        ("2026-10-19T05:00:00+00:00", "2026-10-26T05:00:00+00:00", 0),
+    ]
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+
+
+def test_a_windowed_replay_resumes_from_its_last_committed_batch_within_its_window(
+    data_root: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, BEFORE_THE_WINDOW)
+    target = tmp_path / "backfill"
+    # The first batch fails, so there's no committed batch yet to resume from.
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "RSVP"}])
+    assert replay(target, "--window-start", WINDOW_START) != 0
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "Menu"}])
+
+    # Resuming keeps the window it started with, given again or not, and refuses another.
+    capsys.readouterr()
+    assert replay(target, "--resume", "--window-start", "2026-09-28T00:00:00") != 0
+    assert "window start" in capsys.readouterr().err
+    assert replay(target, "--resume") != 0
+    script(data_root)
+    assert replay(target, "--resume", "--window-start", WINDOW_START) == 0
+
+    assert observed_subjects(data_root) == [["RSVP"], ["RSVP"], ["Menu"], ["Menu"]]
+    assert [(e["status"], e["occurred_from"][:10]) for e in run_log(target)] == [
+        ("failed", "2026-10-06"),
+        ("committed", "2026-10-06"),
+        ("failed", "2026-10-19"),
+        ("committed", "2026-10-19"),
+    ]
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+
+
+def test_a_wiki_seeded_from_a_windowed_replay_carries_on_from_the_backfills_capture_time(
+    data_root: Path, tmp_path: Path
+):
+    # The backfill: mail from before the window, and the RSVP in it.
+    ingest(data_root, wedding_mail("Save the date", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    ingest(data_root, wedding_mail("RSVP", "Wed, 7 Oct 2026 09:00:00 -0500"))
+    backfill_captured = datetime.now(UTC)
+    target = tmp_path / "backfill"
+    assert replay(target, "--window-start", WINDOW_START) == 0
+    # Captured after the backfill, before the seed.
+    ingest(data_root, wedding_mail("Menu", "Tue, 20 Oct 2026 09:00:00 -0500"))
+
+    assert seed(str(target), "--captured-through", backfill_captured.isoformat()) == 0
+
+    seeded = cursor(data_root)
+    assert seeded is not None
+    captured_at, _, episode_id = seeded.partition(" ")
+    assert datetime.fromisoformat(captured_at) <= backfill_captured
+    assert episode_id.startswith("gmail_")
+    # Neither the mail from before the window nor the RSVP is offered again; only the menu is.
+    assert run_librarian() == 0
+    assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
+    assert wiki_files(data_root)["days/2026-10-07.md"].count("[ep:") == 1
 
 
 # The librarian's sandbox (#66)
