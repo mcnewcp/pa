@@ -185,7 +185,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89): the steps only the owner can do, and
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91): the steps only the owner can do, and
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
@@ -194,7 +194,7 @@ finish() {
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ASSISTANT_STAGES=19
+ASSISTANT_STAGES=18
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
 GMAIL_STAGES=3
@@ -218,9 +218,6 @@ ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
 # The checks below read the whole output: with pipefail, grep -q quitting at the first match
 # would fail the pipeline on the writer's SIGPIPE.
-
-# vm_tagged: the VM is on the tailnet as tag:pa.
-vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep '"tag:pa"' >/dev/null; }
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
@@ -296,30 +293,46 @@ ok "Incus is running"
 pause
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
-stage "Incus storage and bridge"
-say "A btrfs storage pool (snapshots are cheap) and the VM's own bridge, $PA_BRIDGE, IPv4 only."
+stage "Incus storage and bridges"
+say "A btrfs storage pool (snapshots are cheap), and two bridges, IPv4 only:"
+say "- $PA_BRIDGE, the VM's own: no DNS, and an egress ACL ($PA_ACL) on the VM's NIC that lets"
+say "  out TCP 443 to the Anthropic API's range, $PA_API_RANGE, and drops all else;"
+say "- $PA_BUILD_BRIDGE, open, which the VM is built on and leaves before anything is mounted."
 run "$DEPLOY_DIR/incus-setup.sh"
-ok "pool $PA_POOL and bridge $PA_BRIDGE are ready"
+ok "pool $PA_POOL, bridges $PA_BRIDGE and $PA_BUILD_BRIDGE, and ACL $PA_ACL are ready"
 pause
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
-stage "Firewall on the VM's bridge"
-say "Drops everything from the VM to private and tailnet ranges and to the devbox itself,"
-say "except DNS and DHCP. Loads at every boot, before Incus; if it fails, the VM stays down."
+stage "Firewall on the VMs' bridges"
+say "A second fence beside the ACL: from $PA_BRIDGE, only DHCP on the devbox and TCP 443 in the"
+say "API's range; from $PA_BUILD_BRIDGE, DNS and DHCP on the devbox and the internet, but nothing"
+say "of yours. Loads at every boot, before Incus; if it fails, the VMs stay down."
 note "It fences the librarian's bridge too, once that exists (the librarian's stages)."
 run "$DEPLOY_DIR/install-firewall.sh"
 systemctl is-enabled --quiet pa-vm-firewall.service && ok "pa-vm-firewall.service is enabled"
 pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "Create the VM"
-say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, Tailscale installed."
+stage "Create the VM, open"
+say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, no Tailscale. It's built on"
+say "$PA_BUILD_BRIDGE, so cloud-init can refresh the OS and install its packages: the only time it"
+say "reaches a package mirror. Nothing is shared into it, and it holds no credential, until the"
+say "next stage fences it."
 note "The first run downloads the image and waits for cloud-init: a few minutes."
 run "$DEPLOY_DIR/create-vm.sh"
 ok "$PA_VM is running"
 pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
+stage "Fence the VM"
+say "Snapshots the VM, installs its fences while it can still reach a mirror, removes Tailscale"
+say "if it's there, and moves it onto $PA_BRIDGE. The API's two names are pinned into it, since"
+say "it has no DNS, and again at every boot of the devbox (pa-pins@$PA_VM.service)."
+run "$DEPLOY_DIR/fence-vm.sh"
+ok "$PA_VM reaches only the API"
+pause
+
+# ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Seed the instance's data root"
 say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
 say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
@@ -327,7 +340,7 @@ run "$DEPLOY_DIR/seed-data-root.sh"
 ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
 pause
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Give the VM's inbox a filesystem of its own"
 say "The VM writes its inbox directory with its own owners and modes, so root in the VM could"
 say "leave a setuid program or a device node on the devbox, or fill its disk. A $PA_CHAT_INBOX_SIZE"
@@ -336,33 +349,37 @@ run "$DEPLOY_DIR/install-chat-inbox.sh"
 ok "$PA_CHAT_INBOX is its own filesystem"
 pause
 
-# ── 8 ─────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
 say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
 say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
-say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in, and"
+say "nothing at all unless the VM is fenced."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
-say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
-say "pushed to GitHub."
+say "Snapshots the VM, then pushes in, from this checkout, the code at a ref (a git bundle), a"
+say "wheelhouse built here for its lock, uv, and Claude Code $PA_ASSISTANT_CLAUDE_VERSION, checked"
+say "against Anthropic's signature. The VM syncs offline, and renders the agent project into"
+say "$PA_VM_PROJECT. The ref is resolved here: git fetch first to deploy what's on GitHub."
 upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
-default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
+default_ref=${upstream:-HEAD}
 printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
 read -r ref || true
 run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Log the VM in to Claude"
+require_fenced
 if claude_logged_in; then
   ok "Claude Code in $PA_VM is already logged in"
 else
-  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat."
+  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat. The login"
+  say "goes to platform.claude.com, pinned into the VM, and so does every token refresh."
   step "Claude prints a URL below. Open it and sign in with your Claude account."
   step "Paste the code it gives you back here."
   note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
@@ -373,64 +390,32 @@ else
 fi
 pause
 
-# ── 11 ────────────────────────────────────────────────────────────────────
-stage "Tailnet policy"
-say "The VM will join as tag:pa. The policy must let your devices reach it and each other,"
-say "and let tag:pa reach nothing."
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa; skipping"
-else
-  open_url "https://login.tailscale.com/admin/acls/file"
-  step "In the policy file, merge in the three parts shown below:"
-  step "tagOwners: add tag:pa, owned by autogroup:admin."
-  step "grants: delete any rule whose src is \"*\" (the default allow-all is one), and add"
-  step "  the two grants: your devices to autogroup:self, and your devices to tag:pa."
-  step "ssh: add the rule letting your devices in to tag:pa as user assistant. Keep your"
-  step "  existing ssh rules."
-  step "Save. The console rejects a policy that doesn't parse."
-  printf '\n'
-  sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
-  printf '\n'
-  pause "Press Enter once the policy is saved"
-fi
-
 # ── 12 ────────────────────────────────────────────────────────────────────
-stage "Join the VM to the tailnet as tag:pa"
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa"
+stage "Take the VM off the tailnet"
+say "The VM has no Tailscale identity any more: you reach it with incus exec from the devbox."
+say "Your tailnet's policy and machine list may still name it from before."
+open_url "https://login.tailscale.com/admin/machines"
+step "Machines: if $PA_VM is listed, open its menu and Remove it."
+open_url "https://login.tailscale.com/admin/acls/file"
+step "Access controls: delete everything naming tag:pa: its tagOwners entry, the grant from"
+step "  your devices to tag:pa, and the ssh rule into tag:pa as assistant. Keep the grant that"
+step "  lets your devices reach each other; the result has the shape shown below."
+step "Save. The console rejects a policy that doesn't parse."
+printf '\n'
+sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
+printf '\n'
+if confirm "Is $PA_VM gone from the machines, and tag:pa from the policy?"; then
+  ok "the tailnet no longer knows $PA_VM"
 else
-  say "The VM asks to join; Tailscale prints a login URL below."
-  step "Open the URL, log in as yourself (you own tag:pa, so the VM joins tagged)."
-  step "The command returns once you've approved it."
-  printf '\n'
-  run incus exec "$PA_VM" -- tailscale up --advertise-tags=tag:pa --ssh --hostname="$PA_VM"
-  vm_tagged || { printf '  %s✗ %s isn'"'"'t tagged tag:pa%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
-  ok "$PA_VM joined as tag:pa"
+  SKIPPED+=("take $PA_VM off the tailnet: remove the machine and every tag:pa rule")
 fi
-note "Tagged devices don't expire; the VM reconnects on its own after reboots."
 pause
 
 # ── 13 ────────────────────────────────────────────────────────────────────
-stage "Check your devices"
-say "Your devices still reach each other (from the devbox):"
-while read -r ip host; do
-  if ping -c1 -W2 "$ip" >/dev/null 2>&1; then ok "$host ($ip)"; else warn "$host ($ip) doesn't answer (asleep?)"; fi
-done < <(tailscale status | awk -v vm="$PA_VM" '$1 ~ /^100\./ && $2 != vm && !/offline/ {print $1, $2}')
-printf '\n'
-say "Now from the Mac:"
-step "ssh $PA_USER@$PA_VM   (expect a prompt $PA_USER@$PA_VM; then exit)"
-step "ssh devbox            (your devices still reach the devbox)"
-if confirm "Did both work?"; then
-  ok "SSH over Tailscale works"
-else
-  SKIPPED+=("SSH from the Mac: check the tailnet policy (stage 7) and re-run")
-fi
-pause
-
-# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
-say "From inside the VM: the devbox, its Docker services, the LAN and tailnet peers must be"
-say "unreachable, and the internet and Anthropic's API reachable."
+say "From inside the VM: the web, the devbox, its Docker services, the LAN and tailnet peers"
+say "must be unreachable, with no DNS and no Tailscale, and only Anthropic's API reachable; and"
+say "every other fence: the managed settings, the sandbox, the read-only project."
 printf '\n'
 if "$DEPLOY_DIR/check-isolation.sh"; then
   ok "every fence holds"
@@ -438,8 +423,7 @@ else
   SKIPPED+=("isolation check failed: fix and re-run deploy/home/check-isolation.sh")
 fi
 pause
-
-# ── 15 ────────────────────────────────────────────────────────────────────
+# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
 say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
@@ -452,7 +436,7 @@ else
 fi
 pause
 
-# ── 16 ────────────────────────────────────────────────────────────────────
+# ── 15 ────────────────────────────────────────────────────────────────────
 stage "Trust the agent project"
 if project_trusted; then
   ok "Claude Code in $PA_VM already trusts $PA_VM_PROJECT"
@@ -470,7 +454,7 @@ else
 fi
 pause
 
-# ── 17 ────────────────────────────────────────────────────────────────────
+# ── 16 ────────────────────────────────────────────────────────────────────
 stage "Turn on Remote Control"
 if remote_control_consented; then
   ok "Remote Control is already turned on in $PA_VM"
@@ -487,7 +471,7 @@ else
 fi
 pause
 
-# ── 18 ────────────────────────────────────────────────────────────────────
+# ── 17 ────────────────────────────────────────────────────────────────────
 stage "Start the Remote Control service"
 say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
 say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
@@ -500,7 +484,7 @@ else
 fi
 pause
 
-# ── 19 ────────────────────────────────────────────────────────────────────
+# ── 18 ────────────────────────────────────────────────────────────────────
 stage "Find the assistant on your phone"
 say "The Claude app and claude.ai/code list the VM under its hostname and the project folder."
 open_url "https://claude.ai/code"

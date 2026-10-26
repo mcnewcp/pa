@@ -3,31 +3,45 @@
 # shellcheck shell=bash disable=SC2034,SC2032,SC2033
 
 # The devbox runs two VMs: the assistant's (pa-home) and the librarian's (pa-librarian). PA_VM,
-# PA_PROFILE, PA_BRIDGE and PA_USER name the one a script works on: the assistant's, unless the
-# script takes --vm and is given another (take_vm_option).
-PA_ASSISTANT_VM=pa-home
+# PA_PROFILE, PA_BRIDGE, PA_ACL and PA_USER name the one a script works on: the assistant's,
+# unless the script takes --vm and is given another (take_vm_option).
+#
+# Both VMs are fenced alike (#91, docs/research/assistant-fences-spike.md): no Tailscale, a bridge
+# of their own with no DNS (its dnsmasq serves DHCP only), and an Incus ACL on the NIC that lets
+# out TCP 443 to the Anthropic API's published inbound range and drops everything else, both ways.
+# PA_ASSISTANT_VM can name another VM, for a throwaway rebuild beside the live one.
+PA_ASSISTANT_VM=${PA_ASSISTANT_VM:-pa-home}
 PA_ASSISTANT_PROFILE=pa
 PA_ASSISTANT_BRIDGE=pabr0
+PA_ASSISTANT_ACL=pa-home-egress
 PA_ASSISTANT_USER=assistant
+# The assistant's VM is built on this bridge, open to the internet (but nothing of the owner's),
+# so cloud-init can refresh the OS and install its packages. fence-vm.sh moves it onto its own
+# bridge before any share or credential is given it (mount-store.sh refuses an unfenced VM).
+PA_BUILD_BRIDGE=pabuild0
 PA_VM=$PA_ASSISTANT_VM
 PA_PROFILE=$PA_ASSISTANT_PROFILE
 PA_POOL=pa
 PA_POOL_SIZE=120GiB
 PA_BRIDGE=$PA_ASSISTANT_BRIDGE
+PA_ACL=$PA_ASSISTANT_ACL
 PA_IMAGE=images:ubuntu/26.04/cloud
-PA_REPO_URL=https://github.com/mcnewcp/pa.git
 PA_USER=$PA_ASSISTANT_USER
 PA_VM_ROLE=assistant
 # The code in the assistant's VM, and the venv its hooks run with: root's, and read-only to the
-# assistant, like the interpreters uv installs for it (#92). uv itself is root's too.
+# assistant (#92). uv itself is root's too, the devbox's own, pushed in. The VM reaches no index
+# or git host (#91), so update.sh pushes the code as a git bundle and its dependencies as a
+# wheelhouse (a uv cache), both removed once installed, and the venv runs on the VM's own Python.
 PA_REPO_DIR=/opt/pa
-PA_VM_PYTHON_DIR=/opt/pa-python
 PA_VM_UV=/usr/local/bin/uv
+PA_VM_SYSTEM_PYTHON=/usr/bin/python3
 PA_VM_HOOK_PYTHON=$PA_REPO_DIR/.venv/bin/python
+PA_VM_BUNDLE=/var/cache/pa/pa.bundle
+PA_VM_WHEELHOUSE=/var/cache/pa/wheelhouse
+# Where uv put interpreters it downloaded before #91; the isolation check still holds it to root.
+PA_VM_PYTHON_DIR=/opt/pa-python
 
-# The librarian's VM: no Tailscale, a bridge of its own with no DNS (its dnsmasq serves DHCP
-# only), and an Incus ACL on its NIC that lets out TCP 443 to the Anthropic API's published
-# inbound range and drops everything else, both ways (docs/research/librarian-sandbox-spike.md).
+# The librarian's VM, fenced as the assistant's (docs/research/librarian-sandbox-spike.md).
 PA_LIBRARIAN_VM=pa-librarian
 PA_LIBRARIAN_PROFILE=pa-librarian
 PA_LIBRARIAN_BRIDGE=palib0
@@ -36,6 +50,10 @@ PA_LIBRARIAN_USER=librarian
 # https://platform.claude.com/docs/en/api/ip-addresses. The check fails if it ever moves.
 PA_API_HOST=api.anthropic.com
 PA_API_RANGE=160.79.104.0/23
+# The names the assistant's VM is pinned (pin-hosts.sh), since its bridge has no DNS either: the
+# API, which its sessions and Remote Control use, and the host of the login's OAuth exchange and
+# every token refresh (docs/research/assistant-fences-spike.md). Both resolve into PA_API_RANGE.
+PA_VM_PINNED_HOSTS=("$PA_API_HOST" platform.claude.com)
 # Claude Code in the librarian's VM: a pinned release, downloaded and verified on the devbox (its
 # manifest's signature, by Anthropic's key, and the binary's checksum) and pushed in by
 # update.sh --vm librarian. Bump it deliberately: a new release can add tools.
@@ -172,8 +190,23 @@ PA_ASSISTANT_TOOLS=(Bash Edit Read ToolSearch Write)
 PA_VM_SANDBOX_PACKAGES=(bubblewrap socat apparmor)
 PA_VM_BWRAP_PROFILE=/etc/apparmor.d/pa-bwrap
 PA_VM_UBUNTU_BWRAP_PROFILE=/etc/apparmor.d/bwrap-userns-restrict
-# Claude Code in the VM, and the unit that runs Remote Control in the agent project.
-PA_VM_CLAUDE=/home/assistant/.local/bin/claude
+# What would only knock on the fence (#91), masked so nothing starts it: apt's lists, upgrades and
+# unattended upgrades (the OS is refreshed by rebuilding the VM), the clock's sync (it comes from
+# the hypervisor), and Ubuntu's news and Pro timers. Masking a unit the image lacks is harmless.
+PA_VM_QUIET_UNITS=(
+  apt-daily.timer apt-daily.service apt-daily-upgrade.timer apt-daily-upgrade.service
+  unattended-upgrades.service systemd-timesyncd.service motd-news.timer motd-news.service
+  ua-timer.timer esm-cache.service fwupd-refresh.timer
+)
+PA_VM_APT_NO_PERIODIC=/etc/apt/apt.conf.d/99-pa-no-periodic
+# Claude Code in the VM: a pinned release, downloaded and verified on the devbox like the
+# librarian's and pushed in by update.sh, root's. Bump it deliberately: a new release can add tools
+# (the isolation check fails on any it doesn't expect). 2.1.308 is the release #81's spike proved
+# the fences on. Before #91 the assistant installed its own, at the first of PA_VM_OLD_CLAUDE.
+PA_ASSISTANT_CLAUDE_VERSION=2.1.308
+PA_VM_CLAUDE=/usr/local/bin/claude
+PA_VM_OLD_CLAUDE=(/home/assistant/.local/bin/claude /home/assistant/.local/share/claude)
+# The unit that runs Remote Control in the agent project.
 PA_VM_RC_UNIT=pa-remote-control.service
 
 # The store's shares into the VM, and nothing else of the data root: each one's Incus device,
@@ -201,6 +234,9 @@ PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
 # The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.
 PA_ASSISTANT_MANAGED_SETTINGS=$DEPLOY_DIR/managed-settings.json
 PA_BWRAP_PROFILE=$DEPLOY_DIR/apparmor/pa-bwrap
+PA_APT_NO_PERIODIC=$DEPLOY_DIR/apt-no-periodic.conf
+# The selected VM's egress ACL, as `incus network acl edit` takes it (select_vm repoints it).
+PA_ACL_FILE=$DEPLOY_DIR/egress-acl.json
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -212,10 +248,12 @@ select_vm() {
     assistant)
       PA_VM=$PA_ASSISTANT_VM PA_PROFILE=$PA_ASSISTANT_PROFILE PA_BRIDGE=$PA_ASSISTANT_BRIDGE
       PA_USER=$PA_ASSISTANT_USER PA_VM_PROFILE_FILE=$DEPLOY_DIR/profile.yaml
+      PA_ACL=$PA_ASSISTANT_ACL PA_ACL_FILE=$DEPLOY_DIR/egress-acl.json
       ;;
     librarian)
       PA_VM=$PA_LIBRARIAN_VM PA_PROFILE=$PA_LIBRARIAN_PROFILE PA_BRIDGE=$PA_LIBRARIAN_BRIDGE
       PA_USER=$PA_LIBRARIAN_USER PA_VM_PROFILE_FILE=$DEPLOY_DIR/librarian/profile.yaml
+      PA_ACL=$PA_LIBRARIAN_ACL PA_ACL_FILE=$DEPLOY_DIR/librarian/egress-acl.json
       ;;
     *) die "no VM named $1: --vm takes assistant or librarian" ;;
   esac
@@ -363,6 +401,48 @@ for source, device in shared.items():
 ' "$@"
 }
 
+# vm_fence_problems reads the selected VM as `incus query /1.0/instances/<vm>` prints it, and
+# prints each way its network isn't fenced, one per line: a NIC on any bridge but PA_BRIDGE (the
+# open build bridge, say), or without the egress ACL PA_ACL, or letting through what the ACL
+# doesn't name, either way. It prints nothing when the VM is fenced.
+vm_fence_problems() {
+  python3 -c '
+import json, sys
+bridge, acl = sys.argv[1:]
+devices = json.load(sys.stdin).get("expanded_devices") or {}
+nics = {name: d for name, d in sorted(devices.items()) if d.get("type") == "nic"}
+if not nics:
+    print("it has no NIC")
+for name, nic in nics.items():
+    network = nic.get("network") or nic.get("parent") or "no bridge"
+    if network != bridge:
+        print(f"its NIC {name} is on {network}, not {bridge}")
+    if acl not in nic.get("security.acls", "").split(","):
+        print(f"its NIC {name} lacks the egress ACL {acl}")
+    if nic.get("security.acls.default.egress.action") != "drop":
+        print(f"its NIC {name} doesn'"'"'t drop what its ACL doesn'"'"'t let out")
+    if nic.get("security.acls.default.ingress.action") != "drop":
+        print(f"its NIC {name} doesn'"'"'t drop what its ACL doesn'"'"'t let in")
+' "$PA_BRIDGE" "$PA_ACL"
+}
+
+# require_fenced stops unless the selected VM is fenced (vm_fence_problems): nothing of the store
+# and no credential goes into a VM that can reach more than the API.
+require_fenced() {
+  local problems
+  problems=$(incus query "/1.0/instances/$PA_VM" </dev/null | vm_fence_problems) ||
+    die "can't read $PA_VM's devices"
+  [[ -z $problems ]] ||
+    die "$PA_VM isn't fenced (${problems//$'\n'/; }): run fence-vm.sh first"
+}
+
+# render_pins_unit prints the devbox's unit that runs pin-hosts.sh for a VM (pa-pins@<vm>) at
+# every boot, as the devbox user.
+render_pins_unit() {
+  sed -e "s|@USER@|$USER|g" -e "s|@PIN_HOSTS@|$DEPLOY_DIR/pin-hosts.sh|g" \
+    "$DEPLOY_DIR/pa-pins@.service"
+}
+
 # render_vault_sync_unit prints the vault sync unit (vault-sync/pa-vault-sync.service), for the
 # devbox user, with the client installed under PA_VAULT_SYNC_DIR.
 render_vault_sync_unit() {
@@ -399,10 +479,28 @@ for vm in sorted(json.load(sys.stdin), key=lambda vm: vm["name"]):
 ' "$@"
 }
 
-# api_address prints the first IPv4 address PA_API_HOST resolves to on the devbox that lies in
-# PA_API_RANGE, the only addresses the librarian's VM can reach. It fails if none does.
-api_address() {
-  getent ahostsv4 "$PA_API_HOST" | awk '{print $1}' | in_api_range | awk 'NR == 1 {print; found = 1} END {exit !found}'
+# pinned_address HOST prints the first IPv4 address HOST resolves to on the devbox that lies in
+# PA_API_RANGE, the only addresses the fenced VMs can reach. It fails if none does.
+pinned_address() {
+  getent ahostsv4 "$1" | awk '{print $1}' | in_api_range | awk 'NR == 1 {print; found = 1} END {exit !found}'
+}
+
+# api_address: pinned_address for PA_API_HOST, the one name the librarian's sessions need.
+api_address() { pinned_address "$PA_API_HOST"; }
+
+# hosts_with_pins "ADDRESS HOST"... reads an /etc/hosts and prints it with each HOST pinned at its
+# ADDRESS: every line naming a HOST is dropped, and the pins are added at the end.
+hosts_with_pins() {
+  python3 -c '
+import sys
+pins = [pin.split() for pin in sys.argv[1:]]
+hosts = {host for _, host in pins}
+for line in sys.stdin:
+    if not hosts & set(line.split("#", 1)[0].split()[1:]):
+        sys.stdout.write(line)
+for address, host in pins:
+    print(address, host)
+' "$@"
 }
 
 # in_api_range prints each address on stdin, one per line, that lies in PA_API_RANGE.
@@ -458,6 +556,93 @@ wait_for_agent() {
     sleep 2
   done
   die "the $PA_VM agent didn't come up within 2 minutes"
+}
+
+# make_bundle REPO COMMIT OUT writes a git bundle of COMMIT, from the checkout REPO, to OUT, with
+# COMMIT as its branch `deploy` (install-code.sh fetches that). It goes through a scratch bare
+# repository, since a bundle names a branch and REPO's own are left alone.
+make_bundle() {
+  local repo=$1 commit=$2 out=$3 scratch status=0
+  scratch=$(mktemp -d)
+  {
+    git init --quiet --bare "$scratch/repo.git" &&
+      git -C "$repo" push --quiet --no-verify "$scratch/repo.git" "$commit:refs/heads/deploy" &&
+      git -C "$scratch/repo.git" bundle create --quiet "$out" deploy
+  } || status=$?
+  rm -rf "$scratch"
+  return "$status"
+}
+
+# build_wheelhouse REPO COMMIT PYTHON OUT fills OUT, a uv cache, with every dependency COMMIT's
+# lock names (the dev group aside) for Python PYTHON (X.Y), by syncing a scratch copy of COMMIT,
+# from the checkout REPO, on the devbox. install-code.sh syncs the VM's venv from it offline, with
+# the same uv, which reads the cache as this one wrote it.
+build_wheelhouse() {
+  local repo=$1 commit=$2 python=$3 out=$4 source status=0
+  source=$(mktemp -d)
+  {
+    git -C "$repo" archive "$commit" | tar -x -C "$source" &&
+      UV_CACHE_DIR=$out uv sync --quiet --locked --no-dev --project "$source" --python "$python"
+  } || status=$?
+  rm -rf "$source"
+  return "$status"
+}
+
+# claude_code_binary VERSION prints the path of Claude Code VERSION's linux-x64 binary on the
+# devbox, downloading the release into PA_CLAUDE_CACHE unless it's there already: its manifest,
+# the manifest's signature and the binary. It checks the signature against Anthropic's key, by the
+# fingerprint PA_CLAUDE_KEY_FINGERPRINT pins, and the binary against the manifest's checksum, and
+# stops, printing nothing, unless both check out. The VMs never reach the download host: the
+# binary is pushed into them.
+claude_code_binary() {
+  local version=$1 cache binary file
+  cache=$PA_CLAUDE_CACHE/$version
+  binary=$cache/claude-linux-x64
+  if [[ -f $binary ]] && _claude_code_verified "$version" "$cache" "$binary"; then
+    log "Claude Code $version is downloaded and verified"
+  else
+    log "downloading Claude Code $version"
+    mkdir -p "$cache"
+    for file in manifest.json manifest.json.sig; do
+      curl -fsSL -o "$cache/$file" "$PA_CLAUDE_RELEASES/$version/$file"
+    done
+    curl -fsSL -o "$cache/claude-code.asc" "$PA_CLAUDE_KEY_URL"
+    curl -fsSL -o "$binary.part" "$PA_CLAUDE_RELEASES/$version/linux-x64/claude"
+    mv "$binary.part" "$binary"
+    _claude_code_verified "$version" "$cache" "$binary" || exit 1
+    log "Claude Code $version: the manifest's signature and the binary's checksum check out"
+  fi
+  printf '%s\n' "$binary"
+}
+
+# _claude_code_verified VERSION CACHE BINARY: the manifest in CACHE is signed by Anthropic's key
+# and names VERSION, and BINARY is the one it names. It says why not on stderr.
+_claude_code_verified() {
+  local version=$1 cache=$2 binary=$3 gnupghome status=0
+  gnupghome=$(mktemp -d)
+  (
+    export GNUPGHOME=$gnupghome
+    gpg --quiet --batch --import "$cache/claude-code.asc" 2>/dev/null
+    # The key must be the one the fingerprint pins, whatever the download host serves.
+    gpg --batch --with-colons --fingerprint | grep -qx "fpr:::::::::$PA_CLAUDE_KEY_FINGERPRINT:" || {
+      log "the key at $PA_CLAUDE_KEY_URL isn't $PA_CLAUDE_KEY_FINGERPRINT"
+      exit 1
+    }
+    gpg --batch --status-fd 1 --verify "$cache/manifest.json.sig" "$cache/manifest.json" 2>/dev/null |
+      grep -q "^\[GNUPG:\] VALIDSIG $PA_CLAUDE_KEY_FINGERPRINT " || {
+      log "the manifest for $version isn't signed by $PA_CLAUDE_KEY_FINGERPRINT"
+      exit 1
+    }
+  ) || status=$?
+  rm -rf "$gnupghome"
+  ((status == 0)) || return 1
+  python3 - "$cache/manifest.json" "$binary" "$version" <<'PY' || { log "the binary doesn't match the signed manifest for $version"; return 1; }
+import hashlib, json, sys
+manifest, binary, version = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+platform = manifest["platforms"]["linux-x64"]
+digest = hashlib.sha256(open(binary, "rb").read()).hexdigest()
+sys.exit(0 if manifest["version"] == version and digest == platform["checksum"] else 1)
+PY
 }
 
 # PA_LIBRARIAN_TOOLS: the only tools a librarian session may have, whatever its flags.

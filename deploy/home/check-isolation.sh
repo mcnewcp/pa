@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Checks the PA VM's fences from inside the VM:
+# Checks the assistant VM's fences from inside the VM:
 #
-# - the network: the devbox, its containers, the LAN, tailnet peers and IPv6 unreachable. Each
-#   target the VM must not reach is first probed from the devbox as a control: a target the
+# - the network (#91): its NIC on its own bridge behind the repo's egress ACL, and no DNS on the
+#   bridge; the devbox, its containers, the LAN, tailnet peers, the web (by name or address) and
+#   IPv6 unreachable; no Tailscale in the VM; and the API's pinned names, in its range, answering.
+#   Each target the VM must not reach is first probed from the devbox as a control: a target the
 #   devbox can't reach either is skipped, since failing to reach it from the VM proves nothing. A
 #   TCP probe counts as blocked only if it times out; a refusal means a packet got there;
+# - nothing that knocks on the fence: the OS's own updates and clock sync masked, and Claude Code
+#   the pinned release, root's, with no copy of the assistant's own left;
 # - the managed settings: the repo's, root's and mode 0644, with the assistant's user settings a
 #   root-owned {} (#92);
 # - the read-only project: the agent project, its hook, the code and the interpreter the hook
@@ -25,6 +29,7 @@ pass() { printf '  PASS  %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; failed=1; }
 skip() { printf '  skip  %s\n' "$*"; }
 
+in_vm() { incus exec "$PA_VM" -- "$@" </dev/null; }
 tcp_from_devbox() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; }
 ping_from_devbox() { ping -c1 -W2 "$1" >/dev/null 2>&1; }
 
@@ -32,7 +37,7 @@ ping_from_devbox() { ping -c1 -W2 "$1" >/dev/null 2>&1; }
 expect_tcp_blocked() {
   local label=$1 ip=$2 port=$3 status=0
   tcp_from_devbox "$ip" "$port" || { skip "$label ($ip:$port): not reachable from the devbox either"; return; }
-  incus exec "$PA_VM" -- timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null || status=$?
+  in_vm timeout 3 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null || status=$?
   case $status in
     124) pass "$label ($ip:$port) unreachable" ;;
     0) fail "$label ($ip:$port) reachable from the VM" ;;
@@ -44,24 +49,35 @@ expect_tcp_blocked() {
 expect_ping_blocked() {
   local label=$1 ip=$2
   ping_from_devbox "$ip" || { skip "$label ($ip): doesn't answer ping from the devbox either"; return; }
-  if incus exec "$PA_VM" -- ping -c1 -W2 "$ip" >/dev/null 2>&1; then
+  if in_vm ping -c1 -W2 "$ip" >/dev/null 2>&1; then
     fail "$label ($ip) answers ping from the VM"
   else
     pass "$label ($ip) unreachable"
   fi
 }
 
-# expect_https LABEL URL
-expect_https() {
-  if incus exec "$PA_VM" -- curl -sS -o /dev/null -m 10 "$2"; then
-    pass "$1 ($2) reachable"
-  else
-    fail "$1 ($2) unreachable from the VM"
-  fi
-}
+echo "$PA_VM is fenced: its NIC on $PA_BRIDGE behind $PA_ACL, and no DNS on the bridge:"
+if ! problems=$(incus query "/1.0/instances/$PA_VM" | vm_fence_problems); then
+  fail "can't read $PA_VM's devices"
+elif [[ -n $problems ]]; then
+  while read -r problem; do fail "$PA_VM: $problem (run fence-vm.sh)"; done <<<"$problems"
+else
+  pass "its only NIC is on $PA_BRIDGE, behind $PA_ACL, dropping all else both ways"
+fi
+if incus query "/1.0/network-acls/$PA_ACL" | acl_differs "$PA_ACL_FILE"; then
+  fail "the ACL $PA_ACL differs from the repo's $PA_ACL_FILE (run incus-setup.sh)"
+else
+  pass "the ACL $PA_ACL is the repo's: only TCP 443 to $PA_API_RANGE"
+fi
+bridge_ip=$(incus network get "$PA_BRIDGE" ipv4.address); bridge_ip=${bridge_ip%/*}
+# Nothing to probe: the bridge's dnsmasq doesn't listen on port 53 at all.
+if ss -Hlnut "sport = :53" | awk '{print $5}' | grep -q "^$bridge_ip:"; then
+  fail "something listens for DNS on the bridge ($bridge_ip:53) (run incus-setup.sh)"
+else
+  pass "nothing listens for DNS on the bridge ($bridge_ip:53)"
+fi
 
 echo "From $PA_VM, the devbox is unreachable:"
-bridge_ip=$(incus network get "$PA_BRIDGE" ipv4.address); bridge_ip=${bridge_ip%/*}
 lan_ip=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
 expect_tcp_blocked "devbox SSH via the bridge" "$bridge_ip" 22
 expect_tcp_blocked "devbox SSH via its LAN address" "$lan_ip" 22
@@ -91,28 +107,98 @@ fi
 echo "From $PA_VM, the LAN is unreachable:"
 expect_ping_blocked "LAN gateway" "$(ip -4 route show default | awk '{print $3; exit}')"
 
-echo "From $PA_VM, tailnet peers are unreachable:"
+echo "$PA_VM has no Tailscale, and tailnet peers are unreachable:"
+if in_vm sh -c 'command -v tailscale' >/dev/null 2>&1; then
+  fail "tailscale is installed in $PA_VM (run fence-vm.sh)"
+else
+  pass "no tailscale in $PA_VM"
+fi
+if in_vm ip link show tailscale0 >/dev/null 2>&1; then
+  fail "$PA_VM has a tailscale0 interface"
+else
+  pass "no tailscale0 interface in $PA_VM"
+fi
 if command -v tailscale >/dev/null; then
-  # The probe's incus exec gets /dev/null, or it would swallow the rest of the peer list.
   while read -r ip host; do
-    expect_ping_blocked "tailnet peer $host" "$ip" </dev/null
+    expect_ping_blocked "tailnet peer $host" "$ip"
   done < <(tailscale status | awk -v vm="$PA_VM" '$1 ~ /^100\./ && $2 != vm && !/offline/ {print $1, $2}')
 else
   skip "tailscale isn't installed on the devbox"
 fi
 
-echo "From $PA_VM, IPv6 goes nowhere:"
-if incus exec "$PA_VM" -- curl -6 -s -o /dev/null -m 5 https://example.com; then
-  fail "the VM reaches the internet over IPv6"
+echo "From $PA_VM, the web is unreachable:"
+if in_vm getent hosts example.com >/dev/null 2>&1; then
+  fail "example.com resolves in the VM: it has DNS"
 else
+  pass "example.com doesn't resolve: no DNS"
+fi
+for site in example.com wikipedia.org; do
+  web=$(getent ahostsv4 "$site" | awk 'NR == 1 {print $1}')
+  if [[ -n $web ]]; then
+    expect_tcp_blocked "$site by address" "$web" 443
+    expect_tcp_blocked "$site by address" "$web" 80
+  else
+    skip "$site doesn't resolve on the devbox either"
+  fi
+done
+if [[ -z $(in_vm ip -6 route show default) ]]; then
   pass "no IPv6 route out"
+else
+  fail "the VM has an IPv6 default route"
 fi
 
-echo "From $PA_VM, the internet is reachable:"
-expect_https "public internet" https://example.com
-expect_https "Anthropic API" https://api.anthropic.com
+echo "From $PA_VM, the Anthropic API is reachable, at its pinned names:"
+api=""
+for host in "${PA_VM_PINNED_HOSTS[@]}"; do
+  address=$(in_vm getent hosts "$host" | awk 'NR == 1 {print $1}')
+  if [[ -n $address && -n $(in_api_range <<<"$address") ]]; then
+    pass "$host is pinned at $address, in $PA_API_RANGE"
+    api=${api:-$address}
+  else
+    fail "$host isn't pinned in the VM at an address in $PA_API_RANGE (got '${address:-nothing}'; run pin-hosts.sh)"
+  fi
+  # Any HTTP answer will do: the request reached the host and TLS checked out for its name.
+  if in_vm curl -sS -o /dev/null -m 10 "https://$host" 2>/dev/null; then
+    pass "https://$host answers"
+  else
+    fail "https://$host doesn't answer the VM (has the API's range moved?)"
+  fi
+done
+[[ -n $api ]] && expect_tcp_blocked "the API's address on another port" "$api" 80
 
-in_vm() { incus exec "$PA_VM" -- "$@"; }
+echo "In $PA_VM, nothing knocks on the fence:"
+loose=()
+for unit in "${PA_VM_QUIET_UNITS[@]}"; do
+  [[ $(in_vm systemctl is-enabled "$unit" 2>/dev/null) == masked ]] || loose+=("$unit")
+done
+if ((${#loose[@]} == 0)); then
+  pass "the OS's own updates, clock sync and news timers are masked"
+else
+  fail "not masked: ${loose[*]} (run update.sh)"
+fi
+if in_vm test -f "$PA_VM_APT_NO_PERIODIC"; then
+  pass "apt's periodic runs are off ($PA_VM_APT_NO_PERIODIC)"
+else
+  fail "$PA_VM_APT_NO_PERIODIC is missing (run update.sh)"
+fi
+installed=$(in_vm runuser -u "$PA_USER" -- "$PA_VM_CLAUDE" --version 2>/dev/null || true)
+if [[ $installed == "$PA_ASSISTANT_CLAUDE_VERSION "* ]]; then
+  pass "Claude Code $PA_ASSISTANT_CLAUDE_VERSION, the pinned release"
+else
+  fail "Claude Code is '${installed:-missing}', not $PA_ASSISTANT_CLAUDE_VERSION (run update.sh)"
+fi
+owner=$(in_vm stat -c '%U %a' "$PA_VM_CLAUDE" 2>/dev/null || true)
+if [[ $owner == "root 755" ]]; then
+  pass "$PA_VM_CLAUDE is root's, mode 755"
+else
+  fail "$PA_VM_CLAUDE is '${owner:-missing}', not root's with mode 755 (run update.sh)"
+fi
+if in_vm test -e "${PA_VM_OLD_CLAUDE[0]}"; then
+  fail "the assistant's own Claude Code is still at ${PA_VM_OLD_CLAUDE[0]} (run update.sh)"
+else
+  pass "no Claude Code of the assistant's own"
+fi
+
 # as_assistant_quietly COMMAND... runs COMMAND in the VM as the assistant; its status is the result.
 as_assistant_quietly() { incus exec "$PA_VM" -- runuser -u "$PA_USER" -- "$@" >/dev/null 2>&1; }
 # assistant_claude ARG... runs Claude Code in the VM as the assistant, in the agent project, as a

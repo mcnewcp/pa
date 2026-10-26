@@ -8,7 +8,7 @@ nft -f /etc/pa/pa-vm.nft
 
 if iptables -n -L DOCKER-USER >/dev/null 2>&1; then
   rules=()
-  for bridge in pabr0 palib0; do
+  for bridge in pabr0 palib0 pabuild0; do
     rules+=(
       "-i $bridge -j ACCEPT"
       "-o $bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"

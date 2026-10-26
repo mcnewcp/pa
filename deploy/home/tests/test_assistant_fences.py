@@ -218,6 +218,30 @@ def test_the_sandboxs_packages_are_installed_only_when_missing(tmp_path: Path):
     assert apt[-3:] == ["bubblewrap", "socat", "apparmor"]
 
 
+def test_the_oss_own_updates_and_clock_sync_are_masked_so_nothing_knocks_on_the_fence(
+    tmp_path: Path,
+):
+    calls = install(tmp_path)
+
+    [mask] = [c["argv"] for c in calls if "mask" in c["argv"]]
+    [stop] = [c["argv"] for c in calls if "stop" in c["argv"]]
+    assert mask[:5] == ["exec", "pa-home", "--", "systemctl", "mask"]
+    assert stop[:5] == ["exec", "pa-home", "--", "systemctl", "stop"]
+    for unit in (
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer",
+        "unattended-upgrades.service",
+        "systemd-timesyncd.service",
+    ):
+        assert unit in mask
+        assert unit in stop
+    source, options = pushed(calls, "pa-home/etc/apt/apt.conf.d/99-pa-no-periodic")
+    assert options == ["--quiet", "--uid", "0", "--gid", "0", "--mode", "0644"]
+    periodic = Path(source).read_text()
+    assert 'APT::Periodic::Update-Package-Lists "0";' in periodic
+    assert 'APT::Periodic::Unattended-Upgrade "0";' in periodic
+
+
 def test_the_assistants_layout_is_made_as_root(tmp_path: Path):
     [layout] = [
         c for c in install(tmp_path) if c["stdin"] == (DEPLOY / "assistant-layout.sh").read_text()

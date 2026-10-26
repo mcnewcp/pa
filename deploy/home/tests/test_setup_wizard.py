@@ -43,6 +43,22 @@ def test_each_group_counts_its_stages(function: str, variable: str):
     assert declared(variable) == stages_in(function)
 
 
+def test_the_vm_is_built_open_then_fenced_before_the_store_or_a_credential_goes_in():
+    """A rebuild never exposes the store or the login to an open network (#91)."""
+    body = text()
+
+    def at(snippet: str) -> int:
+        assert body.count(snippet) == 1, snippet
+        return body.index(snippet)
+
+    create = at('run "$DEPLOY_DIR/create-vm.sh"\n')
+    fence = at('run "$DEPLOY_DIR/fence-vm.sh"\n')
+    mount = at('run "$DEPLOY_DIR/mount-store.sh"\n')
+    login = at('-c "$PA_VM_CLAUDE auth login"')
+    assert create < fence < mount < login
+    assert "tailscale up" not in body
+
+
 def test_the_wizard_parses():
     result = subprocess.run(["bash", "-n", str(WIZARD)], capture_output=True, text=True)
 

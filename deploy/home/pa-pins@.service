@@ -1,0 +1,17 @@
+[Unit]
+Description=Pin the Anthropic API's names into the PA VM %i, which has no DNS (pin-hosts.sh)
+# After Incus has started the VMs that start at boot. The pins from the VM's last start are still
+# in its /etc/hosts until then; this checks them against what the names resolve to now.
+Wants=network-online.target
+After=network-online.target incus.service incus-startup.service
+
+[Service]
+Type=oneshot
+User=@USER@
+ExecStart=/usr/bin/env PA_ASSISTANT_VM=%i @PIN_HOSTS@
+# The devbox's own DNS may not be up yet.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

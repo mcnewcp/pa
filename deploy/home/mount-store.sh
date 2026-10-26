@@ -7,6 +7,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 [[ -d $PA_L0 ]] || die "$PA_DATA_ROOT has no L0: run seed-data-root.sh first"
+# The store goes only into a VM that reaches nothing but the API (#91).
+require_fenced
 # The shares keep owners as they are, with no mapping: the VM's assistant user can write the
 # inbox directory only because its uid is the devbox user's.
 vm_uid=$(incus exec "$PA_VM" -- id -u "$PA_USER")
