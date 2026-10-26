@@ -6,9 +6,11 @@ import os
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
 from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
@@ -34,6 +36,19 @@ LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
 BACKUP_PASSWORD_VARS = ("RESTIC_PASSWORD", "RESTIC_PASSWORD_FILE", "RESTIC_PASSWORD_COMMAND")
+# Capture: the vault copy the headless Sync client keeps and its daily-notes folder, and how
+# often each source's watermark is expected to move (`PA_<SOURCE>_CADENCE_MINUTES`).
+VAULT_DIR_VAR = "PA_VAULT_DIR"
+VAULT_DAILY_NOTES_VAR = "PA_VAULT_DAILY_NOTES"
+DEFAULT_CADENCE = timedelta(minutes=15)
+"""A capture cycle runs every 15 minutes, so each source's watermark moves that often."""
+COLLECTED_SOURCES = (Source.GMAIL, Source.ICLOUD_CALENDAR, Source.OBSIDIAN)
+"""The sources a collector captures. Chat is captured by the assistant's hook instead."""
+
+
+def cadence_var(source: Source) -> str:
+    """The variable that sets `source`'s expected cadence, in minutes."""
+    return f"PA_{source.upper()}_CADENCE_MINUTES"
 
 
 class ConfigError(PaError):
@@ -68,6 +83,21 @@ class DataRoot:
         """The wiki's git directory, beside the wiki and never inside it."""
         return self.path / WIKI_GIT_DIR
 
+    @property
+    def state(self) -> Path:
+        """Collector state and pending watermarks: the capture cycle's own records, outside L0."""
+        return self.path / "state"
+
+    @property
+    def status(self) -> Path:
+        """The status file, in a directory of its own so it can be shared read-only."""
+        return self.path / "status" / "status.json"
+
+    @property
+    def lock(self) -> Path:
+        """The one lock on the data root, held by a capture cycle and every other job."""
+        return self.path / "pa.lock"
+
 
 @dataclass(frozen=True)
 class LibrarianConfig:
@@ -89,6 +119,25 @@ class LibrarianConfig:
     """The distinct days a slug must be linked on in the day logs before it gets a page."""
     loop_age_days: int = LOOP_AGE_DAYS
     """How long a loop may stay open before lint warns about it."""
+
+
+@dataclass(frozen=True)
+class VaultConfig:
+    """The vault copy, which the PA only reads, and the folder its daily notes are in."""
+
+    path: Path
+    daily_notes: str
+    """The daily-notes folder, relative to the vault, such as `Daily`."""
+
+
+@dataclass(frozen=True)
+class CaptureConfig:
+    """What the capture cycle collects, and how often each source is expected to move."""
+
+    vault: VaultConfig | None
+    """The vault copy, or None when the vault isn't captured."""
+    cadences: Mapping[Source, timedelta]
+    """Each collected source's expected cadence."""
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
@@ -186,6 +235,34 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         ),
         loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, default.loop_age_days),
     )
+
+
+def load_capture_config(environ: Mapping[str, str] = os.environ) -> CaptureConfig:
+    """What the capture cycle collects: the vault when its copy is configured, which then needs
+    its daily-notes folder too. Every source's cadence is 15 minutes unless configured."""
+    vault = None
+    vault_dir = environ.get(VAULT_DIR_VAR, "").strip()
+    if vault_dir:
+        daily_notes = environ.get(VAULT_DAILY_NOTES_VAR, "").strip().strip("/")
+        if not daily_notes:
+            raise ConfigError(
+                f"{VAULT_DIR_VAR} is set but {VAULT_DAILY_NOTES_VAR} is not: set it to the "
+                "vault's daily-notes folder, relative to the vault, such as Daily."
+            )
+        if any(part in ("", ".", "..") for part in daily_notes.split("/")):
+            raise ConfigError(
+                f"{VAULT_DAILY_NOTES_VAR} must be a folder inside the vault (got {daily_notes!r})."
+            )
+        vault = VaultConfig(path=Path(vault_dir).expanduser().resolve(), daily_notes=daily_notes)
+    cadences = {
+        source: timedelta(
+            minutes=_positive_integer(
+                environ, cadence_var(source), int(DEFAULT_CADENCE.total_seconds() // 60)
+            )
+        )
+        for source in COLLECTED_SOURCES
+    }
+    return CaptureConfig(vault=vault, cadences=cadences)
 
 
 def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:
