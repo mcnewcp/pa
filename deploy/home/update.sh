@@ -5,10 +5,10 @@
 # Snapshots a PA VM, then updates it. Roll back with rollback.sh (with the same --vm).
 #
 # The assistant's VM: puts the repo at <ref> and runs `uv sync`, then renders the agent project
-# for the instance owner into a stable directory, reading L0 where the VM mounts it, and the wiki
-# too once the librarian has run into it (render-agent-project.sh), and installs the Remote
-# Control unit, restarting it once the wizard has enabled it. The
-# first run installs uv and Claude Code and clones the repo.
+# for the instance owner into a stable directory, reading L0 and the status where the VM mounts
+# them, and the wiki too once the librarian has run into it (render-agent-project.sh), and
+# installs the Remote Control unit, restarting it once the wizard has enabled it. The first run
+# installs uv and Claude Code and clones the repo.
 #
 # The librarian's VM: installs Claude Code at PA_LIBRARIAN_CLAUDE_VERSION, downloaded and
 # verified on the devbox (install-librarian-claude.sh), and the managed settings. It needs no
@@ -62,6 +62,6 @@ incus exec "$PA_VM" -- runuser -u "$PA_USER" -- \
 
 log "rendering the agent project into $PA_VM_PROJECT"
 as_assistant "$PA_REPO_DIR" "$PA_VM_OWNER_ENV" "$PA_VM_PROJECT" "$PA_VM_L0" "$PA_VM_SCRATCH" \
-  "$PA_VM_WIKI" <"$DEPLOY_DIR/render-agent-project.sh"
+  "$PA_VM_WIKI" "$PA_VM_STATUS_FILE" <"$DEPLOY_DIR/render-agent-project.sh"
 
 "$DEPLOY_DIR/install-remote-control.sh"

@@ -29,7 +29,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `seed-data-root.sh [--corpus argus\|scale]` | Creates the instance's data root on the devbox from a frozen synthetic corpus (Argus's unless `--corpus scale`), with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
-| `mount-store.sh` | Mounts L0 and the wiki into the VM read-only and `inbox/assistant_chat/` writable |
+| `mount-store.sh` | Mounts L0, the wiki and the status into the VM read-only and `inbox/assistant_chat/` writable |
 | `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
@@ -63,15 +63,16 @@ The firewall loads at boot from `pa-vm-firewall.service`, after Docker and befor
 
 The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
 
-Three directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
+Four directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
 
 | On the devbox | In the VM | |
 |---|---|---|
 | `l0/` | `/srv/pa/l0` | Read-only. Enforced on the devbox, so even root in the VM can't write it |
 | `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode, or quarantines it ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
 | `wiki/` | `/srv/pa/wiki` | Read-only, like L0. The librarian keeps it on the devbox; `mount-store.sh` creates it empty if it doesn't exist yet |
+| `status/` | `/srv/pa/status` | Read-only, like L0. It holds `status.json`, which the capture cycle, the librarian and the backup replace by a rename, so the directory is shared, never the file; `mount-store.sh` creates it empty if it doesn't exist yet |
 
-`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
+`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0` and the status file `/srv/pa/status/status.json`, with `/home/assistant/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
 
 The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes, so root in the VM could leave root-owned files there, setuid programs and device nodes included, or fill the devbox's disk. So that directory is a filesystem of its own (`install-chat-inbox.sh`): a 1 GiB ext4 image, `chat-inbox.img` in the data root, loop-mounted `nosuid,nodev,noexec` by a systemd mount unit. Nothing in it can run, setuid or not, or act as a device, and the VM can't write more than 1 GiB. The unit mounts it at boot before Incus, and Incus requires it: if it can't be mounted, Incus doesn't start and the VM stays down instead of sharing the bare directory.
 
@@ -203,6 +204,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
 - `git --git-dir ~/.local/share/pa-home-synthetic/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
+- `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another run holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
 
 ### The Obsidian view
 

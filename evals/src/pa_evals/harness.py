@@ -6,6 +6,7 @@ import shutil
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pa_core.catalog import open_catalog
@@ -13,6 +14,7 @@ from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
+from pa_core.status import SourceStatus, Status, WikiStatus, write_status
 from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import opened, parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
@@ -30,7 +32,7 @@ from pa_evals.results import (
     ToolCallResult,
     WikiResult,
 )
-from pa_home.config import DataRoot
+from pa_home.config import COLLECTED_SOURCES, DEFAULT_CADENCE, DataRoot
 from pa_home.cut import Cut
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -56,7 +58,9 @@ def run_eval(
 
     `corpus` may be a cut instead (`pa_home.cut`), which is asked as it is, with no ingest: its
     L0 and its status file are copied into the throwaway data root with nothing in them
-    writable, and the results record the cut in place of the ingest.
+    writable, and the results record the cut in place of the ingest. Each question's agent is
+    given the cut's status file; over a frozen corpus, it's given one laid for the time the
+    question is asked at, with every source's watermark at that time (`_lay_statuses`).
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
     one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
@@ -99,6 +103,7 @@ def run_eval(
                 quarantined=summary.quarantined,
             )
         laid = None if wiki is None else _lay_wiki(wiki, data_root.wiki)
+        status_at = _status_at(corpus, eval_set, data_root, wiki=laid is not None)
         checks = None
         if laid is not None:
             require_in_l0(eval_set.adversarial, known)
@@ -108,7 +113,10 @@ def run_eval(
             )
 
         def ask(question: EvalQuestion) -> QuestionResult:
-            return _ask(question, eval_set, data_root, laid, owner, store, known, agent, judge)
+            status = status_at(eval_set.as_of_for(question))
+            return _ask(
+                question, eval_set, data_root, laid, status, owner, store, known, agent, judge
+            )
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
@@ -135,6 +143,7 @@ def _ask(
     eval_set: EvalSet,
     data_root: DataRoot,
     wiki: Path | None,
+    status: Path | None,
     owner: Owner,
     store: L0Store,
     known: set[str],
@@ -151,7 +160,7 @@ def _ask(
         evidence=question.evidence,
         status="failed",
     )
-    request = AgentRequest(question.id, question.question, as_of, data_root, owner, wiki)
+    request = AgentRequest(question.id, question.question, as_of, data_root, owner, wiki, status)
     answer = _attempt(lambda: agent.answer(request))
     if isinstance(answer, _Failure):
         recall = 0.0 if question.evidence else None
@@ -238,6 +247,43 @@ def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     shutil.copytree(wiki.tree, target)
     _make_read_only(target)
     return target
+
+
+def _status_at(
+    corpus: Path | Sequence[Path] | Cut, eval_set: EvalSet, data_root: DataRoot, *, wiki: bool
+) -> Callable[[datetime], Path | None]:
+    """The status file a question's agent is given, by the time it's asked at: over a cut, the
+    cut's own (none if it was taken without one); over a frozen corpus, one laid for that
+    time."""
+    if isinstance(corpus, Cut):
+        status = data_root.status if corpus.status is not None else None
+        return lambda _: status
+    return _lay_statuses(eval_set, data_root.path / "statuses", wiki=wiki).__getitem__
+
+
+def _lay_statuses(eval_set: EvalSet, directory: Path, *, wiki: bool) -> dict[datetime, Path]:
+    """Lay a status file in `directory` for each time the set's questions are asked at, with
+    nothing writable, and return each time's file.
+
+    A frozen corpus has no capture cycle, so each file says what one would have: every
+    collected source's watermark at that time, at the cycle's cadence, with no failures. Every
+    episode is captured at the set's as-of time, so with a `wiki` (replayed over all of them)
+    the wiki is current through that time.
+    """
+    statuses: dict[datetime, Path] = {}
+    for as_of in sorted({eval_set.as_of_for(question) for question in eval_set.questions}):
+        path = directory / f"{as_of.astimezone(UTC):%Y%m%dT%H%M%SZ}" / "status.json"
+        sources: dict[str, SourceStatus] = {
+            source: SourceStatus(watermark=as_of, cadence=DEFAULT_CADENCE, last_attempt=as_of)
+            for source in COLLECTED_SOURCES
+        }
+        current_through = eval_set.as_of if wiki else None
+        status = Status(sources=sources, wiki=WikiStatus(current_through=current_through))
+        write_status(path, status, at=as_of)
+        statuses[as_of] = path
+    if statuses:
+        _make_read_only(directory)
+    return statuses
 
 
 def lay_cut(cut: Cut, data_root: DataRoot) -> None:
