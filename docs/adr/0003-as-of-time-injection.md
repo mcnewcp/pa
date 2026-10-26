@@ -1,6 +1,6 @@
 # The agent is told "now" in the system prompt and again before the question
 
-The agent's "now" comes from one value: the question's as-of time in evals, the wall clock otherwise (`ClaudeAgent.answer(..., now=None)` falls back to its clock). Claude Code puts the machine's date in every session's context ("Today's date is 2026-10-26.") and that can't be turned off, so the injected time has to override it. Every eval run, over a frozen corpus or real data, uses one method, `both` (`pa_home.agent.AsOfMethod.BOTH`, the default for `ClaudeAgent` and `pa-eval run`):
+The agent's "now" comes from one value: the question's as-of time in evals, the wall clock otherwise (`ClaudeAgent.answer(..., now=None)` falls back to its clock). Claude Code puts the machine's date in every session's context ("Today's date is 2026-10-26.") and that can't be turned off, so the injected time has to override it. Every eval run, over a frozen corpus or real data, uses one method, `both` (`pa_home.agent.AsOfMethod.BOTH`, the default for `ClaudeAgent`, so for `pa-eval run` and for drafting sessions with `pa-eval draft`):
 
 - The statement goes into Claude Code's system prompt with `--append-system-prompt`, and again into the message, before the question.
 - It gives the time (weekday, date, time, UTC offset, and ISO form). It says Claude Code's "Today's date is …" is the machine's clock, not now, and not to use or mention it. And it says to work out today, days left, and whether anything is overdue, has passed, or has happened yet from the as-of date alone (`as_of_statement`).
