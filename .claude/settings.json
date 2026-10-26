@@ -10,7 +10,27 @@
       "Bash(grep *.local/share/pa-home/*)",
       "Bash(rg *.local/share/pa-home)",
       "Bash(rg *.local/share/pa-home *)",
-      "Bash(rg *.local/share/pa-home/*)"
+      "Bash(rg *.local/share/pa-home/*)",
+      "Read(~/.local/share/pa-vault)",
+      "Read(~/.local/share/pa-vault/**)",
+      "Edit(~/.local/share/pa-vault)",
+      "Edit(~/.local/share/pa-vault/**)",
+      "Bash(grep *.local/share/pa-vault)",
+      "Bash(grep *.local/share/pa-vault *)",
+      "Bash(grep *.local/share/pa-vault/*)",
+      "Bash(rg *.local/share/pa-vault)",
+      "Bash(rg *.local/share/pa-vault *)",
+      "Bash(rg *.local/share/pa-vault/*)",
+      "Read(~/.config/obsidian-headless)",
+      "Read(~/.config/obsidian-headless/**)",
+      "Edit(~/.config/obsidian-headless)",
+      "Edit(~/.config/obsidian-headless/**)",
+      "Bash(grep *.config/obsidian-headless)",
+      "Bash(grep *.config/obsidian-headless *)",
+      "Bash(grep *.config/obsidian-headless/*)",
+      "Bash(rg *.config/obsidian-headless)",
+      "Bash(rg *.config/obsidian-headless *)",
+      "Bash(rg *.config/obsidian-headless/*)"
     ]
   }
 }

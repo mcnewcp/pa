@@ -21,7 +21,7 @@ from pa_evals.eval_wiki import load_eval_wiki
 from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.injection import InjectionCheckError
 from pa_evals.judge import ScriptedJudge, Verdict
-from pa_evals.results import RunResults
+from pa_evals.results import IngestCounts, RunResults
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CORPUS = FIXTURES / "corpus"
@@ -208,7 +208,7 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     all_episodes = sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
     assert seen["hotel-block-deadline"] == (eval_set.as_of, "Argus McNevans", all_episodes)
     assert seen["day-of-week"][0] == datetime.fromisoformat("2026-10-10T09:00:00-05:00")
-    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+    assert results.ingest == IngestCounts(ingested=4, unchanged=0, quarantined=0)
 
 
 def split_corpus(tmp_path: Path) -> tuple[Path, Path]:
@@ -234,7 +234,7 @@ def test_a_corpus_in_several_directories_is_ingested_as_their_union(eval_set, tm
     results = run_eval(corpus, eval_set, LookingAgent(), ScriptedJudge(verdicts))
 
     assert seen == sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
-    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+    assert results.ingest == IngestCounts(ingested=4, unchanged=0, quarantined=0)
 
 
 def test_a_payload_in_two_of_a_corpuss_directories_is_refused(eval_set, tmp_path):
