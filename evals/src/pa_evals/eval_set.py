@@ -121,6 +121,15 @@ class EvalSet(FrozenModel):
         return self.model_copy(update={"questions": [q for q in self.questions if q.id in ids]})
 
 
+def format_problems(error: ValidationError) -> str:
+    """Where a file or reply fails its format and why, never quoting what it holds: a real-data
+    set's questions and answers are private."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: {problem['msg']}"
+        for problem in error.errors(include_input=False, include_url=False)
+    )
+
+
 def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
     """The eval set in `path`. Over a `cut`, refused unless every episode it names (each
     question's evidence, and the adversarial episodes) is in the cut."""
@@ -129,7 +138,9 @@ def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
     except FileNotFoundError as error:
         raise EvalSetError(f"eval set not found: {path}") from error
     except ValidationError as error:
-        raise EvalSetError(f"eval set {path} does not match the format: {error}") from error
+        raise EvalSetError(
+            f"eval set {path} does not match the format: {format_problems(error)}"
+        ) from None
     if cut is not None:
         named = {i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
         missing = sorted(named - cut.episode_ids())

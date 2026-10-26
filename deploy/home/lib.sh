@@ -59,8 +59,9 @@ PA_GMAIL_AUTH_PORT=8765
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
-# Real-data evals' private files (DataRoot.evals): run directories from runs over a cut, under
-# evals/runs/. The nightly backup takes it whole.
+# Real-data evals' private files (DataRoot.evals): run directories from runs over a cut
+# (evals/runs/), and drafts of the real-data eval set with the owner's notes
+# (evals/drafts/<cut>/). The nightly backup takes it whole.
 PA_EVALS=$PA_DATA_ROOT/evals
 # The three parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
@@ -133,6 +134,9 @@ PA_VM_EVAL_WIKI=/home/assistant/.cache/pa-eval/eval-wiki
 PA_VM_EVAL_CUTS=/home/assistant/.cache/pa-eval/cuts
 PA_VM_EVAL_SET=/home/assistant/.cache/pa-eval/eval-set.json
 PA_VM_EVAL_RUNS=/home/assistant/.cache/pa-eval/runs
+# Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
+# owner's notes a second pass revises.
+PA_VM_EVAL_DRAFTS=/home/assistant/.cache/pa-eval/drafts
 # Claude Code in the VM, and the unit that runs Remote Control in the agent project.
 PA_VM_CLAUDE=/home/assistant/.local/bin/claude
 PA_VM_RC_UNIT=pa-remote-control.service
@@ -207,6 +211,58 @@ as_assistant() {
   (($#)) && args=$(printf ' %q' "$@")
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "bash -s --$args"
 }
+
+# require_private stops unless the path ($2) is outside this checkout, after following links;
+# $1 says what it is. Real-data eval sets, drafts, notes, cuts, and run directories stay under the
+# data root, so nothing real is ever committed.
+require_private() {
+  local resolved repository
+  resolved=$(realpath -m -- "$2")
+  repository=$(realpath -- "$REPO_DIR")
+  case $resolved/ in
+    "$repository"/*)
+      die "the $1 ($resolved) is inside the repository ($repository): real-data eval sets, drafts, cuts, and run directories stay under the data root"
+      ;;
+  esac
+}
+
+# cut_name DIR prints the name of the cut in DIR (its as-of time), and stops unless DIR is a cut
+# as `pa cut` makes one.
+cut_name() {
+  local name
+  [[ -f $1/cut.json ]] || die "$1 isn't a cut: it has no cut.json (pa cut makes one)"
+  name=$(basename "$(realpath -- "$1")")
+  [[ $name =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "$1 isn't named as pa cut names a cut"
+  printf '%s\n' "$name"
+}
+
+# push_cut DIR pushes the cut in DIR to $PA_VM_EVAL_CUTS/<name> in the VM, unless it's there
+# already. A cut never changes, so the VM's copy is kept and reused. It's unpacked beside the
+# others and moved into place whole, so a push that stopped part way is never taken for the cut.
+push_cut() {
+  local name vm_cut partial
+  name=$(cut_name "$1")
+  vm_cut=$PA_VM_EVAL_CUTS/$name
+  if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $vm_cut" </dev/null; then
+    log "the cut $name is already in the VM: reusing $vm_cut"
+  else
+    partial=$PA_VM_EVAL_CUTS/.$name.partial
+    tar -C "$1" -cf - . |
+      incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+        "rm -rf $partial && mkdir -p $partial && tar -C $partial -xf - && mv -T $partial $vm_cut"
+    log "pushed the cut $name to $vm_cut"
+  fi
+}
+
+# push_file FILE VM_PATH writes FILE's contents to VM_PATH in the VM, as the assistant.
+push_file() {
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+    "mkdir -p ${2%/*} && cat > $2" <"$1"
+}
+
+# inbox_listing lists what's in the VM's inbox directory on the devbox, with sizes and times, so
+# a run can check its sessions captured nothing.
+inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
 
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
