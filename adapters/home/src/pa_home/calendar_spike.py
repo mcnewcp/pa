@@ -205,7 +205,12 @@ _RECORD = "snapshot.json"
 
 
 def _spike_directory(environ: Mapping[str, str]) -> Path:
-    return load_data_root(environ).path / SCRATCH
+    """The spike's scratch directory, in a data root that already exists: the spike never
+    creates one, which the setup wizard does with its own layout and modes."""
+    root = load_data_root(environ).path
+    if not root.is_dir():
+        raise SpikeError(f"the data root {root} doesn't exist; create it, or set PA_DATA_DIR")
+    return root / SCRATCH
 
 
 def _snapshot_directory(directory: Path, label: str) -> Path:

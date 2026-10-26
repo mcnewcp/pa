@@ -230,6 +230,7 @@ def spike(
     password.write_text(APP_PASSWORD + "\n")
     password.chmod(0o600)
     data_root = tmp_path / "pa-data"
+    data_root.mkdir()
     monkeypatch.setenv("PA_ICLOUD_USERNAME", APPLE_ID)
     monkeypatch.setenv("PA_ICLOUD_PASSWORD_FILE", str(password))
     monkeypatch.setenv("PA_DATA_DIR", str(data_root))
@@ -391,6 +392,14 @@ def test_a_snapshot_label_is_a_plain_name(spike: Spike, label: str):
     assert not (spike.data_root / "scratch").exists() or not any(
         path.name != "calendar-spike" for path in (spike.data_root / "scratch").iterdir()
     )
+
+
+def test_a_snapshot_never_creates_the_data_root(spike: Spike):
+    spike.server.add_calendar("Home")
+    spike.data_root.rmdir()
+
+    assert "doesn't exist" in spike.run("snapshot", "baseline", expect=1)
+    assert not spike.data_root.exists()
 
 
 def test_a_snapshot_never_replaces_another(spike: Spike):
