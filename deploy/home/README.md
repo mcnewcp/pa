@@ -2,8 +2,10 @@
 
 The PA's two VMs on the devbox:
 
-- the assistant's, `pa-home`: an Incus VM that reaches the public internet and nothing of the owner's, and reads the store without being able to change it;
-- the librarian's, `pa-librarian`: a second Incus VM, made with the same scripts (`--vm librarian`), that reaches only the Anthropic API and writes nothing but the wiki ([The librarian's VM](#the-librarians-vm)).
+- the assistant's, `pa-home`: an Incus VM that reaches only the Anthropic API ([The network fence](#the-network-fence)), and reads the store without being able to change it;
+- the librarian's, `pa-librarian`: a second Incus VM, made with the same scripts (`--vm librarian`), that also reaches only the Anthropic API and writes nothing but the wiki ([The librarian's VM](#the-librarians-vm)).
+
+Neither is on the tailnet. The owner reaches both with `incus exec` on the devbox.
 
 See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.md).
 
@@ -23,22 +25,24 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 
 | Script | Does |
 |---|---|
-| `incus-setup.sh [--vm]` | Creates the `pa` btrfs storage pool (copy-on-write, so snapshots are cheap) and the VM's own bridge, `pabr0`, with IPv6 off. For the librarian: `palib0`, with DNS off too, and its egress ACL |
-| `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service`, for both bridges |
-| `create-vm.sh [--vm]` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`, Tailscale). For the librarian: `pa-librarian` from `librarian/profile.yaml` (2 vCPU, 3 GiB RAM, 10 GiB disk, user `librarian`), left stopped |
+| `incus-setup.sh [--vm]` | Creates the `pa` btrfs storage pool (copy-on-write, so snapshots are cheap) and the VM's own bridge, `pabr0`, with IPv6 and DNS off, and its egress ACL, `pa-home-egress` (`egress-acl.json`); and the open bridge the VM is built on, `pabuild0`. For the librarian: `palib0` and `pa-librarian-egress` |
+| `install-firewall.sh` | Installs the bridge firewall (`firewall/`) as `pa-vm-firewall.service`, for every bridge, and the matching ufw rules |
+| `create-vm.sh [--vm]` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`), open, on `pabuild0`. For the librarian: `pa-librarian` from `librarian/profile.yaml` (2 vCPU, 3 GiB RAM, 10 GiB disk, user `librarian`), left stopped |
+| `fence-vm.sh` | Fences `pa-home`: installs its fences while it can still reach a mirror, removes Tailscale, moves it onto `pabr0`, pins the API's names, and installs `pa-pins@pa-home.service` on the devbox ([The network fence](#the-network-fence)) |
+| `pin-hosts.sh` | Pins `api.anthropic.com` and `platform.claude.com` into `pa-home`'s `/etc/hosts`, at addresses the devbox resolved and checked against the API's range |
 | `seed-data-root.sh [--corpus argus\|scale]` | Creates the instance's data root on the devbox from a frozen synthetic corpus (Argus's unless `--corpus scale`), with its owner as the instance owner |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
-| `mount-store.sh` | Mounts L0, the wiki and the status into the VM read-only and `inbox/assistant_chat/` writable |
-| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` in `/opt/pa` and runs `uv sync`, both as root, installs the fences (`install-assistant-fences.sh`), then renders the agent project as root and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
-| `install-assistant-fences.sh` | Installs the assistant's managed settings, the sandbox's packages and AppArmor profile, and its layout (`assistant-layout.sh`) in the VM, as root ([The assistant's managed settings and sandbox](#the-assistants-managed-settings-and-sandbox)) |
+| `mount-store.sh` | Mounts L0, the wiki and the status into the VM read-only and `inbox/assistant_chat/` writable; refuses a VM that isn't fenced |
+| `update.sh <ref>` | Snapshots the VM, then pushes in the code at `<ref>` (a git bundle from this checkout), a wheelhouse built here, uv and the pinned Claude Code; as root, checks the code out in `/opt/pa` and syncs its venv offline (`install-code.sh`), installs the fences (`install-assistant-fences.sh`), pins the API's names, renders the agent project and installs the Remote Control unit, restarting it once it's enabled ([Updating and rolling back](#updating-and-rolling-back)) |
+| `install-assistant-fences.sh` | Installs the assistant's managed settings, the sandbox's packages and AppArmor profile, and its layout (`assistant-layout.sh`) in the VM, as root, and masks the OS's own updates ([The assistant's managed settings and sandbox](#the-assistants-managed-settings-and-sandbox)) |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
 | `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
 | `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
-| `check-isolation.sh` | Probes the fences from inside the VM: the network, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
+| `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
@@ -49,16 +53,27 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
 | `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
 
-`tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
+`tailscale-policy.hujson` holds the tailnet policy as the PA leaves it: no PA VM is on the tailnet, and the owner's devices reach each other.
 
 ## The fences
 
-- **Host firewall** (`firewall/pa-vm.nft`): its own nftables table on the bridge. Anything the VM sends to the devbox, at any of its addresses, is dropped except DNS and DHCP. Anything it sends on to private ranges (RFC1918, which covers the LAN and Docker's networks), the tailnet range (100.64.0.0/10) or link-local is dropped, and so is all IPv6. A drop in this table is final whatever Incus's, Docker's or Tailscale's own rules accept.
-- **Tailnet policy**: the VM joins as `tag:pa`. The owner's devices may reach it, and it is the source of no rule. Its traffic to tailnet peers travels inside Tailscale's tunnel, so only the tailnet policy can stop it.
+### The network fence
 
-The devbox also runs ufw, which drops input and forwarded traffic by default. `install-firewall.sh` adds ufw rules letting the bridge's DHCP, DNS and outbound traffic through, and the `pa_vm` table still fences everything else.
+The assistant's VM reaches TCP 443 in the Anthropic API's published range, `160.79.104.0/23`, and nothing else: not the web, the owner's devices, the LAN or the devbox ([the fences spike](../../docs/research/assistant-fences-spike.md), #91). Three fences stand one behind another, as for the librarian's VM:
 
-The firewall loads at boot from `pa-vm-firewall.service`, after Docker and before Incus. Incus requires it, so if the rules fail to load, Incus doesn't start and the VM stays down. Don't enable `nftables.service` to persist rules: Ubuntu's `/etc/nftables.conf` starts with `flush ruleset`, which would wipe Docker's and Incus's rules at boot.
+- **The bridge and its ACL.** `pabr0` has IPv6 off and no DNS: its dnsmasq serves DHCP only (`raw.dnsmasq=port=0`), since a resolver that forwards lookups is a way out. The VM's NIC carries the Incus ACL `pa-home-egress` (`egress-acl.json`), which lets out TCP 443 to the range and drops and logs everything else both ways (`profile.yaml`). Drops show in `journalctl -k`.
+- **Host firewall** (`firewall/pa-vm.nft`): its own nftables table on the bridges. From `pabr0` (and `palib0`), only DHCP reaches the devbox, at any of its addresses, and only TCP 443 in the range goes on. A drop in this table is final whatever Incus's, Docker's or Tailscale's own rules accept.
+- **ufw**, which drops input and forwarded traffic by default: `install-firewall.sh` lets `pabr0`'s DHCP and its traffic to the range through, and nothing else.
+
+With no DNS, the two names the VM needs are pinned into its `/etc/hosts` by the devbox (`pin-hosts.sh`): `api.anthropic.com`, for sessions and Remote Control, and `platform.claude.com`, for the login's code exchange and every token refresh. The devbox resolves each and pins only an address in the range, or nothing. `fence-vm.sh`, `update.sh` and `rollback.sh` pin them, and `pa-pins@pa-home.service` on the devbox pins them at every boot, after Incus has started the VM; the pins from the last start stay in the VM's `/etc/hosts` in between (cloud-init leaves the file alone).
+
+The VM has no Tailscale. The owner reaches it with `incus exec` from the devbox, and Remote Control reaches the phone through the API.
+
+Nothing in the VM knocks on the fence: `install-assistant-fences.sh` masks apt's timers, unattended upgrades, the clock's sync (the clock comes from the hypervisor) and Ubuntu's news timers, and turns apt's periodic runs off. Claude Code's own updates are off in the managed settings. Updates are pushed in from the devbox ([Updating and rolling back](#updating-and-rolling-back)), and the OS is refreshed by rebuilding the VM ([Rebuilding the assistant's VM](#rebuilding-the-assistants-vm)).
+
+The VM is built open, on `pabuild0`: DNS and the internet, but nothing of the owner's (the firewall drops private, tailnet and link-local ranges and IPv6, as it did for `pabr0` before #91). `create-vm.sh` puts the new VM's NIC there, in place of its profile's, so cloud-init can refresh the OS and install the packages. Nothing is shared into it and no credential entered until `fence-vm.sh` has moved it onto `pabr0`: `mount-store.sh` refuses a VM whose NIC isn't fenced, and so does the wizard's login stage.
+
+The firewall loads at boot from `pa-vm-firewall.service`, after Docker and before Incus. Incus requires it, so if the rules fail to load, Incus doesn't start and the VMs stay down. Don't enable `nftables.service` to persist rules: Ubuntu's `/etc/nftables.conf` starts with `flush ruleset`, which would wipe Docker's and Incus's rules at boot.
 
 ### The assistant's managed settings and sandbox
 
@@ -77,7 +92,8 @@ What the assistant can't write is root's, outside its home, so no directory abov
 | In the VM | Owner, mode | |
 |---|---|---|
 | `/srv/pa/agent` | root, 0755 | The rendered agent project and its hook's script, each session's working directory |
-| `/opt/pa` | root | The code and its venv, the hook's interpreter (any Python uv installs for it goes in `/opt/pa-python`) |
+| `/opt/pa` | root | The code and its venv, on the VM's own `/usr/bin/python3`, the hook's interpreter |
+| `/usr/local/bin/claude`, `/usr/local/bin/uv` | root, 0755 | The pinned Claude Code, and uv, pushed from the devbox |
 | `/etc/pa/owner.env` | root, 0644 | The instance owner, which the project renders from |
 | `/etc/claude-code/managed-settings.json` | root, 0644 | The policy |
 | `~/.claude/settings.json` | root, 0644 | `{}`, since no setting turns user settings off |
@@ -171,7 +187,8 @@ Check the repository itself now and then (`restic check`). It reads the reposito
 
 `pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a session lands in the inbox for `ingest.sh`.
 
-- It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens.
+- It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens. The login refreshes its token through `platform.claude.com` when it's needed, so that name stays pinned; without it Remote Control ends once the access token expires.
+- Don't set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for it: Remote Control refuses to start under it (#81).
 - It waits until the inbox directory is mounted, so no capture goes to the VM's own disk.
 - It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.
 - `update.sh` stops it before the render and starts it again after. A session open during an update is cut off.
@@ -378,9 +395,38 @@ deploy/home/update.sh --vm librarian        # snapshot the librarian's VM, then 
 deploy/home/rollback.sh --vm librarian      # back to its latest pre-update snapshot, left stopped
 ```
 
+The assistant's VM reaches no package index or git host, so `update.sh` pushes everything in from the devbox, and nothing in the VM goes online:
+
+- **The code.** `<ref>` is resolved in this checkout (`git fetch` first, and name it as git does, `origin/v0.13` say), so it needn't be pushed to GitHub. It goes in as a git bundle; `install-code.sh`, as root, checks it out in `/opt/pa`, with no remote.
+- **Its dependencies.** The devbox syncs a scratch copy of the commit with a fresh uv cache, for the VM's Python version, and pushes that cache in as a wheelhouse, with the devbox's own uv (`/usr/local/bin/uv`), which reads it as it was written. In the VM, `uv sync --locked --no-dev` runs offline from it (`UV_OFFLINE=1`), on `/usr/bin/python3`, never downloading an interpreter. The bundle and the wheelhouse are removed afterwards.
+- **Claude Code** at `PA_ASSISTANT_CLAUDE_VERSION` (`lib.sh`), downloaded on the devbox and checked as the librarian's is: the manifest's signature against Anthropic's key fingerprint, the binary against the manifest's checksum. It goes to `/usr/local/bin/claude`, root's, so the assistant can't replace it, and the copy the assistant once installed itself (`~/.local/bin/claude`) is removed. Its auto-updates are off in the managed settings (`claude update` says updates are disabled by the administrator). Bump the pin deliberately, since a release can add tools: change `lib.sh`, run `update.sh`, then `check-isolation.sh`, which fails on any tool beyond the expected five.
+
+Anything that can fail on the devbox (the ref, the download, the wheelhouse) fails before the VM is snapshotted or touched.
+
 The librarian's VM holds no state between runs (the wiki is on the devbox and the token stays there), so its OS packages come from the image it was created from. To refresh them, delete it (`incus delete pa-librarian`) and run `create-vm.sh --vm librarian` and `update.sh --vm librarian` again.
 
-The VM's Tailscale identity lives on its disk, so it survives reboots and rollbacks to any snapshot taken after it joined.
+A rollback restores the VM's disk, not its profile, bridge or firewall, so a VM rolled back to a snapshot from before #91 is still fenced, but has Tailscale again: run `fence-vm.sh`. A snapshot of a VM still on the build bridge (`pre-fence-*` of a rebuilt VM) brings that NIC back, and `mount-store.sh` refuses it until `fence-vm.sh` runs.
+
+### Rebuilding the assistant's VM
+
+The VM's OS is never upgraded in place: refresh it by rebuilding the VM. The order keeps the store and the login away from an open network: the VM is built open before any share or credential exists, and fenced before anything is mounted.
+
+```sh
+incus exec pa-home -- systemctl stop pa-remote-control
+incus stop pa-home
+incus rename pa-home pa-home-old                  # kept until the new one works
+incus config set pa-home-old boot.autostart=false
+incus config device remove pa-home-old pa-l0 pa-chat-inbox pa-wiki pa-status
+deploy/home/create-vm.sh                          # open, on pabuild0
+deploy/home/fence-vm.sh                           # onto pabr0, pinned, no Tailscale
+deploy/home/mount-store.sh                        # refused before the fence
+deploy/home/update.sh <ref>
+deploy/home/setup-wizard.sh                       # its login, trust and Remote Control stages
+deploy/home/check-isolation.sh && deploy/home/check-store.sh
+incus delete pa-home-old                          # its transcripts and login go with it
+```
+
+The login, the project's trust and Remote Control's consent live on the old VM's disk, so the owner answers them again (the wizard's stages 11, 15 and 16), and re-opens the assistant on the phone. To try a rebuild without touching the live VM, give the scripts another name, `PA_ASSISTANT_VM=pa-rebuild-test`, then `incus delete` it and `sudo systemctl disable pa-pins@pa-rebuild-test.service`.
 
 ## Acceptance run (#27)
 
@@ -464,3 +510,24 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
 2. Its last stage shows a daily note edited on the phone reaching the copy within minutes, by the newest note's change time, and the wizard's `pa-pull-only-check.md` never reaching the phone.
 3. `check-store.sh` passes, its vault line included.
 4. Reboot the devbox: `check-vault-sync.sh` passes again.
+
+## Acceptance run (#91)
+
+1. `check-isolation.sh` passes on `pa-home`: the web, the devbox, the LAN and tailnet peers unreachable, no DNS and no Tailscale, the API reachable at its pinned names, the OS's updates masked and Claude Code at its pin.
+2. It fails while an ordinary website is reachable, shown on a throwaway VM, which holds no store and no login, while it's still on the build bridge:
+   ```sh
+   export PA_ASSISTANT_VM=pa-rebuild-test
+   deploy/home/create-vm.sh
+   deploy/home/check-isolation.sh       # FAIL: not fenced, example.com resolves and is reachable
+   ```
+3. The rebuild applies the fence before the store is mounted, on the same VM:
+   ```sh
+   deploy/home/mount-store.sh           # refused: pa-rebuild-test isn't fenced
+   deploy/home/fence-vm.sh
+   deploy/home/mount-store.sh           # mounts
+   deploy/home/check-isolation.sh       # the network lines pass (the session lines need a login)
+   incus delete --force pa-rebuild-test && sudo systemctl disable pa-pins@pa-rebuild-test.service
+   unset PA_ASSISTANT_VM
+   ```
+4. `incus exec pa-home -- systemctl restart pa-remote-control`, then `incus restart pa-home`: each time the service comes back connected, with no new login, and the phone reaches it.
+5. An update with no internet in the VM: `update.sh <ref>` installs the pinned Claude Code, checks out the ref and syncs the venv offline, and `check-isolation.sh` passes.

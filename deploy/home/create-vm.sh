@@ -3,8 +3,15 @@
 #
 # Creates a PA VM, by default the assistant's, from its profile (profile.yaml, or the
 # librarian's in librarian/) and waits for cloud-init to finish. Re-running updates the profile
-# (limits apply live) and leaves an existing VM alone. The librarian's VM is left stopped: it
-# runs only for librarian runs (librarian-sandbox.sh).
+# (limits apply live) and leaves an existing VM alone.
+#
+# The assistant's VM is built open (#91): its profile's NIC, on its fenced bridge, is shadowed by
+# one of its own on the build bridge (PA_BUILD_BRIDGE), which reaches the internet but nothing of
+# the owner's, so cloud-init can refresh the OS and install its packages. Nothing is shared into
+# it and it holds no credential yet; fence-vm.sh fences it next, and mount-store.sh refuses it
+# until then.
+#
+# The librarian's VM is left stopped: it runs only for librarian runs (librarian-sandbox.sh).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 take_vm_option "$@"
@@ -18,8 +25,13 @@ if incus info "$PA_VM" >/dev/null 2>&1; then
   exit 0
 fi
 
-log "launching $PA_VM from $PA_IMAGE (a VM, not a container)"
-incus launch "$PA_IMAGE" "$PA_VM" --vm --profile "$PA_PROFILE" </dev/null
+log "creating $PA_VM from $PA_IMAGE (a VM, not a container)"
+incus init "$PA_IMAGE" "$PA_VM" --vm --profile "$PA_PROFILE" </dev/null
+if [[ $PA_VM_ROLE == assistant ]]; then
+  incus config device add "$PA_VM" eth0 nic "network=$PA_BUILD_BRIDGE" name=eth0 >/dev/null
+  log "$PA_VM is on the open build bridge, $PA_BUILD_BRIDGE, until fence-vm.sh fences it"
+fi
+incus start "$PA_VM" </dev/null
 wait_for_agent
 
 log "waiting for cloud-init"
@@ -34,8 +46,7 @@ esac
 incus exec "$PA_VM" -- id "$PA_USER" >/dev/null || die "user $PA_USER is missing"
 case $PA_VM_ROLE in
   assistant)
-    incus exec "$PA_VM" -- tailscale version >/dev/null || die "tailscale is missing"
-    log "$PA_VM is up"
+    log "$PA_VM is up, unfenced: run fence-vm.sh before anything is mounted or logged in"
     ;;
   librarian)
     # The wiki's share keeps owners as they are, with no mapping: the librarian can write the

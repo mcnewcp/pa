@@ -1,30 +1,35 @@
-description: The PA VM (pa-home)
+description: The assistant's VM (pa-home)
 config:
   limits.cpu: "4"
   limits.memory: 6GiB
   boot.autostart: "true"
   cloud-init.user-data: |
     #cloud-config
-    # One unprivileged user and no default ubuntu user. Admin goes through `incus exec` on the
-    # devbox; the owner reaches assistant over Tailscale SSH.
+    # One unprivileged user and no default ubuntu user. Nothing reaches the VM but `incus exec`
+    # on the devbox: it has no Tailscale (#91).
     users:
       - name: assistant
         gecos: PA assistant
         shell: /bin/bash
         lock_passwd: true
+    # pin-hosts.sh writes the API's names into /etc/hosts at each start: the bridge has no DNS.
+    manage_etc_hosts: false
+    # The only time the VM reaches a package mirror: create-vm.sh builds it on the open build
+    # bridge, and fence-vm.sh fences it before anything is mounted. The OS is refreshed by
+    # rebuilding it; install-assistant-fences.sh masks apt's own timers.
     package_update: true
     package_upgrade: true
     packages:
       - ca-certificates
+      # The isolation check's probes.
       - curl
+      # The code's checkout, from the bundle update.sh pushes.
       - git
       # Claude Code's Bash sandbox, and AppArmor, whose pa-bwrap profile lets bubblewrap run
       # (install-assistant-fences.sh).
       - bubblewrap
       - socat
       - apparmor
-    runcmd:
-      - curl -fsSL https://tailscale.com/install.sh | sh
 devices:
   root:
     type: disk
@@ -35,3 +40,11 @@ devices:
     type: nic
     name: eth0
     network: pabr0
+    # The fence: the egress ACL's one rule (TCP 443 to the API's range), and everything else
+    # dropped and logged, both ways. create-vm.sh shadows this NIC with one on the build bridge
+    # until fence-vm.sh removes it.
+    security.acls: pa-home-egress
+    security.acls.default.egress.action: drop
+    security.acls.default.egress.logged: "true"
+    security.acls.default.ingress.action: drop
+    security.acls.default.ingress.logged: "true"

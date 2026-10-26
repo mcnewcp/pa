@@ -2,15 +2,18 @@
 # Installs the assistant VM's fences inside it (#81, #92), as root, so the assistant can't change
 # them:
 #
-# - the sandbox's packages (bubblewrap, socat, apparmor), installed while the VM can still reach
-#   its package mirror when they're missing, and the pa-bwrap AppArmor profile, which lets
-#   bubblewrap make its user namespace in place of Ubuntu's bwrap-userns-restrict;
+# - the sandbox's packages (bubblewrap, socat, apparmor), installed when they're missing, which
+#   works only while the VM can still reach its package mirror, before fence-vm.sh fences it (its
+#   cloud-init installs them anyway), and the pa-bwrap AppArmor profile, which lets bubblewrap make
+#   its user namespace in place of Ubuntu's bwrap-userns-restrict;
+# - nothing that knocks on the fence (#91): apt's timers, unattended upgrades, the clock's sync
+#   and Ubuntu's news timers masked (PA_VM_QUIET_UNITS), and apt's periodic runs off;
 # - the managed settings, from managed-settings.json, at /etc/claude-code/, root's and mode 0644;
 # - the assistant's layout (assistant-layout.sh): scratch and the evals' directory, its user
 #   settings held empty by root, and no auto memory left.
 #
-# update.sh runs it on every update, after snapshotting the VM. Safe to re-run. check-isolation.sh
-# checks the result, and runs a command in the sandbox.
+# update.sh runs it on every update, after snapshotting the VM, and fence-vm.sh before it fences
+# the VM. Safe to re-run. check-isolation.sh checks the result, and runs a command in the sandbox.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -19,10 +22,20 @@ if ! incus exec "$PA_VM" -- sh -c \
   'for p; do dpkg-query -W -f "\${db:Status-Status}" "$p" 2>/dev/null | grep -qx installed || exit 1; done' \
   sh "${PA_VM_SANDBOX_PACKAGES[@]}"; then
   log "installing ${PA_VM_SANDBOX_PACKAGES[*]} in $PA_VM"
-  incus exec "$PA_VM" -- apt-get update -q >/dev/null
+  incus exec "$PA_VM" -- apt-get update -q >/dev/null ||
+    die "$PA_VM can't reach its package mirror: once fenced it never does. Rebuild it" \
+      "(deploy/home/README.md), and its cloud-init installs them before the fence"
   incus exec "$PA_VM" --env DEBIAN_FRONTEND=noninteractive -- \
     apt-get install -y -q --no-install-recommends "${PA_VM_SANDBOX_PACKAGES[@]}"
 fi
+
+# Nothing in the VM reaches for the internet on its own (#91).
+incus exec "$PA_VM" -- systemctl mask --quiet "${PA_VM_QUIET_UNITS[@]}"
+# Masked units can still be running; those the image lacks fail to stop, harmlessly.
+incus exec "$PA_VM" -- systemctl stop "${PA_VM_QUIET_UNITS[@]}" 2>/dev/null || true
+incus file push --quiet --uid 0 --gid 0 --mode 0644 "$PA_APT_NO_PERIODIC" \
+  "$PA_VM$PA_VM_APT_NO_PERIODIC"
+log "the OS's own updates, clock sync and news timers are masked in $PA_VM"
 
 incus file push --quiet --uid 0 --gid 0 --mode 0644 "$PA_BWRAP_PROFILE" \
   "$PA_VM$PA_VM_BWRAP_PROFILE"
