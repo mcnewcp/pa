@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from zoneinfo import ZoneInfo
 
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
@@ -14,11 +15,16 @@ from pa_core.ingest import ingest
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
+from pa_core.status import Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
+from pa_home.capture import capture_cycle
+from pa_home.collectors import Collector
+from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
     DataRoot,
+    load_capture_config,
     load_data_root,
     load_librarian_config,
     load_owner,
@@ -34,6 +40,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pa", description="Personal assistant.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("ingest", help="Turn raw payloads in the inbox into episodes in L0.")
+    commands.add_parser(
+        "capture",
+        help="Run a capture cycle: collect each configured source into the inbox, ingest, and "
+        "publish each source's watermark once its payloads have landed. Skips if another run "
+        "holds the data root's lock.",
+    )
+    commands.add_parser(
+        "status",
+        help="Print how current the PA is: each source's watermark, cadence, and failures, and "
+        "the last ingest, librarian run, and backup. Prints no content.",
+    )
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
@@ -184,6 +201,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_root = load_data_root()
         if args.command == "ingest":
             _ingest(data_root)
+        elif args.command == "capture":
+            return _capture(data_root)
+        elif args.command == "status":
+            _print_status(data_root)
         elif args.command == "catalog":
             _rebuild_catalog(data_root)
         elif args.command == "backup":
@@ -215,6 +236,83 @@ def _ingest(data_root: DataRoot) -> None:
         for reason in summary.left:
             print(f"pa: {reason}", file=sys.stderr)
         raise PaError(f"left {len(summary.left)} in the inbox: this user can't remove them")
+
+
+def _capture(data_root: DataRoot) -> int:
+    owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
+    collectors: list[Collector] = []
+    if config.vault is not None:
+        collectors.append(VaultCollector(config.vault.path, config.vault.daily_notes, time_zone))
+    outcome = capture_cycle(data_root, collectors=collectors, owner=owner, cadences=config.cadences)
+    if outcome.skipped:
+        print("capture: skipped: another run holds the data root's lock")
+        return 0
+    for source, count in outcome.collected.items():
+        print(f"capture: {source}: collected {count}")
+    for source, reason in outcome.failures.items():
+        print(f"pa: capture: {source}: collection failed: {reason}", file=sys.stderr)
+    if outcome.ingested is not None:
+        summary = outcome.ingested
+        print(
+            f"capture: ingested {summary.ingested}, unchanged {summary.unchanged}, "
+            f"quarantined {summary.quarantined}"
+            + (f", left {len(summary.left)}" if summary.left else "")
+        )
+        for reason in summary.left:
+            print(f"pa: capture: {reason}", file=sys.stderr)
+    if outcome.ingest_failure is not None:
+        print(f"pa: capture: ingest failed: {outcome.ingest_failure}", file=sys.stderr)
+    for source, watermark in outcome.published.items():
+        print(f"capture: {source}: watermark {_moment(watermark, time_zone)}")
+    return 1 if outcome.failed else 0
+
+
+def _print_status(data_root: DataRoot) -> None:
+    time_zone = load_time_zone()
+    if not data_root.status.exists():
+        print("status: nothing recorded yet")
+        return
+    status = read_status(data_root.status)
+    now = datetime.now(UTC)
+
+    def moment(value: datetime | None) -> str:
+        return "never" if value is None else _moment(value, time_zone)
+
+    def failure(value: Failure | None) -> str:
+        return "none" if value is None else f"{moment(value.at)} ({value.reason})"
+
+    print(f"status: updated {moment(status.updated_at)}")
+    for name, source in sorted(status.sources.items()):
+        stale = source.watermark is None or now - source.watermark > source.cadence
+        print(
+            f"{name}: watermark {moment(source.watermark)}"
+            f"{' (stale)' if stale else ''}, "
+            f"expected every {source.cadence.total_seconds() / 60:g} min; "
+            f"last attempt {moment(source.last_attempt)}; "
+            f"last failure {failure(source.last_failure)}; "
+            f"quarantined {source.quarantined}"
+        )
+    print(
+        f"ingest: last success {moment(status.ingest.last_success)}; "
+        f"last failure {failure(status.ingest.last_failure)}"
+    )
+    run = status.wiki.last_run
+    if run is None:
+        last_run = "never"
+    else:
+        cost = "" if run.cost_usd is None else f", cost ${run.cost_usd:.2f}"
+        warnings = "" if run.warnings is None else f", {run.warnings} lint warnings"
+        outcome = "succeeded" if run.succeeded else f"failed ({run.reason})"
+        last_run = f"{moment(run.at)} {outcome}{cost}{warnings}"
+    print(f"wiki: current through {moment(status.wiki.current_through)}; last run {last_run}")
+    print(
+        f"backup: last success {moment(status.backup.last_success)}; "
+        f"last failure {failure(status.backup.last_failure)}"
+    )
+
+
+def _moment(value: datetime, time_zone: ZoneInfo) -> str:
+    return value.astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
 
 
 def _rebuild_catalog(data_root: DataRoot) -> None:
