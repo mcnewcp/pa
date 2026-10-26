@@ -47,8 +47,8 @@ fi
 "$DEPLOY_DIR/pin-hosts.sh"
 
 log "moving $PA_VM behind its fence"
-incus profile edit "$PA_PROFILE" <"$PA_VM_PROFILE_FILE"
 incus stop "$PA_VM" </dev/null
+incus profile edit "$PA_PROFILE" <"$PA_VM_PROFILE_FILE"
 # create-vm.sh's NIC on the build bridge shadows the profile's until it's removed.
 if incus query "/1.0/instances/$PA_VM" </dev/null |
   python3 -c 'import json, sys; sys.exit(0 if "eth0" in (json.load(sys.stdin).get("devices") or {}) else 1)'; then
