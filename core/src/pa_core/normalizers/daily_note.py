@@ -69,9 +69,7 @@ def _captured_at(value: str | None) -> datetime:
     except ValueError:
         moment = None
     if moment is None or moment.utcoffset() is None:
-        raise MalformedPayloadError(
-            f"daily note's Captured-At is not a time with a UTC offset ({value!r})"
-        )
+        raise MalformedPayloadError("daily note's Captured-At is not a time with a UTC offset")
     return moment.astimezone(UTC)
 
 
@@ -86,7 +84,7 @@ def _day(path: str) -> date:
             raise ValueError
         return date.fromisoformat(found[0])
     except ValueError:
-        raise MalformedPayloadError(f"daily note has no date in its name ({path!r})") from None
+        raise MalformedPayloadError("daily note has no date in its name") from None
 
 
 def _text(data: bytes) -> str:

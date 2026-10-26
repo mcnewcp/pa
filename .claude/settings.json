@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(~/.local/share/pa-home)",
+      "Read(~/.local/share/pa-home/**)",
+      "Edit(~/.local/share/pa-home)",
+      "Edit(~/.local/share/pa-home/**)",
+      "Bash(grep *.local/share/pa-home)",
+      "Bash(grep *.local/share/pa-home *)",
+      "Bash(grep *.local/share/pa-home/*)",
+      "Bash(rg *.local/share/pa-home)",
+      "Bash(rg *.local/share/pa-home *)",
+      "Bash(rg *.local/share/pa-home/*)"
+    ]
+  }
+}

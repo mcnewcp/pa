@@ -107,9 +107,7 @@ def _moment(event: _Component, name: str, calendar_zone: str | None) -> datetime
             raise ValueError
         naive = datetime.strptime(match[1] + (match[2] or "000000"), "%Y%m%d%H%M%S")
     except ValueError:
-        raise MalformedPayloadError(
-            f"calendar event has an unreadable {name} ({prop.value!r})"
-        ) from None
+        raise MalformedPayloadError(f"calendar event has an unreadable {name}") from None
     if match[3]:
         return naive.replace(tzinfo=UTC)
     return naive.replace(tzinfo=_zone(prop.params.get("TZID") or calendar_zone))
@@ -194,7 +192,7 @@ _NAME = re.compile(r"[A-Za-z0-9-]+")
 def _content_line(line: str) -> tuple[str, dict[str, str], str]:
     name_match = _NAME.match(line)
     if name_match is None:
-        raise MalformedPayloadError(f"calendar has an unreadable line: {line[:40]!r}")
+        raise MalformedPayloadError("calendar has an unreadable line")
     position = name_match.end()
     params: dict[str, str] = {}
     while (param := _PARAM.match(line, position)) is not None:
@@ -202,7 +200,7 @@ def _content_line(line: str) -> tuple[str, dict[str, str], str]:
         params[param[1].upper()] = quoted[1] if quoted else param[2]
         position = param.end()
     if not line.startswith(":", position):
-        raise MalformedPayloadError(f"calendar has an unreadable line: {line[:40]!r}")
+        raise MalformedPayloadError("calendar has an unreadable line")
     return name_match[0].upper(), params, line[position + 1 :]
 
 
