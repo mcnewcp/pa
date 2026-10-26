@@ -12,8 +12,9 @@ See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh              # both VMs
+deploy/home/setup-wizard.sh              # both VMs, then the vault copy
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
+deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
 ```
 
 The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
@@ -38,6 +39,8 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
+| `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
+| `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -183,6 +186,34 @@ git pull --ff-only                            # to refresh, on the Mac
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
 
+## The vault copy
+
+The vault collector reads the owner's daily notes from a copy of their Obsidian vault on the devbox, at `~/.local/share/pa-vault`. Obsidian's headless Sync client keeps it, pull-only, as `pa-vault-sync.service`. Set it up with `setup-wizard.sh --vault`:
+
+1. **Sync.** The owner subscribes to Obsidian Sync, moves the vault out of iCloud on the Mac and sets it up on Sync, end-to-end encrypted, then sets the phone up from Sync, off iCloud ([Switch to Obsidian Sync](https://obsidian.md/help/sync/switch)). Obsidian advises against Sync on a folder iCloud syncs too.
+2. **The client.** `install-vault-sync.sh` installs it under `~/.local/share/pa/vault-sync/`:
+   - Node `PA_NODE_VERSION` (22) from nodejs.org, checked against `PA_NODE_SHA256` in `lib.sh` before it's unpacked;
+   - `obsidian-headless` at `PA_VAULT_SYNC_VERSION`, with `npm ci` from `vault-sync/package-lock.json`, which pins every package with its checksum. better-sqlite3's install script fetches its prebuilt binary from its GitHub releases.
+
+   The client is in open beta, so bump either pin deliberately: change `lib.sh` and regenerate the lockfile (`npm install --package-lock-only --ignore-scripts` in `vault-sync/`), then run `install-vault-sync.sh`, which restarts the service.
+3. **Login.** `ob login` (`~/.local/share/pa/vault-sync/bin/ob`) takes the Obsidian account's email, password and 2FA code. The client keeps its login, each vault's encryption key and a sync log in `~/.config/obsidian-headless/`, mode 0700.
+4. **Setup.** `ob sync-setup --vault <name> --path ~/.local/share/pa-vault --device-name pa-devbox` asks for the vault's encryption password, and `ob sync-config --path ~/.local/share/pa-vault --mode pull-only` sets pull-only before the first sync. The wizard then writes `~/.config/pa/vault.env`: `PA_VAULT_DIR` and `PA_VAULT_DAILY_NOTES`, the daily-notes folder relative to the vault, as Obsidian's Daily notes settings name it. The capture cycle reads them.
+5. **The service.** `install-vault-sync.sh --enable` starts the unit.
+
+What holds it:
+
+- **Pull-only.** The client downloads what the owner's devices change and ignores any change made on the devbox, so nothing written into the copy ever reaches them. (`mirror-remote` would revert such a change instead; the spec chose pull-only.) The unit runs `pa-vault-sync run`, which refuses to sync a vault that isn't set up pull-only, with status 78. The unit doesn't restart on that, nor on the client's "not logged in" (2) or "no sync set up" (3). It restarts on anything else, forever, 30 seconds apart.
+- **Nothing in the PA writes the copy.** The collector only reads it. The unit runs as the devbox user and can write only the copy and the client's state (`ProtectSystem=strict`, `ProtectHome=read-only`).
+- **No VM sees it.** The copy and the client's state are outside the data root, and no VM is shared them. `check-store.sh` and `check-vault-sync.sh` both fail if any VM is shared either, a directory in them, or a directory holding them.
+- **Note names stay out of the journal.** The client prints each note it downloads by name, so the unit drops its output; its errors still reach the journal. Its own log, in `~/.config/obsidian-headless/sync/<vault id>/sync.log`, keeps every name. That log, the journal and the copy are real content: a development session reads only `check-vault-sync.sh`, which reports counts and times.
+
+To check it, run `check-vault-sync.sh`. It checks the pins, pull-only, the unit (enabled, running, how many restarts), the modes, that no VM is shared the copy, and how many daily notes there are and when the newest changed. The wizard's last stage proves the two directions from the phone:
+
+- a daily note edited on the phone reaches the copy within minutes;
+- a file written into the copy (`pa-pull-only-check.md`, removed afterwards) never shows on the phone or the Mac.
+
+Re-auth: if the client's login is revoked, the unit stops with status 2. Run `ob login`, then `sudo systemctl restart pa-vault-sync`. If the vault's encryption password changes, run `ob sync-unlink --path ~/.local/share/pa-vault`, then `setup-wizard.sh --vault` again: its sync stage sets the vault up afresh, pull-only.
+
 ## Hand-run tests with the real model
 
 The suite skips the tests that call a real model unless asked, since they cost money and depend on the model. Run them by hand on the devbox:
@@ -315,3 +346,10 @@ The VM's Tailscale identity lives on its disk, so it survives reboots and rollba
    incus stop pa-librarian
    ```
 4. Reboot the devbox: `pa-librarian` stays stopped, the wiki and replays are mounted, and `check-librarian.sh` passes.
+
+## Acceptance run (#87)
+
+1. `setup-wizard.sh --vault` runs, and ends with `check-vault-sync.sh` passing: Node and the client at their pins, the vault pull-only, `pa-vault-sync.service` enabled and running, and no VM shared the copy.
+2. Its last stage shows a daily note edited on the phone reaching the copy within minutes, by the newest note's change time, and the wizard's `pa-pull-only-check.md` never reaching the phone.
+3. `check-store.sh` passes, its vault line included.
+4. Reboot the devbox: `check-vault-sync.sh` passes again.
