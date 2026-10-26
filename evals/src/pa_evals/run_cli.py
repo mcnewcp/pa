@@ -55,10 +55,12 @@ AS_OF_ADR = "docs/adr/0003-as-of-time-injection.md"
 """Where the as-of injection methods were compared, and why the default won."""
 
 AS_OF_REASONS: dict[AsOfMethod, str] = {
-    AsOfMethod.SYSTEM_PROMPT: "the default: it and a preamble both passed every as-of canary, "
-    "and it leaves the question exactly as asked and works in an interactive session too",
-    AsOfMethod.PREAMBLE: "the alternative: it passed every as-of canary too, but it adds to the "
-    "question, and the agent credits the date to the owner",
+    AsOfMethod.BOTH: "the default: told in the system prompt and again before the question, it "
+    "was the one method to pass every as-of canary with Sonnet",
+    AsOfMethod.SYSTEM_PROMPT: "an alternative: it leaves the question exactly as asked, but it "
+    "didn't pass every as-of canary with Sonnet",
+    AsOfMethod.PREAMBLE: "an alternative: it adds to the question, and it didn't pass every "
+    "as-of canary with Sonnet",
     AsOfMethod.NONE: "the control: the agent is not told the as-of time, so it goes by the "
     "real date",
 }
