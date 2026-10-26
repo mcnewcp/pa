@@ -59,7 +59,8 @@ PA_GMAIL_AUTH_PORT=8765
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
-# Real-data evals' private files: run directories from runs over a cut, under evals/runs/.
+# Real-data evals' private files (DataRoot.evals): run directories from runs over a cut, under
+# evals/runs/. The nightly backup takes it whole.
 PA_EVALS=$PA_DATA_ROOT/evals
 # The three parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
@@ -108,6 +109,13 @@ PA_VAULT_SYNC_CONFIG=$HOME/.config/obsidian-headless
 # vault's version history (it makes none).
 PA_VAULT_SYNC_UNIT=pa-vault-sync.service
 PA_VAULT_DEVICE_NAME=pa-devbox
+
+# The nightly backup (pa backup, backup.sh): a restic repository on the USB SSD, which is
+# mounted by its filesystem's UUID at PA_BACKUP_MOUNT (install-backup-drive.sh), and the
+# password it's encrypted with, kept here and in the owner's password manager.
+PA_BACKUP_MOUNT=/mnt/pa-backup
+PA_BACKUP_REPOSITORY=$PA_BACKUP_MOUNT/restic
+PA_BACKUP_PASSWORD_FILE=$HOME/.config/pa/restic.password
 
 # Where the VM sees the store: L0 and the wiki read-only, and its own inbox directory, its only
 # way back.
@@ -397,4 +405,61 @@ for server in init.get("mcp_servers") or []:
 if init.get("permissionMode") == "bypassPermissions":
     print("it runs in bypass mode")
 ' "${PA_LIBRARIAN_TOOLS[@]}"
+}
+
+# backup_mount_unit_name prints the name of the backup drive's mount unit, which systemd
+# derives from its mount point.
+backup_mount_unit_name() { systemd-escape -p --suffix=mount "$PA_BACKUP_MOUNT"; }
+
+# backup_mount_unit UUID prints the mount unit that mounts the filesystem with that UUID, and
+# only that one, at PA_BACKUP_MOUNT. It's wanted at boot, never required: a missing drive
+# leaves the mount point empty, and the backup records that as a missing repository.
+backup_mount_unit() {
+  [[ ${1:-} =~ ^[0-9A-Fa-f]+(-[0-9A-Fa-f]+)*$ ]] \
+    || die "the backup drive is named by its filesystem UUID, as lsblk -o UUID shows it (got '${1:-}')"
+  cat <<UNIT
+[Unit]
+Description=The PA's backup drive, found by its filesystem's UUID
+
+[Mount]
+What=/dev/disk/by-uuid/$1
+Where=$PA_BACKUP_MOUNT
+Options=nosuid,nodev,noexec,noatime
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# ensure_backup_password FILE makes FILE a new random restic password, readable only by the
+# owner, unless it holds one already: the password is made once, since a new one wouldn't
+# open the repository.
+ensure_backup_password() {
+  local file=$1
+  if [[ ! -s $file ]]; then
+    mkdir -p "$(dirname "$file")"
+    (umask 077 && python3 -c 'import secrets; print(secrets.token_urlsafe(32))' >"$file")
+    log "made a new restic password in $file"
+  fi
+  chmod 600 "$file"
+}
+
+# init_backup_repository REPOSITORY PASSWORD_FILE initializes a restic repository at
+# REPOSITORY, encrypted with the password in PASSWORD_FILE, unless one is there already, which
+# that password must open.
+init_backup_repository() {
+  local repository=$1 password_file=$2 code=0
+  RESTIC_REPOSITORY=$repository RESTIC_PASSWORD_FILE=$password_file \
+    restic cat config >/dev/null 2>&1 || code=$?
+  case $code in
+    0) log "the restic repository at $repository is already initialized" ;;
+    # restic's exit code for a repository that doesn't exist.
+    10)
+      RESTIC_REPOSITORY=$repository RESTIC_PASSWORD_FILE=$password_file restic init >/dev/null \
+        || die "restic couldn't initialize a repository at $repository"
+      log "initialized the restic repository at $repository"
+      ;;
+    12) die "the password in $password_file doesn't open the restic repository at $repository" ;;
+    *) die "restic couldn't open the repository at $repository (exit $code)" ;;
+  esac
 }

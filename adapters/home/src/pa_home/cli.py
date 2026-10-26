@@ -35,14 +35,13 @@ from pa_home.config import (
     load_librarian_config,
     load_owner,
     load_time_zone,
-    require_backup_config,
     require_outside_repository,
 )
 from pa_home.cut import take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
-from pa_home.lock import data_root_lock
+from pa_home.lock import LockHeld, data_root_lock
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -114,7 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
-    commands.add_parser("backup", help="Back up L0 to the configured restic repository.")
+    commands.add_parser(
+        "backup",
+        help="Back up L0, the wiki's git directory, and the private eval directory to the "
+        "configured restic repository, and record the outcome in the status. Skips if another "
+        "run holds the data root's lock.",
+    )
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
     )
@@ -461,9 +465,13 @@ def _rebuild_catalog(data_root: DataRoot) -> None:
 
 
 def _backup(data_root: DataRoot) -> None:
-    require_backup_config()
-    snapshot_id = back_up(data_root.l0)
-    print(f"backed up L0 to snapshot {snapshot_id[:8]}")
+    try:
+        with data_root_lock(data_root):
+            snapshot_id = back_up(data_root)
+    except LockHeld:
+        print("backup: skipped: another run holds the data root's lock")
+        return
+    print(f"backup: took snapshot {snapshot_id[:8]}")
 
 
 def _renormalize(data_root: DataRoot) -> None:

@@ -89,6 +89,12 @@ class DataRoot:
         return self.path / WIKI_GIT_DIR
 
     @property
+    def evals(self) -> Path:
+        """The private eval directory: real-data eval sets, cuts, runs, and verdicts, which
+        never go in the repository."""
+        return self.path / "evals"
+
+    @property
     def state(self) -> Path:
         """Collector state and pending watermarks: the capture cycle's own records, outside L0."""
         return self.path / "state"

@@ -185,11 +185,12 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87): the steps only the owner can do, and
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89): the steps only the owner can do, and
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
-# client), or --gmail for Gmail's Cloud project and consent (#86), the re-auth too.
+# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, or --backup
+# for the backup drive alone (#89).
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -197,13 +198,15 @@ ASSISTANT_STAGES=19
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
 GMAIL_STAGES=3
-only_librarian=false only_vault=false only_gmail=false
+BACKUP_STAGES=2
+only_librarian=false only_vault=false only_gmail=false only_backup=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES)) ;;
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
   --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail]\n' >&2; exit 2 ;;
+  --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
+  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --backup]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -884,6 +887,54 @@ rm -f "$probe"
 pause
 }
 
+# The nightly backup's USB SSD and its restic repository (#89).
+backup_stages() {
+
+# ── B1 ────────────────────────────────────────────────────────────────────
+stage "The backup drive"
+if mountpoint -q "$PA_BACKUP_MOUNT"; then
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT"
+else
+  say "The nightly backup goes to your USB SSD on the devbox, mounted at $PA_BACKUP_MOUNT by its"
+  say "filesystem's UUID, so no other drive is ever mounted there. Without the drive the devbox"
+  say "still boots, and the status records each backup that finds no repository."
+  step "Plug the SSD into the devbox, and find it in the list below (TRAN usb, its SIZE and MODEL)."
+  step "If it has no ext4 filesystem yet, make one (this erases the drive), with its partition"
+  step "in place of sdX1: sudo mkfs.ext4 -L pa-backup /dev/sdX1, then run lsblk -f to see its UUID."
+  printf '\n'
+  run lsblk -o NAME,TRAN,SIZE,MODEL,FSTYPE,LABEL,UUID
+  printf '\n'
+  ask backup_uuid "The UUID of the SSD's ext4 filesystem:"
+  run "$DEPLOY_DIR/install-backup-drive.sh" "$backup_uuid"
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT, and will be at every boot"
+fi
+pause
+
+# ── B2 ────────────────────────────────────────────────────────────────────
+stage "The backup repository and its password"
+mountpoint -q "$PA_BACKUP_MOUNT" || { printf '  %s✗ the backup drive isn'"'"'t mounted at %s%s\n' "$RED" "$PA_BACKUP_MOUNT" "$RESET"; exit 1; }
+say "restic encrypts the backup with the password in $PA_BACKUP_PASSWORD_FILE, readable only"
+say "by you. Without it the backup can't be restored, so keep a copy in your password manager"
+say "too: it's what restores L0 after the devbox is lost."
+ensure_backup_password "$PA_BACKUP_PASSWORD_FILE"
+ok "the password is in $PA_BACKUP_PASSWORD_FILE, mode 0600"
+if confirm "Show the password now, to copy it into your password manager?"; then
+  printf '\n    %s%s%s\n\n' "$BOLD" "$(cat "$PA_BACKUP_PASSWORD_FILE")" "$RESET"
+else
+  note "It's in $PA_BACKUP_PASSWORD_FILE when you want it."
+fi
+if confirm "Is it saved in your password manager, as \"PA restic backup\"?"; then
+  ok "saved in your password manager"
+else
+  SKIPPED+=("save the restic password in your password manager, from $PA_BACKUP_PASSWORD_FILE")
+  warn "save the restic password in your password manager before you rely on the backup"
+fi
+init_backup_repository "$PA_BACKUP_REPOSITORY" "$PA_BACKUP_PASSWORD_FILE"
+ok "the restic repository is ready at $PA_BACKUP_REPOSITORY"
+note "deploy/home/backup.sh backs up to it, and pa status shows the last backup."
+pause
+}
+
 banner "PA setup"
 if $only_gmail; then
   gmail_stages
@@ -893,12 +944,20 @@ if $only_gmail; then
   printf '\n'
   exit 0
 fi
+if $only_backup; then
+  backup_stages
+  finish
+  note "The backup runs by hand: deploy/home/backup.sh, and pa status shows the last one."
+  printf '\n'
+  exit 0
+fi
 if $only_vault; then
   vault_stages
 else
   $only_librarian || assistant_stages
   librarian_stages
   $only_librarian || vault_stages
+  $only_librarian || backup_stages
 fi
 
 finish
@@ -911,4 +970,5 @@ note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the 
 fi
 $only_vault || note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
 $only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
+$only_librarian || $only_vault || note "The backup runs by hand: deploy/home/backup.sh."
 printf '\n'
