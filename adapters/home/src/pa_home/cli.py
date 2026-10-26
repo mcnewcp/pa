@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
+from pa_core.inspection import FORMATS, format_for, inspect_structure
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
@@ -40,6 +41,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pa", description="Personal assistant.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("ingest", help="Turn raw payloads in the inbox into episodes in L0.")
+    inspect = commands.add_parser(
+        "inspect",
+        help="Print the structure of a payload, an envelope, or a quarantine record, never its "
+        "content: names, kinds, counts, and sizes.",
+    )
+    inspect.add_argument("paths", type=Path, nargs="+", metavar="PATH", help="A file to inspect.")
+    inspect.add_argument(
+        "--as",
+        dest="fmt",
+        choices=FORMATS,
+        help="Read each file as this format, whatever its suffix (.eml, .ics, .md, .json).",
+    )
     commands.add_parser(
         "capture",
         help="Run a capture cycle: collect each configured source into the inbox, ingest, and "
@@ -188,6 +201,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "librarian-project":
             _render_librarian_project(args.target, l0=args.l0, wiki=args.wiki)
             return 0
+        if args.command == "inspect":
+            return _inspect(args.paths, args.fmt)
         if args.command == "librarian" and args.librarian_command == "replay":
             _replay(
                 args.target,
@@ -236,6 +251,25 @@ def _ingest(data_root: DataRoot) -> None:
         for reason in summary.left:
             print(f"pa: {reason}", file=sys.stderr)
         raise PaError(f"left {len(summary.left)} in the inbox: this user can't remove them")
+
+
+def _inspect(paths: list[Path], fmt: str | None) -> int:
+    """Print each file's structure. A file's path is never printed: a glob may have named it,
+    and a name in the store can be content."""
+    status = 0
+    for number, path in enumerate(paths, start=1):
+        if number > 1:
+            print()
+        if len(paths) > 1:
+            print(f"file {number} of {len(paths)}")
+        try:
+            raw = path.read_bytes()
+        except OSError as error:
+            print(f"pa: file {number} can't be read ({error.strerror})", file=sys.stderr)
+            status = 1
+            continue
+        print(inspect_structure(raw, fmt or format_for(path.suffix)), end="")
+    return status
 
 
 def _capture(data_root: DataRoot) -> int:
