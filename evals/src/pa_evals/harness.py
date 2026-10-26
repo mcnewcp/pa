@@ -83,7 +83,7 @@ def run_eval(
         data_root = DataRoot(Path(directory))
         counts = None
         if isinstance(corpus, Cut):
-            _lay_cut(corpus, data_root)
+            lay_cut(corpus, data_root)
             store = FilesystemL0(data_root.l0)
             known = {envelope.episode_id for envelope in store.envelopes()}
         else:
@@ -240,9 +240,10 @@ def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     return target
 
 
-def _lay_cut(cut: Cut, data_root: DataRoot) -> None:
+def lay_cut(cut: Cut, data_root: DataRoot) -> None:
     """Copy the cut's L0 and status file into the throwaway data root, with nothing in them
-    writable. Its wiki is laid as the run's eval wiki, if the run has one."""
+    writable. Never its wiki: a run with one lays it as the run's eval wiki, and a draft is
+    written without it."""
     if cut.l0.is_dir():
         shutil.copytree(cut.l0, data_root.l0)
     else:

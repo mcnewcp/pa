@@ -34,6 +34,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
+| `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
 | `check-isolation.sh` | Probes the fences from inside the VM |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
@@ -256,6 +257,20 @@ deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --jud
 ```
 
 A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`~/.cache/pa-eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut is refused before anything runs.
+
+### Drafting the real-data eval set
+
+```sh
+deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> [--agent-model sonnet]
+                                              # <data root>/evals/drafts/<as-of>/draft-<time>.json
+deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> \
+  --revise <data root>/evals/drafts/<as-of>/draft-<time>.json \
+  --notes <data root>/evals/drafts/<as-of>/notes.md   # a second pass: a new draft beside it
+```
+
+A headless session in the assistant's VM reads the cut's L0 (a read-only copy, never the cut's wiki), with exchange capture off, and drafts about 25 questions (`--questions N`), each with an expected answer and evidence episode ids. It's asked at the cut's as-of time, as the owner in the VM's `owner.env`, with the prompt versioned in `evals/src/pa_evals/draft_prompts/`. Questions get opaque ids (`r01`, `r02`, ...), and a draft naming an episode that isn't in the cut is thrown away whole. The draft comes back mode 0600 under `<data root>/evals/drafts/<as-of>/` (or `$PA_EVAL_DRAFTS_DIR/<as-of>/`), and is never written over.
+
+The owner corrects the draft in place, adds questions of their own, and, for a second pass, writes their notes beside it. The second pass revises the draft as the owner left it, keeps the ids of the questions it keeps, and numbers new ones after the last. Drafts and notes are refused inside this checkout, by `draft-evals.sh` and again by `pa-eval draft`; what either prints says how much was drafted, never what. The session may take up to an hour (`--timeout` seconds) before it fails.
 
 ## Updating and rolling back
 
