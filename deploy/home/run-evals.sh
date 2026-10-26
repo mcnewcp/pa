@@ -2,8 +2,9 @@
 # Usage: run-evals.sh [pa-eval run options]
 #
 # Runs the eval set inside the PA VM, as the assistant user, with the agent project at the VM's
-# deployed commit (default options: --agent claude --judge model). The run builds its throwaway
-# data root on the VM's own disk, never the mounted store, with exchange capture off. The run
+# deployed commit (default options: --agent claude --judge model), under the VM's managed settings
+# and sandbox, as every session there runs. The run builds its throwaway data root on the VM's own
+# disk, in its eval directory, never the mounted store, with exchange capture off. The run
 # directory is copied back to evals/runs/ in this checkout (or to $PA_EVAL_RUNS_DIR, if set), and
 # the run fails if the VM's inbox directory changed while it ran.
 #
@@ -61,6 +62,8 @@ if [[ -n $cut ]]; then
 else
   runs_dir=${PA_EVAL_RUNS_DIR:-$REPO_DIR/evals/runs}
   [[ -z $eval_set ]] || args+=(--eval-set "$eval_set")
+  # The VM's code is root's, so the run directory can't go in its evals/runs/.
+  args+=(--runs-dir "$PA_VM_EVAL_RUNS")
 fi
 set -- "${args[@]}"
 
@@ -85,13 +88,14 @@ before=$(inbox_listing)
 
 output=$(mktemp)
 trap 'rm -f "$output"' EXIT
-as_assistant "$PA_REPO_DIR" "$@" <<'EOF' | tee "$output"
+as_assistant "$PA_REPO_DIR" "$PA_VM_EVAL_TMP" "$@" <<'EOF' | tee "$output"
 set -euo pipefail
 cd "$1"
-shift
 # The run's throwaway data root and rendered projects go in TMPDIR: on the VM's disk, since
-# /tmp in the VM is in memory.
-export TMPDIR=$HOME/.cache/pa-eval
+# /tmp in the VM is in memory, and outside the assistant's home, whose CLAUDE.md files the
+# managed settings exclude.
+export TMPDIR=$2
+shift 2
 mkdir -p "$TMPDIR"
 .venv/bin/pa-eval run "$@"
 EOF

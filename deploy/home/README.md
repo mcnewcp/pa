@@ -30,14 +30,15 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
 | `mount-store.sh` | Mounts L0 and the wiki into the VM read-only and `inbox/assistant_chat/` writable |
-| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` and runs `uv sync`, then renders the agent project and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
+| `update.sh <ref>` | Snapshots the VM, puts the repo at `<ref>` in `/opt/pa` and runs `uv sync`, both as root, installs the fences (`install-assistant-fences.sh`), then renders the agent project as root and installs the Remote Control unit, restarting it once it's enabled; the first run installs uv and Claude Code |
+| `install-assistant-fences.sh` | Installs the assistant's managed settings, the sandbox's packages and AppArmor profile, and its layout (`assistant-layout.sh`) in the VM, as root ([The assistant's managed settings and sandbox](#the-assistants-managed-settings-and-sandbox)) |
 | `install-remote-control.sh [--enable]` | Installs `pa-remote-control.service` in the VM and restarts it if it's enabled; `--enable` enables it first |
 | `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
 | `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
 | `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
-| `check-isolation.sh` | Probes the fences from inside the VM |
+| `check-isolation.sh` | Probes the fences from inside the VM: the network, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
@@ -59,6 +60,32 @@ The devbox also runs ufw, which drops input and forwarded traffic by default. `i
 
 The firewall loads at boot from `pa-vm-firewall.service`, after Docker and before Incus. Incus requires it, so if the rules fail to load, Incus doesn't start and the VM stays down. Don't enable `nftables.service` to persist rules: Ubuntu's `/etc/nftables.conf` starts with `flush ruleset`, which would wipe Docker's and Incus's rules at boot.
 
+### The assistant's managed settings and sandbox
+
+Inside the VM, the assistant's policy is Claude Code's managed settings, `managed-settings.json` here, at `/etc/claude-code/managed-settings.json` in the VM, root's and mode 0644, so the assistant can't change them and every session in the VM runs under them, eval and drafting sessions included ([the fences spike](../../docs/research/assistant-fences-spike.md)). They:
+
+- deny WebSearch, WebFetch, every MCP tool, Remote Control's own `SendUserFile` and `FetchInboxMessage`, and the tools that schedule prompts or reach out remotely, so a headless session has exactly `Bash, Edit, Read, ToolSearch, Write`, whatever its flags;
+- deny the file tools every place the assistant could write but scratch, and reads of its credentials;
+- admit only their own permission rules and hooks: the capture hook is theirs now, unchanged, running `/srv/pa/agent/.claude/hooks/capture_exchange.py` with `/opt/pa/.venv/bin/python` (#94 replaces it);
+- require Claude Code's Bash sandbox, failing if it's unavailable, with no unsandboxed escape, writes only to scratch, and no network;
+- lock out bypass mode, and turn off auto memory, claude.ai connectors, auto-updates, telemetry, error reports and the feedback command. Not nonessential traffic, whose switch breaks Remote Control.
+
+The sandbox needs `bubblewrap`, `socat` and `apparmor`, and the `pa-bwrap` AppArmor profile (`apparmor/pa-bwrap`), which lets bubblewrap make its user namespace in place of Ubuntu's `bwrap-userns-restrict`, under which every sandboxed command fails.
+
+What the assistant can't write is root's, outside its home, so no directory above it is the assistant's:
+
+| In the VM | Owner, mode | |
+|---|---|---|
+| `/srv/pa/agent` | root, 0755 | The rendered agent project and its hook's script, each session's working directory |
+| `/opt/pa` | root | The code and its venv, the hook's interpreter (any Python uv installs for it goes in `/opt/pa-python`) |
+| `/etc/pa/owner.env` | root, 0644 | The instance owner, which the project renders from |
+| `/etc/claude-code/managed-settings.json` | root, 0644 | The policy |
+| `~/.claude/settings.json` | root, 0644 | `{}`, since no setting turns user settings off |
+| `/srv/pa/scratch` | assistant, 0700 | The one directory the assistant's shell and file tools write |
+| `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
+
+The home directory is the assistant's, so only the managed settings' deny rules and the sandbox keep its tools out of it; Claude Code itself still writes its state there. `install-assistant-fences.sh` also removes any auto-memory directory left under `~/.claude/projects/`.
+
 ## The store
 
 The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
@@ -71,7 +98,7 @@ Three directories of it are mounted into the VM, and nothing else, the catalog a
 | `inbox/assistant_chat/` | `/srv/pa/inbox/assistant_chat` | Writable: the VM's only way back. Ingest makes anything written there an `assistant_chat` episode, or quarantines it ([ADR-0004](../../docs/adr/0004-inbox-directory-sets-source.md)) |
 | `wiki/` | `/srv/pa/wiki` | Read-only, like L0. The librarian keeps it on the devbox; `mount-store.sh` creates it empty if it doesn't exist yet |
 
-`update.sh` copies `owner.env` into the VM and renders the agent project from it into `/home/assistant/agent`, pointing it at `/srv/pa/l0`, with `/home/assistant/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
+`update.sh` copies `owner.env` into the VM (`/etc/pa/owner.env`, root's) and, as root, renders the agent project from it into `/srv/pa/agent`, pointing it at `/srv/pa/l0`, with `/srv/pa/scratch` as its scratch directory, and at `/srv/pa/wiki` once the librarian has run into the wiki (its `index.md` is there); until then the assistant runs on files alone, so run `update.sh` again after the librarian's first run. Each update deletes the rendered project and renders it again at the same path.
 
 The shares are served by `virtiofsd` running as root on the devbox, with no id mapping. The VM's `assistant` user can write its inbox directory only because its uid is the devbox user's (both 1000); `mount-store.sh` refuses to go on if they differ. What the VM writes into `inbox/assistant_chat/` keeps the VM's owners and modes, so root in the VM could leave root-owned files there, setuid programs and device nodes included, or fill the devbox's disk. So that directory is a filesystem of its own (`install-chat-inbox.sh`): a 1 GiB ext4 image, `chat-inbox.img` in the data root, loop-mounted `nosuid,nodev,noexec` by a systemd mount unit. Nothing in it can run, setuid or not, or act as a device, and the VM can't write more than 1 GiB. The unit mounts it at boot before Incus, and Incus requires it: if it can't be mounted, Incus doesn't start and the VM stays down instead of sharing the bare directory.
 
@@ -312,7 +339,7 @@ uv run pa-eval compare evals/baselines/v0.12/scale-files-alone evals/runs/<run> 
 
 A files-plus-wiki run's `--wiki` is an eval wiki on the devbox: a replay's `wiki/` and `run-log.jsonl` (`pa librarian replay`), kept in `evals/wikis/<corpus>/<librarian version>/` and committed when a reported result uses it, never with its `wiki.git/`. `run-evals.sh` pushes that copy into the VM (replacing the last one) and points the run at it; the run lays it beside its throwaway L0 with nothing writable, and its report names the librarian version that built it.
 
-The run uses the code and agent project at the VM's deployed commit, builds its throwaway data root on the VM's own disk (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
+The run uses the code and agent project at the VM's deployed commit, under the VM's managed settings and sandbox like every session there, builds its throwaway data root on the VM's own disk in `/srv/pa/eval` (never the mounted store) with exchange capture off, and fails if `inbox/assistant_chat/` changed while it ran. The run directory is copied back to `evals/runs/` in this checkout. Claude Code in the VM must be logged in (the wizard's login stage).
 
 ### Real-data runs over a cut
 
@@ -323,7 +350,7 @@ deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --jud
   [--configuration files-plus-wiki]           # the cut's own wiki; no --wiki
 ```
 
-A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`~/.cache/pa-eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut is refused before anything runs.
+A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`/srv/pa/eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut is refused before anything runs.
 
 ### Drafting the real-data eval set
 

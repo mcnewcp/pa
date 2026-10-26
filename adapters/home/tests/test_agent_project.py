@@ -6,7 +6,6 @@ differs.
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -72,17 +71,15 @@ def test_the_rendered_settings_hold_the_instance_paths(instance):
     assert "${" not in (target / SETTINGS).read_text()
 
 
-def test_the_rendered_capture_hook_runs_the_projects_hook_script_with_the_rendering_python(
+def test_the_rendered_project_holds_the_capture_hooks_script_but_its_settings_run_no_hook(
     instance,
 ):
+    """The hook moved into the VM's managed settings, the only hooks that run there (#92); it
+    runs the rendered project's copy of the script."""
     target = _render(instance)
     settings = json.loads((target / SETTINGS).read_text())
 
-    [group] = settings["hooks"]["Stop"]
-    [hook] = group["hooks"]
-    # Exec form (command and args, no shell), so no path needs quoting.
-    assert hook["command"] == sys.executable
-    assert hook["args"] == [str(target / ".claude" / "hooks" / "capture_exchange.py")]
+    assert "hooks" not in settings
     assert (target / ".claude" / "hooks" / "capture_exchange.py").is_file()
 
 
@@ -165,28 +162,24 @@ def test_the_source_project_names_no_owner_and_no_instance_path():
         assert not value.startswith("/"), f"settings.json names an absolute path: {value!r}"
 
 
-def test_the_permission_policy_leaves_the_fences_to_the_vm_and_holds_in_every_mode(instance):
-    """The shared policy (roadmap's permissions table, #22). Isolation is the VM's: its
-    tailnet rules, the host firewall and the read-only L0 mount. Inside it the assistant has
-    its normal tools, so there is no Bash sandbox and no file-tool deny rule. What the settings
-    do fence is a deny rule, never an ask rule, since the chat client picks the permission
-    mode."""
+def test_the_permission_policy_denies_the_web_and_mcp_and_holds_in_every_mode(instance):
+    """The shared policy. The web tools and MCP are denied here and again by the VM's managed
+    settings (#92), so the policy holds even if these settings change. Isolation is the VM's: its
+    managed settings, sandbox and network. What the settings fence is a deny rule, never an ask
+    rule, since the chat client picks the permission mode."""
     settings = json.loads((_render(instance) / SETTINGS).read_text())
     permissions = settings["permissions"]
 
     assert "ask" not in permissions
     assert "defaultMode" not in permissions
-    assert "sandbox" not in settings
-    # Web search and fetch (any domain) without a prompt.
-    assert {"WebSearch", "WebFetch"} <= set(permissions["allow"])
-    # The normal tools stay: no tool is denied outright except MCP's.
-    assert [rule for rule in permissions["deny"] if "(" not in rule] == ["mcp__*"]
+    assert "allow" not in permissions
+    assert {"WebSearch", "WebFetch", "mcp__*"} <= set(permissions["deny"])
+    # The assistant's own tools aren't denied.
+    assert not {"Bash", "Read", "Edit", "Write"} & set(permissions["deny"])
     # No MCP servers: none configured, claude.ai connectors off, and every MCP tool denied.
     assert settings["disableClaudeAiConnectors"] is True
     assert settings["enableAllProjectMcpServers"] is False
     assert "mcpServers" not in settings
-    # The Stop hook captures each exchange (see the capture hook test).
-    assert settings["hooks"]["Stop"]
 
 
 def test_two_owners_get_their_own_rendered_projects(tmp_path: Path, instance):
