@@ -10,26 +10,50 @@
 # A files-plus-wiki run's --wiki DIR is an eval wiki in this checkout (a replay's wiki/ and
 # run-log.jsonl, e.g. evals/wikis/scale/<librarian version>): its copy is pushed into the VM,
 # replacing the last run's, and the run asks with that copy.
+#
+# A run over a cut (--cut DIR --eval-set FILE, both under the data root; `pa cut` makes the cut)
+# pushes the cut into the VM once, and reuses the VM's copy on every later run over it. The eval
+# set is pushed each run, replacing the last. The run directory stays out of the VM's checkout,
+# and comes back under the data root ($PA_EVALS/runs/, or $PA_EVAL_RUNS_DIR). The cut, the set,
+# and the run directory are refused inside this checkout, so nothing real is ever committed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
-runs_dir=${PA_EVAL_RUNS_DIR:-$REPO_DIR/evals/runs}
 
 (($#)) || set -- --agent claude --judge model
 
-# Point --wiki at the VM's copy of the eval wiki, and push that copy.
+# require_private stops unless the path ($2) is outside this checkout, after following links;
+# $1 says what it is.
+require_private() {
+  local resolved repository
+  resolved=$(realpath -m -- "$2")
+  repository=$(realpath -- "$REPO_DIR")
+  case $resolved/ in
+    "$repository"/*)
+      die "the $1 ($resolved) is inside the repository ($repository): real-data eval sets, cuts, and run directories stay under the data root"
+      ;;
+  esac
+}
+
+# Take out the options that name devbox paths: --wiki is pointed at the VM's copy where it was
+# given, and a cut and its eval set are given again at the end, as the VM's copies.
 wiki=""
+cut=""
+eval_set=""
 args=()
 while (($#)); do
   case $1 in
-    --wiki)
-      (($# >= 2)) || die "--wiki needs a directory"
-      wiki=$2
-      args+=(--wiki "$PA_VM_EVAL_WIKI")
+    --wiki | --cut | --eval-set)
+      (($# >= 2)) || die "$1 needs a path"
+      option=${1#--}
+      printf -v "${option//-/_}" '%s' "$2"
+      [[ $1 != --wiki ]] || args+=(--wiki "$PA_VM_EVAL_WIKI")
       shift 2
       ;;
-    --wiki=*)
-      wiki=${1#--wiki=}
-      args+=(--wiki "$PA_VM_EVAL_WIKI")
+    --wiki=* | --cut=* | --eval-set=*)
+      option=${1%%=*}
+      option=${option#--}
+      printf -v "${option//-/_}" '%s' "${1#*=}"
+      [[ $option != wiki ]] || args+=(--wiki "$PA_VM_EVAL_WIKI")
       shift
       ;;
     *)
@@ -38,7 +62,24 @@ while (($#)); do
       ;;
   esac
 done
+if [[ -n $cut ]]; then
+  [[ -n $eval_set ]] || die "--cut needs --eval-set FILE: the real-data eval set asked over it"
+  runs_dir=${PA_EVAL_RUNS_DIR:-$PA_EVALS/runs}
+  require_private cut "$cut"
+  require_private "eval set" "$eval_set"
+  require_private "runs directory" "$runs_dir"
+  [[ -f $cut/cut.json ]] || die "$cut isn't a cut: it has no cut.json (pa cut makes one)"
+  [[ -f $eval_set ]] || die "eval set not found: $eval_set"
+  cut_name=$(basename "$(realpath -- "$cut")")
+  [[ $cut_name =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "$cut isn't named as pa cut names a cut"
+  vm_cut=$PA_VM_EVAL_CUTS/$cut_name
+  args+=(--cut "$vm_cut" --eval-set "$PA_VM_EVAL_SET" --runs-dir "$PA_VM_EVAL_RUNS")
+else
+  runs_dir=${PA_EVAL_RUNS_DIR:-$REPO_DIR/evals/runs}
+  [[ -z $eval_set ]] || args+=(--eval-set "$eval_set")
+fi
 set -- "${args[@]}"
+
 if [[ -n $wiki ]]; then
   # A replay target's layout, as pa_core.librarian.replay.ReplayTarget defines it.
   [[ -d $wiki/wiki && -f $wiki/run-log.jsonl ]] ||
@@ -48,6 +89,23 @@ if [[ -n $wiki ]]; then
     incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
       "rm -rf $PA_VM_EVAL_WIKI && mkdir -p $PA_VM_EVAL_WIKI && tar -C $PA_VM_EVAL_WIKI -xf -"
   log "pushed the eval wiki in $wiki to $PA_VM_EVAL_WIKI"
+fi
+
+if [[ -n $cut ]]; then
+  # A cut never changes, so the VM's copy is kept and reused. It's unpacked beside the others
+  # and moved into place whole, so a push that stopped part way is never taken for the cut.
+  if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $vm_cut" </dev/null; then
+    log "the cut $cut_name is already in the VM: reusing $vm_cut"
+  else
+    partial=$PA_VM_EVAL_CUTS/.$cut_name.partial
+    tar -C "$cut" -cf - . |
+      incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+        "rm -rf $partial && mkdir -p $partial && tar -C $partial -xf - && mv -T $partial $vm_cut"
+    log "pushed the cut $cut_name to $vm_cut"
+  fi
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+    "mkdir -p ${PA_VM_EVAL_SET%/*} && cat > $PA_VM_EVAL_SET" <"$eval_set"
+  log "pushed the eval set to $PA_VM_EVAL_SET"
 fi
 
 # inbox_listing lists what's in the VM's inbox directory, with sizes and times.

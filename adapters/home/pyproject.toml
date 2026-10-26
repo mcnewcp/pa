@@ -3,7 +3,12 @@ name = "pa-home"
 version = "0.1.0"
 description = "Home adapter for the personal assistant: filesystem L0 and the pa command"
 requires-python = ">=3.12"
-dependencies = ["pa-core"]
+dependencies = [
+    "google-auth-oauthlib==1.5.0",
+    "google-auth[requests]==2.61.0",
+    "pa-core",
+    "requests==2.34.2",
+]
 
 [project.scripts]
 pa = "pa_home.cli:main"

@@ -63,6 +63,7 @@ def scale_l0(eval_set: EvalSet) -> tuple[IngestCounts, list[Envelope]]:
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(SCALE.payloads, one_question, ListingAgent(), ScriptedJudge({}))
+    assert results.ingest is not None
     return results.ingest, envelopes
 
 

@@ -194,6 +194,10 @@ _Avoid_: Mode, variant, arm
 The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
 _Avoid_: Test wiki, fixture wiki
 
+**Cut**:
+A frozen copy of the store, taken now, that a real-data eval set is asked against: every episode captured by then, the live wiki at its last commit, and the status file. It lives under the data root, never in the repository, so the set's answers never change as L0 grows.
+_Avoid_: Snapshot (that's a backup's), frozen corpus (that's synthetic)
+
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".
 _Avoid_: Eval date, reference date

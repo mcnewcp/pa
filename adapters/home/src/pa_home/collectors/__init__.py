@@ -1,9 +1,9 @@
 """Collectors: each brings one source's new and changed items into its inbox directory.
 
 A collector is told where its source's inbox directory is (`SourceInbox`, the only place it may
-write payloads) and where its own state lives, and it collects. Returning means the collection
-succeeded; raising means it failed, and the capture cycle records the failure without its
-content. The cycle, not the collector, keeps the watermarks.
+write payloads) and where its own state lives, and it collects, or backfills a window.
+Returning means it succeeded; raising means it failed, and the capture cycle records the failure
+without its content. The cycle, not the collector, keeps the watermarks.
 """
 
 from __future__ import annotations
@@ -66,6 +66,22 @@ class Collector(Protocol):
         `state` is this collector's own directory under the data root, outside L0, where it
         keeps whatever lets it resume (positions, what it last captured). `now` is the clock.
         Raises on failure; a failed collection may have written some payloads.
+        """
+        ...
+
+    def backfill(
+        self,
+        inbox: SourceInbox,
+        state: Path,
+        *,
+        window_start: datetime,
+        now: Callable[[], datetime],
+    ) -> None:
+        """Write the source's history from `window_start` on into `inbox`, as a one-time
+        capture before collections take over (or to widen the window later).
+
+        Afterwards, collections carry on from where the backfill stopped, and don't reach
+        back before `window_start`. Raises on failure, as `collect` does.
         """
         ...
 

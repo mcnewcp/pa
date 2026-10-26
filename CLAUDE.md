@@ -7,6 +7,7 @@ The real data root (`~/.local/share/pa-home`) holds the owner's mail, calendars,
 - **Run the real pipeline** when a ticket needs it, and read only its counts, exit codes, statuses, quarantine reasons, and lint warning counts.
 - **Real content stays unprinted**: payloads, envelopes, wiki pages and lint findings, the live wiki's git log, and real eval results. That covers every command: `cat`, `grep`, `git log`, a Python one-liner. The repository's `.claude/settings.json` denies the file tools there as a backstop, not as the rule.
 - **Debug a real payload through `pa inspect PATH`**, which prints its structure. Reproduce the shape as a synthetic fixture, then fix it test-first. Fixtures, tests, commits, and issue comments hold synthetic data only.
+- **The vault copy is real content too**: `~/.local/share/pa-vault`, and the headless Sync client's state in `~/.config/obsidian-headless` (its login, the vault's key, and a log naming every note). So is `journalctl -u pa-vault-sync`. Check them only through `deploy/home/check-vault-sync.sh`, which reports file counts and times, and `systemctl show`.
 - **Private material for the owner's review** (eval questions, failing answers, a verdict's details) goes in files under the data root. The GitHub issue gets only a note that it's ready.
 
 The synthetic data root (`~/.local/share/pa-home-synthetic`) and the corpora are fictional; read them freely.
