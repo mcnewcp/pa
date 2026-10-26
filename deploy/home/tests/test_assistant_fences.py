@@ -7,6 +7,7 @@ the VM itself."""
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -119,20 +120,69 @@ def test_the_sessions_temp_directory_stays_out_of_the_denied_home_directory():
     assert managed()["env"]["CLAUDE_CODE_TMPDIR"] == "/tmp"
 
 
-def test_the_capture_hook_runs_the_projects_script_with_the_codes_interpreter():
-    """Unchanged from the agent project's settings, until #94 replaces it."""
-    project, python = lib_values("PA_VM_PROJECT", "PA_VM_HOOK_PYTHON")
+HELPER = DEPLOY / "pa-capture"
+SUDOERS = DEPLOY / "sudoers-pa-capture"
+VERBS = ("prompt", "answer", "stop")
 
-    [group] = managed()["hooks"]["Stop"]
-    assert group["hooks"] == [
-        {
-            "type": "command",
-            "command": python,
-            "args": [f"{project}/.claude/hooks/capture_exchange.py"],
-            "timeout": 30,
-        }
+
+def test_the_capture_hooks_hand_their_events_to_the_helper_as_the_capture_user_if_capture_is_on():
+    """#81's three hooks, gated on the variable only the Remote Control unit sets (#94)."""
+    helper, user = lib_values("PA_VM_CAPTURE_HELPER", "PA_CAPTURE_USER")
+    hooks = managed()["hooks"]
+
+    assert set(hooks) == {"UserPromptSubmit", "PostToolUse", "Stop"}
+    for event, matcher, verb in (
+        ("UserPromptSubmit", None, "prompt"),
+        ("PostToolUse", "AskUserQuestion", "answer"),
+        ("Stop", None, "stop"),
+    ):
+        [group] = hooks[event]
+        assert group.get("matcher") == matcher
+        assert group["hooks"] == [
+            {
+                "type": "command",
+                "timeout": 30,
+                "command": '[ "$PA_CAPTURE_EXCHANGES" = 1 ] || exit 0; '
+                f"exec /usr/bin/sudo -n -u {user} {helper} {verb}",
+            }
+        ]
+
+
+def test_the_sudo_rule_lets_the_assistant_run_the_helper_as_capture_with_its_verbs_only():
+    assistant, user, helper = lib_values("PA_USER", "PA_CAPTURE_USER", "PA_VM_CAPTURE_HELPER")
+
+    rules = [
+        line
+        for line in SUDOERS.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
     ]
-    assert set(managed()["hooks"]) == {"Stop"}
+
+    allowed = ", ".join(f"{helper} {verb}" for verb in VERBS)
+    assert rules == [f"{assistant} ALL=({user}) NOPASSWD: {allowed}"]
+
+
+def test_the_helper_runs_the_projects_hook_script_isolated_with_the_codes_interpreter():
+    project, python, inbox, state = lib_values(
+        "PA_VM_PROJECT", "PA_VM_HOOK_PYTHON", "PA_VM_CHAT_INBOX", "PA_VM_CAPTURE_STATE"
+    )
+
+    helper = HELPER.read_text()
+
+    assert helper.startswith("#!/bin/sh\n")
+    assert f"exec {python} -I {project}/.claude/hooks/capture_exchange.py " in helper
+    assert f"--inbox {inbox} --state {state}" in helper
+
+
+def test_the_assistants_tools_cant_write_the_helper_or_its_state_or_read_its_pending_prompts():
+    helper, state = lib_values("PA_VM_CAPTURE_HELPER", "PA_VM_CAPTURE_STATE")
+    settings = managed()
+    deny = settings["permissions"]["deny"]
+
+    assert helper.startswith("/usr/")
+    assert "Edit(//usr/**)" in deny
+    assert f"Edit(/{state}/**)" in deny
+    assert f"Read(/{state}/**)" in deny
+    assert state in settings["sandbox"]["filesystem"]["denyRead"]
 
 
 def test_the_home_directorys_claude_md_files_are_excluded_but_not_the_projects_or_evals():
@@ -154,10 +204,14 @@ with open(os.environ["CALLS"], "a") as calls:
     calls.write(json.dumps({"argv": argv, "stdin": stdin.decode()}) + "\\n")
 if argv[0] == "exec" and "dpkg-query" in " ".join(argv):
     sys.exit(int(os.environ["PACKAGES_MISSING"]))
+if argv[0] == "exec" and argv[-1:] == ["command -v sudo"]:
+    sys.exit(int(os.environ["SUDO_MISSING"]))
 """
 
 
-def install(tmp_path: Path, *, packages_missing: bool = False) -> list[dict[str, Any]]:
+def install(
+    tmp_path: Path, *, packages_missing: bool = False, sudo_missing: bool = False
+) -> list[dict[str, Any]]:
     """Runs install-assistant-fences.sh on the stand-in `incus`; returns its calls."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -177,10 +231,15 @@ def install(tmp_path: Path, *, packages_missing: bool = False) -> list[dict[str,
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "CALLS": str(calls),
             "PACKAGES_MISSING": "1" if packages_missing else "0",
+            "SUDO_MISSING": "1" if sudo_missing else "0",
         },
         check=False,
     )
-    assert result.returncode == 0, result.stderr
+    if sudo_missing:
+        assert result.returncode != 0
+        assert "rebuild" in result.stderr.lower(), result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
     return [json.loads(line) for line in calls.read_text().splitlines()]
 
 
@@ -240,6 +299,64 @@ def test_the_oss_own_updates_and_clock_sync_are_masked_so_nothing_knocks_on_the_
     periodic = Path(source).read_text()
     assert 'APT::Periodic::Update-Package-Lists "0";' in periodic
     assert 'APT::Periodic::Unattended-Upgrade "0";' in periodic
+
+
+def test_the_capture_user_is_made_with_the_devbox_users_uid_before_the_helper_goes_in(
+    tmp_path: Path,
+):
+    """The inbox share keeps owners unmapped, so the capture user writes it, and ingest on the
+    devbox reads and removes what lands, only with the devbox user's uid (#81)."""
+    calls = install(tmp_path)
+    users_script = (DEPLOY / "capture-user.sh").read_text()
+
+    [made] = [i for i, c in enumerate(calls) if c["stdin"] == users_script]
+    assert calls[made]["argv"][:4] == ["exec", "pa-home", "--", "bash"]
+    assert calls[made]["argv"][-5:] == [
+        "assistant",
+        "capture",
+        str(os.getuid()),
+        "1001",
+        "/var/lib/pa-capture",
+    ]
+    [helper] = [
+        i for i, c in enumerate(calls) if c["argv"][-1:] == ["pa-home/usr/local/libexec/pa-capture"]
+    ]
+    assert made < helper
+
+
+def test_the_helper_goes_in_roots_and_mode_0755(tmp_path: Path):
+    source, options = pushed(install(tmp_path), "pa-home/usr/local/libexec/pa-capture")
+
+    assert Path(source) == HELPER
+    assert options == ["--quiet", "--uid", "0", "--gid", "0", "--mode", "0755"]
+
+
+def test_the_sudo_rule_goes_in_roots_and_mode_0440_only_once_sudo_has_checked_it(
+    tmp_path: Path,
+):
+    calls = install(tmp_path)
+
+    [push] = [
+        (i, c["argv"])
+        for i, c in enumerate(calls)
+        if c["argv"][:2] == ["file", "push"] and c["argv"][-2] == str(SUDOERS)
+    ]
+    index, argv = push
+    staged = argv[-1].removeprefix("pa-home")
+    assert not staged.startswith("/etc/sudoers.d/"), "sudo would read it before it's checked"
+    assert argv[2:-2] == ["--quiet", "--uid", "0", "--gid", "0", "--mode", "0440"]
+    [check] = [c["argv"] for c in calls[index:] if "visudo" in " ".join(c["argv"])]
+    assert "-cf" in " ".join(check)
+    assert staged in check
+    assert "/etc/sudoers.d/pa-capture" in check
+
+
+def test_without_sudo_the_vm_must_be_rebuilt(tmp_path: Path):
+    """Once fenced, the VM reaches no package mirror: what it lacks comes with a rebuild."""
+    calls = install(tmp_path, sudo_missing=True)
+
+    assert not [c for c in calls if "apt-get" in " ".join(c["argv"])]
+    assert not [c for c in calls if c["argv"][-1:] == ["pa-home/usr/local/libexec/pa-capture"]]
 
 
 def test_the_assistants_layout_is_made_as_root(tmp_path: Path):
@@ -317,6 +434,7 @@ SANDBOXED = (
     "refused /srv/pa/inbox/assistant_chat\n"
     "refused /srv/pa/agent\n"
     "sudo refused\n"
+    "capture rule refused\n"
 )
 
 
@@ -335,6 +453,8 @@ def test_the_probe_reports_where_it_could_write_its_privileges_and_sudo(tmp_path
     assert output[0].startswith("NoNewPrivs:\t")
     assert output[1:3] == [f"wrote {scratch}", f"refused {locked}"]
     assert output[3] in ("sudo ran", "sudo refused")
+    # The capture helper's rule, with which the hooks reach it: there's no helper here.
+    assert output[4] == "capture rule refused"
     assert list(scratch.iterdir()) == []
 
 
@@ -349,6 +469,7 @@ def test_a_probe_that_wrote_outside_scratch_or_ran_sudo_fails():
     output = (
         SANDBOXED.replace("refused /srv/pa/agent", "wrote /srv/pa/agent")
         .replace("sudo refused", "sudo ran")
+        .replace("capture rule refused", "capture rule ran")
         .replace("wrote /srv/pa/scratch", "refused /srv/pa/scratch")
     )
 
@@ -356,6 +477,65 @@ def test_a_probe_that_wrote_outside_scratch_or_ran_sudo_fails():
         "the sandboxed shell couldn't write /srv/pa/scratch",
         "the sandboxed shell wrote /srv/pa/agent",
         "sudo ran in the sandboxed shell",
+        "the sandboxed shell ran the capture helper through its sudo rule",
+    ]
+
+
+def test_the_probe_tries_the_capture_helpers_own_sudo_rule():
+    helper, user = lib_values("PA_VM_CAPTURE_HELPER", "PA_CAPTURE_USER")
+
+    command = lib(f"sandbox_probe {PROBE_ARGS}").stdout
+
+    assert f"sudo -n -u {user} {helper} stop" in command
+
+
+# What a session in the VM did when asked to write with the file tools, which the isolation check
+# reads: each (tool, path) must have been tried, and refused.
+INBOX_PROBE = "/srv/pa/inbox/assistant_chat/.pa-file-tool-probe.json"
+USER_CLAUDE_MD = "/home/assistant/.claude/CLAUDE.md"
+EDIT_PROBE = "/srv/pa/inbox/assistant_chat/.pa-edit-probe.json"
+TRIES = ("Write", INBOX_PROBE), ("Write", USER_CLAUDE_MD), ("Edit", EDIT_PROBE)
+
+
+def tried(tool: str, path: str, *, refused: bool = True, n: int = 1) -> tuple[dict, dict]:
+    call = {"type": "tool_use", "id": f"toolu_{n}", "name": tool, "input": {"file_path": path}}
+    result = {
+        "type": "tool_result",
+        "tool_use_id": f"toolu_{n}",
+        "content": "File is in a directory that is denied by your permission settings."
+        if refused
+        else "The file has been updated.",
+        "is_error": refused,
+    }
+    return (
+        {"type": "assistant", "message": {"content": [call]}},
+        {"type": "user", "message": {"content": [result]}},
+    )
+
+
+def file_tool_problems(*events: dict[str, Any]) -> subprocess.CompletedProcess[str]:
+    args = " ".join(f"{tool}:{path}" for tool, path in TRIES)
+    return lib(f"file_tool_probe_problems {args}", stdin=printed(*events))
+
+
+def test_file_tools_refused_everywhere_they_were_tried_have_no_problems():
+    events = [e for n, (tool, path) in enumerate(TRIES) for e in tried(tool, path, n=n)]
+
+    result = file_tool_problems(*events)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_a_file_tool_that_wrote_or_was_never_tried_fails():
+    """A model that declines to try proves nothing (#81), so a call never made is a problem."""
+    result = file_tool_problems(
+        *tried("Write", INBOX_PROBE, refused=False, n=1), *tried("Write", USER_CLAUDE_MD, n=2)
+    )
+
+    assert result.stdout.splitlines() == [
+        f"Write wrote {INBOX_PROBE}",
+        f"the session never tried Edit on {EDIT_PROBE}",
     ]
 
 

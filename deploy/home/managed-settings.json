@@ -17,8 +17,12 @@
   "allowManagedPermissionRulesOnly": true,
   "allowManagedHooksOnly": true,
   "hooks": {
-    "Stop": [{"hooks": [{"type": "command", "command": "/opt/pa/.venv/bin/python",
-      "args": ["/srv/pa/agent/.claude/hooks/capture_exchange.py"], "timeout": 30}]}]
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture prompt"}]}],
+    "PostToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture answer"}]}],
+    "Stop": [{"hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture stop"}]}]
   },
   "sandbox": {
     "enabled": true,

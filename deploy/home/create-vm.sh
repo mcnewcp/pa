@@ -46,6 +46,12 @@ esac
 incus exec "$PA_VM" -- id "$PA_USER" >/dev/null || die "user $PA_USER is missing"
 case $PA_VM_ROLE in
   assistant)
+    # The inbox share keeps owners as they are, with no mapping: the capture user can write the
+    # inbox, and ingest read and remove what it writes, only because its uid is the devbox
+    # user's (#94).
+    capture_uid=$(incus exec "$PA_VM" -- id -u "$PA_CAPTURE_USER" </dev/null)
+    [[ $capture_uid == "$(id -u)" ]] ||
+      die "$PA_CAPTURE_USER is uid $capture_uid in $PA_VM but you are uid $(id -u): it couldn't write the inbox"
     log "$PA_VM is up, unfenced: run fence-vm.sh before anything is mounted or logged in"
     ;;
   librarian)
