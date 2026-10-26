@@ -14,6 +14,7 @@ Run the wizard on the devbox. It walks through the steps only the owner can do a
 ```sh
 deploy/home/setup-wizard.sh              # both VMs
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
+deploy/home/setup-wizard.sh --backup     # the backup drive and its repository alone
 ```
 
 The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
@@ -38,6 +39,8 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
 | `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
+| `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
+| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
 
 `tailscale-policy.hujson` holds the parts of the tailnet policy the VM needs, for merging into the policy in the admin console.
 
@@ -92,6 +95,43 @@ deploy/home/update.sh <ref>   # the assistant's project points at the wiki once 
 ```
 
 `seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
+
+## The backup
+
+`backup.sh` runs `pa backup`, which takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
+
+- **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
+- **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
+- **Configuration.** `pa backup` reads restic's own variables. `backup.sh` sets `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` to the drive's, and ignores any restic variables already in the environment.
+- **The lock and the status.** `pa backup` takes the data root's lock, so it never snapshots a half-run capture or librarian run. It skips, and exits 0, while another run holds the lock. Each backup records its last success or its last failure in the status, and `pa status` prints both. A missing drive shows as a missing repository ("is the backup drive mounted?"). Other failures are a wrong password, a repository restic has locked, an incomplete snapshot, or restic's exit code. `pa backup` never prints restic's own output, since that can name files under the data root. To see it, run restic by hand.
+- **A cloud copy, later,** is a second restic repository: run `pa backup` again with that repository's variables, or `restic copy` the drive's snapshots into it. Neither needs a change here.
+
+### Restoring
+
+Restic needs the repository and its password. On a new devbox, first install restic, plug in the SSD, and run `install-backup-drive.sh <UUID>`. Then write the password from your password manager to `~/.config/pa/restic.password`, mode 0600.
+
+```sh
+export RESTIC_REPOSITORY=/mnt/pa-backup/restic RESTIC_PASSWORD_FILE=~/.config/pa/restic.password
+restic snapshots                                   # one per backup; the newest is "latest"
+restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/ and evals/, as backed up
+```
+
+To bring back a whole data root, start from an empty one. Move the old one aside if it's still there, and stop anything that runs against it.
+
+```sh
+data_root=~/.local/share/pa-home-synthetic          # the instance's data root (lib.sh's PA_DATA_ROOT)
+mkdir -p "$data_root" && restic restore latest --target "$data_root"
+# owner.env: write the instance owner again (PA_OWNER_NAME, PA_OWNER_EMAILS, PA_TIME_ZONE, ...)
+deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh   # the VMs' own filesystems
+git --git-dir "$data_root/wiki.git" --work-tree "$data_root/wiki" checkout -f main   # the wiki's files
+PA_DATA_DIR=$data_root uv run pa catalog rebuild    # the catalog, from L0
+```
+
+L0 then holds every episode it held at the snapshot, byte for byte. The wiki is at its last commit before the snapshot, and its cursor is where that commit left it, so the next librarian run takes everything captured after.
+
+To bring back a single file deleted by mistake, restore just that file: `restic restore latest --target "$data_root" --include /l0/<path>`.
+
+Check the repository itself now and then (`restic check`). It reads the repository's structure, not every file's data, unless given `--read-data`.
 
 ## Remote Control
 
