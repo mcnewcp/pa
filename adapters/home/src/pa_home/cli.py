@@ -139,6 +139,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "else up to the latest episode. A corpus is captured at this time.",
     )
     replay.add_argument(
+        "--window-start",
+        type=datetime.fromisoformat,
+        help="Start the replay at this time (ISO 8601; the owner's time zone if it has no "
+        "offset), such as a backfill's window start: the first batch is its week, and nothing "
+        "that occurred before it is offered. Else the replay starts at the first episode.",
+    )
+    replay.add_argument(
         "--batch-days",
         type=int,
         default=BATCH_DAYS,
@@ -180,7 +187,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "inspect":
             return _inspect(args.paths, args.fmt)
         if args.command == "librarian" and args.librarian_command == "replay":
-            _replay(args.target, args.corpus, args.as_of, args.batch_days, resume=args.resume)
+            _replay(
+                args.target,
+                args.corpus,
+                args.as_of,
+                args.batch_days,
+                window_start=args.window_start,
+                resume=args.resume,
+            )
             return 0
         data_root = load_data_root()
         if args.command == "ingest":
@@ -291,6 +305,7 @@ def _replay(
     as_of: datetime | None,
     batch_days: int,
     *,
+    window_start: datetime | None,
     resume: bool,
 ) -> None:
     owner, time_zone = load_owner(), load_time_zone()
@@ -306,6 +321,8 @@ def _replay(
         )
     if as_of is not None and as_of.utcoffset() is None:
         as_of = as_of.replace(tzinfo=time_zone)
+    if window_start is not None and window_start.utcoffset() is None:
+        window_start = window_start.replace(tzinfo=time_zone)
 
     def report(outcome: RunOutcome) -> None:
         batch = outcome.batch
@@ -327,6 +344,7 @@ def _replay(
             config=load_librarian_config(),
             batch_days=batch_days,
             as_of=as_of,
+            window_start=window_start,
             resume=resume,
             progress=report,
         )

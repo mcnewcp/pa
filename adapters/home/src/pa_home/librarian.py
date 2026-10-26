@@ -106,6 +106,7 @@ def replay(
     config: LibrarianConfig,
     batch_days: int = BATCH_DAYS,
     as_of: datetime | None = None,
+    window_start: datetime | None = None,
     resume: bool = False,
     project: Path = LIBRARIAN_PROJECT,
     clock: Callable[[], datetime] = wall_clock,
@@ -115,8 +116,9 @@ def replay(
 
     L0 is the `data_root`'s, or `corpus` (directories of raw payloads, one directory per source
     as in the inbox) ingested into a throwaway data root, captured at `as_of` (else the clock's
-    time). `target` must be new or empty, unless `resume`, when it must hold a replay to carry
-    on from its last committed run.
+    time). With a `window_start`, the first batch is the window start's week, and nothing that
+    occurred before it is offered. `target` must be new or empty, unless `resume`, when it
+    must hold a replay to carry on from its last committed run.
     """
     layout = ReplayTarget(target)
     if resume and not layout.git_dir.is_dir():
@@ -140,6 +142,7 @@ def replay(
                 run_log=layout.run_log,
                 batch_days=batch_days,
                 as_of=as_of,
+                window_start=window_start,
                 page_threshold=config.page_threshold,
                 loop_age_days=config.loop_age_days,
                 progress=progress,
