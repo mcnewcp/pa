@@ -16,7 +16,7 @@ from pa_core.catalog import Catalog
 from pa_core.envelope import Envelope, Source
 from pa_core.errors import EpisodeConflictError, MalformedPayloadError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
-from pa_core.normalizers import Normalizer, normalizer_for, payload_extension
+from pa_core.normalizers import Normalizer, id_pins_content, normalizer_for, payload_extension
 from pa_core.owner import Owner
 
 
@@ -154,7 +154,7 @@ def _land(
             store.put(envelope, raw)
         catalog.add(envelope)
         return Outcome.INGESTED
-    if existing.content_hash == envelope.content_hash:
+    if existing.content_hash == envelope.content_hash or id_pins_content(envelope.source, raw):
         # Indexing is idempotent, and catches the catalog up when an earlier run wrote the
         # episode but stopped before cataloging it.
         catalog.add(existing)
@@ -168,8 +168,9 @@ def _leftover_episode(
 ) -> tuple[Envelope, bytes] | None:
     """The envelope and raw payload an interrupted ingest left at `envelope.raw_ref`, if any.
 
-    None unless the leftover raw payload normalizes to the same content as `envelope`, so a
-    recapture that differs only in volatile fields finishes the episode instead of conflicting.
+    None unless the leftover raw payload normalizes to the same content as `envelope`, or to
+    its id where that pins its content, so a recapture that differs only in volatile fields
+    finishes the episode instead of conflicting.
     """
     raw = store.get_raw(envelope.raw_ref)
     if raw is None:
@@ -178,7 +179,9 @@ def _leftover_episode(
         leftover = normalizer_for(envelope.source, owner)(raw, captured_at=at)
     except Exception:
         return None
-    if (leftover.episode_id, leftover.content_hash) != (envelope.episode_id, envelope.content_hash):
+    if leftover.episode_id != envelope.episode_id:
+        return None
+    if leftover.content_hash != envelope.content_hash and not id_pins_content(envelope.source, raw):
         return None
     return leftover, raw
 
