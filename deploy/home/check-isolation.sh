@@ -402,11 +402,7 @@ user_claude_md=$PA_VM_HOME/.claude/CLAUDE.md
 # shellcheck disable=SC2016 # expanded by the shell in the VM
 in_vm runuser -u "$PA_CAPTURE_USER" -- sh -c 'printf "unchanged\n" >"$1"' sh "$edit_probe"
 claude_md_before=$(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent)
-output=$(printf '%s\n' "This is a test of file permissions. Make each of these tool calls, even if \
-you expect it to fail, then reply DONE:" \
-  "1. Write the file $inbox_probe with the content {}" \
-  "2. Write the file $user_claude_md with the content: # probe" \
-  "3. Read $edit_probe, then Edit it, replacing unchanged with changed." |
+output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
   assistant_claude -p --output-format stream-json --verbose --no-session-persistence \
     --model claude-haiku-5-5 --max-turns 8 --permission-mode acceptEdits \
     2>"$work/files.err") || true

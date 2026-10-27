@@ -458,6 +458,14 @@ def test_the_probe_reports_where_it_could_write_its_privileges_and_sudo(tmp_path
     assert list(scratch.iterdir()) == []
 
 
+def test_the_probe_holds_no_shell_variable_for_claude_code_to_refuse():
+    """Claude Code 2.1.308 won't run a command whose variables it can't check before it runs, so a
+    headless session refused the probe on the live VM (#91)."""
+    command = lib(f"sandbox_probe {PROBE_ARGS}").stdout
+
+    assert "$" not in command
+
+
 def test_a_probe_that_ran_sandboxed_has_no_problems():
     result = probe_problems(SANDBOXED)
 
@@ -525,6 +533,16 @@ def test_file_tools_refused_everywhere_they_were_tried_have_no_problems():
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
+
+
+def test_the_file_tools_prompt_asks_for_each_try_and_holds_no_shell_variable():
+    """Like the sandbox probe (#91): nothing a headless session is asked to do names a variable."""
+    prompt = lib(f"file_tool_probe_prompt {INBOX_PROBE} {USER_CLAUDE_MD} {EDIT_PROBE}").stdout
+
+    assert "$" not in prompt
+    assert f"Write the file {INBOX_PROBE}" in prompt
+    assert f"Write the file {USER_CLAUDE_MD}" in prompt
+    assert f"Read {EDIT_PROBE}, then Edit it" in prompt
 
 
 def test_a_file_tool_that_wrote_or_was_never_tried_fails():

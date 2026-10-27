@@ -709,11 +709,20 @@ if init.get("permissionMode") == "bypassPermissions":
 # whether the capture helper's own sudo rule did ("capture rule ran" if the helper answered:
 # every line it prints starts "exchange capture:"). The isolation check has a session in the VM
 # run it with Bash.
+#
+# The command names no shell variable: Claude Code (2.1.308) refuses to run a command whose
+# variables it can't check before it runs, so each directory is spelled out.
 sandbox_probe() {
-  local dirs rule
-  dirs=$(printf ' %q' "$@")
+  local command dir quoted file rule
+  command="grep '^NoNewPrivs:' /proc/self/status;"
+  for dir in "$@"; do
+    quoted=$(printf %q "$dir")
+    file=$(printf %q "$dir/.pa-sandbox-probe")
+    command+=" if touch $file 2>/dev/null; then rm -f $file; echo wrote $quoted; else echo refused $quoted; fi;"
+  done
   rule="sudo -n -u $PA_CAPTURE_USER $PA_VM_CAPTURE_HELPER stop"
-  printf '%s\n' "grep '^NoNewPrivs:' /proc/self/status; for d in$dirs; do f=\$d/.pa-sandbox-probe; if touch \"\$f\" 2>/dev/null; then rm -f \"\$f\"; echo \"wrote \$d\"; else echo \"refused \$d\"; fi; done; if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi; case \"\$($rule </dev/null 2>&1)\" in *'exchange capture:'*) echo 'capture rule ran' ;; *) echo 'capture rule refused' ;; esac"
+  command+=" if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi;"
+  printf '%s\n' "$command if $rule </dev/null 2>&1 | grep -q 'exchange capture:'; then echo 'capture rule ran'; else echo 'capture rule refused'; fi"
 }
 
 # sandbox_probe_problems SCRATCH DIR... reads what `claude -p --output-format stream-json
@@ -762,6 +771,17 @@ if "sudo refused" not in lines:
 if "capture rule refused" not in lines:
     print("the sandboxed shell ran the capture helper through its sudo rule")
 ' "$@"
+}
+
+# file_tool_probe_prompt INBOX_PROBE CLAUDE_MD EDIT_PROBE prints the prompt that asks a session to
+# Write a new file at INBOX_PROBE and at CLAUDE_MD, and to Edit EDIT_PROBE, which holds
+# "unchanged". Like the sandbox probe, it names no shell variable.
+file_tool_probe_prompt() {
+  printf '%s\n' "This is a test of file permissions. Make each of these tool calls, even if \
+you expect it to fail, then reply DONE:" \
+    "1. Write the file $1 with the content {}" \
+    "2. Write the file $2 with the content: # probe" \
+    "3. Read $3, then Edit it, replacing unchanged with changed."
 }
 
 # file_tool_probe_problems TOOL:PATH... reads what `claude -p --output-format stream-json
