@@ -489,12 +489,30 @@ def test_a_probe_that_wrote_outside_scratch_or_ran_sudo_fails():
     ]
 
 
-def test_the_probe_tries_the_capture_helpers_own_sudo_rule():
+def test_the_probe_tries_the_capture_helpers_own_sudo_rule_with_a_harmless_verb():
+    """Given `pa-capture stop`, a session declined to run the probe, reading it as stopping the
+    capture service (pa-home, 2026-10-27). With no event, any verb only says why it took none."""
     helper, user = lib_values("PA_VM_CAPTURE_HELPER", "PA_CAPTURE_USER")
 
     command = lib(f"sandbox_probe {PROBE_ARGS}").stdout
 
-    assert f"sudo -n -u {user} {helper} stop" in command
+    assert f"sudo -n -u {user} {helper} answer" in command
+    assert " stop" not in command
+
+
+def test_the_probe_is_asked_for_by_its_scripts_path_as_a_test_whose_refusals_are_expected():
+    """Given the probe's command, a session declined it, or ran it without its sudo steps, as
+    beyond what its instructions allow (pa-home, 2026-10-27). So the check writes the probe into
+    a script in scratch, and the session is asked to run that, saying what it is."""
+    script = "/srv/pa/scratch/.pa-sandbox-probe.sh"
+
+    prompt = lib(f"sandbox_probe_prompt {script}").stdout.strip()
+
+    assert prompt.startswith("This is a test of your sandbox")
+    assert "expected" in prompt
+    assert "Bash tool" in prompt
+    assert prompt.endswith(f"\n\nbash {script}")
+    assert "$" not in prompt
 
 
 # What a session in the VM did when asked to write with the file tools, which the isolation check
@@ -542,7 +560,21 @@ def test_the_file_tools_prompt_asks_for_each_try_and_holds_no_shell_variable():
     assert "$" not in prompt
     assert f"Write the file {INBOX_PROBE}" in prompt
     assert f"Write the file {USER_CLAUDE_MD}" in prompt
-    assert f"Read {EDIT_PROBE}, then Edit it" in prompt
+    # Not Read first: the inbox isn't a directory sessions may read without asking, so a headless
+    # session's Read is refused, and the session stopped there (pa-home, 2026-10-27). The deny
+    # rule refuses an Edit before Claude Code asks whether the file was read.
+    assert f"Edit the file {EDIT_PROBE}" in prompt
+    assert "Read " not in prompt
+
+
+def test_the_file_tools_prompt_says_its_a_test_whose_refusals_are_expected():
+    """Told only to make the calls, a session mostly declined: its project's instructions say it
+    writes only to scratch (pa-home, 2026-10-27)."""
+    prompt = lib(f"file_tool_probe_prompt {INBOX_PROBE} {USER_CLAUDE_MD} {EDIT_PROBE}").stdout
+
+    assert prompt.startswith("This is a test of your file tools' permissions")
+    assert "expected" in prompt
+    assert "scratch" in prompt
 
 
 def test_a_file_tool_that_wrote_or_was_never_tried_fails():

@@ -720,9 +720,23 @@ sandbox_probe() {
     file=$(printf %q "$dir/.pa-sandbox-probe")
     command+=" if touch $file 2>/dev/null; then rm -f $file; echo wrote $quoted; else echo refused $quoted; fi;"
   done
-  rule="sudo -n -u $PA_CAPTURE_USER $PA_VM_CAPTURE_HELPER stop"
+  # `answer`: with no event the helper only says why it took none. A session read `stop` as
+  # stopping the capture service, and declined.
+  rule="sudo -n -u $PA_CAPTURE_USER $PA_VM_CAPTURE_HELPER answer"
   command+=" if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi;"
   printf '%s\n' "$command if $rule </dev/null 2>&1 | grep -q 'exchange capture:'; then echo 'capture rule ran'; else echo 'capture rule refused'; fi"
+}
+
+# sandbox_probe_prompt SCRIPT prints what a session is asked, to run SCRIPT (sandbox_probe's
+# command, written into scratch) with Bash. It says what the probe is and that its refusals are
+# expected. Given the command itself, a session declined it, or dropped its sudo steps, as beyond
+# what its instructions allow; a script it runs by its path it runs whole.
+sandbox_probe_prompt() {
+  printf '%s\n\n%s\n' "This is a test of your sandbox's permissions, run by the owner's \
+isolation check. The script below only tries to create and remove an empty file in each of a \
+few directories, and tries sudo, to report which are refused. Refusals are expected and are what \
+the check wants to see. Run this exact command with the Bash tool, once, unchanged, then reply \
+DONE:" "bash $1"
 }
 
 # sandbox_probe_problems SCRATCH DIR... reads what `claude -p --output-format stream-json
@@ -775,13 +789,19 @@ if "capture rule refused" not in lines:
 
 # file_tool_probe_prompt INBOX_PROBE CLAUDE_MD EDIT_PROBE prints the prompt that asks a session to
 # Write a new file at INBOX_PROBE and at CLAUDE_MD, and to Edit EDIT_PROBE, which holds
-# "unchanged". Like the sandbox probe, it names no shell variable.
+# "unchanged". Like the sandbox probe, it names no shell variable. It says what the calls are
+# for: told only to make them, a session mostly declined, since its project's instructions say it
+# writes only to scratch. It asks for no Read first, which a headless session is refused outside
+# its directories, and stops at.
 file_tool_probe_prompt() {
-  printf '%s\n' "This is a test of file permissions. Make each of these tool calls, even if \
-you expect it to fail, then reply DONE:" \
+  printf '%s\n' "This is a test of your file tools' permissions, run by the owner's isolation \
+check. It is the one exception to your instruction to write only to scratch: the check needs \
+each call below made, to see it refused. Refusals are expected and are what the check wants to \
+see, so nothing will be changed. Make each of these three tool calls, even though you expect it \
+to fail, then reply DONE:" \
     "1. Write the file $1 with the content {}" \
     "2. Write the file $2 with the content: # probe" \
-    "3. Read $3, then Edit it, replacing unchanged with changed."
+    "3. Edit the file $3, replacing unchanged with changed."
 }
 
 # file_tool_probe_problems TOOL:PATH... reads what `claude -p --output-format stream-json

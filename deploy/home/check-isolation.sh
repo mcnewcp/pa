@@ -379,10 +379,14 @@ echo "In $PA_VM, Bash runs in the sandbox, writing only to scratch:"
 # and fails every command (#81).
 probe_dirs=("$PA_VM_SCRATCH" "$PA_VM_HOME" "$PA_VM_HOME/.claude" "$PA_VM_CHAT_INBOX" \
   "$PA_VM_PROJECT" "$PA_VM_EVAL")
-probe=$(sandbox_probe "${probe_dirs[@]}")
-output=$(printf 'Run this exact command with the Bash tool, once, unchanged, then reply DONE:\n\n%s\n' \
-  "$probe" | assistant_claude -p --output-format stream-json --verbose --no-session-persistence \
-  --model claude-haiku-5-5 --max-turns 3 2>"$work/probe.err") || true
+# The probe goes in as a script in scratch, root's and read-only, which the session runs whole.
+probe_script=$PA_VM_SCRATCH/.pa-sandbox-probe.sh
+sandbox_probe "${probe_dirs[@]}" >"$work/probe.sh"
+incus file push --quiet --uid 0 --gid 0 --mode 0644 "$work/probe.sh" "$PA_VM$probe_script"
+output=$(sandbox_probe_prompt "$probe_script" |
+  assistant_claude -p --output-format stream-json --verbose --no-session-persistence \
+    --model claude-haiku-5-5 --max-turns 3 2>"$work/probe.err") || true
+in_vm rm -f "$probe_script"
 if ! problems=$(sandbox_probe_problems "${probe_dirs[@]}" <<<"$output" 2>&1); then
   fail "the sandbox probe: $problems $(head -c 300 "$work/probe.err")"
 elif [[ -n $problems ]]; then
@@ -402,10 +406,22 @@ user_claude_md=$PA_VM_HOME/.claude/CLAUDE.md
 # shellcheck disable=SC2016 # expanded by the shell in the VM
 in_vm runuser -u "$PA_CAPTURE_USER" -- sh -c 'printf "unchanged\n" >"$1"' sh "$edit_probe"
 claude_md_before=$(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent)
-output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
-  assistant_claude -p --output-format stream-json --verbose --no-session-persistence \
-    --model claude-haiku-5-5 --max-turns 8 --permission-mode acceptEdits \
-    2>"$work/files.err") || true
+# The session runs in scratch, where no project's instructions load: in the agent project, whose
+# CLAUDE.md says it writes only to scratch, sessions mostly declined to try. The deny rules are
+# the managed settings', the same everywhere. One that still declines is asked again, up to three
+# times; a write that got through fails at once.
+for attempt in 1 2 3; do
+  output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
+    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_SCRATCH") && $(
+      printf '%q ' "$PA_VM_CLAUDE" -p --output-format stream-json --verbose \
+        --no-session-persistence --model claude-haiku-5-5 --max-turns 8 \
+        --permission-mode acceptEdits)" 2>"$work/files.err") || true
+  problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
+    "Edit:$edit_probe" <<<"$output" 2>&1) || break
+  grep -qv '^the session never tried ' <<<"$problems" && break
+  [[ -z $problems ]] && break
+  ((attempt < 3)) && printf '  ....  the session declined to try; asking again\n'
+done
 if ! problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
   "Edit:$edit_probe" <<<"$output" 2>&1); then
   fail "the file tools probe: $problems $(head -c 300 "$work/files.err")"

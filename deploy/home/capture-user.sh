@@ -29,10 +29,16 @@ if [[ $uid == "$capture_uid" ]]; then
   if [[ $(id -g "$assistant") == "$capture_uid" ]]; then
     ! getent group "$assistant_uid" >/dev/null || die "gid $assistant_uid is taken"
     groupmod -g "$assistant_uid" "$assistant"
-    find / -xdev -gid "$capture_uid" -exec chgrp -h "$assistant_uid" {} +
+  fi
+  # -xdev keeps find on the VM's own disk, but still lists each mount point, the root of another
+  # filesystem (a share, read-only or the inbox's): only files of the root's filesystem type go.
+  # Each step is safe to repeat, so a move that stopped part way finishes on a re-run.
+  rootfs=$(findmnt -no FSTYPE /)
+  if [[ $(id -g "$assistant") == "$assistant_uid" ]]; then
+    find / -xdev -fstype "$rootfs" -gid "$capture_uid" -exec chgrp -h "$assistant_uid" {} +
   fi
   usermod -u "$assistant_uid" "$assistant"
-  find / -xdev -uid "$capture_uid" -exec chown -h "$assistant_uid" {} +
+  find / -xdev -fstype "$rootfs" -uid "$capture_uid" -exec chown -h "$assistant_uid" {} +
   log "moved $assistant from uid $capture_uid to $assistant_uid"
 fi
 
