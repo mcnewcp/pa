@@ -170,6 +170,19 @@ deploy/home/update.sh <ref>   # the assistant's project points at the wiki once 
 
 `seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
 
+## The backfill
+
+Before the schedules, the go-live backfill brings each set-up source's history into L0 from one window start, the same one the replay is given: `deploy/home/capture.sh --backfill <window start>` (ISO 8601; the owner's time zone without an offset). It ends with the backfill's size, in numbers only, which is what goes on the issue:
+
+```
+backfill: gmail: 1234 episodes since 2026-08-26: primary 210, promotions 600, social 90, updates 300, forums 34
+backfill: icloud_calendar: 117 episodes since 2026-08-26
+backfill: obsidian: 61 episodes since 2026-08-26
+backfill: a replay from 2026-08-26 would offer 690 episodes: about $44.16, at $0.064 per offered episode (the scale corpus's reference replay)
+```
+
+The counts are the episodes in L0 that occurred since the window start (with the calendar events still going then), per source, and the mail per Gmail category. The cost is the episodes a replay from the window start would offer (never Promotions or Social mail, and only a note's latest version), at the last replay's cost per offered episode: the replay under `replays/` whose run log changed last, over its committed runs that reported a cost. Until a replay has run there, it's the scale corpus's reference replay's $0.064. To print it again later, run `pa backfill-estimate --window-start <window start>` with the instance's environment (`PA_DATA_DIR` and `owner.env`'s `PA_TIME_ZONE`).
+
 ## The live schedule
 
 Once the go-live backfill is replayed and the wiki seeded, the PA runs on its own, on two timers on the devbox (`setup-wizard.sh --schedules`, or `install-schedules.sh --enable`). They're system units, in `schedules/`, run as the devbox user with the code of the checkout they were installed from (its venv's `pa`, which `uv sync` makes), so install them from the checkout the devbox keeps, and run `install-schedules.sh` again after an update that changes them.

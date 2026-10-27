@@ -50,9 +50,10 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, PlainSerializer, ValidationError
 
+from pa_core.envelope import Envelope
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch
+from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch, replay_takes
 from pa_core.librarian.run import (
     LOOP_AGE_DAYS,
     OCCURRED_TO_FIELD,
@@ -75,6 +76,10 @@ BATCH_DAYS = 7
 
 RUN_LOG = "run-log.jsonl"
 """The run log's name in a replay's target directory."""
+
+REFERENCE_COST_PER_OFFERED = 0.064
+"""The scale corpus's reference replay's cost per offered episode, in US dollars: $42.37 for
+659 offered episodes (#80). A backfill's estimate uses it until a replay has run here."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +155,37 @@ def read_run_log(path: Path) -> list[RunLogEntry]:
                 f"{path}:{number} isn't a run log entry: {error.errors()[0]['msg']}"
             ) from error
     return entries
+
+
+def cost_per_offered(run_log: Path) -> float | None:
+    """What the replay whose run log is at `run_log` cost per offered episode, over its
+    committed runs that reported a cost; None when it has none that offered anything."""
+    runs = [
+        entry
+        for entry in read_run_log(run_log)
+        if entry.status == "committed" and entry.cost_usd is not None
+    ]
+    offered = sum(entry.episodes for entry in runs)
+    if offered == 0:
+        return None
+    return sum(entry.cost_usd or 0.0 for entry in runs) / offered
+
+
+@dataclass(frozen=True)
+class ReplayScope:
+    """What a windowed replay would take, and how many of them it would offer."""
+
+    taken: tuple[Envelope, ...]
+    offered: int
+
+
+def replay_scope(store: L0Store, *, time_zone: tzinfo, window_start: datetime) -> ReplayScope:
+    """What a replay of `store` from `window_start` (to the end of L0) would take and offer:
+    its windows put together, whose first carries in the calendar events still going."""
+    window = Window(window_start, window_start, carry_in=True)
+    taken = tuple(e for e in store.envelopes() if replay_takes(e, window, time_zone))
+    batch = replay_batch(store, window, time_zone=time_zone, last=True)
+    return ReplayScope(taken, len(batch.episodes) if batch is not None else 0)
 
 
 class ReplayError(LibrarianRunError):

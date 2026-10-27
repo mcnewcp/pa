@@ -101,6 +101,11 @@ class DataRoot:
         return self.path / "evals"
 
     @property
+    def replays(self) -> Path:
+        """Where replays build their wikis (`pa librarian replay`), each beside its run log."""
+        return self.path / "replays"
+
+    @property
     def state(self) -> Path:
         """Collector state and pending watermarks: the capture cycle's own records, outside L0."""
         return self.path / "state"

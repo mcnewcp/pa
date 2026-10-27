@@ -19,6 +19,7 @@ from pa_core.renormalize import renormalize
 from pa_core.status import Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
+from pa_home.backfill_estimate import estimate_backfill, estimate_lines
 from pa_home.backup import back_up
 from pa_home.capture import CycleOutcome, capture_cycle
 from pa_home.collectors import Collector
@@ -83,7 +84,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="WINDOW_START",
         help="Backfill instead: capture each source's history from WINDOW_START on (ISO 8601; "
         "the owner's time zone if it has no offset), such as two months back. Collections then "
-        "carry on from the backfill.",
+        "carry on from the backfill. Ends with the counts and estimate backfill-estimate "
+        "prints.",
     )
     capture_kind.add_argument(
         "--reconcile",
@@ -91,6 +93,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Reconcile instead of collecting, where a source can (iCloud Calendar): compare "
         "everything it holds against what was captured, so a change or deletion a collection "
         "missed still lands. The nightly job's cycle.",
+    )
+    backfill_estimate = commands.add_parser(
+        "backfill-estimate",
+        help="Count the episodes in L0 since WINDOW_START, per source and Gmail category, and "
+        "estimate what replaying them costs: the episodes a replay would offer, at the last "
+        "replay's cost per offered episode (else the scale corpus's). Prints numbers only.",
+    )
+    backfill_estimate.add_argument(
+        "--window-start",
+        type=datetime.fromisoformat,
+        required=True,
+        help="ISO 8601; the owner's time zone if it has no offset.",
     )
     gmail = commands.add_parser("gmail", help="Set up and check Gmail's capture.")
     gmail_commands = gmail.add_subparsers(dest="gmail_command", required=True)
@@ -337,6 +351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _capture(data_root, args.backfill, reconcile=args.reconcile)
         elif args.command == "nightly":
             return _nightly(data_root)
+        elif args.command == "backfill-estimate":
+            _print_backfill_estimate(data_root, args.window_start)
         elif args.command == "status":
             _print_status(data_root)
         elif args.command == "cut":
@@ -438,7 +454,16 @@ def _capture(
         print(skipped("capture"))
         return 0
     _report_cycle(outcome, time_zone, "capture")
+    if window_start is not None and outcome.ingested is not None:
+        _print_backfill_estimate(data_root, window_start)
     return 1 if outcome.failed else 0
+
+
+def _print_backfill_estimate(data_root: DataRoot, window_start: datetime) -> None:
+    time_zone = load_time_zone()
+    estimate = estimate_backfill(data_root, _in_time_zone(window_start, time_zone))
+    for line in estimate_lines(estimate, time_zone):
+        print(line)
 
 
 def _report_cycle(outcome: CycleOutcome, time_zone: ZoneInfo, name: str) -> None:

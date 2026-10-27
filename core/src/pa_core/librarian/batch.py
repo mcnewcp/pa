@@ -160,11 +160,7 @@ def replay_batch(
         (
             e
             for e in everything
-            if (
-                _occurred_from(e, time_zone) >= window.start
-                or (window.carry_in and _still_going(e, window.start))
-            )
-            and (last or days[e.episode_id] < end)
+            if replay_takes(e, window, time_zone) and (last or days[e.episode_id] < end)
         ),
         key=lambda e: (e.occurred_at.start, e.episode_id),
     )
@@ -178,6 +174,15 @@ def replay_batch(
         last_captured=max(e.captured_at for e in taken),
         cursor=max(_position(e) for e in replayed),
         window=window,
+    )
+
+
+def replay_takes(envelope: Envelope, window: Window, time_zone: tzinfo) -> bool:
+    """Whether `window` takes `envelope` by when it occurred, from the window's start (its end
+    aside): it occurred since then, or it's a calendar event still going then and the window
+    carries those in."""
+    return _occurred_from(envelope, time_zone) >= window.start or (
+        window.carry_in and _still_going(envelope, window.start)
     )
 
 
