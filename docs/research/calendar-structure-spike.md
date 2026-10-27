@@ -2,6 +2,8 @@
 
 Run on 2026-10-27 on the devbox, against the owner's iCloud account over CalDAV (`caldav.icloud.com`), with an app-specific password. The spike (`python -m pa_home.calendar_spike`) fetched each calendar into a scratch directory under the data root and printed only counts and shapes. The development session saw nothing else: no summary, time, UID, href or other value. The owner made and changed a throwaway recurring event, titled `PA spike test`, while the spike took a snapshot after each step. Every fetched resource was deleted afterwards, along with the scratch directory.
 
+The spike's tool is gone from the code; it lived in commit 0151b4c: `git show 0151b4c:adapters/home/src/pa_home/calendar_spike.py` (its tests: `adapters/home/tests/test_calendar_spike.py`). The CalDAV client it used, `collectors/calendar_server.py`, stays: the calendar collector reads iCloud through it.
+
 ## Results
 
 | # | Question | Answer |
