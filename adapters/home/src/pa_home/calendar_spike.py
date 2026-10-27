@@ -609,6 +609,8 @@ def _test_event(directory: Path, a: _Snapshot, b: _Snapshot, marker: str) -> lis
     lines = [
         f"test event (SUMMARY is the marker): in {a.label} {len(before)}, in {b.label} {len(after)}"
     ]
+    if (before and len(after) > 1) or (len(before) > 1 and after):
+        return [*lines, *_split(before, after)]
     if len(before) > 1 or len(after) > 1:
         return [*lines, "  the marker matches several resources: choose a distinctive one"]
     if not before and not after:
@@ -643,6 +645,58 @@ def _test_event(directory: Path, a: _Snapshot, b: _Snapshot, marker: str) -> lis
     ]
     lines += _event_changes(old.events, new.events)
     return [*lines, f"  structure in {b.label}:", *_inspected(new.raw)]
+
+
+def _split(before: list[_Found], after: list[_Found]) -> list[str]:
+    """A series held in several resources, as Apple's "all future events" leaves it: each
+    resource now, paired with the one at the same href before, with how it changed or what it
+    holds; and how many resources went."""
+    olds = {found.href: found for found in before}
+    after = sorted(after, key=lambda found: found.href not in olds)
+    uids_before = {_text(found.events[0], "UID") for found in before if found.events}
+    uids_after = {_text(found.events[0], "UID") for found in after if found.events}
+    heading = (
+        f"the series split: resources {len(before)} -> {len(after)}"
+        if len(before) == 1
+        else f"the series' resources: {len(before)} -> {len(after)}"
+    )
+    lines = [f"  {heading}, UIDs {len(uids_before)} -> {len(uids_after)}"]
+    for number, new in enumerate(after, 1):
+        prefix = f"  resource {number} of {len(after)}: "
+        old = olds.get(new.href)
+        if old is not None:
+            etag = "same" if old.etag == new.etag else "new"
+            lines.append(f"{prefix}the same resource, calendar {new.calendar}; etag {etag}")
+            if etag == "same" and old.raw == new.raw:
+                continue
+            lines += [
+                f"    RRULE ends by: {_rrule_end(old.events)} -> {_rrule_end(new.events)}",
+                f"    events: {len(old.events)} -> {len(new.events)} "
+                f"({_shape(old.events)[0]} -> {_shape(new.events)[0]}), "
+                f"EXDATEs: {_exdates(old.events)} -> {_exdates(new.events)}",
+                *(f"  {line}" for line in _event_changes(old.events, new.events)),
+            ]
+        else:
+            seen = bool(new.events) and _text(new.events[0], "UID") in uids_before
+            lines += [
+                f"{prefix}a new resource, calendar {new.calendar}; "
+                f"UID seen before: {'yes' if seen else 'no'}",
+                f"    RRULE ends by: {_rrule_end(new.events)}",
+                f"    events: {_events_summary(new.events)}",
+            ]
+    gone = [found for found in before if found.href not in {new.href for new in after}]
+    if gone:
+        lines.append(f"  resources gone: {len(gone)}")
+    return lines
+
+
+def _rrule_end(events: list[_Component]) -> str:
+    """How the series' recurrence ends: by UNTIL, by COUNT, or nothing (it runs forever)."""
+    rule = next((_text(e, "RRULE") for e in events if _text(e, "RRULE")), None)
+    if rule is None:
+        return "no RRULE"
+    parts = {part.split("=", 1)[0].upper() for part in rule.split(";")}
+    return "UNTIL" if "UNTIL" in parts else "COUNT" if "COUNT" in parts else "nothing"
 
 
 def _find(directory: Path, snapshot: _Snapshot, marker: str) -> list[_Found]:

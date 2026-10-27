@@ -69,6 +69,7 @@ def vevent(
     *,
     start: str = "20310105T090000",
     rrule: bool = False,
+    until: str | None = None,
     exdates: int = 0,
     rdate: bool = False,
     recurrence_id: str | None = None,
@@ -90,7 +91,7 @@ def vevent(
     if recurrence_id:
         lines.append(f"RECURRENCE-ID;TZID=Europe/Tallinn:{recurrence_id}")
     if rrule:
-        lines.append("RRULE:FREQ=WEEKLY;COUNT=10")
+        lines.append(f"RRULE:FREQ=WEEKLY;UNTIL={until}" if until else "RRULE:FREQ=WEEKLY;COUNT=10")
     lines += [f"EXDATE;TZID=Europe/Tallinn:203101{12 + 7 * n}T090000" for n in range(exdates)]
     if rdate:
         lines.append("RDATE;TZID=Europe/Tallinn:20310301T090000")
@@ -486,6 +487,87 @@ def test_a_diff_reports_whether_moving_the_series_bumped_its_version(spike: Spik
         "  overrides: added 0, removed 0, changed 0 of 0\n"
         "  changed events without a SEQUENCE or LAST-MODIFIED bump: 0\n"
     ) in output
+
+
+def test_a_diff_reports_a_series_split_by_a_change_to_all_future_events(spike: Spike, home: str):
+    spike.server.put(home, "test", marker_series())
+    spike.run("snapshot", "created")
+    # As Apple does for "all future events": the old series ends, and a new one starts.
+    spike.server.put(
+        home,
+        "test",
+        ics(
+            vevent(
+                "test",
+                MARKER,
+                rrule=True,
+                until="20310118T235959Z",
+                sequence=0,
+                last_modified="20310104T080000Z",
+            )
+        ),
+    )
+    spike.server.put(
+        home,
+        "test-future",
+        ics(
+            vevent(
+                "test-future",
+                MARKER,
+                start="20310120T150000",
+                rrule=True,
+                sequence=0,
+                last_modified="20310104T080000Z",
+            )
+        ),
+    )
+    spike.run("snapshot", "split")
+
+    output = spike.run("diff", "created", "split", "--marker", MARKER)
+
+    report = output[output.index("test event") :]
+    assert report.startswith(
+        "test event (SUMMARY is the marker): in created 1, in split 2\n"
+        "  the series split: resources 1 -> 2, UIDs 1 -> 2\n"
+        "  resource 1 of 2: the same resource, calendar Home; etag new\n"
+        "    RRULE ends by: COUNT -> UNTIL\n"
+        "    events: 1 -> 1 (series -> series), EXDATEs: 0 -> 0\n"
+    )
+    assert (
+        "  resource 2 of 2: a new resource, calendar Home; UID seen before: no\n"
+        "    RRULE ends by: COUNT\n"
+        "    events: 1 (series), EXDATEs: 0, with SEQUENCE: 1, LAST-MODIFIED: 1\n"
+    ) in report
+
+
+def test_a_diff_pairs_a_split_series_resources_and_reports_a_changed_occurrence(
+    spike: Spike, home: str
+):
+    ended = vevent("test", MARKER, rrule=True, until="20310118T235959Z", sequence=0)
+    future = vevent("test-future", MARKER, start="20310120T150000", rrule=True, sequence=0)
+    spike.server.put(home, "test", ics(ended))
+    spike.server.put(home, "test-future", ics(future))
+    spike.run("snapshot", "split")
+    override = vevent(
+        "test-future", MARKER, recurrence_id="20310127T150000", start="20310127T170000", sequence=1
+    )
+    spike.server.put(home, "test-future", ics(future, override))
+    spike.run("snapshot", "one-changed")
+
+    output = spike.run("diff", "split", "one-changed", "--marker", MARKER)
+
+    report = output[output.index("test event") :]
+    assert report.startswith(
+        "test event (SUMMARY is the marker): in split 2, in one-changed 2\n"
+        "  the series' resources: 2 -> 2, UIDs 2 -> 2\n"
+    )
+    assert "the same resource, calendar Home; etag same\n" in report
+    assert (
+        "the same resource, calendar Home; etag new\n"
+        "    RRULE ends by: COUNT -> COUNT\n"
+        "    events: 1 -> 2 (series -> series with overrides), EXDATEs: 0 -> 0\n"
+    ) in report
+    assert "    overrides: added 1 (with SEQUENCE: 1, LAST-MODIFIED: 0), removed 0" in report
 
 
 def test_a_diff_reports_a_changed_occurrence_and_a_change_that_bumped_nothing(

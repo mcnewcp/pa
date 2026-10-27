@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ElementTree
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Protocol
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from caldav.davclient import DAVClient
 from caldav.lib import error as caldav_error
@@ -204,7 +204,10 @@ class CalDavServer:
         hrefs = list(listed)
         for start in range(0, len(hrefs), MULTIGET_BATCH):
             batch = hrefs[start : start + MULTIGET_BATCH]
-            body = _MULTIGET.format(hrefs="\n".join(f"  <d:href>{_xml(h)}</d:href>" for h in batch))
+            # By path: iCloud answers a multiget href given as a full URL with 404.
+            body = _MULTIGET.format(
+                hrefs="\n".join(f"  <d:href>{_xml(urlsplit(h).path)}</d:href>" for h in batch)
+            )
             reply = self._request("fetching resources", "REPORT", collection.url, body, None)
             for href, prop in _responses(reply):
                 url = urljoin(collection.url, href)
