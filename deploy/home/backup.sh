@@ -2,7 +2,7 @@
 # Backs up the instance's data root on the devbox to the restic repository on the USB SSD
 # (install-backup-drive.sh), with this checkout's code: one snapshot of L0, the wiki's git
 # directory, and the private eval directory. `pa backup` takes the data root's lock, skipping
-# if another run holds it, and records the outcome in the status. Nothing is ever pruned.
+# if another job holds it, and records the outcome in the status. Nothing is ever pruned.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 

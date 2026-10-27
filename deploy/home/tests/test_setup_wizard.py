@@ -86,3 +86,40 @@ def test_the_schedules_are_turned_on_by_their_installer_after_the_backup_drive()
     backup = body.index('run "$DEPLOY_DIR/install-backup-drive.sh"')
     schedules = body.index('run "$DEPLOY_DIR/install-schedules.sh" --enable')
     assert backup < schedules
+
+
+def plain_run() -> list[str]:
+    """The groups of stages a plain `setup-wizard.sh` runs, in order."""
+    block = re.search(r"^elif \$only_librarian; then\n.*?^else\n(.*?)^fi$", text(), re.M | re.S)
+    assert block, "no plain run in the wizard"
+    return re.findall(r"^  (\w+_stages)$", block.group(1), re.M)
+
+
+def test_a_plain_run_sets_up_gmail_and_icloud_after_the_data_root_and_before_the_schedules():
+    groups = plain_run()
+
+    assert groups == [
+        "assistant_stages",  # seeds the data root, which the dry runs need
+        "librarian_stages",
+        "vault_stages",
+        "gmail_stages",
+        "icloud_stages",
+        "backup_stages",
+        "schedule_stages",
+    ]
+
+
+def test_a_plain_runs_progress_counts_every_stage_it_shows():
+    total = re.search(r'^  ""\) TOTAL_STAGES=\$\(\((.*)\)\) ;;$', text(), re.M)
+    assert total, "no total for the plain run"
+
+    counted = sorted(variable.strip() for variable in total.group(1).split("+"))
+    assert counted == sorted(GROUPS[group] for group in plain_run())
+
+
+def test_the_owner_is_reminded_to_keep_remote_control_transcripts_out_of_training():
+    """Story 129: with model-improvement sharing off, claude.ai keeps the transcripts 30 days."""
+    body = text()
+
+    assert 'stage "Keep your chats out of model training"' in body
+    assert "Settings → Privacy" in body

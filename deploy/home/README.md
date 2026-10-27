@@ -14,7 +14,7 @@ See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh              # both VMs, the vault copy, then the backup drive
+deploy/home/setup-wizard.sh              # both VMs, the vault copy, Gmail, iCloud Calendar, the backup drive, then the schedules
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
 deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
 deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
@@ -170,6 +170,19 @@ deploy/home/update.sh <ref>   # the assistant's project points at the wiki once 
 
 `seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
 
+## The backfill
+
+Before the schedules, the go-live backfill brings each set-up source's history into L0 from one window start, the same one the replay is given: `deploy/home/capture.sh --backfill <window start>` (ISO 8601; the owner's time zone without an offset). It ends with the backfill's size, in numbers only, which is what goes on the issue:
+
+```
+backfill: gmail: 1234 episodes since 2026-08-26: primary 210, promotions 600, social 90, updates 300, forums 34
+backfill: icloud_calendar: 117 episodes since 2026-08-26
+backfill: obsidian: 61 episodes since 2026-08-26
+backfill: a replay from 2026-08-26 would offer 690 episodes: about $44.16, at $0.064 per offered episode (the scale corpus's reference replay)
+```
+
+The counts are the episodes in L0 that occurred since the window start (with the calendar events still going then), per source, and the mail per Gmail category. The cost is the episodes a replay from the window start would offer (never Promotions or Social mail, and only a note's latest version), at the last replay's cost per offered episode: the replay under `replays/` whose run log changed last, over its committed runs that reported a cost. Until a replay has run there, it's the scale corpus's reference replay's $0.064. To print it again later, run `pa backfill-estimate --window-start <window start>` with the instance's environment (`PA_DATA_DIR` and `owner.env`'s `PA_TIME_ZONE`).
+
 ## The live schedule
 
 Once the go-live backfill is replayed and the wiki seeded, the PA runs on its own, on two timers on the devbox (`setup-wizard.sh --schedules`, or `install-schedules.sh --enable`). They're system units, in `schedules/`, run as the devbox user with the code of the checkout they were installed from (its venv's `pa`, which `uv sync` makes), so install them from the checkout the devbox keeps, and run `install-schedules.sh` again after an update that changes them.
@@ -179,8 +192,9 @@ Once the go-live backfill is replayed and the wiki seeded, the PA runs on its ow
 | `pa-capture.timer` | Every 15 minutes, on the quarter hour | `pa-capture.service` → `capture.sh` → `pa capture`: each configured source collected into the inbox, ingest, and each watermark published once its payloads have landed |
 | `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then the backup |
 
-- **One lock.** Every job that writes the store takes the data root's lock (`pa.lock`): the capture cycle from its first collector through ingest and publication, the nightly job throughout, and `pa ingest`, `pa librarian run` and `pa backup` by hand. A job that finds it held skips and exits 0 (`… skipped: another run holds the data root's lock`); `pa cut`, `pa renormalize`, `pa catalog rebuild` and `pa librarian seed` refuse instead. So the librarian never runs between a collection and its ingest, and every note or calendar resource collected before a run (stamped with when it was read) is offered by that run.
+- **One lock.** Every job that writes the store takes the data root's lock (`pa.lock`): the capture cycle from its first collector through ingest and publication, the nightly job throughout, and `pa ingest`, `pa librarian run` and `pa backup` by hand. A job that finds it held skips and exits 0 (`… skipped: another job holds the data root's lock`); `pa cut`, `pa renormalize`, `pa catalog rebuild` and `pa librarian seed` refuse instead. So the librarian never runs between a collection and its ingest, and every note or calendar resource collected before a run (stamped with when it was read) is offered by that run.
 - **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. The one exception: when the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. The 15-minute cycles skip while the job runs.
+- **Staleness.** A source is stale once its watermark is more than twice its cadence behind (30 minutes for a 15-minute cadence). The nightly job records in the status when it started (`nightly.running_since`), and while it runs neither `pa status` nor the assistant calls a source stale, since the job holds the cycles back. A nightly job running past 3 hours has stopped holding staleness off.
 - **Catching up.** Both timers are `Persistent=`: after the devbox was off, each starts its job once at boot for what it missed, the nightly job after the capture cycle starting then. A timer never starts a second job while its last one runs (the services are oneshot), and neither the nightly job nor a cycle piles up behind the other: whichever finds the lock held skips. A capture cycle that hangs is stopped after 30 minutes.
 - **Confinement.** `pa-capture.service` can write only the inbox, L0, the catalog, collector state (`state/`), the status, and the lock; it reads the credentials in `~/.config/pa`, the vault copy and the code without being able to write them (`ProtectSystem=strict`, `ProtectHome=read-only`), with a private `/tmp` and no privileges. `pa-nightly.service` can write those too, and the wiki and its git directory, the backup repository on the drive and restic's cache, and `/tmp`, which stays the host's: the librarian run renders its project there and Incus shares it into the librarian's VM. It wants the backup drive's mount but runs without it, and the status records the backup that found no repository.
 - **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox and the drive's repository, whatever the environment says.
@@ -202,7 +216,7 @@ The nightly job backs up once the schedules are on ([The live schedule](#the-liv
 - **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
 - **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
 - **Configuration.** `pa backup` reads restic's own variables. `backup.sh` sets `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` to the drive's, and ignores any restic variables already in the environment.
-- **The lock and the status.** `pa backup` takes the data root's lock, so it never snapshots a half-run capture or librarian run. It skips, and exits 0, while another run holds the lock. Each backup records its last success or its last failure in the status, and `pa status` prints both. A missing drive shows as a missing repository ("is the backup drive mounted?"). Other failures are a wrong password, a repository restic has locked, an incomplete snapshot, or restic's exit code. `pa backup` never prints restic's own output, since that can name files under the data root. To see it, run restic by hand.
+- **The lock and the status.** `pa backup` takes the data root's lock, so it never snapshots a half-run capture or librarian run. It skips, and exits 0, while another job holds the lock. Each backup records its last success or its last failure in the status, and `pa status` prints both. A missing drive shows as a missing repository ("is the backup drive mounted?"). Other failures are a wrong password, a repository restic has locked, an incomplete snapshot, or restic's exit code. `pa backup` never prints restic's own output, since that can name files under the data root. To see it, run restic by hand.
 - **A cloud copy, later,** is a second restic repository: run `pa backup` again with that repository's variables, or `restic copy` the drive's snapshots into it. Neither needs a change here.
 
 ### Restoring
@@ -242,6 +256,7 @@ Check the repository itself now and then (`restic check`). It reads the reposito
 - It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.
 - `update.sh` stops it before the render and starts it again after. A session open during an update is cut off.
 - The permission mode isn't pinned: the phone picks each session's mode, and the fences hold in every mode.
+- Its sessions are kept in the owner's claude.ai account like any chat: for 30 days with model-improvement sharing off, and for 5 years (and used for training) with it on. The wizard's last assistant stage asks the owner to check it's off, at claude.ai Settings → Privacy (story 129). The PA can't read or change the setting.
 - Before it's enabled, two questions are answered once from a terminal as `assistant`: running `claude` in the project (theme, the "Claude can make mistakes" notice, folder trust), and running `claude remote-control` (`Enable Remote Control? (y/n)`). With no terminal, the service would wait on that question forever. The wizard asks both, checks the answers in the VM's `~/.claude.json` (`hasTrustDialogAccepted`, `remoteDialogSeen`), and only then enables the service.
 
 Don't chat during an eval run: the run fails if the inbox changes while it runs, and every exchange changes it.
@@ -297,7 +312,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
 - `git --git-dir ~/.local/share/pa-home-synthetic/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
-- `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another run holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
+- `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another job holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
 
 ### The Obsidian view
 
@@ -323,6 +338,12 @@ git pull --ff-only                            # to refresh, on the Mac
 - **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
+
+#### Advanced Data Protection
+
+The phone's view of the wiki travels through iCloud Drive, so Apple holds a copy of every page. With Advanced Data Protection on, that copy is end-to-end encrypted: only the owner's devices hold the keys, and Apple can't read it. Without it, Apple holds the keys (stories 111 and 128). Nothing in the PA depends on it either way: the Obsidian view, the vault copy and capture all work the same.
+
+To turn it on, on the iPhone: Settings → your name → iCloud → Advanced Data Protection. Apple asks for a recovery contact or a recovery key first, since it can no longer help recover the data; every device signed in to the Apple ID must run a recent enough OS. It also turns off web access to iCloud data unless it's allowed again in the same place.
 
 ## The vault copy
 
@@ -436,7 +457,7 @@ deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --jud
   [--configuration files-plus-wiki]           # the cut's own wiki; no --wiki
 ```
 
-A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`/srv/pa/eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut is refused before anything runs.
+A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`/srv/pa/eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut, or asked at another time than the cut was taken (its `as_of`), is refused before anything runs; so is a second drafting pass over such a draft.
 
 ### Drafting the real-data eval set
 

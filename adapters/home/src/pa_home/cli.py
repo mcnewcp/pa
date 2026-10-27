@@ -19,6 +19,7 @@ from pa_core.renormalize import renormalize
 from pa_core.status import Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
+from pa_home.backfill_estimate import estimate_backfill, estimate_lines
 from pa_home.backup import back_up
 from pa_home.capture import CycleOutcome, capture_cycle
 from pa_home.collectors import Collector
@@ -46,7 +47,7 @@ from pa_home.cut import take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
-from pa_home.lock import LockHeld, data_root_lock
+from pa_home.lock import LockHeld, data_root_lock, skipped
 from pa_home.nightly import nightly_job
 
 
@@ -55,7 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(
         "ingest",
-        help="Turn raw payloads in the inbox into episodes in L0. Skips if another run holds "
+        help="Turn raw payloads in the inbox into episodes in L0. Skips if another job holds "
         "the data root's lock.",
     )
     inspect = commands.add_parser(
@@ -73,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     capture = commands.add_parser(
         "capture",
         help="Run a capture cycle: collect each configured source into the inbox, ingest, and "
-        "publish each source's watermark once its payloads have landed. Skips if another run "
+        "publish each source's watermark once its payloads have landed. Skips if another job "
         "holds the data root's lock.",
     )
     capture_kind = capture.add_mutually_exclusive_group()
@@ -83,7 +84,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="WINDOW_START",
         help="Backfill instead: capture each source's history from WINDOW_START on (ISO 8601; "
         "the owner's time zone if it has no offset), such as two months back. Collections then "
-        "carry on from the backfill.",
+        "carry on from the backfill. Ends with the counts and estimate backfill-estimate "
+        "prints.",
     )
     capture_kind.add_argument(
         "--reconcile",
@@ -91,6 +93,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Reconcile instead of collecting, where a source can (iCloud Calendar): compare "
         "everything it holds against what was captured, so a change or deletion a collection "
         "missed still lands. The nightly job's cycle.",
+    )
+    backfill_estimate = commands.add_parser(
+        "backfill-estimate",
+        help="Count the episodes in L0 since WINDOW_START, per source and Gmail category, and "
+        "estimate what replaying them costs: the episodes a replay would offer, at the last "
+        "replay's cost per offered episode (else the scale corpus's). Prints numbers only.",
+    )
+    backfill_estimate.add_argument(
+        "--window-start",
+        type=datetime.fromisoformat,
+        required=True,
+        help="ISO 8601; the owner's time zone if it has no offset.",
     )
     gmail = commands.add_parser("gmail", help="Set up and check Gmail's capture.")
     gmail_commands = gmail.add_subparsers(dest="gmail_command", required=True)
@@ -139,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
         "reconciliation, then the librarian run, then the backup, each recorded in the status. "
-        "A step that fails doesn't stop the next. Skips if another run holds the lock.",
+        "A step that fails doesn't stop the next. Skips if another job holds the lock.",
     )
     commands.add_parser(
         "status",
@@ -150,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "cut",
         help="Cut the store now, for real-data evals: every episode captured by now, the wiki "
         "at its last commit, and the status file, under the data root's cuts/. Refused while "
-        "another run holds the data root's lock.",
+        "another job holds the data root's lock.",
     )
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
@@ -332,11 +346,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 with data_root_lock(data_root):
                     _ingest(data_root)
             except LockHeld:
-                print("ingest: skipped: another run holds the data root's lock")
+                print(skipped("ingest"))
         elif args.command == "capture":
             return _capture(data_root, args.backfill, reconcile=args.reconcile)
         elif args.command == "nightly":
             return _nightly(data_root)
+        elif args.command == "backfill-estimate":
+            _print_backfill_estimate(data_root, args.window_start)
         elif args.command == "status":
             _print_status(data_root)
         elif args.command == "cut":
@@ -435,10 +451,19 @@ def _capture(
         reconcile=reconcile,
     )
     if outcome.skipped:
-        print("capture: skipped: another run holds the data root's lock")
+        print(skipped("capture"))
         return 0
     _report_cycle(outcome, time_zone, "capture")
+    if window_start is not None and outcome.ingested is not None:
+        _print_backfill_estimate(data_root, window_start)
     return 1 if outcome.failed else 0
+
+
+def _print_backfill_estimate(data_root: DataRoot, window_start: datetime) -> None:
+    time_zone = load_time_zone()
+    estimate = estimate_backfill(data_root, _in_time_zone(window_start, time_zone))
+    for line in estimate_lines(estimate, time_zone):
+        print(line)
 
 
 def _report_cycle(outcome: CycleOutcome, time_zone: ZoneInfo, name: str) -> None:
@@ -472,7 +497,7 @@ def _nightly(data_root: DataRoot) -> int:
         time_zone=time_zone,
     )
     if outcome.skipped:
-        print("nightly: skipped: another run holds the data root's lock")
+        print(skipped("nightly"))
         return 0
     if outcome.capture is not None:
         _report_cycle(outcome.capture, time_zone, "nightly: capture")
@@ -564,11 +589,12 @@ def _print_status(data_root: DataRoot) -> None:
         return "none" if value is None else f"{moment(value.at)} ({value.reason})"
 
     print(f"status: updated {moment(status.updated_at)}")
+    if status.nightly.running_since is not None:
+        print(f"nightly: running since {moment(status.nightly.running_since)}")
     for name, source in sorted(status.sources.items()):
-        stale = source.watermark is None or now - source.watermark > source.cadence
         print(
             f"{name}: watermark {moment(source.watermark)}"
-            f"{' (stale)' if stale else ''}, "
+            f"{' (stale)' if status.stale(name, now=now) else ''}, "
             f"expected every {source.cadence.total_seconds() / 60:g} min; "
             f"last attempt {moment(source.last_attempt)}; "
             f"last failure {failure(source.last_failure)}; "
@@ -616,7 +642,7 @@ def _backup(data_root: DataRoot) -> None:
         with data_root_lock(data_root):
             snapshot_id = back_up(data_root)
     except LockHeld:
-        print("backup: skipped: another run holds the data root's lock")
+        print(skipped("backup"))
         return
     print(f"backup: took snapshot {snapshot_id[:8]}")
 
@@ -635,7 +661,7 @@ def _run_librarian(data_root: DataRoot) -> None:
         with data_root_lock(data_root):
             outcome = librarian.run(data_root, owner=owner, time_zone=time_zone, config=config)
     except LockHeld:
-        print("librarian: skipped: another run holds the data root's lock")
+        print(skipped("librarian"))
         return
     _report_run(outcome, "librarian")
 

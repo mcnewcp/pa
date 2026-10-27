@@ -6,11 +6,16 @@ Every header has `Captured-At`, when the collector read the payload, which becom
 envelope's `captured_at`; each source declares the other fields it requires. Names are matched
 without regard to case, and fields a source doesn't know are ignored, so a collector can add one
 without breaking older payloads. Error messages name the field, never its value (#82).
+
+Collectors write headers with `encode_capture_header`, which refuses a line break or any other
+control character, so a value taken from a source (a calendar's display name) can't add a field
+of its own.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +24,32 @@ from pa_core.errors import MalformedPayloadError
 
 _HEADER_END = re.compile(rb"\r?\n\r?\n")
 _HEADER_LINE = re.compile(r"([A-Za-z0-9-]+):(.*)")
+_FIELD_NAME = re.compile(r"[A-Za-z0-9-]+")
+
+
+class CaptureHeaderError(ValueError):
+    """A field a capture header can't hold. The message names the field, never its value."""
+
+
+def encode_capture_header(fields: Mapping[str, str]) -> bytes:
+    """The capture header holding `fields`, in order, with the blank line that ends it.
+
+    Raises CaptureHeaderError for a name that isn't letters, digits and hyphens, or a value
+    holding a line break or any other control character.
+    """
+    lines: list[str] = []
+    for name, value in fields.items():
+        if _FIELD_NAME.fullmatch(name) is None:
+            raise CaptureHeaderError("a capture header field's name isn't letters, digits and -")
+        if any(_is_control(character) for character in value):
+            raise CaptureHeaderError(f"the capture header's {name} holds a control character")
+        lines.append(f"{name}: {value}\n")
+    return f"{''.join(lines)}\n".encode()
+
+
+def _is_control(character: str) -> bool:
+    """A control character, or a line or paragraph separator (both end a line in a header)."""
+    return unicodedata.category(character) in ("Cc", "Zl", "Zp")
 
 
 @dataclass(frozen=True)

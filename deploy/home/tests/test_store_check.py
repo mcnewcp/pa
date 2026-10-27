@@ -124,3 +124,13 @@ def test_any_other_host_directory_is_a_problem(home: Path):
         f"{data_root(home)} is shared too, at /srv/pa/all",
         f"{data_root(home) / 'catalog'} is shared too, at /srv/pa/catalog",
     ]
+
+
+def test_unreadable_vm_devices_fail_the_share_checks_and_the_check_carries_on(stand_ins):
+    stand_ins.answer("incus", "query", exit=1)
+
+    result = stand_ins.run(Path(LIB).parent / "check-store.sh")
+
+    assert result.returncode == 1
+    assert "  FAIL  can't read pa-home's devices" in result.stdout
+    assert "  FAIL  can't read the VMs' devices" in result.stdout

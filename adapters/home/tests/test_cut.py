@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.catalog import open_catalog
+from pa_core.envelope import Source
 from pa_core.ingest import ingest
 from pa_core.owner import Owner
 from pa_core.status import SourceStatus, Status, write_status
@@ -124,7 +125,9 @@ def test_a_cut_holds_the_wiki_at_its_last_commit_and_names_that_commit(data_root
 
 def test_a_cut_holds_a_copy_of_the_status_file(data_root: DataRoot):
     capture(data_root, MONDAY, a=email("a", "The block closes Oct 9."))
-    status = Status(sources={"gmail": SourceStatus(watermark=MONDAY, cadence=TUESDAY - MONDAY)})
+    status = Status(
+        sources={Source.GMAIL: SourceStatus(watermark=MONDAY, cadence=TUESDAY - MONDAY)}
+    )
     write_status(data_root.status, status, at=MONDAY)
 
     cut = take_cut(data_root, now=TUESDAY)

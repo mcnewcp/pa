@@ -5,7 +5,9 @@
 2. the librarian run, over everything captured since its cursor;
 3. the backup, which then holds the night's wiki.
 
-Each step records its outcome in the status, and a step that fails doesn't stop the next: the
+The status says the job is running, from its start until it ends, so neither `pa status` nor
+the assistant calls a source stale while the job holds the capture cycles back. Each step
+records its outcome in the status, and a step that fails doesn't stop the next: the
 backup runs whatever the librarian did. The one exception closes the gap the lock is for: when
 the cycle's ingest failed, its payloads wait in the inbox with their capture times, and a run
 now would move its cursor past them, so the run is held back (and recorded as failed) until a
@@ -23,6 +25,7 @@ from zoneinfo import ZoneInfo
 from pa_core.envelope import Source
 from pa_core.librarian.run import RunOutcome
 from pa_core.owner import Owner
+from pa_core.status import NightlyStatus, read_status, write_status
 from pa_home import librarian
 from pa_home.agent import wall_clock
 from pa_home.backup import back_up, backup_failure_reason
@@ -73,13 +76,29 @@ def nightly_job(
     now: Callable[[], datetime] = wall_clock,
 ) -> NightlyOutcome:
     """Run the night's capture cycle, librarian run, and backup under the data root's lock, or
-    skip them all if another run holds it. The librarian and the backup are configured from
+    skip them all if another job holds it. The librarian and the backup are configured from
     `environ`."""
     try:
         with data_root_lock(data_root):
-            return _night(data_root, collectors, owner, cadences, time_zone, environ, now)
+            _mark_running(data_root, now(), now)
+            try:
+                return _night(data_root, collectors, owner, cadences, time_zone, environ, now)
+            finally:
+                _mark_running(data_root, None, now)
     except LockHeld:
         return NightlyOutcome(skipped=True)
+
+
+def _mark_running(data_root: DataRoot, since: datetime | None, now: Callable[[], datetime]) -> None:
+    """Record in the status that the nightly job is running since `since`, or (None) isn't."""
+    try:
+        status = read_status(data_root.status)
+        nightly = NightlyStatus(running_since=since)
+        write_status(data_root.status, status.model_copy(update={"nightly": nightly}), at=now())
+    except Exception:
+        # A status that can't be read or written fails the steps that record in it, which
+        # say why; the night carries on without the mark.
+        pass
 
 
 def _night(
@@ -114,7 +133,7 @@ def _night(
                 _not_run(outcome, data_root, str(error), now)
             else:
                 outcome.librarian = librarian.run(
-                    data_root, owner=owner, time_zone=time_zone, config=config, clock=now
+                    data_root, owner=owner, time_zone=time_zone, config=config, now=now
                 )
     except Exception as error:
         # librarian.run recorded it; a reason given already stands.
@@ -131,4 +150,4 @@ def _not_run(
     outcome: NightlyOutcome, data_root: DataRoot, reason: str, now: Callable[[], datetime]
 ) -> None:
     outcome.librarian_failure = reason
-    librarian.record_run_not_made(data_root, reason, clock=now)
+    librarian.record_run_not_made(data_root, reason, now=now)

@@ -31,6 +31,7 @@ from pa_core.ingest import inbox_normalizer
 from pa_core.model_client import ModelClient
 from pa_core.normalizers import payload_extension
 from pa_core.normalizers.assistant_chat import TurnRole, encode_exchange
+from pa_core.normalizers.capture_header import encode_capture_header
 from pa_evals.prose_cache import ProseCache
 from pa_evals.storyline import (
     Background,
@@ -426,11 +427,13 @@ class _Generator:
 
     def _note(self, day: dt.date, sections: Iterable[_Section], captured_at: dt.datetime) -> bytes:
         body = "\n\n".join(f"## {section.heading}\n\n{section.text}" for section in sections)
-        header = (
-            f"Vault-Path: {self.spec.vault_folder}/{day.isoformat()}.md\n"
-            f"Captured-At: {captured_at.isoformat()}\n"
+        header = encode_capture_header(
+            {
+                "Vault-Path": f"{self.spec.vault_folder}/{day.isoformat()}.md",
+                "Captured-At": captured_at.isoformat(),
+            }
         )
-        return f"{header}\n{body}\n".encode()
+        return header + f"{body}\n".encode()
 
     def _note_prompt(self, section: NoteSection) -> str:
         owner = self.spec.person(self.spec.owner)

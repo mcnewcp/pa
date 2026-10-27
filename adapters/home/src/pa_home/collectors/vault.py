@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from pa_core.envelope import Source
+from pa_core.normalizers.capture_header import CaptureHeaderError, encode_capture_header
 from pa_home.collectors import CollectionError, SourceInbox, read_state, write_state
 
 _STATE = "notes.json"
@@ -66,6 +67,7 @@ class VaultCollector:
         captured = dict(saved.captured)
         today = now().astimezone(self.time_zone).date()
         first_day = saved.first_day or date.min
+        unwritable = 0
         for note in sorted(folder.rglob("*.md")):
             vault_path = note.relative_to(self.vault).as_posix()
             day = _day(note)
@@ -78,10 +80,23 @@ class VaultCollector:
             if captured.get(vault_path) == digest:
                 continue
             read_at = now().astimezone(self.time_zone).isoformat(timespec="seconds")
-            header = f"Vault-Path: {vault_path}\nCaptured-At: {read_at}\n\n".encode()
+            try:
+                header = encode_capture_header({"Vault-Path": vault_path, "Captured-At": read_at})
+            except CaptureHeaderError:
+                unwritable += 1
+                continue
             inbox.write(day.isoformat(), header + text)
             captured[vault_path] = digest
         write_state(state / _STATE, saved.model_copy(update={"captured": captured}))
+        if unwritable == 1:
+            raise CollectionError(
+                "a daily note's path holds a line break or control character; rename the note"
+            )
+        if unwritable:
+            raise CollectionError(
+                f"{unwritable} daily notes' paths hold a line break or control character; "
+                "rename the notes"
+            )
 
 
 def _day(note: Path) -> date | None:

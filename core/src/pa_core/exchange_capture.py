@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from pa_core.atomic import write_atomically
 from pa_core.errors import MalformedPayloadError, PaError
 from pa_core.normalizers.assistant_chat import (
     EXTENSION,
@@ -205,7 +205,7 @@ class ExchangeCapture:
 
     def _hold(self, session_id: str, pending: dict[str, Any]) -> None:
         self.pending.mkdir(mode=0o700, parents=True, exist_ok=True)
-        _write_atomically(self._pending_path(session_id), json.dumps(pending).encode(), mode=0o600)
+        write_atomically(self._pending_path(session_id), json.dumps(pending).encode(), mode=0o600)
 
 
 def _answer_text(answer: object) -> str | None:
@@ -229,21 +229,7 @@ def _drop(exchange: CapturedExchange, inbox: Path) -> None:
     """
     if not inbox.is_dir():
         raise CaptureRefusedError(f"the inbox directory {inbox} is missing (is it mounted?)")
-    _write_atomically(inbox / exchange.file_name, exchange.payload, mode=0o644)
-
-
-def _write_atomically(target: Path, content: bytes, *, mode: int) -> None:
-    partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
-    try:
-        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
-        with os.fdopen(fd, "wb") as file:
-            file.write(content)
-            file.flush()
-            os.fsync(file.fileno())
-        partial.chmod(mode)
-        partial.replace(target)
-    finally:
-        partial.unlink(missing_ok=True)
+    write_atomically(inbox / exchange.file_name, exchange.payload, mode=0o644)
 
 
 def run_helper(argv: list[str], stdin: BinaryIO, *, clock: Callable[[], datetime] = _now) -> int:

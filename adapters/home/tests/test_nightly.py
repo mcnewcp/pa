@@ -125,7 +125,7 @@ def test_the_nightly_job_captures_then_runs_the_librarian_then_backs_up_the_nigh
     assert backup["wiki_head"] == wiki_head(data_root)
     assert {"l0", "wiki.git"} <= set(backup["args"])
     status = read_status(data_root / "status" / "status.json")
-    run, obsidian = status.wiki.last_run, status.sources["obsidian"]
+    run, obsidian = status.wiki.last_run, status.sources[Source.OBSIDIAN]
     assert run is not None and run.succeeded
     assert obsidian.last_attempt is not None and status.backup.last_success is not None
     assert obsidian.last_attempt <= run.at <= status.backup.last_success
@@ -188,7 +188,7 @@ def test_a_note_collected_before_a_run_is_offered_by_that_run(
     )
 
     assert collector.librarian_exit == 0
-    assert "librarian: skipped: another run holds the data root's lock" in capsys.readouterr().out
+    assert "librarian: skipped: another job holds the data root's lock" in capsys.readouterr().out
     assert sessions(tmp_path) == []
     assert outcome.ingested is not None and outcome.ingested.ingested == 1
 
@@ -207,7 +207,7 @@ def test_pa_ingest_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["ingest"]) == 0
 
-    assert capsys.readouterr().out == "ingest: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "ingest: skipped: another job holds the data root's lock\n"
     assert (data_root / "inbox" / "gmail" / "hotel.eml").exists()
     assert not (data_root / "l0").exists()
 
@@ -223,7 +223,7 @@ def test_what_rewrites_the_store_by_hand_is_refused_while_another_run_holds_the_
     with data_root_lock(DataRoot(data_root)):
         assert main(command) == 1
 
-    assert "another run holds the data root's lock" in capsys.readouterr().err
+    assert "another job holds the data root's lock" in capsys.readouterr().err
     assert not (data_root / "catalog").exists()
     assert not (data_root / "wiki.git").exists()
 
@@ -240,7 +240,7 @@ def test_the_nightly_job_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["nightly"]) == 0
 
-    assert capsys.readouterr().out == "nightly: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "nightly: skipped: another job holds the data root's lock\n"
     assert not (data_root / "inbox").exists()
     assert sessions(tmp_path) == [] and backups(tmp_path) == []
     assert not (data_root / "status").exists()
@@ -357,3 +357,41 @@ def test_a_failed_backup_is_recorded_after_the_nights_run(
     failure = status(data_root).backup.last_failure
     assert failure is not None and "RESTIC_REPOSITORY" in failure.reason
     assert f"pa: nightly: backup failed: {failure.reason}" in capsys.readouterr().err
+
+
+class SeesTheStatus:
+    """A collector that reads the status file as the assistant would, mid-night."""
+
+    source = Source.ICLOUD_CALENDAR
+
+    def __init__(self, data_root: Path) -> None:
+        self.data_root = data_root
+        self.running_since: datetime | None = None
+
+    def collect(self, inbox: SourceInbox, state: Path, *, now) -> None:
+        raise AssertionError("the nightly job reconciles")
+
+    def reconcile(self, inbox: SourceInbox, state: Path, *, now) -> None:
+        self.running_since = status(self.data_root).nightly.running_since
+
+    def backfill(self, inbox: SourceInbox, state: Path, *, window_start, now) -> None:
+        raise AssertionError("not a backfill")
+
+
+def test_the_status_says_the_nightly_job_is_running_from_its_start_until_it_ends(
+    data_root: Path, vault: Path
+):
+    started = datetime(2026, 10, 21, 3, 0, tzinfo=CHICAGO)
+    calendar = SeesTheStatus(data_root)
+
+    nightly_job(
+        DataRoot(data_root),
+        collectors=[calendar],
+        owner=OWNER,
+        cadences={Source.ICLOUD_CALENDAR: timedelta(minutes=15)},
+        time_zone=CHICAGO,
+        now=lambda: started,
+    )
+
+    assert calendar.running_since == started
+    assert status(data_root).nightly.running_since is None

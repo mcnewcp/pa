@@ -371,3 +371,40 @@ def test_a_node_download_that_isnt_the_pinned_release_is_refused(home: Path):
     assert "checksum doesn't match PA_NODE_SHA256: not installed" in result.stderr
     assert not tarball.exists()
     assert not (Path(lib_value("PA_VAULT_SYNC_DIR", home)) / "node").exists()
+
+
+def check(stand_ins: Any) -> subprocess.CompletedProcess[str]:
+    """check-vault-sync.sh run whole, with stand-ins for systemctl and incus, over a vault copy
+    with one daily note."""
+    stand_ins.add("systemctl")
+    home = stand_ins.home
+    daily = home / ".local" / "share" / "pa-vault" / "Daily"
+    daily.mkdir(parents=True)
+    (daily / "2026-10-01.md").write_text("a stand-in note\n")
+    env = home / ".config" / "pa" / "vault.env"
+    env.parent.mkdir(parents=True)
+    env.write_text(f'PA_VAULT_DIR="{daily.parent}"\nPA_VAULT_DAILY_NOTES="Daily"\n')
+    return stand_ins.run(DEPLOY / "check-vault-sync.sh")
+
+
+def test_unreadable_vm_devices_fail_the_share_check_and_the_check_carries_on(stand_ins):
+    stand_ins.answer("incus", "query", exit=1)
+
+    result = check(stand_ins)
+
+    assert result.returncode == 1
+    assert "  FAIL  can't read the VMs' devices" in result.stdout
+    assert "1 daily notes of" in result.stdout
+
+
+def test_an_unreadable_folder_in_the_vault_copy_doesnt_stop_the_count(stand_ins):
+    stand_ins.answer("incus", "query", stdout="[]")
+    locked = stand_ins.home / ".local" / "share" / "pa-vault" / "Locked"
+    locked.mkdir(parents=True)
+    locked.chmod(0)
+    try:
+        result = check(stand_ins)
+    finally:
+        locked.chmod(0o700)
+
+    assert "1 daily notes of 1 files" in result.stdout

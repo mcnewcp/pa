@@ -92,7 +92,7 @@ def seed_corrections_fixture(root: Path) -> dict[str, str]:
             target.write_text(
                 _PLACEHOLDER.sub(lambda m: f"[ep:{ids[m[1]]}]", text), encoding="utf-8"
             )
-        librarian.seed(DataRoot(root), seed, owner=OWNER, clock=lambda: RUN_CLOCKS[0])
+        librarian.seed(DataRoot(root), seed, owner=OWNER, now=lambda: RUN_CLOCKS[0])
     return ids
 
 
@@ -223,14 +223,14 @@ def test_smoke_the_real_librarian_applies_the_owners_corrections_from_chat():
 
     deliver_stage(target, "chats")
     first = librarian.run(
-        data_root, owner=OWNER, time_zone=TIME_ZONE, config=config, clock=lambda: RUN_CLOCKS[0]
+        data_root, owner=OWNER, time_zone=TIME_ZONE, config=config, now=lambda: RUN_CLOCKS[0]
     )
     _report("after the chats", first)
     problems += [f"after the chats: {p}" for p in corrections_problems(data_root.wiki, ids)]
 
     deliver_stage(target, "later")
     second = librarian.run(
-        data_root, owner=OWNER, time_zone=TIME_ZONE, config=config, clock=lambda: RUN_CLOCKS[1]
+        data_root, owner=OWNER, time_zone=TIME_ZONE, config=config, now=lambda: RUN_CLOCKS[1]
     )
     _report("after the later stage", second)
     problems += [f"after the later stage: {p}" for p in later_problems(data_root.wiki, ids)]

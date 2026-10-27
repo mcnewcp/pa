@@ -6,8 +6,10 @@ content: a failure is recorded as a reason written without subjects, names, addr
 bodies. Each job updates its own part and writes the whole file atomically, under the data
 root's lock, so a reader always sees one whole status.
 
-The assistant judges staleness itself, against its own "now": a source is stale when its
-watermark is further behind than its cadence allows. A status file that stopped updating can't
+The assistant judges staleness itself, against its own "now", by the rule `Status.stale`
+keeps: a source is stale when its watermark is more than twice its cadence behind (a cycle's
+slack), except while the nightly job runs, since it holds the capture cycles back (for at most
+`NIGHTLY_BOUND`; one running longer has stopped). A status file that stopped updating can't
 claim to be fresh, since every watermark in it falls behind.
 """
 
@@ -19,8 +21,13 @@ from pathlib import Path
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from pa_core.atomic import write_atomically
+from pa_core.envelope import Source
 
 STATUS_VERSION = 1
+STALE_AFTER_CADENCES = 2
+"""A source is stale once its watermark is more than this many cadences behind now."""
+NIGHTLY_BOUND = timedelta(hours=3)
+"""How long the nightly job may run before it stops holding staleness off."""
 
 
 class _Model(BaseModel):
@@ -41,7 +48,7 @@ class SourceStatus(_Model):
     """The time through which the source is known to be fully captured into L0: the start of
     its last successful collection whose payloads have all landed. None until the first."""
     cadence: timedelta
-    """How often the watermark is expected to move. Further behind than this, it's stale."""
+    """How often the watermark is expected to move. More than twice this behind, it's stale."""
     last_attempt: AwareDatetime | None = None
     """When its collector last started a collection, whether it succeeded or not."""
     last_failure: Failure | None = None
@@ -77,14 +84,35 @@ class WikiStatus(_Model):
     last_run: LibrarianRun | None = None
 
 
+class NightlyStatus(_Model):
+    running_since: AwareDatetime | None = None
+    """When the nightly job now running started, or None when none is. While it runs it holds
+    the data root's lock, so capture cycles skip and watermarks wait."""
+
+
 class Status(_Model):
     version: int = STATUS_VERSION
     updated_at: AwareDatetime | None = None
-    sources: dict[str, SourceStatus] = {}
-    """Each collected source's status, by source name (`gmail`, `obsidian`, ...)."""
+    sources: dict[Source, SourceStatus] = {}
+    """Each collected source's status, saved under its name (`gmail`, `obsidian`, ...)."""
     ingest: JobStatus = JobStatus()
     wiki: WikiStatus = WikiStatus()
     backup: JobStatus = JobStatus()
+    nightly: NightlyStatus = NightlyStatus()
+
+    def nightly_running(self, *, now: datetime) -> bool:
+        """Whether the nightly job is running, and has run no longer than `NIGHTLY_BOUND`."""
+        since = self.nightly.running_since
+        return since is not None and now - since <= NIGHTLY_BOUND
+
+    def stale(self, source: Source, *, now: datetime) -> bool:
+        """Whether `source` is stale at `now`: never collected, or its watermark more than
+        `STALE_AFTER_CADENCES` cadences behind while no nightly job is running."""
+        found = self.sources.get(source)
+        if found is None or found.watermark is None:
+            return True
+        behind = now - found.watermark
+        return behind > STALE_AFTER_CADENCES * found.cadence and not self.nightly_running(now=now)
 
 
 def read_status(path: Path) -> Status:

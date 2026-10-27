@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 
+from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.owner import Owner
 from pa_core.status import read_status
@@ -146,7 +147,7 @@ def revise_eval_set(cut: Cut, drafter: Drafter, *, previous: EvalSet, notes: str
 
 def _about(cut: Cut, zone: ZoneInfo) -> dict[str, str]:
     """What both prompts say about the cut: its time, sources, and watermarks."""
-    sources = sorted(p.name for p in (cut.l0 / "episodes").glob("*") if p.is_dir())
+    sources = sorted(Source(p.name) for p in (cut.l0 / "episodes").glob("*") if p.is_dir())
     recorded = read_status(cut.status).sources if cut.status is not None else {}
     watermarks = [
         f"  - {source}: {_when(recorded[source].watermark if source in recorded else None, zone)}"

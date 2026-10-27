@@ -174,8 +174,10 @@ def test_with_a_status_the_rendered_claude_md_says_to_read_it_and_scope_claims_b
         "Nothing from Jay in email since Friday, synced 6:10 this morning.",
     ):
         assert value in claude_md, value
-    # Say when a source is stale: further behind now than its cadence allows.
-    assert "further behind now than its cadence allows" in claude_md
+    # Say when a source is stale: more than twice its cadence behind, unless the nightly job
+    # started within 3 hours.
+    for value in ("more than twice its cadence behind now", "`nightly.running_since`", "3 hours"):
+        assert value in claude_md, value
     # A missing status file or watermark means currency is unknown, never fresh.
     assert "can't tell how current" in claude_md
     assert "${" not in text, "a placeholder was left unfilled"

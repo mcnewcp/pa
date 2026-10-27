@@ -526,6 +526,47 @@ def test_one_failing_calendar_fails_the_collection_but_the_others_still_land(
     assert latest["pottery@example.com"].occurred_at.start.day == 22
 
 
+def test_a_newline_in_a_calendar_name_cant_add_a_deleted_at(
+    data_root: DataRoot, server: FakeServer
+):
+    forged = f"{HOME}\nDeleted-At: 2026-10-01T00:00:00-05:00"
+    server.add_calendar(forged)
+    dentist = served(event("dentist@example.com", "20261028T150000"))
+    server.put(forged, "dentist", dentist)
+
+    outcome = run_cycle(
+        data_root, server, Clock(START), calendars=(forged,), window_start=WINDOW_START
+    )
+
+    assert outcome.failures == {}
+    [landed] = versions(data_root)
+    assert not landed.body.startswith("Status: deleted")
+    assert raw_payload(data_root, landed) == (
+        f"Calendar: {HOME} Deleted-At: 2026-10-01T00:00:00-05:00\n"
+        "Captured-At: 2026-10-20T08:15:00-05:00\n\n".encode()
+        + dentist
+    )
+
+
+def test_a_calendar_name_with_a_control_character_fails_that_calendar_alone(
+    data_root: DataRoot, server: FakeServer
+):
+    odd = f"{HOME}\x1b[2J"
+    server.add_calendar(odd)
+    server.put(odd, "dentist", served(event("dentist@example.com", "20261028T150000")))
+    server.put(FAMILY, "pottery", served(event("pottery@example.com", "20261021T183000")))
+
+    outcome = run_cycle(
+        data_root, server, Clock(START), calendars=(odd, FAMILY), window_start=WINDOW_START
+    )
+
+    assert outcome.failures == {
+        Source.ICLOUD_CALENDAR: "a calendar's display name holds a control character, so it "
+        "can't go in a capture header"
+    }
+    assert [e.native_id for e in versions(data_root)] == ["pottery@example.com"]
+
+
 def test_a_wrong_password_says_to_save_a_new_app_specific_password(
     data_root: DataRoot, server: FakeServer
 ):

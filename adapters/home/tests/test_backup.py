@@ -274,7 +274,7 @@ def test_pa_backup_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["backup"]) == 0
 
-    assert capsys.readouterr().out == "backup: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "backup: skipped: another job holds the data root's lock\n"
     assert snapshots() == []
     assert backup_status(data_root) == JobStatus()
 

@@ -40,7 +40,7 @@ _PENDING = "watermarks.json"
 class PendingWatermarks(BaseModel):
     """Watermarks recorded by successful collections, waiting for their payloads to land."""
 
-    pending: dict[str, AwareDatetime] = {}
+    pending: dict[Source, AwareDatetime] = {}
 
 
 @dataclass
@@ -74,7 +74,7 @@ def capture_cycle(
     window_start: datetime | None = None,
     reconcile: bool = False,
 ) -> CycleOutcome:
-    """Run one capture cycle over `data_root` under its lock, or skip it if another run holds
+    """Run one capture cycle over `data_root` under its lock, or skip it if another job holds
     the lock (`run_capture_cycle` says what the cycle does)."""
     try:
         with data_root_lock(data_root):
@@ -159,17 +159,17 @@ def run_capture_cycle(
     else:
         outcome.ingested = summary
         ingest_status = ingest_status.model_copy(update={"last_success": now()})
-        for name, current in sources.items():
-            quarantined = summary.quarantined_from.get(name, 0)
+        for source, current in sources.items():
+            quarantined = summary.quarantined_from.get(source, 0)
             if quarantined:
-                sources[name] = current.model_copy(
+                sources[source] = current.model_copy(
                     update={"quarantined": current.quarantined + quarantined}
                 )
-        for name, watermark in list(pending.items()):
-            if name in sources and not waiting_payloads(data_root.inbox / name):
-                sources[name] = sources[name].model_copy(update={"watermark": watermark})
-                outcome.published[Source(name)] = watermark
-                del pending[name]
+        for source, watermark in list(pending.items()):
+            if source in sources and not waiting_payloads(data_root.inbox / source):
+                sources[source] = sources[source].model_copy(update={"watermark": watermark})
+                outcome.published[source] = watermark
+                del pending[source]
         write_state(pending_file, PendingWatermarks(pending=pending))
 
     write_status(

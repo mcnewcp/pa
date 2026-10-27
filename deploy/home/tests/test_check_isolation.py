@@ -46,3 +46,23 @@ def test_a_mounted_inbox_has_its_file_tools_tried(stand_ins):
     check(stand_ins)
 
     assert [c for c in stand_ins.of("incus") if "acceptEdits" in c.line]
+
+
+def test_a_site_the_devbox_cant_resolve_is_skipped_and_the_check_carries_on(stand_ins):
+    stand_ins.add("getent")
+    stand_ins.answer("getent", "ahostsv4", exit=2)
+
+    result = check(stand_ins)
+
+    assert "  skip  example.com doesn't resolve on the devbox either" in result.stdout
+    assert "no auto memory is left" in result.stdout
+
+
+def test_an_unpinned_api_name_fails_and_the_check_carries_on(stand_ins):
+    stand_ins.answer("incus", "exec", "getent hosts", exit=2)
+
+    result = check(stand_ins)
+
+    assert result.returncode == 1
+    assert "isn't pinned in the VM at an address in" in result.stdout
+    assert "no auto memory is left" in result.stdout

@@ -3,7 +3,7 @@
 # the instance's configuration (lib.sh job_environment): one process holding the data root's lock
 # throughout, which runs a capture cycle with reconciliation, the librarian run (its sessions in
 # the librarian's VM, librarian-sandbox.sh), and the backup to the USB SSD's restic repository,
-# each recorded in the status. It skips if another run holds the lock. pa-nightly.service runs
+# each recorded in the status. It skips if another job holds the lock. pa-nightly.service runs
 # it overnight (pa-nightly.timer, install-schedules.sh); run it by hand too.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"

@@ -3,10 +3,13 @@ would configure them."""
 
 import logging
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from pa_core.envelope import Source
+from pa_core.status import NightlyStatus, SourceStatus, Status, write_status
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.lock import data_root_lock
@@ -105,7 +108,7 @@ def test_pa_capture_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["capture"]) == 0
 
-    assert "skipped" in capsys.readouterr().out
+    assert capsys.readouterr().out == "capture: skipped: another job holds the data root's lock\n"
     assert episodes(data_root) == []
 
 
@@ -128,3 +131,52 @@ def test_a_vault_without_its_daily_notes_folder_configured_is_refused(
     assert main(["capture"]) == 1
 
     assert "PA_VAULT_DAILY_NOTES" in capsys.readouterr().err
+
+
+def write_a_status(data_root: Path, behind: timedelta, *, nightly_for: timedelta | None) -> None:
+    """Obsidian's watermark `behind` now, every 15 minutes, and the nightly job running for
+    `nightly_for`, if given."""
+    now = datetime.now(UTC)
+    obsidian = SourceStatus(watermark=now - behind, cadence=timedelta(minutes=15))
+    nightly = NightlyStatus(running_since=None if nightly_for is None else now - nightly_for)
+    status = Status(sources={Source.OBSIDIAN: obsidian}, nightly=nightly)
+    write_status(DataRoot(data_root).status, status, at=now)
+
+
+def obsidian_line(capsys: pytest.CaptureFixture[str]) -> str:
+    assert main(["status"]) == 0
+    [line] = [line for line in capsys.readouterr().out.splitlines() if line.startswith("obsidian")]
+    return line
+
+
+@pytest.mark.parametrize(
+    ("behind", "nightly_for", "stale"),
+    [
+        (timedelta(minutes=25), None, False),
+        (timedelta(minutes=35), None, True),
+        (timedelta(hours=2), timedelta(hours=1), False),
+        (timedelta(hours=5), timedelta(hours=4), True),
+    ],
+)
+def test_pa_status_marks_a_source_stale_past_twice_its_cadence_unless_the_nightly_job_runs(
+    data_root: Path,
+    capsys: pytest.CaptureFixture[str],
+    behind: timedelta,
+    nightly_for: timedelta | None,
+    stale: bool,
+):
+    write_a_status(data_root, behind, nightly_for=nightly_for)
+
+    assert ("(stale)" in obsidian_line(capsys)) is stale
+
+
+def test_pa_status_says_when_the_nightly_job_started(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    write_a_status(data_root, timedelta(minutes=5), nightly_for=timedelta(minutes=40))
+
+    assert main(["status"]) == 0
+
+    assert re.search(
+        r"^nightly: running since \d{4}-\d{2}-\d{2} \d{2}:\d{2}", capsys.readouterr().out, re.M
+    )
