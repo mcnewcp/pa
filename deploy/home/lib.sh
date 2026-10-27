@@ -155,6 +155,20 @@ PA_VAULT_DEVICE_NAME=pa-devbox
 PA_BACKUP_MOUNT=/mnt/pa-backup
 PA_BACKUP_REPOSITORY=$PA_BACKUP_MOUNT/restic
 PA_BACKUP_PASSWORD_FILE=$HOME/.config/pa/restic.password
+# restic's cache, which the nightly job may write.
+PA_RESTIC_CACHE=$HOME/.cache/restic
+
+# The schedules (#98): system units on the devbox, run as the devbox user, that install-schedules.sh
+# renders from schedules/ and installs. pa-capture.timer starts the capture cycle every 15
+# minutes; pa-nightly.timer starts the nightly job (a capture cycle with reconciliation, the
+# librarian run, the backup) at PA_NIGHTLY_AT, in the devbox's time zone. Both catch up after the
+# devbox was off. Their services run capture.sh and nightly.sh with this checkout's code, through
+# PA_BIN: the venv's own `pa`, since a confined service can't let uv write its cache or the venv.
+PA_CAPTURE_TIMER=pa-capture.timer
+PA_NIGHTLY_TIMER=pa-nightly.timer
+PA_SCHEDULE_UNITS=(pa-capture.service "$PA_CAPTURE_TIMER" pa-nightly.service "$PA_NIGHTLY_TIMER")
+PA_SCHEDULE_TIMERS=("$PA_CAPTURE_TIMER" "$PA_NIGHTLY_TIMER")
+PA_NIGHTLY_AT=03:00
 
 # Where the VM sees the store: L0, the wiki and the status read-only, and its own inbox directory,
 # its only way back.
@@ -253,6 +267,8 @@ PA_LIB_DEVICES=(lib-l0 lib-project lib-wiki)
 
 DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
+# The `pa` the schedules run (capture.sh, nightly.sh): this checkout's venv's (uv sync makes it).
+PA_BIN=${PA_BIN:-$REPO_DIR/.venv/bin/pa}
 # The librarian VM's managed settings, as the repo has them.
 PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
 # The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.
@@ -493,6 +509,37 @@ render_vault_sync_unit() {
   sed -e "s|@USER@|$USER|g" -e "s|@RUNNER@|$PA_VAULT_SYNC_DIR/bin/pa-vault-sync|g" \
     -e "s|@VAULT@|$PA_VAULT|g" -e "s|@CONFIG@|$PA_VAULT_SYNC_CONFIG|g" \
     "$DEPLOY_DIR/vault-sync/pa-vault-sync.service"
+}
+
+# render_schedule_unit NAME prints the schedule's unit NAME (one of PA_SCHEDULE_UNITS, from
+# schedules/), for the devbox user and this checkout, over the instance's data root.
+render_schedule_unit() {
+  local mount_unit
+  [[ " ${PA_SCHEDULE_UNITS[*]} " == *" $1 "* ]] || die "no schedule unit $1"
+  mount_unit=$(backup_mount_unit_name)
+  sed -e "s|@USER@|$USER|g" -e "s|@DEPLOY@|$DEPLOY_DIR|g" -e "s|@DATA@|$PA_DATA_ROOT|g" \
+    -e "s|@BACKUP_MOUNT_UNIT@|${mount_unit//\\/\\\\}|g" \
+    -e "s|@BACKUP_REPOSITORY@|$PA_BACKUP_REPOSITORY|g" -e "s|@RESTIC_CACHE@|$PA_RESTIC_CACHE|g" \
+    -e "s|@NIGHTLY_AT@|$PA_NIGHTLY_AT|g" "$DEPLOY_DIR/schedules/$1"
+}
+
+# job_environment exports what the capture cycle and the nightly job read: the data root, the
+# owner (owner.env), the vault copy (vault.env), iCloud Calendar (icloud.env and the password
+# file), and Gmail's token, each only once its setup has written it. The scheduled jobs and
+# their by-hand runs (capture.sh, nightly.sh) start from it.
+job_environment() {
+  require_owner_env
+  set -a
+  # shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
+  source "$PA_OWNER_ENV"
+  # shellcheck source=/dev/null # vault.env, written by the wizard
+  [[ ! -f $PA_VAULT_ENV ]] || source "$PA_VAULT_ENV"
+  # shellcheck source=/dev/null # icloud.env, written by the wizard
+  [[ ! -f $PA_ICLOUD_ENV ]] || source "$PA_ICLOUD_ENV"
+  set +a
+  export PA_DATA_DIR=$PA_DATA_ROOT PA_ICLOUD_PASSWORD_FILE
+  if [[ -f $PA_GMAIL_TOKEN ]]; then export PA_GMAIL_TOKEN; else unset PA_GMAIL_TOKEN; fi
+  [[ -x $PA_BIN ]] || die "$PA_BIN is missing: run uv sync in $REPO_DIR"
 }
 
 # vault_share_problems reads every VM as `incus query /1.0/instances?recursion=1` prints them,

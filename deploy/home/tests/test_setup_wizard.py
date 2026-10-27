@@ -20,6 +20,7 @@ GROUPS = {
     "gmail_stages": "GMAIL_STAGES",
     "icloud_stages": "ICLOUD_STAGES",
     "backup_stages": "BACKUP_STAGES",
+    "schedule_stages": "SCHEDULE_STAGES",
 }
 
 
@@ -73,6 +74,15 @@ def test_an_unknown_option_is_refused_with_the_usage():
 
     assert result.returncode == 2
     assert (
-        "usage: setup-wizard.sh [--librarian | --vault | --gmail | --icloud | --backup]"
-        in result.stderr
+        "usage: setup-wizard.sh "
+        "[--librarian | --vault | --gmail | --icloud | --backup | --schedules]" in result.stderr
     )
+
+
+def test_the_schedules_are_turned_on_by_their_installer_after_the_backup_drive():
+    """Last: the nightly job backs up to the drive, and the wiki must be seeded first."""
+    body = text()
+
+    backup = body.index('run "$DEPLOY_DIR/install-backup-drive.sh"')
+    schedules = body.index('run "$DEPLOY_DIR/install-schedules.sh" --enable')
+    assert backup < schedules

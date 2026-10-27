@@ -20,9 +20,11 @@ Episode selection (`pa_core.selection`) decides which of them are offered:
   supersedes;
 - a chat with its owner turns, read from its raw payload: they are its only evidence.
 
-Known limitation: a daily note's capture time comes from its own capture header, so a note
-ingested after a run but captured (by its header) before that run's cursor is never offered.
-That's fine for the frozen corpora; real collectors (v0.13) need to revisit it.
+A daily note's (or a calendar resource's) capture time comes from its own capture header, so a
+note ingested after a run but captured (by its header) before that run's cursor would never be
+offered. On the home instance the data root's lock rules that out (#98): a capture cycle holds it
+from collection through ingest, and a run holds it throughout, so a run never starts between a
+collection and its ingest.
 """
 
 from __future__ import annotations

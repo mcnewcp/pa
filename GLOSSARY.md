@@ -38,6 +38,14 @@ _Avoid_: Snapshot, full sync, sweep
 The time through which a source is known to be fully captured into L0. An absence ("nothing from Jay since Friday") is only as true as its source's watermark.
 _Avoid_: Cursor, last sync, sync time
 
+**Capture cycle**:
+One pass of every collector, then ingest, then publishing each watermark whose payloads have landed, all under the data root's lock, every 15 minutes. A cycle that finds the lock held skips.
+_Avoid_: Sync, poll, run
+
+**Nightly job**:
+The overnight job that holds the data root's lock throughout while it runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+_Avoid_: Cron, batch, nightly run
+
 **Raw payload**:
 An original item exactly as a source produced it (an email message, a calendar event, a note). Raw payloads are never modified.
 _Avoid_: Original, blob

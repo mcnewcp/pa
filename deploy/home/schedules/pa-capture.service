@@ -1,0 +1,41 @@
+# The capture cycle (#98), started every 15 minutes by pa-capture.timer: each configured
+# source collected into the inbox, ingest, and the watermarks published, under the data root's
+# lock. A cycle that finds the lock held (the nightly job, a run by hand) skips. capture.sh gives
+# it the instance's configuration. install-schedules.sh renders the @…@ names from lib.sh.
+[Unit]
+Description=PA: the capture cycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# A timer starts no second cycle while one runs: the unit is still starting until it exits.
+Type=oneshot
+User=@USER@
+ExecStart=@DEPLOY@/capture.sh
+# A cycle that hangs would hold the lock, and so every job after it.
+TimeoutStartSec=30min
+# It writes only the inbox, L0, the catalog, collector state, the status and the lock (what's
+# missing stays read-only, and the cycle records the failure). It reads the credentials, the vault
+# copy and the code without being able to write them.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=-@DATA@/inbox -@DATA@/l0 -@DATA@/catalog -@DATA@/state -@DATA@/status -@DATA@/pa.lock
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# Gmail's API and iCloud's CalDAV hosts over HTTPS, and DNS.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+# L0 stays readable to the assistant's VM, which reads it as another user.
+UMask=0022
+Environment=PYTHONDONTWRITEBYTECODE=1

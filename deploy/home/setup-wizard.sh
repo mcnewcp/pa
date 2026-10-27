@@ -190,8 +190,9 @@ finish() {
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
 # client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, --icloud for
-# iCloud Calendar's app-specific password and calendars (#97), a new password too, or --backup
-# for the backup drive alone (#89).
+# iCloud Calendar's app-specific password and calendars (#97), a new password too, --backup
+# for the backup drive alone (#89), or --schedules to turn on the schedules alone (#98), once the
+# go-live backfill is replayed and the wiki seeded.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -201,15 +202,18 @@ VAULT_STAGES=8
 GMAIL_STAGES=3
 ICLOUD_STAGES=3
 BACKUP_STAGES=2
+SCHEDULE_STAGES=2
 only_librarian=false only_vault=false only_gmail=false only_icloud=false only_backup=false
+only_schedules=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES)) ;;
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
   --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
   --icloud) TOTAL_STAGES=$ICLOUD_STAGES; only_icloud=true ;;
   --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --icloud | --backup]\n' >&2; exit 2 ;;
+  --schedules) TOTAL_STAGES=$SCHEDULE_STAGES; only_schedules=true ;;
+  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --icloud | --backup | --schedules]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -1002,27 +1006,86 @@ note "deploy/home/backup.sh backs up to it, and pa status shows the last backup.
 pause
 }
 
+# The schedules (#98): the capture cycle every 15 minutes and the nightly job overnight. Turned on
+# last in the go-live ticket, once the backfill is replayed and the wiki seeded.
+schedule_stages() {
+
+# ── S1 ────────────────────────────────────────────────────────────────────
+stage "Turn on the schedules"
+say "Two timers on the devbox, run as you with this checkout's code. pa-capture.timer runs the"
+say "capture cycle every 15 minutes: each source collected, ingested, and its watermark"
+say "published. pa-nightly.timer runs the nightly job at $PA_NIGHTLY_AT: a cycle that also"
+say "reconciles the calendars, then the librarian run, then the backup. Both catch up at boot"
+say "after the devbox was off, and a job that finds another holding the data root's lock skips."
+schedules_on=false
+if systemctl is-enabled --quiet "$PA_CAPTURE_TIMER" && systemctl is-enabled --quiet "$PA_NIGHTLY_TIMER"; then
+  ok "both timers are enabled already"
+  run "$DEPLOY_DIR/install-schedules.sh"
+  schedules_on=true
+elif [[ ! -d $PA_WIKI_GIT ]]; then
+  warn "not yet: the wiki isn't seeded. Backfill, replay, and seed it first (deploy/home/README.md)."
+  SKIPPED+=("turn on the schedules once the wiki is seeded: setup-wizard.sh --schedules")
+else
+  warn "Turn them on only after the backfill's replay seeded the wiki, with no capture since:"
+  warn "a cycle in between would be both replayed and offered again."
+  if confirm "Is the wiki seeded from the backfill's replay, with no capture since?"; then
+    run "$DEPLOY_DIR/install-schedules.sh" --enable
+    ok "both timers are enabled, and will be at every boot"
+    schedules_on=true
+  else
+    SKIPPED+=("turn on the schedules once the wiki is seeded: setup-wizard.sh --schedules")
+  fi
+fi
+pause
+
+# ── S2 ────────────────────────────────────────────────────────────────────
+stage "The first capture cycle, confined"
+if $schedules_on; then
+  say "Starts one capture cycle now as the timer does, in its confined service, then checks"
+  say "both timers, each job's last run, and pa status. Times and counts only."
+  printf '  %s$ %s%s\n' "$DIM" "sudo systemctl start pa-capture.service" "$RESET"
+  sudo systemctl start pa-capture.service || warn "the cycle failed: the check below says why"
+  printf '\n'
+  if "$DEPLOY_DIR/check-schedules.sh"; then
+    ok "the schedules check out"
+  else
+    SKIPPED+=("schedule check failed: see deploy/home/check-schedules.sh and pa status")
+  fi
+else
+  note "Skipped: the schedules aren't on yet."
+fi
+pause
+}
+
 banner "PA setup"
 if $only_gmail; then
   gmail_stages
   finish
-  note "Gmail is captured once PA_GMAIL_TOKEN=$PA_GMAIL_TOKEN is in the capture's environment,"
-  note "after its backfill: pa capture --backfill <window start>."
+  note "capture.sh and the schedules capture Gmail now its token is saved, once it's backfilled:"
+  note "deploy/home/capture.sh --backfill <window start>."
   printf '\n'
   exit 0
 fi
 if $only_icloud; then
   icloud_stages
   finish
-  note "iCloud Calendar is captured once $PA_ICLOUD_ENV and PA_ICLOUD_PASSWORD_FILE are in the"
-  note "capture's environment, after its backfill: pa capture --backfill <window start>."
+  note "capture.sh and the schedules capture iCloud Calendar now $PA_ICLOUD_ENV names the"
+  note "calendars, once they're backfilled: deploy/home/capture.sh --backfill <window start>."
   printf '\n'
   exit 0
 fi
 if $only_backup; then
   backup_stages
   finish
-  note "The backup runs by hand: deploy/home/backup.sh, and pa status shows the last one."
+  note "The nightly job backs up once the schedules are on (setup-wizard.sh --schedules);"
+  note "deploy/home/backup.sh backs up by hand, and pa status shows the last one."
+  printf '\n'
+  exit 0
+fi
+if $only_schedules; then
+  schedule_stages
+  finish
+  note "deploy/home/check-schedules.sh checks them, and pa status shows how current the PA is."
   printf '\n'
   exit 0
 fi
@@ -1033,6 +1096,7 @@ else
   librarian_stages
   $only_librarian || vault_stages
   $only_librarian || backup_stages
+  $only_librarian || schedule_stages
 fi
 
 finish
@@ -1043,7 +1107,7 @@ note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
 fi
-$only_vault || note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
+$only_vault || note "The nightly job runs the librarian once the schedules are on: deploy/home/check-schedules.sh."
 $only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
-$only_librarian || $only_vault || note "The backup runs by hand: deploy/home/backup.sh."
+$only_librarian || $only_vault || note "Until then the librarian and the backup run by hand: librarian.sh run, backup.sh."
 printf '\n'

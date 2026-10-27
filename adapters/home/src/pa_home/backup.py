@@ -45,13 +45,17 @@ def back_up(
         require_backup_config(environ)
         snapshot_id = _snapshot(data_root, environ)
     except Exception as error:
-        # Only this module's and the configuration's messages are written to be shown.
-        reason = str(error) if isinstance(error, PaError) else failure_reason(error)
-        failure = Failure(at=started, reason=reason)
+        failure = Failure(at=started, reason=backup_failure_reason(error))
         _record(data_root, status, status.backup.model_copy(update={"last_failure": failure}), now)
         raise
     _record(data_root, status, status.backup.model_copy(update={"last_success": started}), now)
     return snapshot_id
+
+
+def backup_failure_reason(error: BaseException) -> str:
+    """Why a backup failed, without content: only this module's and the configuration's
+    messages are written to be shown."""
+    return str(error) if isinstance(error, PaError) else failure_reason(error)
 
 
 def _record(

@@ -1,0 +1,14 @@
+# Starts the nightly job (pa-nightly.service) once a day, overnight, in the devbox's time zone.
+# After the devbox was off through the night it starts the job at boot (Persistent=), after any
+# capture cycle starting then, and never a second while one runs. install-schedules.sh installs
+# it; --enable enables it.
+[Unit]
+Description=PA: the nightly job, overnight
+
+[Timer]
+OnCalendar=*-*-* @NIGHTLY_AT@:00
+Persistent=true
+Unit=pa-nightly.service
+
+[Install]
+WantedBy=timers.target
