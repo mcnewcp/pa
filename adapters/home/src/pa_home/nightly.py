@@ -114,7 +114,7 @@ def _night(
                 _not_run(outcome, data_root, str(error), now)
             else:
                 outcome.librarian = librarian.run(
-                    data_root, owner=owner, time_zone=time_zone, config=config, clock=now
+                    data_root, owner=owner, time_zone=time_zone, config=config, now=now
                 )
     except Exception as error:
         # librarian.run recorded it; a reason given already stands.
@@ -131,4 +131,4 @@ def _not_run(
     outcome: NightlyOutcome, data_root: DataRoot, reason: str, now: Callable[[], datetime]
 ) -> None:
     outcome.librarian_failure = reason
-    librarian.record_run_not_made(data_root, reason, clock=now)
+    librarian.record_run_not_made(data_root, reason, now=now)

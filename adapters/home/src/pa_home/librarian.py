@@ -81,9 +81,9 @@ def run(
     time_zone: ZoneInfo,
     config: LibrarianConfig,
     project: Path = LIBRARIAN_PROJECT,
-    clock: Callable[[], datetime] = wall_clock,
+    now: Callable[[], datetime] = wall_clock,
 ) -> RunOutcome:
-    """Runs the librarian over the episodes captured since the last run, telling it the clock's
+    """Runs the librarian over the episodes captured since the last run, telling it `now`'s
     time as "now". `project` is the librarian project's source, run as committed
     (`project_files`).
 
@@ -91,7 +91,7 @@ def run(
     (its cursor's capture time) and the run's outcome, a failure's reason without content. The
     caller holds the data root's lock, so the status holds still.
     """
-    started = clock()
+    started = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
     try:
         files = project_files(project)
@@ -112,38 +112,38 @@ def run(
         failed = LibrarianRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record_run(data_root, repository, failed, clock)
+        _record_run(data_root, repository, failed, now)
         raise
     warnings = None if outcome.batch is None else len(outcome.warnings)
     succeeded = LibrarianRun(
         at=started, succeeded=True, cost_usd=_cost(outcome.sessions), warnings=warnings
     )
-    _record_run(data_root, repository, succeeded, clock)
+    _record_run(data_root, repository, succeeded, now)
     return outcome
 
 
 def record_run_not_made(
-    data_root: DataRoot, reason: str, *, clock: Callable[[], datetime] = wall_clock
+    data_root: DataRoot, reason: str, *, now: Callable[[], datetime] = wall_clock
 ) -> None:
     """Records in the status a run that failed before it started, such as one the nightly job
     held back or one with no configuration, with `reason`, which must hold no content."""
-    at = clock()
+    at = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), clock)
+    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), now)
 
 
 def _record_run(
     data_root: DataRoot,
     repository: GitWikiRepository,
     run: LibrarianRun,
-    clock: Callable[[], datetime],
+    now: Callable[[], datetime],
 ) -> None:
     """Writes `run` into the status as the wiki's last run, with the time the wiki is current
     through as last committed."""
     cursor = last_cursor(repository)
     wiki = WikiStatus(current_through=None if cursor is None else cursor.captured_at, last_run=run)
     status = read_status(data_root.status)
-    write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=clock())
+    write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=now())
 
 
 def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
@@ -180,13 +180,13 @@ def replay(
     window_start: datetime | None = None,
     resume: bool = False,
     project: Path = LIBRARIAN_PROJECT,
-    clock: Callable[[], datetime] = wall_clock,
+    now: Callable[[], datetime] = wall_clock,
     progress: Callable[[RunOutcome], None] = lambda _: None,
 ) -> ReplayOutcome:
     """Replays L0 through the librarian into a fresh wiki in `target`, a batch at a time.
 
     L0 is the `data_root`'s, or `corpus` (directories of raw payloads, one directory per source
-    as in the inbox) ingested into a throwaway data root, captured at `as_of` (else the clock's
+    as in the inbox) ingested into a throwaway data root, captured at `as_of` (else `now`'s
     time). With a `window_start`, the first batch is the window start's week, and nothing that
     occurred before it is offered but the calendar events still going at it, such as a series.
     `target` must be new or empty, unless `resume`, when it
@@ -200,7 +200,7 @@ def replay(
             f"{target} isn't empty; a replay runs into a fresh wiki (or give --resume to carry "
             "on with the replay in it)"
         )
-    with _l0(data_root, corpus, owner, as_of or clock()) as l0:
+    with _l0(data_root, corpus, owner, as_of or now()) as l0:
         repository = GitWikiRepository.open(layout.tree, layout.git_dir)
         files = project_files(project)
         with _runner(l0, layout.tree, owner, config, files) as runner:
@@ -227,7 +227,7 @@ def seed(
     *,
     owner: Owner,
     captured_through: datetime | None = None,
-    clock: Callable[[], datetime] = wall_clock,
+    now: Callable[[], datetime] = wall_clock,
 ) -> str:
     """Seeds the data root's fresh wiki from `eval_wiki` (a replay's target, or an eval wiki
     kept in the evals tree: its `wiki/` and run log), replayed over the same episodes as the
@@ -242,7 +242,7 @@ def seed(
         owner=owner,
         repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
         source=source,
-        now=clock(),
+        now=now(),
         captured_through=captured_through,
     )
 
