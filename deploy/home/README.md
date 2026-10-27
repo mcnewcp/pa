@@ -444,7 +444,7 @@ deploy/home/check-isolation.sh && deploy/home/check-store.sh
 incus delete pa-home-old                          # its transcripts and login go with it
 ```
 
-The login, the project's trust and Remote Control's consent live on the old VM's disk, so the owner answers them again (the wizard's stages 11, 15 and 16), and re-opens the assistant on the phone. To try a rebuild without touching the live VM, give the scripts another name, `PA_ASSISTANT_VM=pa-rebuild-test`, then `incus delete` it and `sudo systemctl disable pa-pins@pa-rebuild-test.service`.
+The login, the project's trust and Remote Control's consent live on the old VM's disk, so the owner answers them again (the wizard's stages 11, 15 and 16), and re-opens the assistant on the phone. To try a rebuild without touching the live VM, give the scripts another name, `PA_ASSISTANT_VM=pa-rebuild-test`, then `incus delete` it. A throwaway gets no boot unit.
 
 ## Acceptance run (#27)
 
@@ -544,7 +544,7 @@ The login, the project's trust and Remote Control's consent live on the old VM's
    deploy/home/fence-vm.sh
    deploy/home/mount-store.sh           # mounts
    deploy/home/check-isolation.sh       # the network lines pass (the session lines need a login)
-   incus delete --force pa-rebuild-test && sudo systemctl disable pa-pins@pa-rebuild-test.service
+   incus delete --force pa-rebuild-test
    unset PA_ASSISTANT_VM
    ```
 4. `incus exec pa-home -- systemctl restart pa-remote-control`, then `incus restart pa-home`: each time the service comes back connected, with no new login, and the phone reaches it.

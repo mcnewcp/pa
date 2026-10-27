@@ -15,7 +15,8 @@
 #    the moment the VM is back.
 # 3. The VM stopped, its profile's fenced NIC (profile.yaml) put in place of the build bridge's,
 #    and started again; the pins checked again.
-# 4. pa-pins@<vm>.service on the devbox, which pins the names again at every boot.
+# 4. For the live VM, pa-pins@<vm>.service on the devbox, which pins the names again at every
+#    boot (installed and enabled with sudo only if it isn't yet). A throwaway gets none.
 # 5. A quick look from inside: no name resolves, and the API answers. check-isolation.sh checks
 #    the rest.
 set -euo pipefail
@@ -29,8 +30,10 @@ incus info "$PA_VM" >/dev/null 2>&1 || die "$PA_VM doesn't exist: run create-vm.
 if incus query "/1.0/network-acls/$PA_ACL" </dev/null | acl_differs "$PA_ACL_FILE"; then
   die "the ACL $PA_ACL isn't the repo's ($PA_ACL_FILE): run incus-setup.sh first"
 fi
-sudo nft list chain inet pa_vm fenced_out >/dev/null ||
-  die "the bridge firewall has no fenced_out chain: run install-firewall.sh first"
+# Without sudo: the unit that loads the rules is up, and the rules it loads are the repo's.
+systemctl is-active --quiet pa-vm-firewall.service &&
+  cmp -s "$PA_INSTALLED_FIREWALL" "$DEPLOY_DIR/firewall/pa-vm.nft" ||
+  die "the bridge firewall ($PA_INSTALLED_FIREWALL) isn't the repo's: run install-firewall.sh first"
 
 vm_running || incus start "$PA_VM" </dev/null
 wait_for_agent
@@ -59,10 +62,20 @@ wait_for_agent
 "$DEPLOY_DIR/pin-hosts.sh"
 require_fenced
 
-render_pins_unit | sudo tee /etc/systemd/system/pa-pins@.service >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl enable "pa-pins@$PA_VM.service"
-log "pa-pins@$PA_VM.service pins the API's names into $PA_VM at every boot of the devbox"
+# The boot unit, for the live VM only: a throwaway (PA_ASSISTANT_VM) keeps the pins just written.
+# An installed template is kept, since it names the checkout the devbox keeps; sudo is asked for
+# only when something is missing.
+if [[ $PA_VM != "$PA_LIVE_ASSISTANT_VM" ]]; then
+  log "$PA_VM is a throwaway: no boot unit pins it again"
+else
+  if [[ ! -f $PA_SYSTEMD_DIR/pa-pins@.service ]]; then
+    render_pins_unit | sudo tee "$PA_SYSTEMD_DIR/pa-pins@.service" >/dev/null
+    sudo systemctl daemon-reload
+  fi
+  systemctl is-enabled --quiet "pa-pins@$PA_VM.service" ||
+    sudo systemctl enable "pa-pins@$PA_VM.service"
+  log "pa-pins@$PA_VM.service pins the API's names into $PA_VM at every boot of the devbox"
+fi
 
 if incus exec "$PA_VM" -- getent hosts example.com >/dev/null 2>&1 </dev/null; then
   die "$PA_VM still resolves example.com: its bridge serves DNS"

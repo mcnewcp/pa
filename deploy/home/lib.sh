@@ -10,7 +10,12 @@
 # of their own with no DNS (its dnsmasq serves DHCP only), and an Incus ACL on the NIC that lets
 # out TCP 443 to the Anthropic API's published inbound range and drops everything else, both ways.
 # PA_ASSISTANT_VM can name another VM, for a throwaway rebuild beside the live one.
-PA_ASSISTANT_VM=${PA_ASSISTANT_VM:-pa-home}
+PA_LIVE_ASSISTANT_VM=pa-home
+PA_ASSISTANT_VM=${PA_ASSISTANT_VM:-$PA_LIVE_ASSISTANT_VM}
+# Where install-firewall.sh installs the bridge rules, and where the devbox's system units go
+# (overridable for the tests).
+PA_INSTALLED_FIREWALL=${PA_INSTALLED_FIREWALL:-/etc/pa/pa-vm.nft}
+PA_SYSTEMD_DIR=${PA_SYSTEMD_DIR:-/etc/systemd/system}
 PA_ASSISTANT_PROFILE=pa
 PA_ASSISTANT_BRIDGE=pabr0
 PA_ASSISTANT_ACL=pa-home-egress
