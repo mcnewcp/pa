@@ -338,6 +338,14 @@ def test_the_probe_reports_where_it_could_write_its_privileges_and_sudo(tmp_path
     assert list(scratch.iterdir()) == []
 
 
+def test_the_probe_holds_no_shell_variable_for_claude_code_to_refuse():
+    """Claude Code 2.1.308 won't run a command whose variables it can't check before it runs, so a
+    headless session refused the probe on the live VM (#91)."""
+    command = lib(f"sandbox_probe {PROBE_ARGS}").stdout
+
+    assert "$" not in command
+
+
 def test_a_probe_that_ran_sandboxed_has_no_problems():
     result = probe_problems(SANDBOXED)
 

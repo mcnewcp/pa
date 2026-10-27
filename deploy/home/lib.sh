@@ -692,10 +692,18 @@ if init.get("permissionMode") == "bypassPermissions":
 # NoNewPrivs line (1 in Claude Code's sandbox), whether it could write a file in SCRATCH and in
 # each DIR ("wrote DIR" or "refused DIR", leaving nothing behind), and whether `sudo` ran. The
 # isolation check has a session in the VM run it with Bash.
+#
+# The command names no shell variable: Claude Code (2.1.308) refuses to run a command whose
+# variables it can't check before it runs, so each directory is spelled out.
 sandbox_probe() {
-  local dirs
-  dirs=$(printf ' %q' "$@")
-  printf '%s\n' "grep '^NoNewPrivs:' /proc/self/status; for d in$dirs; do f=\$d/.pa-sandbox-probe; if touch \"\$f\" 2>/dev/null; then rm -f \"\$f\"; echo \"wrote \$d\"; else echo \"refused \$d\"; fi; done; if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi"
+  local command dir quoted file
+  command="grep '^NoNewPrivs:' /proc/self/status;"
+  for dir in "$@"; do
+    quoted=$(printf %q "$dir")
+    file=$(printf %q "$dir/.pa-sandbox-probe")
+    command+=" if touch $file 2>/dev/null; then rm -f $file; echo wrote $quoted; else echo refused $quoted; fi;"
+  done
+  printf '%s\n' "$command if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi"
 }
 
 # sandbox_probe_problems SCRATCH DIR... reads what `claude -p --output-format stream-json
