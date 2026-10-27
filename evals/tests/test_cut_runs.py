@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.catalog import open_catalog
+from pa_core.envelope import Source
 from pa_core.ingest import ingest
 from pa_core.status import SourceStatus, Status, write_status
 from pa_evals.agent import AgentAnswer, AgentRequest, ScriptedAgent
@@ -57,7 +58,7 @@ def make_cut(
         shutil.copytree(EVAL_WIKI / "wiki", data_root.wiki, dirs_exist_ok=True)
         repository.commit(f"Observe a batch\n\nLibrarian-Version: {LIBRARIAN_VERSION}\n")
     if status:
-        sources = {"gmail": SourceStatus(watermark=captured, cadence=timedelta(hours=1))}
+        sources = {Source.GMAIL: SourceStatus(watermark=captured, cadence=timedelta(hours=1))}
         write_status(data_root.status, Status(sources=sources), at=captured)
     return take_cut(data_root, now=eval_set.as_of)
 

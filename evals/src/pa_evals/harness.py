@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pa_core.catalog import open_catalog
+from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
@@ -273,7 +274,7 @@ def _lay_statuses(eval_set: EvalSet, directory: Path, *, wiki: bool) -> dict[dat
     statuses: dict[datetime, Path] = {}
     for as_of in sorted({eval_set.as_of_for(question) for question in eval_set.questions}):
         path = directory / f"{as_of.astimezone(UTC):%Y%m%dT%H%M%SZ}" / "status.json"
-        sources: dict[str, SourceStatus] = {
+        sources: dict[Source, SourceStatus] = {
             source: SourceStatus(watermark=as_of, cadence=DEFAULT_CADENCE, last_attempt=as_of)
             for source in COLLECTED_SOURCES
         }

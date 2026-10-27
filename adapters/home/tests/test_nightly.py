@@ -125,7 +125,7 @@ def test_the_nightly_job_captures_then_runs_the_librarian_then_backs_up_the_nigh
     assert backup["wiki_head"] == wiki_head(data_root)
     assert {"l0", "wiki.git"} <= set(backup["args"])
     status = read_status(data_root / "status" / "status.json")
-    run, obsidian = status.wiki.last_run, status.sources["obsidian"]
+    run, obsidian = status.wiki.last_run, status.sources[Source.OBSIDIAN]
     assert run is not None and run.succeeded
     assert obsidian.last_attempt is not None and status.backup.last_success is not None
     assert obsidian.last_attempt <= run.at <= status.backup.last_success

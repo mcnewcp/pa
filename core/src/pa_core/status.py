@@ -19,6 +19,7 @@ from pathlib import Path
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from pa_core.atomic import write_atomically
+from pa_core.envelope import Source
 
 STATUS_VERSION = 1
 
@@ -80,8 +81,8 @@ class WikiStatus(_Model):
 class Status(_Model):
     version: int = STATUS_VERSION
     updated_at: AwareDatetime | None = None
-    sources: dict[str, SourceStatus] = {}
-    """Each collected source's status, by source name (`gmail`, `obsidian`, ...)."""
+    sources: dict[Source, SourceStatus] = {}
+    """Each collected source's status, saved under its name (`gmail`, `obsidian`, ...)."""
     ingest: JobStatus = JobStatus()
     wiki: WikiStatus = WikiStatus()
     backup: JobStatus = JobStatus()

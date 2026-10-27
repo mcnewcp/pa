@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.catalog import open_catalog
+from pa_core.envelope import Source
 from pa_core.ingest import ingest
 from pa_core.owner import Owner
 from pa_core.status import SourceStatus, Status, write_status
@@ -62,7 +63,9 @@ def cut(data_root: DataRoot) -> Cut:
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
     shutil.copytree(EVAL_WIKI / "wiki", data_root.wiki, dirs_exist_ok=True)
     repository.commit("Observe a batch\n\nLibrarian-Version: fedcba987654\n")
-    status = Status(sources={"gmail": SourceStatus(watermark=captured, cadence=timedelta(hours=1))})
+    status = Status(
+        sources={Source.GMAIL: SourceStatus(watermark=captured, cadence=timedelta(hours=1))}
+    )
     write_status(data_root.status, status, at=captured)
     # Taken as `pa cut` takes one: its as-of time in UTC.
     return take_cut(data_root, now=as_of.astimezone(UTC))

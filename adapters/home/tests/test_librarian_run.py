@@ -40,6 +40,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pa_core.envelope import Source
 from pa_core.status import SourceStatus, Status, read_status, write_status
 from pa_home import librarian
 from pa_home.cli import main
@@ -2641,7 +2642,7 @@ def test_the_librarians_record_leaves_the_rest_of_the_status_as_it_was(data_root
     path = data_root / "status" / "status.json"
     synced = datetime(2026, 10, 1, 6, 10, tzinfo=UTC)
     gmail = SourceStatus(watermark=synced, cadence=timedelta(minutes=15), quarantined=2)
-    write_status(path, Status(sources={"gmail": gmail}), at=synced)
+    write_status(path, Status(sources={Source.GMAIL: gmail}), at=synced)
 
     assert run_librarian() == 0
 
