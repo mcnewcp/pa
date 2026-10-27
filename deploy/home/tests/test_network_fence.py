@@ -7,6 +7,7 @@ stand-ins (conftest.py); the isolation check checks the VM itself."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -140,6 +141,42 @@ def test_the_store_isnt_mounted_into_a_vm_that_isnt_fenced(stand_ins):
     assert not [c for c in stand_ins.of("incus") if c.argv[:3] == ["config", "device", "add"]]
 
 
+def mount_store(stand_ins: Any, *, capture: int, assistant: int) -> Any:
+    """mount-store.sh into the fenced VM, its users at these uids."""
+    (stand_ins.home / ".local" / "share" / "pa-home-synthetic" / "l0").mkdir(parents=True)
+    fenced = instance(eth0=profile()["devices"]["eth0"])
+    stand_ins.answer("incus", "query", stdout=json.dumps(fenced))
+    stand_ins.answer("incus", "id -u capture", stdout=f"{capture}\n")
+    stand_ins.answer("incus", "id -u assistant", stdout=f"{assistant}\n")
+    stand_ins.answer("incus", "config", "device", "get", exit=1)
+    return stand_ins.run(DEPLOY / "mount-store.sh")
+
+
+def test_the_store_is_mounted_once_the_capture_user_has_the_devbox_users_uid(stand_ins):
+    result = mount_store(stand_ins, capture=os.getuid(), assistant=os.getuid() + 1)
+
+    assert result.returncode == 0, result.stderr
+    added = [c for c in stand_ins.of("incus") if c.argv[:3] == ["config", "device", "add"]]
+    assert len(added) == 4
+
+
+@pytest.mark.parametrize(
+    ("capture", "assistant", "reason"),
+    [(1, 0, "capture is uid"), (0, 0, "assistant is uid")],
+    ids=["capture-elsewhere", "assistant-still-on-it"],
+)
+def test_the_store_isnt_mounted_where_the_assistant_could_write_the_inbox(
+    stand_ins, capture: int, assistant: int, reason: str
+):
+    result = mount_store(
+        stand_ins, capture=os.getuid() + capture, assistant=os.getuid() + assistant
+    )
+
+    assert result.returncode != 0
+    assert reason in result.stderr
+    assert not [c for c in stand_ins.of("incus") if c.argv[:3] == ["config", "device", "add"]]
+
+
 def test_the_vm_is_built_without_tailscale_and_leaves_its_hosts_to_the_pins():
     cloud = yaml.safe_load(profile()["config"]["cloud-init.user-data"])
 
@@ -147,6 +184,30 @@ def test_the_vm_is_built_without_tailscale_and_leaves_its_hosts_to_the_pins():
     assert "runcmd" not in cloud
     assert cloud["manage_etc_hosts"] is False
     assert {"git", "bubblewrap", "socat", "apparmor"} <= set(cloud["packages"])
+
+
+def test_the_vm_is_built_with_the_capture_user_first_and_the_assistant_on_a_uid_of_its_own():
+    """The capture user has the devbox user's uid, 1000, so the inbox share is its (#94)."""
+    cloud = yaml.safe_load(profile()["config"]["cloud-init.user-data"])
+    [assistant_uid] = lib('echo "$PA_VM_ASSISTANT_UID"').stdout.split()
+
+    capture, assistant = cloud["users"]
+    assert (capture["name"], capture["uid"]) == ("capture", 1000)
+    assert capture["shell"] == "/usr/sbin/nologin"
+    assert capture["no_create_home"] is True
+    assert (assistant["name"], assistant["uid"]) == ("assistant", int(assistant_uid))
+    assert "sudo" not in assistant
+    assert "sudo" in cloud["packages"]
+
+
+def test_the_vm_is_checked_for_the_capture_users_uid_once_built(stand_ins):
+    stand_ins.answer("incus", "info", "pa-home", exit=1)
+    stand_ins.answer("incus", "id -u capture", stdout="1005\n")
+
+    result = stand_ins.run(DEPLOY / "create-vm.sh")
+
+    assert result.returncode != 0
+    assert "capture is uid 1005" in result.stderr
 
 
 def acl_rules(path: Path) -> list[dict[str, str]]:
@@ -169,6 +230,7 @@ def test_the_assistants_egress_acl_lets_out_only_tcp_443_to_the_apis_range():
 
 def created(stand_ins: Any, *, exists: bool = False) -> list[Any]:
     stand_ins.answer("incus", "info", "pa-home", exit=0 if exists else 1)
+    stand_ins.answer("incus", "id -u capture", stdout=f"{os.getuid()}\n")
     result = stand_ins.run(DEPLOY / "create-vm.sh")
     assert result.returncode == 0, result.stderr
     return stand_ins.calls

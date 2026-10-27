@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the store's mounts from inside the PA VM: L0, the wiki and the status are readable where
 # the rendered agent project says they are and unwritable even by root, and the VM's inbox
-# directory is the only part of the data root it can write; on the devbox, that inbox directory
+# directory is the only part of the data root it can write, as the capture user and never as the
+# assistant (#94); on the devbox, that inbox directory
 # is a filesystem of its own that nothing written into it can run from, and the VM is shared
 # exactly those four directories. No VM is shared the vault copy or the headless Sync client's state (#87). Exits
 # non-zero if any check fails.
@@ -121,15 +122,21 @@ for user in "$PA_USER" root; do
   fi
 done
 
-echo "In $PA_VM, the inbox directory is writable, and it reaches the devbox:"
+echo "In $PA_VM, the inbox directory is writable by the capture user alone, and it reaches the devbox:"
 probe=.store-check-$$
-if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
-  [[ -e $PA_CHAT_INBOX/$probe ]]; then
-  pass "$PA_USER's file in $PA_VM_CHAT_INBOX lands in $PA_CHAT_INBOX"
+if in_vm_as "$PA_CAPTURE_USER" touch "$PA_VM_CHAT_INBOX/$probe" &&
+  [[ -O $PA_CHAT_INBOX/$probe ]]; then
+  pass "$PA_CAPTURE_USER's file in $PA_VM_CHAT_INBOX lands in $PA_CHAT_INBOX, yours"
 else
-  fail "$PA_USER's file in $PA_VM_CHAT_INBOX doesn't reach the devbox"
+  fail "$PA_CAPTURE_USER's file in $PA_VM_CHAT_INBOX doesn't reach the devbox as yours"
 fi
 rm -f "$PA_CHAT_INBOX/$probe"
+if in_vm_as "$PA_USER" touch "$PA_VM_CHAT_INBOX/$probe"; then
+  fail "$PA_USER created a file in $PA_VM_CHAT_INBOX"
+  rm -f "$PA_CHAT_INBOX/$probe"
+else
+  pass "$PA_USER can't create a file in $PA_VM_CHAT_INBOX"
+fi
 
 echo "On the devbox, the VM's inbox directory is a filesystem of its own:"
 if missing=$(chat_inbox_missing_flags); then

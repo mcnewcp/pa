@@ -81,7 +81,7 @@ Inside the VM, the assistant's policy is Claude Code's managed settings, `manage
 
 - deny WebSearch, WebFetch, every MCP tool, Remote Control's own `SendUserFile` and `FetchInboxMessage`, and the tools that schedule prompts or reach out remotely, so a headless session has exactly `Bash, Edit, Read, ToolSearch, Write`, whatever its flags;
 - deny the file tools every place the assistant could write but scratch, and reads of its credentials;
-- admit only their own permission rules and hooks: the capture hook is theirs now, unchanged, running `/srv/pa/agent/.claude/hooks/capture_exchange.py` with `/opt/pa/.venv/bin/python` (#94 replaces it);
+- admit only their own permission rules and hooks: the three capture hooks ([Exchange capture](#exchange-capture));
 - require Claude Code's Bash sandbox, failing if it's unavailable, with no unsandboxed escape, writes only to scratch, and no network;
 - lock out bypass mode, and turn off auto memory, claude.ai connectors, auto-updates, telemetry, error reports and the feedback command. Not nonessential traffic, whose switch breaks Remote Control.
 
@@ -96,11 +96,29 @@ What the assistant can't write is root's, outside its home, so no directory abov
 | `/usr/local/bin/claude`, `/usr/local/bin/uv` | root, 0755 | The pinned Claude Code, and uv, pushed from the devbox |
 | `/etc/pa/owner.env` | root, 0644 | The instance owner, which the project renders from |
 | `/etc/claude-code/managed-settings.json` | root, 0644 | The policy |
+| `/usr/local/libexec/pa-capture` | root, 0755 | The capture helper (`pa-capture`) |
+| `/etc/sudoers.d/pa-capture` | root, 0440 | Its sudo rule (`sudoers-pa-capture`) |
+| `/srv/pa/inbox/assistant_chat` | capture (uid 1000), 0755 | The chat inbox, a writable share |
+| `/var/lib/pa-capture` | capture, 0700 | The helper's pending prompts |
 | `~/.claude/settings.json` | root, 0644 | `{}`, since no setting turns user settings off |
 | `/srv/pa/scratch` | assistant, 0700 | The one directory the assistant's shell and file tools write |
 | `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
 
 The home directory is the assistant's, so only the managed settings' deny rules and the sandbox keep its tools out of it; Claude Code itself still writes its state there. `install-assistant-fences.sh` also removes any auto-memory directory left under `~/.claude/projects/`.
+
+### Exchange capture
+
+Only the harness's capture hooks can write an exchange, and they take the owner's words from the hook events, never from the transcript, which the assistant's own process writes ([ADR-0009](../../docs/adr/0009-capture-by-a-separate-user.md), #94). Three managed hooks do nothing unless the session's environment has `PA_CAPTURE_EXCHANGES=1`, which only the Remote Control unit sets; otherwise each runs the capture helper as the `capture` user, through the one sudo rule, with its event on stdin:
+
+- `UserPromptSubmit` → `pa-capture prompt`: the helper holds the owner's prompt as pending for its session. It refuses one that opens as a background task's report (`<task-notification>`) or another session's message (`<cross-session-message`), and drops what was pending.
+- `PostToolUse` on `AskUserQuestion` → `pa-capture answer`: it adds each question the assistant asked and the owner's answer.
+- `Stop` → `pa-capture stop`: it adds the reply (`last_assistant_message`), holds the exchange to the `assistant_chat` schema, and writes it into the inbox under a hidden name, renamed into place. The message id is the turn's `prompt_id`, which both events carry.
+
+A turn the owner interrupts, or that fails, fires no `Stop`, so it's never written: its prompt is dropped by the session's next prompt, or once it's 24 hours old. A stop whose `prompt_id` isn't the pending prompt's writes nothing either.
+
+The helper (`pa-capture`, at `/usr/local/libexec/pa-capture`) runs the project's `.claude/hooks/capture_exchange.py` with `/opt/pa/.venv/bin/python -I`, the inbox and its state directory written in, since sudo resets the environment. `install-assistant-fences.sh` puts it in, with the sudo rule (`sudoers-pa-capture`, checked by `visudo` before it's moved into `/etc/sudoers.d/`), and makes the `capture` user and its state directory (`capture-user.sh`).
+
+The `capture` user has the devbox user's uid, 1000: the inbox share keeps owners unmapped, so what the helper writes is the devbox user's on the devbox, mode 0644, where ingest reads and removes it, and the assistant, uid 1001, can't write the inbox, in the VM or through the share. A rebuilt VM gets both users from `profile.yaml`; in a VM built before #94, `capture-user.sh` moves the assistant from uid 1000 to 1001 first, with its group, its home directory and what else it owns on the VM's own disk (it refuses while anything runs as the assistant). The sandboxed shell can't use the sudo rule at all: nothing in the sandbox gains privileges.
 
 ## The store
 
@@ -185,7 +203,7 @@ Check the repository itself now and then (`restic check`). It reads the reposito
 
 ## Remote Control
 
-`pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`, with `PA_CAPTURE_INBOX` set to the inbox directory), so each exchange of a session lands in the inbox for `ingest.sh`.
+`pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`), so each exchange of a session lands in the inbox, through the capture helper, for `ingest.sh` ([Exchange capture](#exchange-capture)).
 
 - It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens. The login refreshes its token through `platform.claude.com` when it's needed, so that name stays pinned; without it Remote Control ends once the access token expires.
 - Don't set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for it: Remote Control refuses to start under it (#81).
@@ -405,7 +423,7 @@ Anything that can fail on the devbox (the ref, the download, the wheelhouse) fai
 
 The librarian's VM holds no state between runs (the wiki is on the devbox and the token stays there), so its OS packages come from the image it was created from. To refresh them, delete it (`incus delete pa-librarian`) and run `create-vm.sh --vm librarian` and `update.sh --vm librarian` again.
 
-A rollback restores the VM's disk, not its profile, bridge or firewall, so a VM rolled back to a snapshot from before #91 is still fenced, but has Tailscale again: run `fence-vm.sh`. A snapshot of a VM still on the build bridge (`pre-fence-*` of a rebuilt VM) brings that NIC back, and `mount-store.sh` refuses it until `fence-vm.sh` runs.
+A rollback restores the VM's disk, not its profile, bridge or firewall, so a VM rolled back to a snapshot from before #91 is still fenced, but has Tailscale again: run `fence-vm.sh`. A snapshot from before #94 has no `capture` user and the assistant at uid 1000: `mount-store.sh`, which `rollback.sh` runs last, refuses it, though the VM is back with its shares as they were. Run `rollback.sh` from a checkout of that snapshot's commit, or `update.sh` again to move the assistant off uid 1000. A snapshot of a VM still on the build bridge (`pre-fence-*` of a rebuilt VM) brings that NIC back, and `mount-store.sh` refuses it until `fence-vm.sh` runs.
 
 ### Rebuilding the assistant's VM
 
