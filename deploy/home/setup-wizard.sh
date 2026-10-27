@@ -426,7 +426,8 @@ pause
 # ── 14 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
-say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
+say "root; inbox/assistant_chat/ is writable by the capture user alone, not the assistant, and"
+say "on the devbox a nosuid,nodev,noexec"
 say "filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then

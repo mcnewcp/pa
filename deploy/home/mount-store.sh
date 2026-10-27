@@ -9,11 +9,16 @@ source "$(dirname "$0")/lib.sh"
 [[ -d $PA_L0 ]] || die "$PA_DATA_ROOT has no L0: run seed-data-root.sh first"
 # The store goes only into a VM that reaches nothing but the API (#91).
 require_fenced
-# The shares keep owners as they are, with no mapping: the VM's assistant user can write the
-# inbox directory only because its uid is the devbox user's.
-vm_uid=$(incus exec "$PA_VM" -- id -u "$PA_USER")
-[[ $vm_uid == "$(id -u)" ]] ||
-  die "$PA_USER is uid $vm_uid in $PA_VM but you are uid $(id -u): it couldn't write its inbox"
+# The shares keep owners as they are, with no mapping: the VM's capture user can write the inbox
+# directory only because its uid is the devbox user's, and the assistant can't because its uid
+# isn't (#94).
+capture_uid=$(incus exec "$PA_VM" -- id -u "$PA_CAPTURE_USER" </dev/null) || capture_uid=none
+[[ $capture_uid == "$(id -u)" ]] ||
+  die "$PA_CAPTURE_USER is uid $capture_uid in $PA_VM but you are uid $(id -u): it couldn't" \
+    "write the inbox (run update.sh, which makes it)"
+assistant_uid=$(incus exec "$PA_VM" -- id -u "$PA_USER" </dev/null)
+[[ $assistant_uid != "$(id -u)" ]] ||
+  die "$PA_USER is uid $assistant_uid in $PA_VM, yours: it could write the inbox (run update.sh)"
 
 # share DEVICE SOURCE PATH [READONLY] attaches SOURCE at PATH in the VM as a disk device.
 share() {

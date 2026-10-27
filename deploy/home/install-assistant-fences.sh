@@ -8,6 +8,11 @@
 #   its user namespace in place of Ubuntu's bwrap-userns-restrict;
 # - nothing that knocks on the fence (#91): apt's timers, unattended upgrades, the clock's sync
 #   and Ubuntu's news timers masked (PA_VM_QUIET_UNITS), and apt's periodic runs off;
+# - exchange capture by a separate user (#94): the capture user, with the devbox user's uid (the
+#   assistant moved off it first, in a VM built before #94), and the helper's state directory
+#   (capture-user.sh); the capture helper at /usr/local/libexec/pa-capture, root's and mode 0755;
+#   and its sudo rule, root's and mode 0440, checked by visudo before it goes into sudoers.d. sudo
+#   comes with the image: a VM without it must be rebuilt;
 # - the managed settings, from managed-settings.json, at /etc/claude-code/, root's and mode 0644;
 # - the assistant's layout (assistant-layout.sh): scratch and the evals' directory, its user
 #   settings held empty by root, and no auto memory left.
@@ -52,6 +57,28 @@ incus exec "$PA_VM" -- sh -c '
   apparmor_parser -r "$ours"
 ' sh "$PA_VM_UBUNTU_BWRAP_PROFILE" "$PA_VM_BWRAP_PROFILE"
 log "the sandbox's AppArmor profile is loaded in $PA_VM"
+
+# Exchange capture by a separate user (#94): sudo comes with the image, and can't be installed
+# once the VM is fenced.
+incus exec "$PA_VM" -- sh -c 'command -v sudo' >/dev/null </dev/null ||
+  die "$PA_VM has no sudo, and once fenced never reaches a package mirror: rebuild it" \
+    "(deploy/home/README.md), and its cloud-init installs it"
+incus exec "$PA_VM" -- bash -s -- "$PA_USER" "$PA_CAPTURE_USER" "$(id -u)" \
+  "$PA_VM_ASSISTANT_UID" "$PA_VM_CAPTURE_STATE" <"$DEPLOY_DIR/capture-user.sh"
+log "$PA_CAPTURE_USER is uid $(id -u) in $PA_VM, yours, and $PA_USER has a uid of its own"
+incus exec "$PA_VM" -- install -d -m 0755 "$(dirname "$PA_VM_CAPTURE_HELPER")" </dev/null
+incus file push --quiet --uid 0 --gid 0 --mode 0755 "$PA_CAPTURE_HELPER" \
+  "$PA_VM$PA_VM_CAPTURE_HELPER"
+# The rule goes in only once visudo has checked it, where there is one: a broken file in
+# sudoers.d breaks all of sudo.
+staged=/root/.pa-capture.sudoers
+incus file push --quiet --uid 0 --gid 0 --mode 0440 "$PA_CAPTURE_SUDOERS" "$PA_VM$staged"
+# shellcheck disable=SC2016 # expanded by the shell in the VM
+incus exec "$PA_VM" -- sh -c '
+  if command -v visudo >/dev/null; then visudo -cf "$1" >/dev/null || exit 1; fi
+  mv -f "$1" "$2"
+' sh "$staged" "$PA_VM_CAPTURE_SUDOERS" </dev/null || die "visudo refused $PA_CAPTURE_SUDOERS"
+log "installed the capture helper at $PA_VM_CAPTURE_HELPER and its sudo rule"
 
 incus exec "$PA_VM" -- install -d -m 0755 "$(dirname "$PA_VM_MANAGED_SETTINGS")"
 incus file push --quiet --uid 0 --gid 0 --mode 0644 "$PA_ASSISTANT_MANAGED_SETTINGS" \

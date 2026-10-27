@@ -208,6 +208,18 @@ PA_VM_CLAUDE=/usr/local/bin/claude
 PA_VM_OLD_CLAUDE=(/home/assistant/.local/bin/claude /home/assistant/.local/share/claude)
 # The unit that runs Remote Control in the agent project.
 PA_VM_RC_UNIT=pa-remote-control.service
+# Exchange capture by a separate user (#94, ADR-0009). The chat inbox inside the VM belongs to the
+# capture user, which has the devbox user's uid: the share keeps owners unmapped, so what it
+# writes is the devbox user's on the devbox, where ingest reads and removes it, and the
+# assistant, a uid of its own (PA_VM_ASSISTANT_UID), can't write it. Only the capture helper,
+# root's, writes there: the managed settings' capture hooks run it as the capture user through
+# one sudo rule, which the sandboxed shell can't use. It holds each turn's prompt as pending in
+# its state directory, the capture user's alone, until the turn's stop.
+PA_CAPTURE_USER=capture
+PA_VM_ASSISTANT_UID=1001
+PA_VM_CAPTURE_HELPER=/usr/local/libexec/pa-capture
+PA_VM_CAPTURE_STATE=/var/lib/pa-capture
+PA_VM_CAPTURE_SUDOERS=/etc/sudoers.d/pa-capture
 
 # The store's shares into the VM, and nothing else of the data root: each one's Incus device,
 # its directory on the devbox, where the VM mounts it, and whether it's read-only.
@@ -234,6 +246,9 @@ PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
 # The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.
 PA_ASSISTANT_MANAGED_SETTINGS=$DEPLOY_DIR/managed-settings.json
 PA_BWRAP_PROFILE=$DEPLOY_DIR/apparmor/pa-bwrap
+# The capture helper and its sudo rule, as the repo has them.
+PA_CAPTURE_HELPER=$DEPLOY_DIR/pa-capture
+PA_CAPTURE_SUDOERS=$DEPLOY_DIR/sudoers-pa-capture
 PA_APT_NO_PERIODIC=$DEPLOY_DIR/apt-no-periodic.conf
 # The selected VM's egress ACL, as `incus network acl edit` takes it (select_vm repoints it).
 PA_ACL_FILE=$DEPLOY_DIR/egress-acl.json
@@ -690,20 +705,24 @@ if init.get("permissionMode") == "bypassPermissions":
 
 # sandbox_probe SCRATCH DIR... prints a shell command that reports, one line each, its
 # NoNewPrivs line (1 in Claude Code's sandbox), whether it could write a file in SCRATCH and in
-# each DIR ("wrote DIR" or "refused DIR", leaving nothing behind), and whether `sudo` ran. The
-# isolation check has a session in the VM run it with Bash.
+# each DIR ("wrote DIR" or "refused DIR", leaving nothing behind), whether `sudo` ran, and
+# whether the capture helper's own sudo rule did ("capture rule ran" if the helper answered:
+# every line it prints starts "exchange capture:"). The isolation check has a session in the VM
+# run it with Bash.
 #
 # The command names no shell variable: Claude Code (2.1.308) refuses to run a command whose
 # variables it can't check before it runs, so each directory is spelled out.
 sandbox_probe() {
-  local command dir quoted file
+  local command dir quoted file rule
   command="grep '^NoNewPrivs:' /proc/self/status;"
   for dir in "$@"; do
     quoted=$(printf %q "$dir")
     file=$(printf %q "$dir/.pa-sandbox-probe")
     command+=" if touch $file 2>/dev/null; then rm -f $file; echo wrote $quoted; else echo refused $quoted; fi;"
   done
-  printf '%s\n' "$command if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi"
+  rule="sudo -n -u $PA_CAPTURE_USER $PA_VM_CAPTURE_HELPER stop"
+  command+=" if sudo -n true 2>/dev/null; then echo 'sudo ran'; else echo 'sudo refused'; fi;"
+  printf '%s\n' "$command if $rule </dev/null 2>&1 | grep -q 'exchange capture:'; then echo 'capture rule ran'; else echo 'capture rule refused'; fi"
 }
 
 # sandbox_probe_problems SCRATCH DIR... reads what `claude -p --output-format stream-json
@@ -749,6 +768,53 @@ for path in denied:
         print(f"the sandboxed shell wrote {path}")
 if "sudo refused" not in lines:
     print("sudo ran in the sandboxed shell")
+if "capture rule refused" not in lines:
+    print("the sandboxed shell ran the capture helper through its sudo rule")
+' "$@"
+}
+
+# file_tool_probe_prompt INBOX_PROBE CLAUDE_MD EDIT_PROBE prints the prompt that asks a session to
+# Write a new file at INBOX_PROBE and at CLAUDE_MD, and to Edit EDIT_PROBE, which holds
+# "unchanged". Like the sandbox probe, it names no shell variable.
+file_tool_probe_prompt() {
+  printf '%s\n' "This is a test of file permissions. Make each of these tool calls, even if \
+you expect it to fail, then reply DONE:" \
+    "1. Write the file $1 with the content {}" \
+    "2. Write the file $2 with the content: # probe" \
+    "3. Read $3, then Edit it, replacing unchanged with changed."
+}
+
+# file_tool_probe_problems TOOL:PATH... reads what `claude -p --output-format stream-json
+# --verbose` printed for a session asked to use each TOOL (Write or Edit) on its PATH, and prints
+# each way the file tools got past their fences, one per line: a TOOL that wrote its PATH, or one
+# the session never tried, since a model that declines to try proves nothing. It prints nothing
+# when every one was tried and refused.
+file_tool_probe_problems() {
+  python3 -c '
+import json, sys
+tries = [arg.split(":", 1) for arg in sys.argv[1:]]
+calls, results = [], {}
+for line in sys.stdin:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    message = event.get("message") if isinstance(event, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            path = (block.get("input") or {}).get("file_path")
+            calls.append((block.get("name"), path, block.get("id")))
+        elif block.get("type") == "tool_result":
+            results[block.get("tool_use_id")] = block
+for tool, path in tries:
+    made = [results[id] for name, at, id in calls if (name, at) == (tool, path) and id in results]
+    if not made:
+        print(f"the session never tried {tool} on {path}")
+    elif any(not result.get("is_error") for result in made):
+        print(f"{tool} wrote {path}")
 ' "$@"
 }
 

@@ -331,7 +331,6 @@ def test_the_drafting_session_runs_with_capture_off_and_without_the_wiki(
     monkeypatch.setenv("SEEN", str(tmp_path / "seen.json"))
     # Capture is on in the caller's environment, as it is in the VM's Remote Control unit.
     monkeypatch.setenv("PA_CAPTURE_EXCHANGES", "1")
-    monkeypatch.setenv("PA_CAPTURE_INBOX", str(tmp_path / "inbox"))
     out = data_root.evals / "drafts" / cut.name / "draft-1.json"
 
     exit_code = main(
@@ -345,7 +344,6 @@ def test_the_drafting_session_runs_with_capture_off_and_without_the_wiki(
     seen = json.loads((tmp_path / "seen.json").read_text())
     # Capture off: the session's environment has no capture settings.
     assert "PA_CAPTURE_EXCHANGES" not in seen["environ"]
-    assert "PA_CAPTURE_INBOX" not in seen["environ"]
     # Without the wiki: the project gives L0 and scratch alone, and no wiki section; and L0 is a
     # copy of the cut's, with no wiki beside it.
     l0, _scratch = seen["directories"]

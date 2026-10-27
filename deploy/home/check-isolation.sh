@@ -12,11 +12,19 @@
 # - the managed settings: the repo's, root's and mode 0644, with the assistant's user settings a
 #   root-owned {} (#92);
 # - the read-only project: the agent project, its hook, the code and the interpreter the hook
-#   runs with are root's, and the assistant can't write them;
+#   runs with, the capture helper and its sudo rule are root's, and the assistant can't write
+#   them;
+# - capture by a separate user (#94): the capture user has the devbox user's uid and the
+#   assistant another; the inbox and the helper's state are the capture user's alone; the helper
+#   and its sudo rule are the repo's; the assistant can't write the inbox, and the rule lets it
+#   run the helper with its three verbs and nothing else;
 # - the tools: a session with no flags, and one with every flag that tries to reopen them, each
 #   has exactly the assistant's tools, no MCP server, and no bypass mode;
 # - the sandbox, by having a session run a command in it: no new privileges, scratch writable,
-#   the home directory, the inbox, the project and the evals' directory not, and no sudo;
+#   the home directory, the inbox, the project and the evals' directory not, and neither sudo
+#   nor the capture helper's sudo rule usable;
+# - the file tools, by having a session in acceptEdits mode try them: Write and Edit can't write
+#   the inbox, and Write can't write the assistant's user CLAUDE.md;
 # - no auto memory directory left.
 #
 # The sessions run on Haiku, briefly, on the assistant's login. A Remote Control session's tools
@@ -232,7 +240,8 @@ fi
 
 echo "In $PA_VM, the agent project, its hook and their interpreter are read-only to $PA_USER:"
 hook_python=$(in_vm realpath -e "$PA_VM_HOOK_PYTHON" 2>/dev/null || true)
-read_only=("$PA_VM_PROJECT" "$PA_REPO_DIR" "$PA_VM_PYTHON_DIR" "$PA_VM_OWNER_ENV" "${hook_python:-}")
+read_only=("$PA_VM_PROJECT" "$PA_REPO_DIR" "$PA_VM_PYTHON_DIR" "$PA_VM_OWNER_ENV" "${hook_python:-}"
+  "$PA_VM_CAPTURE_HELPER" "$PA_VM_CAPTURE_SUDOERS")
 for path in "${read_only[@]}"; do
   [[ -n $path ]] || { fail "$PA_VM_HOOK_PYTHON doesn't resolve to an interpreter"; continue; }
   in_vm test -e "$path" || { skip "$path doesn't exist"; continue; }
@@ -269,6 +278,78 @@ if [[ $owner == "$PA_USER 700" ]]; then
 else
   fail "$PA_VM_SCRATCH is '${owner:-missing}', not $PA_USER's with mode 700 (run update.sh)"
 fi
+
+echo "In $PA_VM, the chat inbox is $PA_CAPTURE_USER's, written only through the capture helper:"
+devbox_uid=$(id -u)
+uid=$(in_vm id -u "$PA_CAPTURE_USER" 2>/dev/null || true)
+if [[ $uid == "$devbox_uid" ]]; then
+  pass "$PA_CAPTURE_USER is uid $uid, yours, so what it writes in the inbox is yours on the devbox"
+else
+  fail "$PA_CAPTURE_USER is uid '${uid:-missing}', not $devbox_uid (run update.sh)"
+fi
+uid=$(in_vm id -u "$PA_USER" 2>/dev/null || true)
+if [[ -n $uid && $uid != "$devbox_uid" ]]; then
+  pass "$PA_USER is uid $uid, not yours"
+else
+  fail "$PA_USER is uid '${uid:-missing}': it would own the inbox through the share (run update.sh)"
+fi
+# Owned by the capture user and writable by it alone.
+loose=$(in_vm find "$PA_VM_CHAT_INBOX" -maxdepth 0 \( ! -user "$PA_CAPTURE_USER" -o -perm /022 \) \
+  -print 2>/dev/null || echo missing)
+if [[ -z $loose ]]; then
+  pass "$PA_VM_CHAT_INBOX is $PA_CAPTURE_USER's, and only it can write there"
+else
+  fail "$PA_VM_CHAT_INBOX isn't $PA_CAPTURE_USER's alone ($(in_vm stat -c '%U %a' "$PA_VM_CHAT_INBOX" 2>&1))"
+fi
+if as_assistant_quietly touch "$PA_VM_CHAT_INBOX/.pa-write-check"; then
+  fail "$PA_USER created a file in $PA_VM_CHAT_INBOX"
+  in_vm rm -f "$PA_VM_CHAT_INBOX/.pa-write-check"
+else
+  pass "$PA_USER can't create a file in $PA_VM_CHAT_INBOX"
+fi
+owner=$(in_vm stat -c '%U %a' "$PA_VM_CAPTURE_STATE" 2>/dev/null || true)
+if [[ $owner == "$PA_CAPTURE_USER 700" ]]; then
+  pass "$PA_VM_CAPTURE_STATE, the pending prompts, is $PA_CAPTURE_USER's alone"
+else
+  fail "$PA_VM_CAPTURE_STATE is '${owner:-missing}', not $PA_CAPTURE_USER's with mode 700 (run update.sh)"
+fi
+for pair in "$PA_VM_CAPTURE_HELPER|$PA_CAPTURE_HELPER|root 755" \
+  "$PA_VM_CAPTURE_SUDOERS|$PA_CAPTURE_SUDOERS|root 440"; do
+  IFS='|' read -r path repo expected <<<"$pair"
+  owner=$(in_vm stat -c '%U %a' "$path" 2>/dev/null || true)
+  if [[ $owner == "$expected" &&
+    $(in_vm sha256sum "$path" 2>/dev/null | cut -d' ' -f1) == "$(sha256sum "$repo" | cut -d' ' -f1)" ]]; then
+    pass "$path is the repo's, $expected"
+  else
+    fail "$path isn't the repo's with $expected ('${owner:-missing}'; run update.sh)"
+  fi
+done
+# capture_rule [VERB] runs the helper through its sudo rule as the assistant, outside the
+# sandbox, as the hooks do, with no event: it succeeds if the helper answered.
+capture_rule() {
+  local said
+  said=$(in_vm runuser -u "$PA_USER" -- sudo -n -u "$PA_CAPTURE_USER" "$PA_VM_CAPTURE_HELPER" \
+    "${1:-stop}" 2>&1 || true)
+  [[ $said == *"exchange capture:"* ]]
+}
+if capture_rule; then
+  pass "$PA_USER runs the helper as $PA_CAPTURE_USER through the sudo rule, as the hooks do"
+else
+  fail "$PA_USER can't run $PA_VM_CAPTURE_HELPER through the sudo rule: nothing would be captured"
+fi
+if capture_rule stopping; then
+  fail "the sudo rule lets $PA_USER run the helper with a verb of its own"
+else
+  pass "the sudo rule refuses the helper any verb but its three"
+fi
+for command in "-u $PA_CAPTURE_USER /bin/sh -c true" "-u root true" "true"; do
+  # shellcheck disable=SC2086 # the words of a sudo command line
+  if as_assistant_quietly sudo -n $command; then
+    fail "$PA_USER ran sudo -n $command"
+  else
+    pass "$PA_USER can't sudo -n $command"
+  fi
+done
 
 echo "In $PA_VM, a session has only the assistant's tools, whatever its flags:"
 # check_session LABEL FLAG... runs a short session with FLAGs and checks its fences.
@@ -310,6 +391,45 @@ else
   pass "Bash ran sandboxed, with no new privileges: it wrote scratch, and not $(
     IFS=,; echo "${probe_dirs[*]:1}"), and sudo failed"
 fi
+
+echo "In $PA_VM, Write and Edit can't write the inbox or the assistant's own instructions:"
+# A session in acceptEdits mode, where nothing but the fences stops a write, is asked to Write a
+# new file in the inbox and the user CLAUDE.md, and to Edit a file in the inbox that the capture
+# user wrote, as an exchange would be. Each must be tried and refused, and the files must show it.
+inbox_probe=$PA_VM_CHAT_INBOX/.pa-file-tool-probe.json
+edit_probe=$PA_VM_CHAT_INBOX/.pa-edit-probe.json
+user_claude_md=$PA_VM_HOME/.claude/CLAUDE.md
+# shellcheck disable=SC2016 # expanded by the shell in the VM
+in_vm runuser -u "$PA_CAPTURE_USER" -- sh -c 'printf "unchanged\n" >"$1"' sh "$edit_probe"
+claude_md_before=$(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent)
+output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
+  assistant_claude -p --output-format stream-json --verbose --no-session-persistence \
+    --model claude-haiku-5-5 --max-turns 8 --permission-mode acceptEdits \
+    2>"$work/files.err") || true
+if ! problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
+  "Edit:$edit_probe" <<<"$output" 2>&1); then
+  fail "the file tools probe: $problems $(head -c 300 "$work/files.err")"
+elif [[ -n $problems ]]; then
+  while read -r problem; do fail "$problem"; done <<<"$problems"
+else
+  pass "Write and Edit were refused on $inbox_probe, $user_claude_md and $edit_probe"
+fi
+if in_vm test -e "$inbox_probe"; then
+  fail "$inbox_probe was written"
+else
+  pass "nothing new in $PA_VM_CHAT_INBOX"
+fi
+if [[ $(in_vm cat "$edit_probe" 2>/dev/null) == unchanged ]]; then
+  pass "$edit_probe is unchanged"
+else
+  fail "$edit_probe was changed"
+fi
+if [[ $(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent) == "$claude_md_before" ]]; then
+  pass "$user_claude_md is unchanged"
+else
+  fail "$user_claude_md was written"
+fi
+in_vm rm -f "$inbox_probe" "$edit_probe"
 
 echo "In $PA_VM, no auto memory is left, and these sessions wrote none:"
 memory=$(in_vm find "$PA_VM_HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name memory \
