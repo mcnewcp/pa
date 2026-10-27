@@ -187,7 +187,8 @@ finish() {
 
 # Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91): the steps only the owner can do, and
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
-# Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
+# Run it on the devbox: deploy/home/setup-wizard.sh for everything, Gmail and iCloud Calendar
+# included, or deploy/home/setup-wizard.sh --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
 # client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, --icloud for
 # iCloud Calendar's app-specific password and calendars (#97), a new password too, --backup
@@ -196,7 +197,7 @@ finish() {
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ASSISTANT_STAGES=18
+ASSISTANT_STAGES=19
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
 GMAIL_STAGES=3
@@ -206,7 +207,7 @@ SCHEDULE_STAGES=2
 only_librarian=false only_vault=false only_gmail=false only_icloud=false only_backup=false
 only_schedules=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + GMAIL_STAGES + ICLOUD_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
   --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
@@ -502,6 +503,21 @@ if confirm "Is it listed in both?"; then
   ok "the assistant is reachable from your phone"
 else
   SKIPPED+=("Remote Control isn't listed: check incus exec $PA_VM -- journalctl -u $PA_VM_RC_UNIT")
+fi
+pause
+
+# ── 19 ────────────────────────────────────────────────────────────────────
+stage "Keep your chats out of model training"
+say "Your Remote Control sessions with the assistant are kept in your claude.ai account, like"
+say "any chat. With model-improvement sharing off, Anthropic keeps them for 30 days; with it on,"
+say "for 5 years, and may train on them. The PA can't see or change this setting: check it once."
+open_url "https://claude.ai/settings"
+step "Signed in as the account the VM's Claude Code logged in with:"
+step "Settings → Privacy → turn off the model-improvement sharing (Help improve Claude)."
+if confirm "Is it off?"; then
+  ok "your chats are kept 30 days, and not used for training"
+else
+  SKIPPED+=("model-improvement sharing: turn it off at claude.ai, Settings → Privacy")
 fi
 pause
 }
@@ -1089,14 +1105,20 @@ if $only_schedules; then
   printf '\n'
   exit 0
 fi
+# A plain run: the assistant's VM seeds the data root, which the Gmail and iCloud dry runs need,
+# and the schedules come last, once everything they run is set up.
 if $only_vault; then
   vault_stages
-else
-  $only_librarian || assistant_stages
+elif $only_librarian; then
   librarian_stages
-  $only_librarian || vault_stages
-  $only_librarian || backup_stages
-  $only_librarian || schedule_stages
+else
+  assistant_stages
+  librarian_stages
+  vault_stages
+  gmail_stages
+  icloud_stages
+  backup_stages
+  schedule_stages
 fi
 
 finish
@@ -1109,5 +1131,6 @@ note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the 
 fi
 $only_vault || note "The nightly job runs the librarian once the schedules are on: deploy/home/check-schedules.sh."
 $only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
+$only_librarian || $only_vault || note "Backfill the sources: deploy/home/capture.sh --backfill <window start> ends with the counts and the replay's estimate."
 $only_librarian || $only_vault || note "Until then the librarian and the backup run by hand: librarian.sh run, backup.sh."
 printf '\n'

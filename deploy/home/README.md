@@ -14,7 +14,7 @@ See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh              # both VMs, the vault copy, then the backup drive
+deploy/home/setup-wizard.sh              # both VMs, the vault copy, Gmail, iCloud Calendar, the backup drive, then the schedules
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
 deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
 deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
@@ -256,6 +256,7 @@ Check the repository itself now and then (`restic check`). It reads the reposito
 - It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.
 - `update.sh` stops it before the render and starts it again after. A session open during an update is cut off.
 - The permission mode isn't pinned: the phone picks each session's mode, and the fences hold in every mode.
+- Its sessions are kept in the owner's claude.ai account like any chat: for 30 days with model-improvement sharing off, and for 5 years (and used for training) with it on. The wizard's last assistant stage asks the owner to check it's off, at claude.ai Settings → Privacy (story 129). The PA can't read or change the setting.
 - Before it's enabled, two questions are answered once from a terminal as `assistant`: running `claude` in the project (theme, the "Claude can make mistakes" notice, folder trust), and running `claude remote-control` (`Enable Remote Control? (y/n)`). With no terminal, the service would wait on that question forever. The wizard asks both, checks the answers in the VM's `~/.claude.json` (`hasTrustDialogAccepted`, `remoteDialogSeen`), and only then enables the service.
 
 Don't chat during an eval run: the run fails if the inbox changes while it runs, and every exchange changes it.
@@ -337,6 +338,12 @@ git pull --ff-only                            # to refresh, on the Mac
 - **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
+
+#### Advanced Data Protection
+
+The phone's view of the wiki travels through iCloud Drive, so Apple holds a copy of every page. With Advanced Data Protection on, that copy is end-to-end encrypted: only the owner's devices hold the keys, and Apple can't read it. Without it, Apple holds the keys (stories 111 and 128). Nothing in the PA depends on it either way: the Obsidian view, the vault copy and capture all work the same.
+
+To turn it on, on the iPhone: Settings → your name → iCloud → Advanced Data Protection. Apple asks for a recovery contact or a recovery key first, since it can no longer help recover the data; every device signed in to the Apple ID must run a recent enough OS. It also turns off web access to iCloud data unless it's allowed again in the same place.
 
 ## The vault copy
 
