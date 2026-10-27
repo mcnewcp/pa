@@ -8,7 +8,7 @@ The frozen corpus's `.ics` payloads are shaped like a calendar export: one VEVEN
 
 So the collector lands each resource exactly as CalDAV served it, behind a capture header like ADR-0002's for daily notes: `Name: value` lines and a blank line. Two fields are required. `Calendar` is the collection's display name. `Captured-At` is when the collector read this version, and it becomes the envelope's `captured_at`, as it does for notes. When a resource disappears from its calendar, the collector lands its last-known bytes with a `Deleted-At` field added.
 
-A resource is one episode: the series together with its overrides. Its version component covers every VEVENT in it, so a change to any occurrence is a new episode, and the latest version shows where the whole series stands. A deletion is an episode too, and its id differs from every version's. The normalized body describes the recurrence in words and lists the occurrences in a window around `Captured-At`, with overrides and exclusions applied. The assistant reads dates instead of doing RRULE arithmetic, and renormalize reproduces the same body because the window's anchor is in the payload.
+A resource is one episode: the series together with its overrides. Its version component covers every VEVENT in it, so a change to any occurrence is a new episode, and the latest version shows where the whole series stands. It covers each VEVENT's content apart from `DTSTAMP`, not just `SEQUENCE` and `LAST-MODIFIED`: the spike (#85, [findings](../research/calendar-structure-spike.md)) showed iCloud ending a series with an `UNTIL` and bumping neither. A deletion is an episode too, and its id differs from every version's. The normalized body describes the recurrence in words and lists the occurrences in a window around `Captured-At`, with overrides and exclusions applied. The assistant reads dates instead of doing RRULE arithmetic, and renormalize reproduces the same body because the window's anchor is in the payload.
 
 The collector reads changes through CalDAV's sync tokens every 15 minutes. Each night it also reconciles everything each calendar holds against what it has captured, so a deletion that a sync report missed still lands.
 
@@ -33,3 +33,5 @@ The collector reads changes through CalDAV's sync tokens every 15 minutes. Each 
   - whether a Birthdays calendar is served at all.
 
   If a change can arrive without a bump, the version component must cover the content as well, so that the change isn't quarantined as a conflicting duplicate.
+
+  The spike (#85) found that one can: "all future events" ends the old series with an `UNTIL`, with no bump, and starts a new series with its own UID in a new resource. So the version covers the content, and a split series is two episodes. No Birthdays calendar is served.

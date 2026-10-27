@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,6 +49,10 @@ DEFAULT_CADENCE = timedelta(minutes=15)
 """A capture cycle runs every 15 minutes, so each source's watermark moves that often."""
 COLLECTED_SOURCES = (Source.GMAIL, Source.ICLOUD_CALENDAR, Source.OBSIDIAN)
 """The sources a collector captures. Chat is captured by the assistant's hook instead."""
+# iCloud Calendar over CalDAV: the Apple ID, and the file holding its app-specific password.
+ICLOUD_USERNAME_VAR = "PA_ICLOUD_USERNAME"
+ICLOUD_PASSWORD_FILE_VAR = "PA_ICLOUD_PASSWORD_FILE"
+DEFAULT_ICLOUD_PASSWORD_FILE = "~/.config/pa/icloud-app-password"
 
 
 def cadence_var(source: Source) -> str:
@@ -160,6 +164,46 @@ class GmailConfig:
     token: Path
     client: Path | None
     """The OAuth client (a Desktop app client's JSON), needed only to ask for consent."""
+
+
+@dataclass(frozen=True)
+class ICloudCredentials:
+    """The Apple ID and its app-specific password, which CalDAV accepts in place of the Apple ID
+    password. Neither is ever printed."""
+
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+
+
+def load_icloud_credentials(environ: Mapping[str, str] = os.environ) -> ICloudCredentials:
+    """The iCloud credential: the Apple ID, and the app-specific password from a file only the
+    owner can read (by default in the owner's configuration directory)."""
+    username = environ.get(ICLOUD_USERNAME_VAR, "").strip()
+    if not username:
+        raise ConfigError(f"{ICLOUD_USERNAME_VAR} is not set: set it to the owner's Apple ID.")
+    configured = environ.get(ICLOUD_PASSWORD_FILE_VAR, "").strip()
+    path = Path(configured or DEFAULT_ICLOUD_PASSWORD_FILE).expanduser()
+    try:
+        mode = path.stat().st_mode
+        password = path.read_text().strip()
+    except FileNotFoundError:
+        raise ConfigError(
+            f"There's no app-specific password at {path}. Create one for the Apple ID at "
+            f"account.apple.com and save it there with mode 600, or point "
+            f"{ICLOUD_PASSWORD_FILE_VAR} at the file that holds it."
+        ) from None
+    except OSError as error:
+        raise ConfigError(
+            f"The app-specific password at {path} can't be read: {error.strerror}"
+        ) from None
+    if mode & 0o077:
+        raise ConfigError(
+            f"The app-specific password at {path} is readable by others (mode "
+            f"{mode & 0o777:o}): make it readable only by the owner (chmod 600)."
+        )
+    if not password:
+        raise ConfigError(f"The app-specific password file {path} is empty.")
+    return ICloudCredentials(username=username, password=password)
 
 
 def load_data_root(environ: Mapping[str, str] = os.environ) -> DataRoot:
