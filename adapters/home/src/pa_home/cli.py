@@ -46,7 +46,7 @@ from pa_home.cut import take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
-from pa_home.lock import LockHeld, data_root_lock
+from pa_home.lock import LockHeld, data_root_lock, skipped
 from pa_home.nightly import nightly_job
 
 
@@ -55,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(
         "ingest",
-        help="Turn raw payloads in the inbox into episodes in L0. Skips if another run holds "
+        help="Turn raw payloads in the inbox into episodes in L0. Skips if another job holds "
         "the data root's lock.",
     )
     inspect = commands.add_parser(
@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     capture = commands.add_parser(
         "capture",
         help="Run a capture cycle: collect each configured source into the inbox, ingest, and "
-        "publish each source's watermark once its payloads have landed. Skips if another run "
+        "publish each source's watermark once its payloads have landed. Skips if another job "
         "holds the data root's lock.",
     )
     capture_kind = capture.add_mutually_exclusive_group()
@@ -139,7 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
         "reconciliation, then the librarian run, then the backup, each recorded in the status. "
-        "A step that fails doesn't stop the next. Skips if another run holds the lock.",
+        "A step that fails doesn't stop the next. Skips if another job holds the lock.",
     )
     commands.add_parser(
         "status",
@@ -150,7 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "cut",
         help="Cut the store now, for real-data evals: every episode captured by now, the wiki "
         "at its last commit, and the status file, under the data root's cuts/. Refused while "
-        "another run holds the data root's lock.",
+        "another job holds the data root's lock.",
     )
     catalog = commands.add_parser("catalog", help="Manage the catalog of episodes in L0.")
     catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
@@ -332,7 +332,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 with data_root_lock(data_root):
                     _ingest(data_root)
             except LockHeld:
-                print("ingest: skipped: another run holds the data root's lock")
+                print(skipped("ingest"))
         elif args.command == "capture":
             return _capture(data_root, args.backfill, reconcile=args.reconcile)
         elif args.command == "nightly":
@@ -435,7 +435,7 @@ def _capture(
         reconcile=reconcile,
     )
     if outcome.skipped:
-        print("capture: skipped: another run holds the data root's lock")
+        print(skipped("capture"))
         return 0
     _report_cycle(outcome, time_zone, "capture")
     return 1 if outcome.failed else 0
@@ -472,7 +472,7 @@ def _nightly(data_root: DataRoot) -> int:
         time_zone=time_zone,
     )
     if outcome.skipped:
-        print("nightly: skipped: another run holds the data root's lock")
+        print(skipped("nightly"))
         return 0
     if outcome.capture is not None:
         _report_cycle(outcome.capture, time_zone, "nightly: capture")
@@ -616,7 +616,7 @@ def _backup(data_root: DataRoot) -> None:
         with data_root_lock(data_root):
             snapshot_id = back_up(data_root)
     except LockHeld:
-        print("backup: skipped: another run holds the data root's lock")
+        print(skipped("backup"))
         return
     print(f"backup: took snapshot {snapshot_id[:8]}")
 
@@ -635,7 +635,7 @@ def _run_librarian(data_root: DataRoot) -> None:
         with data_root_lock(data_root):
             outcome = librarian.run(data_root, owner=owner, time_zone=time_zone, config=config)
     except LockHeld:
-        print("librarian: skipped: another run holds the data root's lock")
+        print(skipped("librarian"))
         return
     _report_run(outcome, "librarian")
 

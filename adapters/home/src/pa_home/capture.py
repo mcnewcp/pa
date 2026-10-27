@@ -74,7 +74,7 @@ def capture_cycle(
     window_start: datetime | None = None,
     reconcile: bool = False,
 ) -> CycleOutcome:
-    """Run one capture cycle over `data_root` under its lock, or skip it if another run holds
+    """Run one capture cycle over `data_root` under its lock, or skip it if another job holds
     the lock (`run_capture_cycle` says what the cycle does)."""
     try:
         with data_root_lock(data_root):

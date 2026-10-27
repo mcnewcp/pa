@@ -105,7 +105,7 @@ def test_pa_capture_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["capture"]) == 0
 
-    assert "skipped" in capsys.readouterr().out
+    assert capsys.readouterr().out == "capture: skipped: another job holds the data root's lock\n"
     assert episodes(data_root) == []
 
 

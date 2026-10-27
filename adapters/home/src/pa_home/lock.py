@@ -14,14 +14,22 @@ from contextlib import contextmanager
 from pa_core.errors import PaError
 from pa_home.config import DataRoot
 
+LOCK_HELD = "another job holds the data root's lock"
+"""Why a job skipped or refused: a capture cycle, the nightly job, or a command holds the lock."""
+
+
+def skipped(command: str) -> str:
+    """What `command` prints when it skips because the lock is held."""
+    return f"{command}: skipped: {LOCK_HELD}"
+
 
 class LockHeld(PaError):
-    """Another run holds the data root's lock."""
+    """Another job holds the data root's lock."""
 
 
 @contextmanager
 def data_root_lock(data_root: DataRoot) -> Iterator[None]:
-    """Hold the data root's lock for the block; raises LockHeld at once if another run has it.
+    """Hold the data root's lock for the block; raises LockHeld at once if another job has it.
 
     The lock is the kernel's, on an open file, so it's released when its holder exits, however
     it exits.
@@ -31,5 +39,5 @@ def data_root_lock(data_root: DataRoot) -> Iterator[None]:
         try:
             fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise LockHeld("another run holds the data root's lock") from None
+            raise LockHeld(LOCK_HELD) from None
         yield

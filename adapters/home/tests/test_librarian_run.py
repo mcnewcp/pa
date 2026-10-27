@@ -2702,6 +2702,6 @@ def test_pa_librarian_run_skips_while_another_run_holds_the_lock(data_root: Path
     with data_root_lock(DataRoot(data_root)):
         assert run_librarian() == 0
 
-    assert capsys.readouterr().out == "librarian: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "librarian: skipped: another job holds the data root's lock\n"
     assert sessions(data_root) == []
     assert not (data_root / "status" / "status.json").exists()

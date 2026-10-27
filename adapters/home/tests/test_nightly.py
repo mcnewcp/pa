@@ -188,7 +188,7 @@ def test_a_note_collected_before_a_run_is_offered_by_that_run(
     )
 
     assert collector.librarian_exit == 0
-    assert "librarian: skipped: another run holds the data root's lock" in capsys.readouterr().out
+    assert "librarian: skipped: another job holds the data root's lock" in capsys.readouterr().out
     assert sessions(tmp_path) == []
     assert outcome.ingested is not None and outcome.ingested.ingested == 1
 
@@ -207,7 +207,7 @@ def test_pa_ingest_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["ingest"]) == 0
 
-    assert capsys.readouterr().out == "ingest: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "ingest: skipped: another job holds the data root's lock\n"
     assert (data_root / "inbox" / "gmail" / "hotel.eml").exists()
     assert not (data_root / "l0").exists()
 
@@ -223,7 +223,7 @@ def test_what_rewrites_the_store_by_hand_is_refused_while_another_run_holds_the_
     with data_root_lock(DataRoot(data_root)):
         assert main(command) == 1
 
-    assert "another run holds the data root's lock" in capsys.readouterr().err
+    assert "another job holds the data root's lock" in capsys.readouterr().err
     assert not (data_root / "catalog").exists()
     assert not (data_root / "wiki.git").exists()
 
@@ -240,7 +240,7 @@ def test_the_nightly_job_skips_while_another_run_holds_the_lock(
     with data_root_lock(DataRoot(data_root)):
         assert main(["nightly"]) == 0
 
-    assert capsys.readouterr().out == "nightly: skipped: another run holds the data root's lock\n"
+    assert capsys.readouterr().out == "nightly: skipped: another job holds the data root's lock\n"
     assert not (data_root / "inbox").exists()
     assert sessions(tmp_path) == [] and backups(tmp_path) == []
     assert not (data_root / "status").exists()

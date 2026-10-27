@@ -73,7 +73,7 @@ def nightly_job(
     now: Callable[[], datetime] = wall_clock,
 ) -> NightlyOutcome:
     """Run the night's capture cycle, librarian run, and backup under the data root's lock, or
-    skip them all if another run holds it. The librarian and the backup are configured from
+    skip them all if another job holds it. The librarian and the backup are configured from
     `environ`."""
     try:
         with data_root_lock(data_root):
