@@ -10,11 +10,13 @@ series moved "for all future events" split into two resources with different UID
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from pa_core.normalizers.calendar import occurs_on_or_after
 from pa_home.cli import main
 
 CALENDAR = "Moonwhistle Family"
@@ -485,6 +487,8 @@ def test_renormalize_rebuilds_every_captured_resource_as_it_was(data_root: Path)
 
     assert episodes(data_root) == before
     assert len(before) == 3
+    # The series' list too: its window's anchor is in the payload.
+    assert sum("Occurrences from 2026-08-20 to 2027-04-20:" in e["body"] for e in before) == 1
 
 
 def test_a_deletion_landed_again_by_reconciliation_collapses(
@@ -498,3 +502,321 @@ def test_a_deletion_landed_again_by_reconciliation_collapses(
 
     assert len(episodes(data_root)) == 1
     assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
+# The occurrence list (#96): a captured series' body describes its recurrence in words and
+# lists its occurrences in a window around its capture, two months back and six ahead.
+
+
+def occurrences(body: str) -> list[str]:
+    """The occurrence lines of a body's list."""
+    return [line[2:] for line in body.splitlines() if line.startswith("- ")]
+
+
+def test_a_series_lists_its_occurrences_with_its_exclusions_and_moves_applied(data_root: Path):
+    series = resource(pottery(), moved_occurrence())
+
+    ingest(data_root, {"pottery.ics": captured(series)})
+
+    [episode] = episodes(data_root)
+    assert "Occurrences from 2026-08-20 to 2027-04-20:\n" in episode["body"]
+    listed = occurrences(episode["body"])
+    assert listed[0] == "Tue 2026-08-25 18:30 to 20:00 -05:00"
+    assert listed[-1] == "Tue 2027-04-13 18:30 to 20:00 -05:00"
+    # Removed on Oct 13; Oct 27's moved to the Thursday.
+    assert listed[6:9] == [
+        "Tue 2026-10-06 18:30 to 20:00 -05:00",
+        "Tue 2026-10-20 18:30 to 20:00 -05:00",
+        "Thu 2026-10-29 18:30 to 20:00 -05:00 (moved from Tue 2026-10-27)",
+    ]
+    assert len(listed) == 33  # 34 Tuesdays, one removed
+
+
+def test_an_occurrence_cancelled_by_its_override_is_not_listed(data_root: Path):
+    # Some organizers cancel one occurrence with an override, not an EXDATE.
+    cancelled = [*moved_occurrence(start="20261027T183000")[:-1], "STATUS:CANCELLED", "END:VEVENT"]
+
+    ingest(data_root, {"pottery.ics": captured(resource(pottery(exdates=()), cancelled))})
+
+    [episode] = episodes(data_root)
+    listed = occurrences(episode["body"])
+    assert "Tue 2026-10-20 18:30 to 20:00 -05:00" in listed
+    assert not any("2026-10-27" in line for line in listed)
+    assert "Tue 2026-11-03 18:30 to 20:00 -06:00" in listed
+
+
+@pytest.mark.parametrize("deleted_at", [None, "2026-10-22T19:40:00-05:00"])
+def test_a_series_with_an_unreadable_rule_is_quarantined_without_quoting_it(
+    data_root: Path, deleted_at: str | None
+):
+    lines = resource(pottery(rule="FREQ=FORTNIGHTLY;BYDAY=TU"))
+
+    ingest(data_root, {"pottery.ics": captured(lines, deleted_at=deleted_at)})
+
+    assert episodes(data_root) == []
+    assert quarantine_reasons(data_root) == ["calendar event has an unreadable RRULE"]
+
+
+def repeats(body: str) -> str:
+    [line] = [line for line in body.splitlines() if line.startswith("Repeats: ")]
+    return line.removeprefix("Repeats: ")
+
+
+def test_a_series_describes_its_recurrence_in_words(data_root: Path):
+    ended = resource(pottery(rule="FREQ=WEEKLY;BYDAY=TU;UNTIL=20261020T045959Z"))
+
+    ingest(
+        data_root,
+        {"pottery.ics": captured(resource(pottery())), "ended.ics": captured(ended)},
+    )
+
+    assert sorted(repeats(e["body"]) for e in episodes(data_root)) == [
+        "every Tuesday, 6:30 to 8 pm America/Chicago, from Sep 2, 2025",
+        "every Tuesday, 6:30 to 8 pm America/Chicago, from Sep 2, 2025 until Oct 19, 2026",
+    ]
+
+
+# Rules, with the start and end of their first occurrence on Tuesday, Sep 8, 2026, in words.
+RULES = {
+    "two days a week": (
+        "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261216T055959Z",
+        ("180000", "190000"),
+        "every Tuesday and Thursday, 6 to 7 pm America/Chicago, "
+        "from Sep 8, 2026 until Dec 15, 2026",
+    ),
+    "every other week": (
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR",
+        ("110000", "133000"),
+        "every 2 weeks on Monday, Wednesday and Friday, 11 am to 1:30 pm America/Chicago, "
+        "from Sep 8, 2026",
+    ),
+    "daily, a number of times": (
+        "FREQ=DAILY;COUNT=10",
+        ("070000", "070000"),
+        "every day, 7 am America/Chicago, from Sep 8, 2026, 10 times",
+    ),
+    "every few days": (
+        "FREQ=DAILY;INTERVAL=3",
+        ("000000", "120000"),
+        "every 3 days, 12 am to 12 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "a weekday of the month": (
+        "FREQ=MONTHLY;BYDAY=2TU",
+        ("180000", "190000"),
+        "every month on the second Tuesday, 6 to 7 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "the last weekday of the month": (
+        "FREQ=MONTHLY;BYDAY=-1FR",
+        ("180000", "190000"),
+        "every month on the last Friday, 6 to 7 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "a day of the month": (
+        "FREQ=MONTHLY;BYMONTHDAY=15",
+        ("180000", "190000"),
+        "every month on the 15th, 6 to 7 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "the start's day of the month": (
+        "FREQ=MONTHLY;INTERVAL=3",
+        ("180000", "190000"),
+        "every 3 months on the 8th, 6 to 7 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "the start's day of the year": (
+        "FREQ=YEARLY",
+        ("180000", "190000"),
+        "every year on Sep 8, 6 to 7 pm America/Chicago, from Sep 8, 2026",
+    ),
+    "a rule words don't cover": (
+        "FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO,TU,WE,TH,FR",
+        ("180000", "190000"),
+        "every month (BYSETPOS=-1;BYDAY=MO,TU,WE,TH,FR), 6 to 7 pm America/Chicago, "
+        "from Sep 8, 2026",
+    ),
+}
+
+
+@pytest.mark.parametrize("given", RULES, ids=list(RULES))
+def test_a_rule_is_described_in_words(data_root: Path, given: str):
+    rule, (start, end), words = RULES[given]
+    event = [
+        "BEGIN:VEVENT",
+        "UID:choir-0001@example.com",
+        "DTSTAMP:20261020T131500Z",
+        f"DTSTART;TZID=America/Chicago:20260908T{start}",
+        f"DTEND;TZID=America/Chicago:20260908T{end}",
+        f"RRULE:{rule}",
+        "SUMMARY:Choir",
+        "END:VEVENT",
+    ]
+
+    ingest(data_root, {"choir.ics": captured(resource(event))})
+
+    [episode] = episodes(data_root)
+    assert repeats(episode["body"]) == words
+
+
+def test_a_series_keeps_its_wall_clock_time_across_a_daylight_saving_change(data_root: Path):
+    ingest(data_root, {"pottery.ics": captured(resource(pottery()))})
+
+    [episode] = episodes(data_root)
+    listed = occurrences(episode["body"])
+    # Central time falls back on Nov 1, 2026 and springs forward on Mar 14, 2027.
+    assert "Tue 2026-10-27 18:30 to 20:00 -05:00" in listed
+    assert "Tue 2026-11-03 18:30 to 20:00 -06:00" in listed
+    assert "Tue 2027-03-09 18:30 to 20:00 -06:00" in listed
+    assert "Tue 2027-03-16 18:30 to 20:00 -05:00" in listed
+
+
+def market(rule: str = "FREQ=WEEKLY;COUNT=4") -> list[str]:
+    """An all-day series: a Saturday market, a day each time."""
+    return [
+        "BEGIN:VEVENT",
+        "UID:market-0001@example.com",
+        "DTSTAMP:20261020T131500Z",
+        "DTSTART;VALUE=DATE:20261003",
+        "DTEND;VALUE=DATE:20261004",
+        f"RRULE:{rule}",
+        "SUMMARY:Hollow Lane market",
+        "END:VEVENT",
+    ]
+
+
+def moved_occurrence_of_market(occurrence: str, day: str) -> list[str]:
+    return [
+        "BEGIN:VEVENT",
+        "UID:market-0001@example.com",
+        f"RECURRENCE-ID;VALUE=DATE:{occurrence}",
+        "DTSTAMP:20261020T131500Z",
+        f"DTSTART;VALUE=DATE:{day}",
+        "SUMMARY:Hollow Lane market",
+        "END:VEVENT",
+    ]
+
+
+def test_an_all_day_series_lists_its_days_and_stops_at_its_count(data_root: Path):
+    ingest(data_root, {"market.ics": captured(resource(market()))})
+
+    [episode] = episodes(data_root)
+    assert repeats(episode["body"]) == "every Saturday, all day, from Oct 3, 2026, 4 times"
+    assert occurrences(episode["body"]) == [
+        "Sat 2026-10-03",
+        "Sat 2026-10-10",
+        "Sat 2026-10-17",
+        "Sat 2026-10-24",
+    ]
+
+
+def test_a_series_stops_at_its_until(data_root: Path):
+    ended = resource(pottery(rule="FREQ=WEEKLY;BYDAY=TU;UNTIL=20261020T045959Z", exdates=()))
+
+    ingest(data_root, {"pottery.ics": captured(ended)})
+
+    [episode] = episodes(data_root)
+    listed = occurrences(episode["body"])
+    assert listed[0] == "Tue 2026-08-25 18:30 to 20:00 -05:00"
+    assert listed[-1] == "Tue 2026-10-13 18:30 to 20:00 -05:00"
+    assert len(listed) == 8
+
+
+def test_a_series_with_an_end_ends_with_its_last_occurrence(data_root: Path):
+    # So a windowed replay doesn't carry a series that was over before its window began.
+    ended = resource(pottery(rule="FREQ=WEEKLY;BYDAY=TU;UNTIL=20261020T045959Z", exdates=()))
+    moved_last = resource(market(), moved_occurrence_of_market("20261024", "20261031"))
+
+    ingest(data_root, {"pottery.ics": captured(ended), "market.ics": captured(moved_last)})
+
+    assert {e["subject"]: e["occurred_at"] for e in episodes(data_root)} == {
+        "Pottery class": {"start": "2025-09-02T18:30:00-05:00", "end": "2026-10-13T20:00:00-05:00"},
+        "Hollow Lane market": {"start": "2026-10-03T00:00:00Z", "end": "2026-11-01T00:00:00Z"},
+    }
+
+
+def served(lines: list[str]) -> bytes:
+    """The resource as the calendar server served it, before the collector's header."""
+    return "".join(f"{line}\r\n" for line in lines).encode()
+
+
+ENDED = "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261020T045959Z"  # last on Oct 13
+# A resource, a moment, and whether it has an occurrence on or after that moment.
+ON_OR_AFTER = {
+    "an unending series, years on": (resource(pottery()), "2031-01-07T00:00:00Z", True),
+    "an ended series, after its last": (
+        resource(pottery(rule=ENDED, exdates=())),
+        "2026-10-13T20:00:00-05:00",
+        False,
+    ),
+    "an ended series, during its last": (
+        resource(pottery(rule=ENDED, exdates=())),
+        "2026-10-13T19:59:00-05:00",
+        True,
+    ),
+    "an ended series whose last was removed": (
+        resource(pottery(rule=ENDED, exdates=("20261013T183000",))),
+        "2026-10-06T20:00:00-05:00",
+        False,
+    ),
+    "an ended series whose last moved later": (
+        resource(
+            pottery(rule=ENDED, exdates=()),
+            moved_occurrence("20261013T183000", "20261015T183000"),
+        ),
+        "2026-10-13T20:00:00-05:00",
+        True,
+    ),
+    "an all-day series, on its last day": (
+        resource(market()),
+        "2026-10-24T23:00:00Z",
+        True,
+    ),
+    "an all-day series, after its last day": (
+        resource(market()),
+        "2026-10-25T00:00:00Z",
+        False,
+    ),
+    "an event, before it": (resource(dentist()), "2026-10-28T00:00:00Z", True),
+    "an event, while it's on": (resource(dentist()), "2026-10-28T15:30:00-05:00", True),
+    "an event, once it's over": (resource(dentist()), "2026-10-28T16:00:00-05:00", False),
+}
+
+
+@pytest.mark.parametrize("case", ON_OR_AFTER, ids=list(ON_OR_AFTER))
+@pytest.mark.parametrize("shape", ["served", "captured"])
+def test_a_collector_can_ask_whether_a_resource_occurs_on_or_after_a_moment(case: str, shape: str):
+    lines, moment, expected = ON_OR_AFTER[case]
+    payload = served(lines) if shape == "served" else captured(lines)
+
+    assert occurs_on_or_after(payload, datetime.fromisoformat(moment)) is expected
+
+
+def test_an_unchanged_series_captured_again_months_later_keeps_its_first_list(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    # The nightly reconciliation, or a backfill overlapping live capture, lands an unchanged
+    # resource again. Its version is the same, so it collapses: the list it landed with stands.
+    series = resource(pottery(), moved_occurrence())
+    ingest(data_root, {"pottery.ics": captured(series)})
+    [first] = episodes(data_root)
+    capsys.readouterr()
+
+    ingest(data_root, {"pottery.ics": captured(series, captured_at="2027-03-02T08:15:00-06:00")})
+
+    assert episodes(data_root) == [first]
+    assert "Occurrences from 2026-08-20 to 2027-04-20:\n" in first["body"]
+    assert capsys.readouterr().out == "ingested 0, unchanged 1, quarantined 0\n"
+
+
+def test_a_series_captured_again_finishes_an_interrupted_ingest_with_its_first_list(
+    data_root: Path,
+):
+    series = resource(pottery(), moved_occurrence())
+    first = captured(series)
+    ingest(data_root, {"pottery.ics": first})
+    [episode] = episodes(data_root)
+    # An ingest that stopped between writing the raw payload and its envelope.
+    for path in (data_root / "l0" / "episodes").rglob("*.json"):
+        path.unlink()
+
+    ingest(data_root, {"pottery.ics": captured(series, captured_at="2026-11-20T08:15:00-06:00")})
+
+    assert episodes(data_root) == [episode]
+    assert (data_root / "l0" / episode["raw_ref"]).read_bytes() == first
+    assert quarantine_reasons(data_root) == []
