@@ -18,7 +18,9 @@ deploy/home/setup-wizard.sh              # both VMs, the vault copy, then the ba
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
 deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
 deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
+deploy/home/setup-wizard.sh --icloud     # iCloud Calendar's app-specific password and calendars
 deploy/home/setup-wizard.sh --backup     # the backup drive and its repository alone
+deploy/home/setup-wizard.sh --schedules  # turn on the schedules, once the wiki is seeded
 ```
 
 The scripts that both VMs share take `--vm assistant|librarian`, and work on the assistant's VM without it.
@@ -52,6 +54,10 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `gmail.sh auth\|dry-run …` | Runs `pa gmail` on the devbox: the consent (and re-auth), and the dry run's counts ([Gmail](#gmail)) |
 | `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
 | `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
+| `capture.sh [--backfill W \| --reconcile]` | Runs a capture cycle on the devbox with the instance's configuration, as `pa-capture.service` does every 15 minutes ([The live schedule](#the-live-schedule)) |
+| `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, the backup, as `pa-nightly.service` does overnight |
+| `install-schedules.sh [--enable]` | Installs the schedules' units and timers (`schedules/`, needs sudo); `--enable` starts both timers once the wiki is seeded |
+| `check-schedules.sh` | Checks the schedules: each timer enabled, its last and next start, each job's last result, then `pa status` |
 
 `tailscale-policy.hujson` holds the tailnet policy as the PA leaves it: no PA VM is on the tailnet, and the owner's devices reach each other.
 
@@ -122,7 +128,7 @@ The `capture` user has the devbox user's uid, 1000: the inbox share keeps owners
 
 ## The store
 
-The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox, by hand (`ingest.sh`).
+The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox: in each capture cycle once the schedules are on ([The live schedule](#the-live-schedule)), and by hand with `ingest.sh`.
 
 Four directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
 
@@ -164,9 +170,34 @@ deploy/home/update.sh <ref>   # the assistant's project points at the wiki once 
 
 `seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
 
+## The live schedule
+
+Once the go-live backfill is replayed and the wiki seeded, the PA runs on its own, on two timers on the devbox (`setup-wizard.sh --schedules`, or `install-schedules.sh --enable`). They're system units, in `schedules/`, run as the devbox user with the code of the checkout they were installed from (its venv's `pa`, which `uv sync` makes), so install them from the checkout the devbox keeps, and run `install-schedules.sh` again after an update that changes them.
+
+| Timer | When | Runs |
+|---|---|---|
+| `pa-capture.timer` | Every 15 minutes, on the quarter hour | `pa-capture.service` → `capture.sh` → `pa capture`: each configured source collected into the inbox, ingest, and each watermark published once its payloads have landed |
+| `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then the backup |
+
+- **One lock.** Every job that writes the store takes the data root's lock (`pa.lock`): the capture cycle from its first collector through ingest and publication, the nightly job throughout, and `pa ingest`, `pa librarian run` and `pa backup` by hand. A job that finds it held skips and exits 0 (`… skipped: another run holds the data root's lock`); `pa cut`, `pa renormalize`, `pa catalog rebuild` and `pa librarian seed` refuse instead. So the librarian never runs between a collection and its ingest, and every note or calendar resource collected before a run (stamped with when it was read) is offered by that run.
+- **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. The one exception: when the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. The 15-minute cycles skip while the job runs.
+- **Catching up.** Both timers are `Persistent=`: after the devbox was off, each starts its job once at boot for what it missed, the nightly job after the capture cycle starting then. A timer never starts a second job while its last one runs (the services are oneshot), and neither the nightly job nor a cycle piles up behind the other: whichever finds the lock held skips. A capture cycle that hangs is stopped after 30 minutes.
+- **Confinement.** `pa-capture.service` can write only the inbox, L0, the catalog, collector state (`state/`), the status, and the lock; it reads the credentials in `~/.config/pa`, the vault copy and the code without being able to write them (`ProtectSystem=strict`, `ProtectHome=read-only`), with a private `/tmp` and no privileges. `pa-nightly.service` can write those too, and the wiki and its git directory, the backup repository on the drive and restic's cache, and `/tmp`, which stays the host's: the librarian run renders its project there and Incus shares it into the librarian's VM. It wants the backup drive's mount but runs without it, and the status records the backup that found no repository.
+- **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox and the drive's repository, whatever the environment says.
+
+To check them, with times, counts and reasons only, never content:
+
+```sh
+deploy/home/check-schedules.sh    # each timer enabled, its last and next start; each job's last result; then pa status
+systemctl list-timers 'pa-*'
+journalctl -u pa-capture -u pa-nightly --since today   # counts and content-free reasons
+```
+
+To run either job by hand, as its timer does: `deploy/home/capture.sh` (with `--backfill <window start>` for a backfill) or `deploy/home/nightly.sh`; or `sudo systemctl start pa-capture.service`, which runs it confined. To pause the PA: `sudo systemctl disable --now pa-capture.timer pa-nightly.timer`; `install-schedules.sh --enable` turns it back on, and the first cycle catches up from each source's stored position.
+
 ## The backup
 
-`backup.sh` runs `pa backup`, which takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
+The nightly job backs up once the schedules are on ([The live schedule](#the-live-schedule)), and `backup.sh` runs `pa backup` by hand. Each takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
 
 - **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
 - **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
@@ -257,7 +288,7 @@ Its fences:
 
 ### Live runs
 
-In v0.12.1 the wiki changes only when a run is started by hand; nightly runs come in v0.13. After chatting from the phone, land the chats and run the librarian:
+Once the schedules are on, the nightly job runs the librarian ([The live schedule](#the-live-schedule)). Before that, or to fold chats in before the night, land them and run it by hand:
 
 ```sh
 deploy/home/ingest.sh && deploy/home/librarian.sh run
@@ -328,7 +359,7 @@ The capture cycle (`pa capture`) collects the owner's one Gmail account through 
 - **The OAuth client** comes from the owner's own Google Cloud project: a Desktop app client, the project published "In production" and left unverified, for personal use, so its refresh token doesn't expire weekly. It's at `~/.config/pa/gmail-client.json` (`PA_GMAIL_CLIENT`), mode 0600.
 - **The token** is at `~/.config/pa/gmail-token.json` (`PA_GMAIL_TOKEN`), mode 0600, never in the store or the repository. A collection refuses a token anyone else can read.
 - **Setup** is the wizard's Gmail stages, run once in the go-live ticket: `deploy/home/setup-wizard.sh --gmail`.
-- **Backfill first.** A collection reads Gmail's history from the position the backfill recorded, and fails until there is one: `pa capture --backfill <window start>` (ISO 8601; the owner's time zone without an offset). A position Gmail no longer keeps (the devbox off for a week or more) leads to a listing of the time since the last collection, and ingest collapses what's already in L0.
+- **Backfill first.** A collection reads Gmail's history from the position the backfill recorded, and fails until there is one: `deploy/home/capture.sh --backfill <window start>` (`pa capture --backfill`; ISO 8601; the owner's time zone without an offset). A position Gmail no longer keeps (the devbox off for a week or more) leads to a listing of the time since the last collection, and ingest collapses what's already in L0.
 - **The dry run** counts what a backfill would capture, by category, from labels alone, without fetching any message, and prints counts only:
 
   ```sh
@@ -352,8 +383,8 @@ The capture cycle (`pa capture`) collects the owner's iCloud calendars over CalD
 
 - **The credential** is an app-specific password for the owner's Apple ID, generated at account.apple.com (Sign-In and Security → App-Specific Passwords), **never the Apple ID password**. It's at `~/.config/pa/icloud-app-password` (`PA_ICLOUD_PASSWORD_FILE`), mode 0600; a file anyone else can read is refused. The Apple ID (`PA_ICLOUD_USERNAME`) and the calendars (`PA_ICLOUD_CALENDARS`) are in `~/.config/pa/icloud.env`, mode 0600.
 - **Setup** is the wizard's iCloud stages, run once in the go-live ticket: `deploy/home/setup-wizard.sh --icloud`. It refuses anything not shaped like an app-specific password (`abcd-efgh-ijkl-mnop`), lists the calendars the account serves (`deploy/home/calendar.sh calendars`, which is also the check that iCloud takes the password), and saves the ones to capture.
-- **Backfill first.** A collection reads each calendar's changes since the sync token its backfill recorded, and fails for a calendar until there is one: `pa capture --backfill <window start>`. The backfill takes every event or series with an occurrence on or after the window start, and everything upcoming; what it leaves out stays out unless it changes into the window. A token iCloud refuses leads to a full comparison, and nothing already captured lands again.
-- **Reconciliation** is the nightly job's: `pa capture --reconcile` compares every resource and its etag against what was captured, so a change or deletion the sync reports missed still lands.
+- **Backfill first.** A collection reads each calendar's changes since the sync token its backfill recorded, and fails for a calendar until there is one: `deploy/home/capture.sh --backfill <window start>`. The backfill takes every event or series with an occurrence on or after the window start, and everything upcoming; what it leaves out stays out unless it changes into the window. A token iCloud refuses leads to a full comparison, and nothing already captured lands again.
+- **Reconciliation** is the nightly job's ([The live schedule](#the-live-schedule)), or `capture.sh --reconcile` by hand: it compares every resource and its etag against what was captured, so a change or deletion the sync reports missed still lands.
 - **The dry run** counts, per calendar, what a backfill would take, reading every resource and printing counts only:
 
   ```sh

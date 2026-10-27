@@ -110,7 +110,7 @@ def run(
     except Exception as error:
         sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
         failed = LibrarianRun(
-            at=started, succeeded=False, reason=_failure_reason(error), cost_usd=_cost(sessions)
+            at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
         _record_run(data_root, repository, failed, clock)
         raise
@@ -120,6 +120,16 @@ def run(
     )
     _record_run(data_root, repository, succeeded, clock)
     return outcome
+
+
+def record_run_not_made(
+    data_root: DataRoot, reason: str, *, clock: Callable[[], datetime] = wall_clock
+) -> None:
+    """Records in the status a run that failed before it started, such as one the nightly job
+    held back or one with no configuration, with `reason`, which must hold no content."""
+    at = clock()
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), clock)
 
 
 def _record_run(
@@ -144,7 +154,7 @@ def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
     return sum(cost for cost in costs if cost is not None)
 
 
-def _failure_reason(error: Exception) -> str:
+def run_failure_reason(error: Exception) -> str:
     """Why a run failed, without content: a run's error quotes pages, paths, and what the
     session said, so it's named by where it failed alone."""
     if isinstance(error, LibrarianRunError):

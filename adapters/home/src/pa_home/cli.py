@@ -20,7 +20,7 @@ from pa_core.status import Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
-from pa_home.capture import capture_cycle
+from pa_home.capture import CycleOutcome, capture_cycle
 from pa_home.collectors import Collector
 from pa_home.collectors.calendar import BackfillCount, CalendarCollector, count_for_backfill
 from pa_home.collectors.calendar_server import CalDavServer, CalendarServer
@@ -29,6 +29,7 @@ from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
     GMAIL_CLIENT_VAR,
     GMAIL_TOKEN_VAR,
+    CaptureConfig,
     ConfigError,
     DataRoot,
     load_capture_config,
@@ -46,12 +47,17 @@ from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
 from pa_home.lock import LockHeld, data_root_lock
+from pa_home.nightly import nightly_job
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pa", description="Personal assistant.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("ingest", help="Turn raw payloads in the inbox into episodes in L0.")
+    commands.add_parser(
+        "ingest",
+        help="Turn raw payloads in the inbox into episodes in L0. Skips if another run holds "
+        "the data root's lock.",
+    )
     inspect = commands.add_parser(
         "inspect",
         help="Print the structure of a payload, an envelope, or a quarantine record, never its "
@@ -128,6 +134,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=datetime.fromisoformat,
         required=True,
         help="ISO 8601; the owner's time zone if it has no offset.",
+    )
+    commands.add_parser(
+        "nightly",
+        help="Run the nightly job under the data root's lock: a capture cycle with "
+        "reconciliation, then the librarian run, then the backup, each recorded in the status. "
+        "A step that fails doesn't stop the next. Skips if another run holds the lock.",
     )
     commands.add_parser(
         "status",
@@ -316,21 +328,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _calendar_dry_run(args.window_start)
         data_root = load_data_root()
         if args.command == "ingest":
-            _ingest(data_root)
+            try:
+                with data_root_lock(data_root):
+                    _ingest(data_root)
+            except LockHeld:
+                print("ingest: skipped: another run holds the data root's lock")
         elif args.command == "capture":
             return _capture(data_root, args.backfill, reconcile=args.reconcile)
+        elif args.command == "nightly":
+            return _nightly(data_root)
         elif args.command == "status":
             _print_status(data_root)
         elif args.command == "cut":
             _cut(data_root)
         elif args.command == "catalog":
-            _rebuild_catalog(data_root)
+            with data_root_lock(data_root):
+                _rebuild_catalog(data_root)
         elif args.command == "backup":
             _backup(data_root)
         elif args.command == "renormalize":
-            _renormalize(data_root)
+            with data_root_lock(data_root):
+                _renormalize(data_root)
         elif args.command == "librarian" and args.librarian_command == "seed":
-            _seed(data_root, args.eval_wiki, args.captured_through)
+            with data_root_lock(data_root):
+                _seed(data_root, args.eval_wiki, args.captured_through)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -386,10 +407,8 @@ def open_icloud() -> CalendarServer:
     return CalDavServer(credentials.username, credentials.password)
 
 
-def _capture(
-    data_root: DataRoot, window_start: datetime | None = None, *, reconcile: bool = False
-) -> int:
-    owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
+def build_collectors(config: CaptureConfig, time_zone: ZoneInfo) -> list[Collector]:
+    """A collector for each source `config` configures."""
     collectors: list[Collector] = []
     if config.gmail_token is not None:
         collectors.append(GmailCollector(open_gmail(config.gmail_token)))
@@ -400,9 +419,16 @@ def _capture(
         )
     if config.vault is not None:
         collectors.append(VaultCollector(config.vault.path, config.vault.daily_notes, time_zone))
+    return collectors
+
+
+def _capture(
+    data_root: DataRoot, window_start: datetime | None = None, *, reconcile: bool = False
+) -> int:
+    owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
     outcome = capture_cycle(
         data_root,
-        collectors=collectors,
+        collectors=build_collectors(config, time_zone),
         owner=owner,
         cadences=config.cadences,
         window_start=None if window_start is None else _in_time_zone(window_start, time_zone),
@@ -411,23 +437,55 @@ def _capture(
     if outcome.skipped:
         print("capture: skipped: another run holds the data root's lock")
         return 0
+    _report_cycle(outcome, time_zone, "capture")
+    return 1 if outcome.failed else 0
+
+
+def _report_cycle(outcome: CycleOutcome, time_zone: ZoneInfo, name: str) -> None:
+    """Print what a capture cycle did, as `name`: counts and reasons, never content."""
     for source, count in outcome.collected.items():
-        print(f"capture: {source}: collected {count}")
+        print(f"{name}: {source}: collected {count}")
     for source, reason in outcome.failures.items():
-        print(f"pa: capture: {source}: collection failed: {reason}", file=sys.stderr)
+        print(f"pa: {name}: {source}: collection failed: {reason}", file=sys.stderr)
     if outcome.ingested is not None:
         summary = outcome.ingested
         print(
-            f"capture: ingested {summary.ingested}, unchanged {summary.unchanged}, "
+            f"{name}: ingested {summary.ingested}, unchanged {summary.unchanged}, "
             f"quarantined {summary.quarantined}"
             + (f", left {len(summary.left)}" if summary.left else "")
         )
         for reason in summary.left:
-            print(f"pa: capture: {reason}", file=sys.stderr)
+            print(f"pa: {name}: {reason}", file=sys.stderr)
     if outcome.ingest_failure is not None:
-        print(f"pa: capture: ingest failed: {outcome.ingest_failure}", file=sys.stderr)
+        print(f"pa: {name}: ingest failed: {outcome.ingest_failure}", file=sys.stderr)
     for source, watermark in outcome.published.items():
-        print(f"capture: {source}: watermark {_moment(watermark, time_zone)}")
+        print(f"{name}: {source}: watermark {_moment(watermark, time_zone)}")
+
+
+def _nightly(data_root: DataRoot) -> int:
+    owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
+    outcome = nightly_job(
+        data_root,
+        collectors=build_collectors(config, time_zone),
+        owner=owner,
+        cadences=config.cadences,
+        time_zone=time_zone,
+    )
+    if outcome.skipped:
+        print("nightly: skipped: another run holds the data root's lock")
+        return 0
+    if outcome.capture is not None:
+        _report_cycle(outcome.capture, time_zone, "nightly: capture")
+    if outcome.capture_failure is not None:
+        print(f"pa: nightly: capture failed: {outcome.capture_failure}", file=sys.stderr)
+    if outcome.librarian is not None:
+        _report_run(outcome.librarian, "nightly: librarian")
+    if outcome.librarian_failure is not None:
+        print(f"pa: nightly: librarian: {outcome.librarian_failure}", file=sys.stderr)
+    if outcome.snapshot is not None:
+        print(f"nightly: backup: took snapshot {outcome.snapshot[:8]}")
+    if outcome.backup_failure is not None:
+        print(f"pa: nightly: backup failed: {outcome.backup_failure}", file=sys.stderr)
     return 1 if outcome.failed else 0
 
 
@@ -579,12 +637,17 @@ def _run_librarian(data_root: DataRoot) -> None:
     except LockHeld:
         print("librarian: skipped: another run holds the data root's lock")
         return
+    _report_run(outcome, "librarian")
+
+
+def _report_run(outcome: RunOutcome, name: str) -> None:
+    """Print what a librarian run did, as `name`: counts, never content."""
     if outcome.batch is None or outcome.commit is None:
-        print("librarian: no new episodes since the last run")
+        print(f"{name}: no new episodes since the last run")
         return
     batch = outcome.batch
     print(
-        f"librarian: offered {len(batch.episodes)} of {batch.captured} new episodes; "
+        f"{name}: offered {len(batch.episodes)} of {batch.captured} new episodes; "
         f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
     )
 

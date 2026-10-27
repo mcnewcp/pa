@@ -74,7 +74,34 @@ def capture_cycle(
     window_start: datetime | None = None,
     reconcile: bool = False,
 ) -> CycleOutcome:
-    """Run one capture cycle over `data_root`, or skip it if another run holds the lock.
+    """Run one capture cycle over `data_root` under its lock, or skip it if another run holds
+    the lock (`run_capture_cycle` says what the cycle does)."""
+    try:
+        with data_root_lock(data_root):
+            return run_capture_cycle(
+                data_root,
+                collectors=collectors,
+                owner=owner,
+                cadences=cadences,
+                now=now,
+                window_start=window_start,
+                reconcile=reconcile,
+            )
+    except LockHeld:
+        return CycleOutcome(skipped=True)
+
+
+def run_capture_cycle(
+    data_root: DataRoot,
+    *,
+    collectors: Sequence[Collector],
+    owner: Owner,
+    cadences: Mapping[Source, timedelta],
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    window_start: datetime | None = None,
+    reconcile: bool = False,
+) -> CycleOutcome:
+    """Run one capture cycle over `data_root`, whose lock the caller holds (the nightly job).
 
     `cadences` gives each collected source's expected cadence, for the status. With
     `window_start`, the cycle is a backfill: each collector captures its source's history from
@@ -83,22 +110,6 @@ def capture_cycle(
     """
     if window_start is not None and reconcile:
         raise ValueError("a backfill doesn't reconcile")
-    try:
-        with data_root_lock(data_root):
-            return _cycle(data_root, collectors, owner, cadences, now, window_start, reconcile)
-    except LockHeld:
-        return CycleOutcome(skipped=True)
-
-
-def _cycle(
-    data_root: DataRoot,
-    collectors: Sequence[Collector],
-    owner: Owner,
-    cadences: Mapping[Source, timedelta],
-    now: Callable[[], datetime],
-    window_start: datetime | None,
-    reconcile: bool,
-) -> CycleOutcome:
     outcome = CycleOutcome()
     status = read_status(data_root.status)
     sources = dict(status.sources)
