@@ -357,3 +357,41 @@ def test_a_failed_backup_is_recorded_after_the_nights_run(
     failure = status(data_root).backup.last_failure
     assert failure is not None and "RESTIC_REPOSITORY" in failure.reason
     assert f"pa: nightly: backup failed: {failure.reason}" in capsys.readouterr().err
+
+
+class SeesTheStatus:
+    """A collector that reads the status file as the assistant would, mid-night."""
+
+    source = Source.ICLOUD_CALENDAR
+
+    def __init__(self, data_root: Path) -> None:
+        self.data_root = data_root
+        self.running_since: datetime | None = None
+
+    def collect(self, inbox: SourceInbox, state: Path, *, now) -> None:
+        raise AssertionError("the nightly job reconciles")
+
+    def reconcile(self, inbox: SourceInbox, state: Path, *, now) -> None:
+        self.running_since = status(self.data_root).nightly.running_since
+
+    def backfill(self, inbox: SourceInbox, state: Path, *, window_start, now) -> None:
+        raise AssertionError("not a backfill")
+
+
+def test_the_status_says_the_nightly_job_is_running_from_its_start_until_it_ends(
+    data_root: Path, vault: Path
+):
+    started = datetime(2026, 10, 21, 3, 0, tzinfo=CHICAGO)
+    calendar = SeesTheStatus(data_root)
+
+    nightly_job(
+        DataRoot(data_root),
+        collectors=[calendar],
+        owner=OWNER,
+        cadences={Source.ICLOUD_CALENDAR: timedelta(minutes=15)},
+        time_zone=CHICAGO,
+        now=lambda: started,
+    )
+
+    assert calendar.running_since == started
+    assert status(data_root).nightly.running_since is None

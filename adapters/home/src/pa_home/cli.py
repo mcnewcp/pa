@@ -564,11 +564,12 @@ def _print_status(data_root: DataRoot) -> None:
         return "none" if value is None else f"{moment(value.at)} ({value.reason})"
 
     print(f"status: updated {moment(status.updated_at)}")
+    if status.nightly.running_since is not None:
+        print(f"nightly: running since {moment(status.nightly.running_since)}")
     for name, source in sorted(status.sources.items()):
-        stale = source.watermark is None or now - source.watermark > source.cadence
         print(
             f"{name}: watermark {moment(source.watermark)}"
-            f"{' (stale)' if stale else ''}, "
+            f"{' (stale)' if status.stale(name, now=now) else ''}, "
             f"expected every {source.cadence.total_seconds() / 60:g} min; "
             f"last attempt {moment(source.last_attempt)}; "
             f"last failure {failure(source.last_failure)}; "
