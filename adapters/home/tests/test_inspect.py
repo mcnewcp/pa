@@ -216,6 +216,19 @@ def test_a_calendar_resource_behind_a_capture_header_shows_its_components_and_ev
     assert "LAST-MODIFIED: 1 of 2" in out
 
 
+def test_a_deleted_calendar_resource_shows_its_deletion_field(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    deleted = series().replace(
+        b"\n\nBEGIN:VCALENDAR", b"\nDeleted-At: 2026-10-22T19:40:00-05:00\n\nBEGIN:VCALENDAR"
+    )
+
+    out = inspect(write(tmp_path, "resource.ics", deleted), capsys)
+
+    assert "capture header: Calendar, Captured-At, Deleted-At" in out
+    assert "events: 2" in out
+
+
 def test_a_calendar_export_without_a_capture_header_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
@@ -402,7 +415,27 @@ MALFORMED = {
         "icloud_calendar/event.ics",
         single_event().replace(b"20261017T090000", NAME.encode()),
     ),
-    "calendar-series": ("icloud_calendar/resource.ics", series()),
+    "calendar-two-series": (
+        "icloud_calendar/resource.ics",
+        series().replace(
+            b"UID:zq-series@quackmail.example\r\nRECURRENCE-ID",
+            b"UID:zq-other@quackmail.example\r\nRECURRENCE-ID",
+        ),
+    ),
+    "calendar-deletion-time": (
+        "icloud_calendar/resource.ics",
+        series().replace(b"Captured-At:", f"Deleted-At: {SUBJECT}\nCaptured-At:".encode()),
+    ),
+    "calendar-unknown-zone": (
+        "icloud_calendar/resource.ics",
+        series().replace(b"TZID=America/Chicago:20261017T090000", b"TZID=Snorkel/Wobble:2026"),
+    ),
+    "calendar-unreadable-duration": (
+        "icloud_calendar/event.ics",
+        series()
+        .replace(b"RRULE:FREQ=WEEKLY;BYDAY=SA\r\n", b"")
+        .replace(b"DTEND;TZID=America/Chicago:20261017T094500", f"DURATION:{NAME}".encode()),
+    ),
     "chat-schema": (
         "assistant_chat/exchange.json",
         exchange().replace(b'"owner"', f'"{NAME}"'.encode()),

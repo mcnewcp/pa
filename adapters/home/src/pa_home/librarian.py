@@ -178,7 +178,8 @@ def replay(
     L0 is the `data_root`'s, or `corpus` (directories of raw payloads, one directory per source
     as in the inbox) ingested into a throwaway data root, captured at `as_of` (else the clock's
     time). With a `window_start`, the first batch is the window start's week, and nothing that
-    occurred before it is offered. `target` must be new or empty, unless `resume`, when it
+    occurred before it is offered but the calendar events still going at it, such as a series.
+    `target` must be new or empty, unless `resume`, when it
     must hold a replay to carry on from its last committed run.
     """
     layout = ReplayTarget(target)

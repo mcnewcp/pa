@@ -2387,6 +2387,59 @@ def test_a_windowed_replay_starts_at_the_window_starts_week_and_never_offers_ear
     ]
 
 
+def captured_event(uid: str, summary: str, start: str, end: str, *extra: str) -> bytes:
+    """A calendar resource as the CalDAV collector lands it, captured in the backfill."""
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        "DTSTAMP:20261025T120000Z",
+        f"DTSTART;TZID=America/Chicago:{start}",
+        f"DTEND;TZID=America/Chicago:{end}",
+        f"SUMMARY:{summary}",
+        *extra,
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    header = "Calendar: Family\nCaptured-At: 2026-10-25T07:00:00-05:00\n\n"
+    return header.encode() + "".join(f"{line}\r\n" for line in lines).encode()
+
+
+def test_a_windowed_replay_offers_what_was_still_going_at_the_window_start_in_its_first_batch(
+    data_root: Path, tmp_path: Path
+):
+    # A weekly class that started a year before the window, an all-day event over the window
+    # start, and a single event over by then.
+    ingest(
+        data_root,
+        {
+            **BEFORE_THE_WINDOW,
+            "icloud_calendar/pottery.ics": captured_event(
+                "pottery@example.com",
+                "Pottery class",
+                "20250902T183000",
+                "20250902T200000",
+                "RRULE:FREQ=WEEKLY;BYDAY=TU",
+            ),
+            "icloud_calendar/dentist.ics": captured_event(
+                "dentist@example.com", "Dentist", "20261006T090000", "20261006T100000"
+            ),
+            "icloud_calendar/retreat.ics": captured_event(
+                "retreat@example.com", "Retreat", "20261005T090000", "20261007T170000"
+            ),
+        },
+    )
+    target = tmp_path / "backfill"
+
+    assert replay(target, "--window-start", WINDOW_START) == 0
+
+    assert [sorted(subjects) for subjects in observed_subjects(data_root)] == [
+        ["Pottery class", "RSVP", "Retreat"],
+        ["Menu"],
+    ]
+
+
 def test_a_windowed_replay_resumes_from_its_last_committed_batch_within_its_window(
     data_root: Path, tmp_path: Path, capsys
 ):

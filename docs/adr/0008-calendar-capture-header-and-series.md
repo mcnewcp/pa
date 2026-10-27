@@ -24,7 +24,9 @@ The collector reads changes through CalDAV's sync tokens every 15 minutes. Each 
 ## Consequences
 
 - The normalizer accepts both shapes. A payload without a header and with one VEVENT normalizes exactly as before, with the same episode id, so the frozen corpus, its eval sets, and its eval wikis hold.
-- Versions of a series are ordered by `captured_at`, then episode id, as notes are. A deletion is the last version.
+- Versions of a series are ordered by `captured_at`, then episode id, as notes are. A deletion is the last version: its `captured_at` is its `Deleted-At`.
+- The version also covers the calendar's name, since an event moved to another calendar is a new resource there with the same UID. It leaves out alarms (`VALARM`) as well as `DTSTAMP` (#93): an alarm is the owner's reminder, never shown in the envelope, and a client may mark one `ACKNOWLEDGED` each time it goes off.
+- A series' `occurred_at` starts at its first occurrence and has no end, and nothing in it depends on `Captured-At`, so an unchanged series captured again collapses. A windowed replay's first window takes the calendar events still going at its start, so a series that began before a backfill's window is offered (#93).
 - The occurrence window is a normalizer parameter. Changing it means a renormalize.
 - v0.13 starts with a spike that reads the owner's real calendars for their structure only, never their content. It checks:
   - how many VEVENTs a resource holds;
