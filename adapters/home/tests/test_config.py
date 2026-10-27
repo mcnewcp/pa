@@ -6,6 +6,8 @@ import pytest
 from pa_core.owner import Owner
 from pa_home.config import (
     ConfigError,
+    load_capture_config,
+    load_icloud_calendars,
     load_icloud_credentials,
     load_librarian_config,
     load_owner,
@@ -116,3 +118,15 @@ def test_a_password_file_others_can_read_is_refused(tmp_path: Path, mode: int):
 def test_an_empty_password_file_is_refused(tmp_path: Path):
     with pytest.raises(ConfigError, match="is empty"):
         load_icloud_credentials(icloud_environ(tmp_path, password="  "))
+
+
+def test_the_calendars_to_capture_are_named_comma_separated_with_spaces_kept_inside():
+    environ = {"PA_ICLOUD_CALENDARS": " Home, Work ,Family Calendar,,Home"}
+
+    assert load_capture_config(environ).icloud_calendars == ("Home", "Work", "Family Calendar")
+
+
+def test_icloud_calendar_isnt_captured_until_its_calendars_are_named():
+    assert load_capture_config({}).icloud_calendars == ()
+    with pytest.raises(ConfigError, match="PA_ICLOUD_CALENDARS is not set"):
+        load_icloud_calendars({})

@@ -189,7 +189,8 @@ finish() {
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
-# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, or --backup
+# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, --icloud for
+# iCloud Calendar's app-specific password and calendars (#97), a new password too, or --backup
 # for the backup drive alone (#89).
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -198,15 +199,17 @@ ASSISTANT_STAGES=18
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
 GMAIL_STAGES=3
+ICLOUD_STAGES=3
 BACKUP_STAGES=2
-only_librarian=false only_vault=false only_gmail=false only_backup=false
+only_librarian=false only_vault=false only_gmail=false only_icloud=false only_backup=false
 case ${1:-} in
   "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
   --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
+  --icloud) TOTAL_STAGES=$ICLOUD_STAGES; only_icloud=true ;;
   --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --backup]\n' >&2; exit 2 ;;
+  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --icloud | --backup]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -648,6 +651,85 @@ fi
 pause
 }
 
+# icloud_value KEY prints KEY's value in icloud.env, if it's set there.
+icloud_value() {
+  [[ -f $PA_ICLOUD_ENV ]] || return 0
+  # shellcheck source=/dev/null # icloud.env, written by the stages below
+  (source "$PA_ICLOUD_ENV" && printf '%s' "${!1:-}")
+}
+
+# iCloud Calendar's capture (#97): an app-specific password for the Apple ID, and the calendars to
+# capture. Run in the go-live ticket, and again (stage C1) whenever the password is revoked.
+icloud_stages() {
+
+# ── C1 ────────────────────────────────────────────────────────────────────
+stage "An app-specific password for iCloud Calendar"
+if private_file "$PA_ICLOUD_PASSWORD_FILE" && [[ -n $(icloud_value PA_ICLOUD_USERNAME) ]] &&
+  ! confirm "A password is saved already. Save a new one (it was revoked, or iCloud refuses it)?"; then
+  ok "the app-specific password is saved at $PA_ICLOUD_PASSWORD_FILE"
+else
+  say "The PA reads your calendars over CalDAV, read-only, signed in as your Apple ID with an"
+  say "app-specific password: one Apple generates for one app, which you can revoke on its own."
+  warn "Not your Apple ID password. Generate a new app-specific password and give that below:"
+  warn "your Apple ID password doesn't work over CalDAV, and must never be saved on the devbox."
+  open_url "https://account.apple.com/account/manage"
+  step "Sign in → Sign-In and Security → App-Specific Passwords → Generate an app-specific password."
+  step "Name it pa-devbox. Apple shows it once, as four groups of four letters: abcd-efgh-ijkl-mnop."
+  printf '\n  %sYour Apple ID (the email you sign in to iCloud with)%s ' "$BOLD" "$RESET"
+  read -r apple_id || true
+  [[ -n $apple_id ]] || { printf '  %s✗ no Apple ID given%s\n' "$RED" "$RESET"; exit 1; }
+  printf '  %sThe app-specific password (hidden)%s ' "$BOLD" "$RESET"
+  read -rs app_password || true
+  printf '\n'
+  if ! app_specific_password "$app_password"; then
+    printf '  %s✗ that isn'"'"'t an app-specific password (abcd-efgh-ijkl-mnop): nothing was saved.%s\n' "$RED" "$RESET"
+    note "If that was your Apple ID password, generate an app-specific password at account.apple.com"
+    note "and re-run setup-wizard.sh --icloud with it."
+    exit 1
+  fi
+  mkdir -p "$(dirname "$PA_ICLOUD_PASSWORD_FILE")"
+  chmod 700 "$(dirname "$PA_ICLOUD_PASSWORD_FILE")"
+  (umask 077 && printf '%s\n' "$app_password" >"$PA_ICLOUD_PASSWORD_FILE")
+  chmod 600 "$PA_ICLOUD_PASSWORD_FILE"
+  unset app_password
+  set_env_value "$PA_ICLOUD_ENV" PA_ICLOUD_USERNAME "$apple_id"
+  ok "saved at $PA_ICLOUD_PASSWORD_FILE, mode 0600, and the Apple ID in $PA_ICLOUD_ENV"
+fi
+note "Checking that iCloud takes it: the calendars the account serves."
+run "$DEPLOY_DIR/calendar.sh" calendars
+ok "iCloud takes the app-specific password"
+pause
+
+# ── C2 ────────────────────────────────────────────────────────────────────
+stage "The calendars to capture"
+say "The PA captures only the calendars you name here, by the names listed below (the Calendar"
+say "app's names). A calendar of reminders (VTODO) holds no events to capture."
+run "$DEPLOY_DIR/calendar.sh" calendars
+current=$(icloud_value PA_ICLOUD_CALENDARS)
+if [[ -n $current ]]; then
+  printf '\n  %sCalendars, comma-separated%s %s[Enter keeps %s]%s ' "$BOLD" "$RESET" "$DIM" "$current" "$RESET"
+else
+  printf '\n  %sCalendars, comma-separated, such as Home,Work,Family Calendar%s ' "$BOLD" "$RESET"
+fi
+read -r calendars || true
+calendars=${calendars:-$current}
+[[ -n $calendars ]] || { printf '  %s✗ no calendar named%s\n' "$RED" "$RESET"; exit 1; }
+set_env_value "$PA_ICLOUD_ENV" PA_ICLOUD_CALENDARS "$calendars"
+ok "wrote PA_ICLOUD_CALENDARS to $PA_ICLOUD_ENV"
+pause
+
+# ── C3 ────────────────────────────────────────────────────────────────────
+stage "iCloud Calendar dry run"
+say "Counts, per calendar, what a two-month backfill would take: each event or series with an"
+say "occurrence since then, and everything upcoming. Nothing but counts is printed."
+if [[ -f $PA_OWNER_ENV ]]; then
+  run "$DEPLOY_DIR/calendar.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("iCloud Calendar dry run: needs $PA_OWNER_ENV, then deploy/home/calendar.sh dry-run --window-start <date>")
+fi
+pause
+}
+
 # The vault copy (#87): ob runs the installed headless client, for the owner's steps.
 ob() { "$PA_VAULT_SYNC_DIR/bin/ob" "$@"; }
 
@@ -926,6 +1008,14 @@ if $only_gmail; then
   finish
   note "Gmail is captured once PA_GMAIL_TOKEN=$PA_GMAIL_TOKEN is in the capture's environment,"
   note "after its backfill: pa capture --backfill <window start>."
+  printf '\n'
+  exit 0
+fi
+if $only_icloud; then
+  icloud_stages
+  finish
+  note "iCloud Calendar is captured once $PA_ICLOUD_ENV and PA_ICLOUD_PASSWORD_FILE are in the"
+  note "capture's environment, after its backfill: pa capture --backfill <window start>."
   printf '\n'
   exit 0
 fi

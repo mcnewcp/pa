@@ -1,8 +1,9 @@
 """The calendar server: the CalDAV collections an account serves, read-only.
 
-`CalendarServer` is what a reader of calendars needs from CalDAV: the calendar collections, a
-full listing of one (every resource with its etag, plus the collection's sync token), and the
-changes since a sync token (RFC 6578). `CalDavServer` is it over iCloud, by the `caldav`
+`CalendarServer` is what a reader of calendars needs from CalDAV: the calendar collections, the
+members of one (every resource's href and etag, plus the collection's sync token), the
+resources at some hrefs, a full listing (the members, fetched), and the changes since a sync
+token (RFC 6578). `CalDavServer` is it over iCloud, by the `caldav`
 library; tests give a fake.
 
 Nothing here prints or logs, and no error it raises holds a URL, an href, a credential, or any
@@ -13,8 +14,8 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ElementTree
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from urllib.parse import urljoin, urlsplit
 
@@ -64,6 +65,15 @@ class Listing:
 
 
 @dataclass(frozen=True)
+class Members:
+    """Every resource a collection holds, by href with its etag, without their data; and the
+    collection's sync token, taken just before they were listed."""
+
+    sync_token: str | None = field(repr=False)
+    etags: dict[str, str | None] = field(repr=False)
+
+
+@dataclass(frozen=True)
 class Changes:
     """A sync report: what changed in a collection since a sync token."""
 
@@ -96,6 +106,13 @@ class CalendarServer(Protocol):
     def collections(self) -> list[Collection]: ...
 
     def listing(self, collection: Collection) -> Listing: ...
+
+    def members(self, collection: Collection) -> Members: ...
+
+    def fetch(self, collection: Collection, hrefs: Sequence[str]) -> list[Resource]:
+        """The resources at `hrefs`, as `members` and `changes` name them; one gone since is
+        left out."""
+        ...
 
     def changes(self, collection: Collection, sync_token: str) -> Changes:
         """What changed since `sync_token`; raises SyncTokenRejected if it's refused."""
@@ -183,6 +200,18 @@ class CalDavServer:
         return found
 
     def listing(self, collection: Collection) -> Listing:
+        members = self.members(collection)
+        resources = [
+            # A resource fetched without its etag keeps the one it was listed with.
+            resource if resource.etag else replace(resource, etag=members.etags[resource.href])
+            for resource in self.fetch(collection, list(members.etags))
+        ]
+        mismatches = sum(resource.etag != members.etags[resource.href] for resource in resources)
+        return Listing(
+            sync_token=members.sync_token, resources=resources, etag_mismatches=mismatches
+        )
+
+    def members(self, collection: Collection) -> Members:
         reply = self._request(
             "reading the sync token", "PROPFIND", collection.url, _PROPFIND_SYNC_TOKEN, 0
         )
@@ -199,25 +228,30 @@ class CalDavServer:
             ):
                 continue
             listed[url] = prop.findtext(f"{DAV}getetag")
+        return Members(sync_token=token, etags=listed)
+
+    def fetch(self, collection: Collection, hrefs: Sequence[str]) -> list[Resource]:
+        wanted = {urljoin(collection.url, href) for href in hrefs}
         resources: list[Resource] = []
-        mismatches = 0
-        hrefs = list(listed)
-        for start in range(0, len(hrefs), MULTIGET_BATCH):
-            batch = hrefs[start : start + MULTIGET_BATCH]
+        ordered = list(dict.fromkeys(hrefs))
+        for start in range(0, len(ordered), MULTIGET_BATCH):
+            batch = ordered[start : start + MULTIGET_BATCH]
             # By path: iCloud answers a multiget href given as a full URL with 404.
             body = _MULTIGET.format(
-                hrefs="\n".join(f"  <d:href>{_xml(urlsplit(h).path)}</d:href>" for h in batch)
+                hrefs="\n".join(
+                    f"  <d:href>{_xml(urlsplit(urljoin(collection.url, h)).path)}</d:href>"
+                    for h in batch
+                )
             )
             reply = self._request("fetching resources", "REPORT", collection.url, body, None)
             for href, prop in _responses(reply):
                 url = urljoin(collection.url, href)
                 data = prop.findtext(f"{CALDAV}calendar-data")
-                if url not in listed or data is None:
+                if url not in wanted or data is None:
                     continue
-                etag = prop.findtext(f"{DAV}getetag") or listed[url]
-                mismatches += etag != listed[url]
+                etag = prop.findtext(f"{DAV}getetag")
                 resources.append(Resource(href=url, etag=etag, data=data.encode("utf-8")))
-        return Listing(sync_token=token, resources=resources, etag_mismatches=mismatches)
+        return resources
 
     def changes(self, collection: Collection, sync_token: str) -> Changes:
         body = _SYNC_COLLECTION.format(token=_xml(sync_token))

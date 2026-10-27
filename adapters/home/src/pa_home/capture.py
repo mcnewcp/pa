@@ -25,6 +25,7 @@ from pa_core.status import Failure, SourceStatus, read_status, write_status
 from pa_home.collectors import (
     CollectionError,
     Collector,
+    Reconciler,
     SourceInbox,
     read_state,
     write_state,
@@ -71,16 +72,20 @@ def capture_cycle(
     cadences: Mapping[Source, timedelta],
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     window_start: datetime | None = None,
+    reconcile: bool = False,
 ) -> CycleOutcome:
     """Run one capture cycle over `data_root`, or skip it if another run holds the lock.
 
     `cadences` gives each collected source's expected cadence, for the status. With
     `window_start`, the cycle is a backfill: each collector captures its source's history from
-    then on instead of collecting what's new.
+    then on instead of collecting what's new. With `reconcile` (the nightly job's), each
+    collector that reconciles does so instead of collecting; the others collect.
     """
+    if window_start is not None and reconcile:
+        raise ValueError("a backfill doesn't reconcile")
     try:
         with data_root_lock(data_root):
-            return _cycle(data_root, collectors, owner, cadences, now, window_start)
+            return _cycle(data_root, collectors, owner, cadences, now, window_start, reconcile)
     except LockHeld:
         return CycleOutcome(skipped=True)
 
@@ -92,6 +97,7 @@ def _cycle(
     cadences: Mapping[Source, timedelta],
     now: Callable[[], datetime],
     window_start: datetime | None,
+    reconcile: bool,
 ) -> CycleOutcome:
     outcome = CycleOutcome()
     status = read_status(data_root.status)
@@ -106,10 +112,12 @@ def _cycle(
         current = sources.get(source) or SourceStatus(cadence=cadences[source])
         state = data_root.state / source
         try:
-            if window_start is None:
-                collector.collect(inbox, state, now=now)
-            else:
+            if window_start is not None:
                 collector.backfill(inbox, state, window_start=window_start, now=now)
+            elif reconcile and isinstance(collector, Reconciler):
+                collector.reconcile(inbox, state, now=now)
+            else:
+                collector.collect(inbox, state, now=now)
         except Exception as error:
             reason = failure_reason(error)
             outcome.failures[source] = reason
