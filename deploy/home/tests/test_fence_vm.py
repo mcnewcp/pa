@@ -13,6 +13,7 @@ from typing import Any
 
 DEPLOY = Path(__file__).resolve().parents[1]
 LIB = DEPLOY / "lib.sh"
+NFT = DEPLOY / "firewall" / "pa-vm.nft"
 API = "160.79.104.10"
 FENCED_NIC = {
     "type": "nic",
@@ -37,7 +38,21 @@ def fence(
     tailscale: bool = True,
     dns: str = "port=0",
     resolves_after: bool = False,
+    firewall: str | None = None,
+    unit_installed: bool = False,
+    vm_name: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """fence-vm.sh on stand-ins. The devbox's firewall is installed as the repo has it unless
+    `firewall` gives other rules; the pins unit isn't installed unless `unit_installed`."""
+    installed = stand_ins.root / "etc-pa" / "pa-vm.nft"
+    installed.parent.mkdir(exist_ok=True)
+    installed.write_text(firewall if firewall is not None else NFT.read_text())
+    units = stand_ins.root / "systemd"
+    units.mkdir(exist_ok=True)
+    if unit_installed:
+        (units / "pa-pins@.service").write_text("[Unit]\n")
+    stand_ins.add("systemctl")
+    stand_ins.answer("systemctl", "is-enabled", exit=0 if unit_installed else 1)
     stand_ins.add("getent")
     for host in ("api.anthropic.com", "platform.claude.com"):
         stand_ins.answer("getent", host, stdout=f"{API} STREAM {host}\n")
@@ -53,7 +68,14 @@ def fence(
     stand_ins.answer("incus", "command -v tailscale", exit=0 if tailscale else 1)
     stand_ins.answer("incus", "cat /etc/hosts", stdout="127.0.0.1 localhost\n")
     stand_ins.answer("incus", "getent", "example.com", exit=0 if resolves_after else 2)
-    return stand_ins.run(DEPLOY / "fence-vm.sh", env={"READS_STDIN": "sudo"})
+    env = {
+        "READS_STDIN": "sudo",
+        "PA_INSTALLED_FIREWALL": str(installed),
+        "PA_SYSTEMD_DIR": str(units),
+    }
+    if vm_name:
+        env["PA_ASSISTANT_VM"] = vm_name
+    return stand_ins.run(DEPLOY / "fence-vm.sh", env=env)
 
 
 def fenced(stand_ins: Any, **kwargs: Any) -> list[Any]:
@@ -111,11 +133,41 @@ def test_the_devbox_pins_the_hosts_again_at_each_boot(stand_ins):
     calls = fenced(stand_ins)
 
     [unit] = [c for c in stand_ins.of("sudo") if c.argv[:1] == ["tee"]]
-    assert unit.argv[-1] == "/etc/systemd/system/pa-pins@.service"
+    assert unit.argv[-1] == str(stand_ins.root / "systemd" / "pa-pins@.service")
     assert "User=owner\n" in unit.stdin
     assert f"ExecStart=/usr/bin/env PA_ASSISTANT_VM=%i {DEPLOY}/pin-hosts.sh\n" in unit.stdin
     assert "After=network-online.target incus.service incus-startup.service\n" in unit.stdin
     assert "sudo systemctl enable pa-pins@pa-home.service" in [c.line for c in calls]
+
+
+def test_a_boot_unit_already_installed_and_enabled_needs_no_sudo(stand_ins):
+    """The owner renders it from the checkout the devbox keeps; a run from another is no reason
+    to point it elsewhere."""
+    fenced(stand_ins, unit_installed=True)
+
+    assert stand_ins.of("sudo") == []
+
+
+def test_a_throwaway_vm_gets_its_pins_but_no_boot_unit(stand_ins):
+    calls = fenced(stand_ins, vm_name="pa-rebuild-test")
+
+    assert [c for c in calls if c.argv[-1:] == ["pa-rebuild-test/etc/hosts"]]
+    assert stand_ins.of("sudo") == []
+
+
+def test_the_firewall_is_checked_without_sudo(stand_ins):
+    fenced(stand_ins, unit_installed=True)
+
+    assert not [c for c in stand_ins.calls if "nft" in c.line]
+    assert "systemctl is-active --quiet pa-vm-firewall.service" in [c.line for c in stand_ins.calls]
+
+
+def test_a_firewall_other_than_the_repos_stops_the_fence_before_the_vm_is_touched(stand_ins):
+    result = fence(stand_ins, firewall="table inet pa_vm {}\n")
+
+    assert result.returncode != 0
+    assert "isn't the repo's: run install-firewall.sh" in result.stderr
+    assert not [c for c in stand_ins.of("incus") if "snapshot" in c.argv or "stop" in c.argv]
 
 
 def test_a_bridge_with_dns_stops_the_fence_before_the_vm_is_touched(stand_ins):
