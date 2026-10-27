@@ -141,7 +141,7 @@ else
   pass "example.com doesn't resolve: no DNS"
 fi
 for site in example.com wikipedia.org; do
-  web=$(getent ahostsv4 "$site" | awk 'NR == 1 {print $1}')
+  web=$(getent ahostsv4 "$site" | awk 'NR == 1 {print $1}' || true)
   if [[ -n $web ]]; then
     expect_tcp_blocked "$site by address" "$web" 443
     expect_tcp_blocked "$site by address" "$web" 80
@@ -158,7 +158,7 @@ fi
 echo "From $PA_VM, the Anthropic API is reachable, at its pinned names:"
 api=""
 for host in "${PA_VM_PINNED_HOSTS[@]}"; do
-  address=$(in_vm getent hosts "$host" | awk 'NR == 1 {print $1}')
+  address=$(in_vm getent hosts "$host" | awk 'NR == 1 {print $1}' || true)
   if [[ -n $address && -n $(in_api_range <<<"$address") ]]; then
     pass "$host is pinned at $address, in $PA_API_RANGE"
     api=${api:-$address}

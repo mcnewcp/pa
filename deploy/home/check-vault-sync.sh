@@ -61,8 +61,9 @@ for dir in "$PA_VAULT" "$PA_VAULT_SYNC_CONFIG"; do
     fail "$dir isn't $USER's with mode 0700 (run install-vault-sync.sh)"
   fi
 done
-problems=$(incus query '/1.0/instances?recursion=1' | vault_share_problems)
-if [[ -z $problems ]]; then
+if ! problems=$(incus query '/1.0/instances?recursion=1' | vault_share_problems); then
+  fail "can't read the VMs' devices"
+elif [[ -z $problems ]]; then
   pass "no VM is shared $PA_VAULT or $PA_VAULT_SYNC_CONFIG"
 else
   while read -r problem; do fail "$problem"; done <<<"$problems"
@@ -82,9 +83,11 @@ else
     fail "the daily-notes folder PA_VAULT_DAILY_NOTES names isn't in the copy (yet?)"
   else
     # The newest note's change time, and the note count, as the vault collector reads them.
-    read -r count newest < <(find "$daily" -type f -name '*.md' -not -path '*/.*' -printf '%T@\n' |
+    # Hidden files and folders are skipped by their own names: the copy itself sits under ~/.local.
+    read -r count newest < <(find "$daily" -mindepth 1 -name '.*' -prune -o -type f -name '*.md' -printf '%T@\n' 2>/dev/null |
       sort -n | awk '{n++; last=$1} END {printf "%d %d\n", n, last}')
-    total=$(find "$PA_VAULT" -type f -not -path '*/.*' | wc -l)
+    # A folder the devbox user can't read is left out of the total, unnamed.
+    total=$(find "$PA_VAULT" -mindepth 1 -name '.*' -prune -o -type f -print 2>/dev/null | wc -l || true)
     if ((count > 0)); then
       pass "$count daily notes of $total files; the newest changed $(date -d "@$newest" '+%F %T %Z'), $((($(date +%s) - newest) / 60)) minutes ago"
     else

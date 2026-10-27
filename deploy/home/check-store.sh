@@ -158,8 +158,9 @@ else
 fi
 
 echo "The VM is shared L0, the inbox directory, the wiki and the status, and nothing else:"
-problems=$(incus query "/1.0/instances/$PA_VM" | store_share_problems)
-if [[ -z $problems ]]; then
+if ! problems=$(incus query "/1.0/instances/$PA_VM" | store_share_problems); then
+  fail "can't read $PA_VM's devices"
+elif [[ -z $problems ]]; then
   pass "the devbox shares L0, the wiki and the status read-only, inbox/assistant_chat, and nothing else"
 else
   while read -r problem; do fail "$problem"; done <<<"$problems"
@@ -178,8 +179,9 @@ else
 fi
 
 echo "No VM is shared the vault copy or the headless Sync client's state:"
-problems=$(incus query '/1.0/instances?recursion=1' | vault_share_problems)
-if [[ -z $problems ]]; then
+if ! problems=$(incus query '/1.0/instances?recursion=1' | vault_share_problems); then
+  fail "can't read the VMs' devices"
+elif [[ -z $problems ]]; then
   pass "no VM is shared $PA_VAULT or $PA_VAULT_SYNC_CONFIG, or a directory holding them"
 else
   while read -r problem; do fail "$problem"; done <<<"$problems"

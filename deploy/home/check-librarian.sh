@@ -98,11 +98,12 @@ else
 fi
 
 echo "$PA_VM is shared L0 and the project read-only, the wiki writable, and nothing else:"
-problems=$(incus query "/1.0/instances/$PA_VM" | share_problems \
+if ! problems=$(incus query "/1.0/instances/$PA_VM" | share_problems \
   "lib-l0|$PA_L0|$PA_LIB_VM_L0|true" \
   "lib-project|$(realpath "$project")|$PA_LIB_VM_PROJECT|true" \
-  "lib-wiki|$(realpath "$PA_WIKI")|$PA_LIB_VM_WIKI|false")
-if [[ -z $problems ]]; then
+  "lib-wiki|$(realpath "$PA_WIKI")|$PA_LIB_VM_WIKI|false"); then
+  fail "can't read $PA_VM's devices"
+elif [[ -z $problems ]]; then
   pass "the devbox shares L0, the project and the wiki as a run's, and nothing else"
 else
   while read -r problem; do fail "$problem"; done <<<"$problems"
@@ -163,7 +164,7 @@ else
 fi
 
 echo "From $PA_VM, the Anthropic API is reachable:"
-api=$(in_vm getent hosts "$PA_API_HOST" | awk '{print $1}')
+api=$(in_vm getent hosts "$PA_API_HOST" | awk '{print $1}' || true)
 if [[ -n $api && -n $(in_api_range <<<"$api") ]]; then
   pass "$PA_API_HOST is $api, in $PA_API_RANGE"
 else
@@ -181,7 +182,7 @@ if in_vm getent hosts example.com >/dev/null 2>&1; then
 else
   pass "example.com doesn't resolve: no DNS"
 fi
-web=$(getent ahostsv4 example.com | awk 'NR == 1 {print $1}')
+web=$(getent ahostsv4 example.com | awk 'NR == 1 {print $1}' || true)
 if [[ -n $web ]]; then
   expect_tcp_blocked "example.com by address" "$web" 443
 else
