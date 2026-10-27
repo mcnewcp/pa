@@ -403,49 +403,61 @@ echo "In $PA_VM, Write and Edit can't write the inbox or the assistant's own ins
 inbox_probe=$PA_VM_CHAT_INBOX/.pa-file-tool-probe.json
 edit_probe=$PA_VM_CHAT_INBOX/.pa-edit-probe.json
 user_claude_md=$PA_VM_HOME/.claude/CLAUDE.md
+# probe_file_tools runs the session, once the Edit probe is in the inbox, and checks the files.
+probe_file_tools() {
+  claude_md_before=$(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent)
+  # The session runs in scratch, where no project's instructions load: in the agent project, whose
+  # CLAUDE.md says it writes only to scratch, sessions mostly declined to try. The deny rules are
+  # the managed settings', the same everywhere. One that still declines is asked again, up to three
+  # times; a write that got through fails at once.
+  for attempt in 1 2 3; do
+    output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
+      incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_SCRATCH") && $(
+        printf '%q ' "$PA_VM_CLAUDE" -p --output-format stream-json --verbose \
+          --no-session-persistence --model claude-haiku-5-5 --max-turns 8 \
+          --permission-mode acceptEdits)" 2>"$work/files.err") || true
+    problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
+      "Edit:$edit_probe" <<<"$output" 2>&1) || break
+    grep -qv '^the session never tried ' <<<"$problems" && break
+    [[ -z $problems ]] && break
+    ((attempt < 3)) && printf '  ....  the session declined to try; asking again\n'
+  done
+  if ! problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
+    "Edit:$edit_probe" <<<"$output" 2>&1); then
+    fail "the file tools probe: $problems $(head -c 300 "$work/files.err")"
+  elif [[ -n $problems ]]; then
+    while read -r problem; do fail "$problem"; done <<<"$problems"
+  else
+    pass "Write and Edit were refused on $inbox_probe, $user_claude_md and $edit_probe"
+  fi
+  if in_vm test -e "$inbox_probe"; then
+    fail "$inbox_probe was written"
+  else
+    pass "nothing new in $PA_VM_CHAT_INBOX"
+  fi
+  if [[ $(in_vm cat "$edit_probe" 2>/dev/null) == unchanged ]]; then
+    pass "$edit_probe is unchanged"
+  else
+    fail "$edit_probe was changed"
+  fi
+  if [[ $(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent) == \
+    "$claude_md_before" ]]; then
+    pass "$user_claude_md is unchanged"
+  else
+    fail "$user_claude_md was written"
+  fi
+  in_vm rm -f "$inbox_probe" "$edit_probe"
+}
+# The capture user puts the Edit probe in the inbox; with no inbox (the store not mounted), there
+# is nothing to probe.
 # shellcheck disable=SC2016 # expanded by the shell in the VM
-in_vm runuser -u "$PA_CAPTURE_USER" -- sh -c 'printf "unchanged\n" >"$1"' sh "$edit_probe"
-claude_md_before=$(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent)
-# The session runs in scratch, where no project's instructions load: in the agent project, whose
-# CLAUDE.md says it writes only to scratch, sessions mostly declined to try. The deny rules are
-# the managed settings', the same everywhere. One that still declines is asked again, up to three
-# times; a write that got through fails at once.
-for attempt in 1 2 3; do
-  output=$(file_tool_probe_prompt "$inbox_probe" "$user_claude_md" "$edit_probe" |
-    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_SCRATCH") && $(
-      printf '%q ' "$PA_VM_CLAUDE" -p --output-format stream-json --verbose \
-        --no-session-persistence --model claude-haiku-5-5 --max-turns 8 \
-        --permission-mode acceptEdits)" 2>"$work/files.err") || true
-  problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
-    "Edit:$edit_probe" <<<"$output" 2>&1) || break
-  grep -qv '^the session never tried ' <<<"$problems" && break
-  [[ -z $problems ]] && break
-  ((attempt < 3)) && printf '  ....  the session declined to try; asking again\n'
-done
-if ! problems=$(file_tool_probe_problems "Write:$inbox_probe" "Write:$user_claude_md" \
-  "Edit:$edit_probe" <<<"$output" 2>&1); then
-  fail "the file tools probe: $problems $(head -c 300 "$work/files.err")"
-elif [[ -n $problems ]]; then
-  while read -r problem; do fail "$problem"; done <<<"$problems"
+if in_vm runuser -u "$PA_CAPTURE_USER" -- sh -c 'printf "unchanged\n" >"$1"' sh "$edit_probe" \
+  2>/dev/null; then
+  probe_file_tools
 else
-  pass "Write and Edit were refused on $inbox_probe, $user_claude_md and $edit_probe"
+  fail "$PA_CAPTURE_USER can't put the Edit probe in $PA_VM_CHAT_INBOX, so the file tools weren't \
+tried (is the store mounted? run mount-store.sh)"
 fi
-if in_vm test -e "$inbox_probe"; then
-  fail "$inbox_probe was written"
-else
-  pass "nothing new in $PA_VM_CHAT_INBOX"
-fi
-if [[ $(in_vm cat "$edit_probe" 2>/dev/null) == unchanged ]]; then
-  pass "$edit_probe is unchanged"
-else
-  fail "$edit_probe was changed"
-fi
-if [[ $(in_vm sha256sum "$user_claude_md" 2>/dev/null || echo absent) == "$claude_md_before" ]]; then
-  pass "$user_claude_md is unchanged"
-else
-  fail "$user_claude_md was written"
-fi
-in_vm rm -f "$inbox_probe" "$edit_probe"
 
 echo "In $PA_VM, no auto memory is left, and these sessions wrote none:"
 memory=$(in_vm find "$PA_VM_HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name memory \
