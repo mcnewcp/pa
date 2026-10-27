@@ -131,8 +131,9 @@ def format_problems(error: ValidationError) -> str:
 
 
 def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
-    """The eval set in `path`. Over a `cut`, refused unless every episode it names (each
-    question's evidence, and the adversarial episodes) is in the cut."""
+    """The eval set in `path`. Over a `cut`, refused unless it's asked at the cut's as-of time
+    and every episode it names (each question's evidence, and the adversarial episodes) is in
+    the cut."""
     try:
         eval_set = EvalSet.model_validate_json(path.read_bytes())
     except FileNotFoundError as error:
@@ -142,7 +143,13 @@ def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
             f"eval set {path} does not match the format: {format_problems(error)}"
         ) from None
     if cut is not None:
-        named = {i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
+        if eval_set.as_of != cut.as_of:
+            # The two times alone: nothing else of the set is quoted.
+            raise EvalSetError(
+                f"eval set {path} is asked at {eval_set.as_of.isoformat()}, but the cut "
+                f"{cut.name} was taken at {cut.as_of.isoformat()}: set its as_of to the cut's"
+            )
+        named ={i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
         missing = sorted(named - cut.episode_ids())
         if missing:
             raise EvalSetError(

@@ -199,6 +199,34 @@ def test_a_set_naming_an_adversarial_episode_missing_from_the_cut_fails_to_load(
         load_eval_set(path, cut=cut)
 
 
+def write_set_asked_at(path: Path, as_of: str) -> Path:
+    data = json.loads(EVAL_SET.read_text())
+    data["as_of"] = as_of
+    path.write_text(json.dumps(data))
+    return path
+
+
+QUESTION_TEXT = json.loads(EVAL_SET.read_text())["questions"][0]["question"]
+
+
+def test_a_set_asked_at_another_time_than_the_cut_was_taken_fails_to_load(tmp_path, cut):
+    path = write_set_asked_at(tmp_path / "set.json", "2026-10-07T20:00:00-05:00")
+
+    with pytest.raises(EvalSetError) as refused:
+        load_eval_set(path, cut=cut)
+
+    message = str(refused.value)
+    assert "2026-10-07T20:00:00-05:00" in message
+    assert cut.as_of.isoformat() in message
+    assert QUESTION_TEXT not in message
+
+
+def test_a_set_asked_at_the_cuts_time_in_another_zone_loads(tmp_path, cut):
+    path = write_set_asked_at(tmp_path / "set.json", "2026-10-07T01:00:00+00:00")
+
+    assert load_eval_set(path, cut=cut).as_of == cut.as_of
+
+
 # `pa-eval run --cut DIR`
 
 QUESTION = "hotel-block-deadline"
@@ -299,6 +327,20 @@ def test_pa_eval_run_over_a_cut_refuses_a_set_citing_an_episode_missing_from_it(
     assert pa_eval_run_over(cut, eval_set, runs, scripts) == 1
 
     assert missing in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_pa_eval_run_over_a_cut_refuses_a_set_asked_at_another_time(
+    cut, scripts, private, capsys
+):
+    runs = private / "runs"
+    eval_set = write_set_asked_at(private / "set.json", "2026-10-05T20:00:00-05:00")
+
+    assert pa_eval_run_over(cut, eval_set, runs, scripts) == 1
+
+    error = capsys.readouterr().err
+    assert "2026-10-05T20:00:00-05:00" in error and cut.as_of.isoformat() in error
+    assert QUESTION_TEXT not in error
     assert not runs.exists()
 
 

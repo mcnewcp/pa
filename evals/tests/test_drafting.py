@@ -280,6 +280,30 @@ def test_a_second_pass_over_a_draft_the_owner_broke_is_refused_without_quoting_i
     assert "made-up" not in error.lower()
 
 
+def test_a_second_pass_over_a_draft_moved_to_another_time_is_refused(
+    tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys
+):
+    drafts = data_root.evals / "drafts"
+    first = drafts / "draft-1.json"
+    reply = reply_file(tmp_path, [question("single_fact_recall", [DEADLINE_EMAIL])])
+    assert draft(cut, first, reply) == 0
+    edited = json.loads(first.read_text())
+    edited["as_of"] = "2026-10-01T09:00:00-05:00"
+    first.write_text(json.dumps(edited))
+    notes = drafts / "notes.md"
+    notes.write_text("Made-up notes.\n")
+
+    result = draft(
+        cut, drafts / "draft-2.json", reply, "--revise", str(first), "--notes", str(notes)
+    )
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "2026-10-01T09:00:00-05:00" in error and cut.as_of.isoformat() in error
+    assert "made-up" not in error.lower()
+    assert not (drafts / "draft-2.json").exists()
+
+
 def test_a_draft_is_never_written_over(
     tmp_path: Path, data_root: DataRoot, cut: Cut, owner_env: None, capsys
 ):
