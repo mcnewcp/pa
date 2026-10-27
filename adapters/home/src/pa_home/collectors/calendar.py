@@ -40,6 +40,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict
 from pa_core.envelope import Source
 from pa_core.errors import MalformedPayloadError
 from pa_core.normalizers.calendar import occurs_on_or_after
+from pa_core.normalizers.capture_header import CaptureHeaderError, encode_capture_header
 from pa_home.collectors import CollectionError, SourceInbox, read_state, write_state
 from pa_home.collectors.calendar_server import (
     CalendarServer,
@@ -155,6 +156,12 @@ class CalendarCollector:
                 sync_token = capture.run(kind, saved.window_start)
             except CalendarServerError as error:
                 failures.append(f"{name}: {_reason(error)}")
+            except _UnwritableName:
+                # The name itself stays out of the reason: it holds a control character.
+                failures.append(
+                    "a calendar's display name holds a control character, so it can't go in a "
+                    "capture header"
+                )
             finally:
                 # What landed is kept even when the pass stopped part way; its token isn't.
                 calendars = {**saved.calendars, name: capture.state(sync_token)}
@@ -163,6 +170,10 @@ class CalendarCollector:
         write_state(state / _STATE, saved)
         if failures:
             raise CollectionError("; ".join(failures))
+
+
+class _UnwritableName(Exception):
+    """A calendar's display name a capture header can't hold."""
 
 
 class _CalendarCapture:
@@ -251,13 +262,18 @@ class _CalendarCapture:
     def _write(
         self, href: str, data: bytes, read_at: datetime, *, deleted_at: datetime | None = None
     ) -> None:
+        # A display name's line breaks and runs of white space read as one space.
         name = " ".join((self.collection.name or "").split())
-        header = f"Calendar: {name}\nCaptured-At: {self._moment(read_at)}\n"
+        fields = {"Calendar": name, "Captured-At": self._moment(read_at)}
         if deleted_at is not None:
-            header += f"Deleted-At: {self._moment(deleted_at)}\n"
+            fields["Deleted-At"] = self._moment(deleted_at)
+        try:
+            header = encode_capture_header(fields)
+        except CaptureHeaderError:
+            raise _UnwritableName from None
         # Named by its href's digest: an href can hold a UID, which can hold an address.
         stem = hashlib.sha256(href.encode()).hexdigest()[:16]
-        self.inbox.write(stem, f"{header}\n".encode() + data)
+        self.inbox.write(stem, header + data)
 
     def _moment(self, moment: datetime) -> str:
         return moment.astimezone(self.time_zone).isoformat(timespec="seconds")

@@ -318,3 +318,18 @@ def test_a_cycle_that_finds_the_lock_held_skips(data_root: DataRoot, vault: Path
     assert notes_in_l0(data_root) == []
     assert not data_root.status.exists()
     assert files_under(data_root.state) == []
+
+
+def test_a_note_whose_path_holds_a_line_break_fails_the_collection_but_the_others_land(
+    data_root: DataRoot, vault: Path
+):
+    write_note(vault, "2026-10-04\nCaptured-At: 2020-01-01T00:00:00+00:00", "## Forged\n")
+    write_note(vault, "2026-10-05", "## Swim lessons\nSigned up for Tuesdays.\n")
+
+    outcome = run_cycle(data_root, vault, Clock(datetime(2026, 10, 6, 1, 0, tzinfo=CHICAGO)))
+
+    assert outcome.failures == {
+        Source.OBSIDIAN: "a daily note's path holds a line break or control character; "
+        "rename the note"
+    }
+    assert [note.native_id for note in notes_in_l0(data_root)] == ["Daily/2026-10-05.md"]
