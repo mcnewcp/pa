@@ -78,3 +78,20 @@ def test_a_listing_fetches_every_resource_asking_for_each_by_its_path():
     assert {resource.etag for resource in listing.resources} == {'"e1"', '"e2"'}
     assert listing.sync_token == "tok"
     assert listing.etag_mismatches == 0
+
+
+def test_the_members_are_every_resources_href_and_etag_without_their_data():
+    members = ICloudLike().members(Collection(url=CALENDAR, name="Home"))
+
+    assert members.etags == {urljoin(CALENDAR, path): etag for path, (etag, _) in EVENTS.items()}
+    assert members.sync_token == "tok"
+
+
+def test_a_fetch_asks_for_each_resource_by_its_path_and_leaves_out_one_gone_since():
+    one = urljoin(CALENDAR, "/111/calendars/home/one.ics")
+    gone = urljoin(CALENDAR, "/111/calendars/home/gone.ics")
+
+    fetched = ICloudLike().fetch(Collection(url=CALENDAR, name="Home"), [one, gone])
+
+    assert [(resource.href, resource.etag) for resource in fetched] == [(one, '"e1"')]
+    assert fetched[0].data == b"BEGIN:VCALENDAR\nEND:VCALENDAR\n"

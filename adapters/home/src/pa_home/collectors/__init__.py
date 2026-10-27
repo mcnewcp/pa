@@ -1,7 +1,8 @@
 """Collectors: each brings one source's new and changed items into its inbox directory.
 
 A collector is told where its source's inbox directory is (`SourceInbox`, the only place it may
-write payloads) and where its own state lives, and it collects, or backfills a window.
+write payloads) and where its own state lives, and it collects, or backfills a window; one that
+is also a `Reconciler` reconciles too.
 Returning means it succeeded; raising means it failed, and the capture cycle records the failure
 without its content. The cycle, not the collector, keeps the watermarks.
 """
@@ -12,7 +13,7 @@ import hashlib
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -83,6 +84,17 @@ class Collector(Protocol):
         Afterwards, collections carry on from where the backfill stopped, and don't reach
         back before `window_start`. Raises on failure, as `collect` does.
         """
+        ...
+
+
+@runtime_checkable
+class Reconciler(Protocol):
+    """A collector that can also reconcile: compare everything its source holds against what it
+    has captured, so a change or a deletion it missed still lands. The nightly job asks for it."""
+
+    def reconcile(self, inbox: SourceInbox, state: Path, *, now: Callable[[], datetime]) -> None:
+        """Land whatever differs from what was last captured, as `collect` lands what's new.
+        Raises on failure, as `collect` does."""
         ...
 
 

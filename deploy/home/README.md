@@ -346,6 +346,24 @@ deploy/home/gmail.sh auth             # on the devbox; open the address it print
 
 Google warns that the app isn't verified: it's the owner's own, so click through (Advanced → Go to the app). The wizard's stage G2 (`setup-wizard.sh --gmail`) walks the same steps. The next capture cycle carries on from the stored history position.
 
+## iCloud Calendar
+
+The capture cycle (`pa capture`) collects the owner's iCloud calendars over CalDAV, read-only, when `PA_ICLOUD_CALENDARS` names them (by the Calendar app's names, comma-separated). Each resource lands in `inbox/icloud_calendar/` exactly as iCloud serves it, behind a capture header naming its calendar and when it was read (ADR-0008); a resource gone from its calendar lands again, its last-known bytes with `Deleted-At` added. The collector's state, with each captured resource's etag and bytes, is `state/icloud_calendar/calendars.json` under the data root, mode 0600.
+
+- **The credential** is an app-specific password for the owner's Apple ID, generated at account.apple.com (Sign-In and Security → App-Specific Passwords), **never the Apple ID password**. It's at `~/.config/pa/icloud-app-password` (`PA_ICLOUD_PASSWORD_FILE`), mode 0600; a file anyone else can read is refused. The Apple ID (`PA_ICLOUD_USERNAME`) and the calendars (`PA_ICLOUD_CALENDARS`) are in `~/.config/pa/icloud.env`, mode 0600.
+- **Setup** is the wizard's iCloud stages, run once in the go-live ticket: `deploy/home/setup-wizard.sh --icloud`. It refuses anything not shaped like an app-specific password (`abcd-efgh-ijkl-mnop`), lists the calendars the account serves (`deploy/home/calendar.sh calendars`, which is also the check that iCloud takes the password), and saves the ones to capture.
+- **Backfill first.** A collection reads each calendar's changes since the sync token its backfill recorded, and fails for a calendar until there is one: `pa capture --backfill <window start>`. The backfill takes every event or series with an occurrence on or after the window start, and everything upcoming; what it leaves out stays out unless it changes into the window. A token iCloud refuses leads to a full comparison, and nothing already captured lands again.
+- **Reconciliation** is the nightly job's: `pa capture --reconcile` compares every resource and its etag against what was captured, so a change or deletion the sync reports missed still lands.
+- **The dry run** counts, per calendar, what a backfill would take, reading every resource and printing counts only:
+
+  ```sh
+  deploy/home/calendar.sh dry-run --window-start 2026-09-01
+  ```
+
+### A new app-specific password
+
+iCloud refuses a revoked password, or one left behind by an Apple ID password change, with HTTP 401. iCloud Calendar's watermark in `pa status` then goes stale, and its last failure says to save a new app-specific password. Generate one at account.apple.com and run `deploy/home/setup-wizard.sh --icloud`: stage C1 asks whether to save a new one, and checks iCloud takes it. The next capture cycle carries on from the stored sync tokens.
+
 ## Hand-run tests with the real model
 
 The suite skips the tests that call a real model unless asked, since they cost money and depend on the model. Run them by hand on the devbox:

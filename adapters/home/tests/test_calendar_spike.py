@@ -9,6 +9,7 @@ the spike prints.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from pa_home.collectors.calendar_server import (
     Changes,
     Collection,
     Listing,
+    Members,
     Resource,
     SyncTokenRejected,
 )
@@ -183,6 +185,14 @@ class FakeServer:
     def listing(self, collection: Collection) -> Listing:
         calendar = self.calendars[collection.url]
         return Listing(self._token(), list(calendar.resources.values()))
+
+    def members(self, collection: Collection) -> Members:
+        calendar = self.calendars[collection.url]
+        return Members(self._token(), {h: r.etag for h, r in calendar.resources.items()})
+
+    def fetch(self, collection: Collection, hrefs: Sequence[str]) -> list[Resource]:
+        resources = self.calendars[collection.url].resources
+        return [resources[href] for href in hrefs if href in resources]
 
     def changes(self, collection: Collection, sync_token: str) -> Changes:
         since = int(sync_token.rpartition("-")[2])

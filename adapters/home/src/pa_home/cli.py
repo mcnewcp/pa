@@ -22,6 +22,8 @@ from pa_home.agent_project import render_agent_project
 from pa_home.backup import back_up
 from pa_home.capture import capture_cycle
 from pa_home.collectors import Collector
+from pa_home.collectors.calendar import BackfillCount, CalendarCollector, count_for_backfill
+from pa_home.collectors.calendar_server import CalDavServer, CalendarServer
 from pa_home.collectors.gmail import GmailClient, GmailCollector, count_by_category
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
@@ -32,6 +34,8 @@ from pa_home.config import (
     load_capture_config,
     load_data_root,
     load_gmail_config,
+    load_icloud_calendars,
+    load_icloud_credentials,
     load_librarian_config,
     load_owner,
     load_time_zone,
@@ -66,13 +70,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "publish each source's watermark once its payloads have landed. Skips if another run "
         "holds the data root's lock.",
     )
-    capture.add_argument(
+    capture_kind = capture.add_mutually_exclusive_group()
+    capture_kind.add_argument(
         "--backfill",
         type=datetime.fromisoformat,
         metavar="WINDOW_START",
         help="Backfill instead: capture each source's history from WINDOW_START on (ISO 8601; "
         "the owner's time zone if it has no offset), such as two months back. Collections then "
         "carry on from the backfill.",
+    )
+    capture_kind.add_argument(
+        "--reconcile",
+        action="store_true",
+        help="Reconcile instead of collecting, where a source can (iCloud Calendar): compare "
+        "everything it holds against what was captured, so a change or deletion a collection "
+        "missed still lands. The nightly job's cycle.",
     )
     gmail = commands.add_parser("gmail", help="Set up and check Gmail's capture.")
     gmail_commands = gmail.add_subparsers(dest="gmail_command", required=True)
@@ -94,6 +106,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         "their labels alone, without fetching any message. Prints counts only.",
     )
     gmail_dry_run.add_argument(
+        "--window-start",
+        type=datetime.fromisoformat,
+        required=True,
+        help="ISO 8601; the owner's time zone if it has no offset.",
+    )
+    calendar = commands.add_parser("calendar", help="Set up and check iCloud Calendar's capture.")
+    calendar_commands = calendar.add_subparsers(dest="calendar_command", required=True)
+    calendar_commands.add_parser(
+        "calendars",
+        help="Name the calendars the iCloud account serves, with what they hold, marking those "
+        "PA_ICLOUD_CALENDARS captures.",
+    )
+    calendar_dry_run = calendar_commands.add_parser(
+        "dry-run",
+        help="Count, per configured calendar, the resources a backfill from WINDOW_START would "
+        "take. Every resource is read; nothing but counts is printed.",
+    )
+    calendar_dry_run.add_argument(
         "--window-start",
         type=datetime.fromisoformat,
         required=True,
@@ -279,11 +309,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "gmail":
             _gmail_dry_run(args.window_start)
             return 0
+        if args.command == "calendar" and args.calendar_command == "calendars":
+            _calendars()
+            return 0
+        if args.command == "calendar":
+            return _calendar_dry_run(args.window_start)
         data_root = load_data_root()
         if args.command == "ingest":
             _ingest(data_root)
         elif args.command == "capture":
-            return _capture(data_root, args.backfill)
+            return _capture(data_root, args.backfill, reconcile=args.reconcile)
         elif args.command == "status":
             _print_status(data_root)
         elif args.command == "cut":
@@ -345,11 +380,24 @@ def open_gmail(token: Path) -> GmailClient:
     return GoogleGmailClient(token)
 
 
-def _capture(data_root: DataRoot, window_start: datetime | None = None) -> int:
+def open_icloud() -> CalendarServer:
+    """The owner's iCloud account, with the Apple ID and app-specific password configured."""
+    credentials = load_icloud_credentials()
+    return CalDavServer(credentials.username, credentials.password)
+
+
+def _capture(
+    data_root: DataRoot, window_start: datetime | None = None, *, reconcile: bool = False
+) -> int:
     owner, time_zone, config = load_owner(), load_time_zone(), load_capture_config()
     collectors: list[Collector] = []
     if config.gmail_token is not None:
         collectors.append(GmailCollector(open_gmail(config.gmail_token)))
+    if config.icloud_calendars:
+        # Opened by name at each pass, so a missing credential fails the calendar alone.
+        collectors.append(
+            CalendarCollector(lambda: open_icloud(), config.icloud_calendars, time_zone)
+        )
     if config.vault is not None:
         collectors.append(VaultCollector(config.vault.path, config.vault.daily_notes, time_zone))
     outcome = capture_cycle(
@@ -358,6 +406,7 @@ def _capture(data_root: DataRoot, window_start: datetime | None = None) -> int:
         owner=owner,
         cadences=config.cadences,
         window_start=None if window_start is None else _in_time_zone(window_start, time_zone),
+        reconcile=reconcile,
     )
     if outcome.skipped:
         print("capture: skipped: another run holds the data root's lock")
@@ -402,6 +451,37 @@ def _gmail_dry_run(window_start: datetime) -> None:
         f"gmail: {counts.total()} messages since {start.astimezone(time_zone).date()}: "
         f"{by_category}"
     )
+
+
+def _calendars() -> None:
+    configured = set(load_icloud_calendars(required=False))
+    for collection in open_icloud().collections():
+        name = collection.name or "(no name)"
+        holds = "/".join(collection.components) or "unknown components"
+        captured = ", captured" if collection.name in configured else ""
+        print(f"calendar: {name} ({holds}){captured}")
+
+
+def _calendar_dry_run(window_start: datetime) -> int:
+    time_zone = load_time_zone()
+    calendars = load_icloud_calendars()
+    start = _in_time_zone(window_start, time_zone)
+    day = start.astimezone(time_zone).date()
+    counts = count_for_backfill(open_icloud(), calendars, start)
+    status, resources, taken = 0, 0, 0
+    for name, count in counts.items():
+        if not isinstance(count, BackfillCount):
+            print(f"pa: calendar: {name}: {count}", file=sys.stderr)
+            status = 1
+            continue
+        print(
+            f"calendar: {name}: {count.resources} resources: {count.in_window} with an "
+            f"occurrence since {day}, {count.before} before, {count.unreadable} unreadable"
+        )
+        resources += count.resources
+        taken += count.in_window + count.unreadable
+    print(f"calendar: a backfill from {day} takes {taken} of {resources} resources")
+    return status
 
 
 def _in_time_zone(moment: datetime, time_zone: ZoneInfo) -> datetime:

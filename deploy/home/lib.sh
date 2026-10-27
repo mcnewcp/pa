@@ -83,6 +83,13 @@ PA_GMAIL_CLIENT=$HOME/.config/pa/gmail-client.json
 PA_GMAIL_TOKEN=$HOME/.config/pa/gmail-token.json
 PA_GMAIL_AUTH_PORT=8765
 
+# iCloud Calendar's capture (calendar.sh, #97): an app-specific password for the owner's Apple ID
+# (never the Apple ID password), mode 0600, and icloud.env, which names the Apple ID and the
+# calendars to capture (PA_ICLOUD_USERNAME, PA_ICLOUD_CALENDARS); the wizard writes both. They
+# stay on the devbox, never in the store or the repository.
+PA_ICLOUD_PASSWORD_FILE=$HOME/.config/pa/icloud-app-password
+PA_ICLOUD_ENV=$HOME/.config/pa/icloud.env
+
 # The instance's data root on the devbox: v0.11's, seeded from the synthetic corpus and
 # disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
 PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
@@ -364,6 +371,23 @@ inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort
 # require_owner_env stops unless the data root is seeded, owner.env with it.
 require_owner_env() {
   [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
+}
+
+# app_specific_password VALUE: VALUE is shaped like an Apple app-specific password, four groups
+# of four lowercase letters joined by hyphens, as account.apple.com shows it. An Apple ID
+# password isn't, so it's caught before it's saved where the app-specific one belongs.
+app_specific_password() { [[ $1 =~ ^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$ ]]; }
+
+# set_env_value FILE KEY VALUE sets KEY to VALUE in FILE, replacing any line for KEY, in double
+# quotes so both bash and a systemd EnvironmentFile read it. FILE is readable only by its owner.
+# A value holding a quote, $, a backquote, a backslash or a line break is refused.
+set_env_value() {
+  local file=$1 key=$2 value=$3 kept=""
+  [[ $value != *[\"\$\`\\]* && $value != *$'\n'* ]] || die "$key's value can't hold \", \$, \`, \\ or a line break"
+  mkdir -p "$(dirname "$file")"
+  [[ -f $file ]] && kept=$(grep -v "^$key=" "$file" || true)
+  (umask 077 && printf '%s%s="%s"\n' "${kept:+$kept$'\n'}" "$key" "$value" >"$file")
+  chmod 600 "$file"
 }
 
 # filesystem_missing_flags PATH prints each of PA_OWN_FILESYSTEM_FLAGS that the filesystem PATH

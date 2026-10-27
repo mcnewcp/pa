@@ -49,8 +49,10 @@ DEFAULT_CADENCE = timedelta(minutes=15)
 """A capture cycle runs every 15 minutes, so each source's watermark moves that often."""
 COLLECTED_SOURCES = (Source.GMAIL, Source.ICLOUD_CALENDAR, Source.OBSIDIAN)
 """The sources a collector captures. Chat is captured by the assistant's hook instead."""
-# iCloud Calendar over CalDAV: the Apple ID, and the file holding its app-specific password.
+# iCloud Calendar over CalDAV: the Apple ID, the file holding its app-specific password, and
+# the calendars to capture, by display name (iCloud Calendar is captured when they're set).
 ICLOUD_USERNAME_VAR = "PA_ICLOUD_USERNAME"
+ICLOUD_CALENDARS_VAR = "PA_ICLOUD_CALENDARS"
 ICLOUD_PASSWORD_FILE_VAR = "PA_ICLOUD_PASSWORD_FILE"
 DEFAULT_ICLOUD_PASSWORD_FILE = "~/.config/pa/icloud-app-password"
 
@@ -155,6 +157,8 @@ class CaptureConfig:
     """Each collected source's expected cadence."""
     gmail_token: Path | None = None
     """Gmail's OAuth token, or None when Gmail isn't captured."""
+    icloud_calendars: tuple[str, ...] = ()
+    """The iCloud calendars to capture, by display name; none when iCloud isn't captured."""
 
 
 @dataclass(frozen=True)
@@ -305,7 +309,8 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
 
 def load_capture_config(environ: Mapping[str, str] = os.environ) -> CaptureConfig:
     """What the capture cycle collects: the vault when its copy is configured, which then needs
-    its daily-notes folder too. Every source's cadence is 15 minutes unless configured."""
+    its daily-notes folder too; Gmail when its token is; iCloud Calendar when its calendars
+    are. Every source's cadence is 15 minutes unless configured."""
     vault = None
     vault_dir = environ.get(VAULT_DIR_VAR, "").strip()
     if vault_dir:
@@ -329,7 +334,25 @@ def load_capture_config(environ: Mapping[str, str] = os.environ) -> CaptureConfi
         for source in COLLECTED_SOURCES
     }
     gmail_token = _path(environ, GMAIL_TOKEN_VAR)
-    return CaptureConfig(vault=vault, cadences=cadences, gmail_token=gmail_token)
+    return CaptureConfig(
+        vault=vault,
+        cadences=cadences,
+        gmail_token=gmail_token,
+        icloud_calendars=load_icloud_calendars(environ, required=False),
+    )
+
+
+def load_icloud_calendars(
+    environ: Mapping[str, str] = os.environ, *, required: bool = True
+) -> tuple[str, ...]:
+    """The iCloud calendars to capture, by their display names, comma-separated."""
+    calendars = tuple(dict.fromkeys(_comma_separated(environ, ICLOUD_CALENDARS_VAR)))
+    if required and not calendars:
+        raise ConfigError(
+            f"{ICLOUD_CALENDARS_VAR} is not set: set it to the calendars to capture, by the "
+            "names the Calendar app shows, comma-separated, such as Home,Family Calendar."
+        )
+    return calendars
 
 
 def load_gmail_config(environ: Mapping[str, str] = os.environ) -> GmailConfig:
