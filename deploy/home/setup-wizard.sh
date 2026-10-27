@@ -185,23 +185,28 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #87): the steps only the owner can do, and
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91): the steps only the owner can do, and
 # the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
 # Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
-# the librarian's VM alone, or --vault for the vault copy alone (Obsidian Sync and its headless
-# client).
+# the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
+# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, or --backup
+# for the backup drive alone (#89).
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ASSISTANT_STAGES=19
+ASSISTANT_STAGES=18
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
-only_librarian=false only_vault=false
+GMAIL_STAGES=3
+BACKUP_STAGES=2
+only_librarian=false only_vault=false only_gmail=false only_backup=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES)) ;;
+  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + BACKUP_STAGES)) ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian | --vault]\n' >&2; exit 2 ;;
+  --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
+  --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
+  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --backup]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -213,9 +218,6 @@ ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
 # The checks below read the whole output: with pipefail, grep -q quitting at the first match
 # would fail the pipeline on the writer's SIGPIPE.
-
-# vm_tagged: the VM is on the tailnet as tag:pa.
-vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep '"tag:pa"' >/dev/null; }
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
@@ -291,30 +293,46 @@ ok "Incus is running"
 pause
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
-stage "Incus storage and bridge"
-say "A btrfs storage pool (snapshots are cheap) and the VM's own bridge, $PA_BRIDGE, IPv4 only."
+stage "Incus storage and bridges"
+say "A btrfs storage pool (snapshots are cheap), and two bridges, IPv4 only:"
+say "- $PA_BRIDGE, the VM's own: no DNS, and an egress ACL ($PA_ACL) on the VM's NIC that lets"
+say "  out TCP 443 to the Anthropic API's range, $PA_API_RANGE, and drops all else;"
+say "- $PA_BUILD_BRIDGE, open, which the VM is built on and leaves before anything is mounted."
 run "$DEPLOY_DIR/incus-setup.sh"
-ok "pool $PA_POOL and bridge $PA_BRIDGE are ready"
+ok "pool $PA_POOL, bridges $PA_BRIDGE and $PA_BUILD_BRIDGE, and ACL $PA_ACL are ready"
 pause
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
-stage "Firewall on the VM's bridge"
-say "Drops everything from the VM to private and tailnet ranges and to the devbox itself,"
-say "except DNS and DHCP. Loads at every boot, before Incus; if it fails, the VM stays down."
+stage "Firewall on the VMs' bridges"
+say "A second fence beside the ACL: from $PA_BRIDGE, only DHCP on the devbox and TCP 443 in the"
+say "API's range; from $PA_BUILD_BRIDGE, DNS and DHCP on the devbox and the internet, but nothing"
+say "of yours. Loads at every boot, before Incus; if it fails, the VMs stay down."
 note "It fences the librarian's bridge too, once that exists (the librarian's stages)."
 run "$DEPLOY_DIR/install-firewall.sh"
 systemctl is-enabled --quiet pa-vm-firewall.service && ok "pa-vm-firewall.service is enabled"
 pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "Create the VM"
-say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, Tailscale installed."
+stage "Create the VM, open"
+say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, no Tailscale. It's built on"
+say "$PA_BUILD_BRIDGE, so cloud-init can refresh the OS and install its packages: the only time it"
+say "reaches a package mirror. Nothing is shared into it, and it holds no credential, until the"
+say "next stage fences it."
 note "The first run downloads the image and waits for cloud-init: a few minutes."
 run "$DEPLOY_DIR/create-vm.sh"
 ok "$PA_VM is running"
 pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
+stage "Fence the VM"
+say "Snapshots the VM, installs its fences while it can still reach a mirror, removes Tailscale"
+say "if it's there, and moves it onto $PA_BRIDGE. The API's two names are pinned into it, since"
+say "it has no DNS, and again at every boot of the devbox (pa-pins@$PA_VM.service)."
+run "$DEPLOY_DIR/fence-vm.sh"
+ok "$PA_VM reaches only the API"
+pause
+
+# ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Seed the instance's data root"
 say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
 say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
@@ -322,7 +340,7 @@ run "$DEPLOY_DIR/seed-data-root.sh"
 ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
 pause
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Give the VM's inbox a filesystem of its own"
 say "The VM writes its inbox directory with its own owners and modes, so root in the VM could"
 say "leave a setuid program or a device node on the devbox, or fill its disk. A $PA_CHAT_INBOX_SIZE"
@@ -331,33 +349,37 @@ run "$DEPLOY_DIR/install-chat-inbox.sh"
 ok "$PA_CHAT_INBOX is its own filesystem"
 pause
 
-# ── 8 ─────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
 say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
 say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
-say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in, and"
+say "nothing at all unless the VM is fenced."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
-say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
-say "pushed to GitHub."
+say "Snapshots the VM, then pushes in, from this checkout, the code at a ref (a git bundle), a"
+say "wheelhouse built here for its lock, uv, and Claude Code $PA_ASSISTANT_CLAUDE_VERSION, checked"
+say "against Anthropic's signature. The VM syncs offline, and renders the agent project into"
+say "$PA_VM_PROJECT. The ref is resolved here: git fetch first to deploy what's on GitHub."
 upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
-default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
+default_ref=${upstream:-HEAD}
 printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
 read -r ref || true
 run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Log the VM in to Claude"
+require_fenced
 if claude_logged_in; then
   ok "Claude Code in $PA_VM is already logged in"
 else
-  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat."
+  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat. The login"
+  say "goes to platform.claude.com, pinned into the VM, and so does every token refresh."
   step "Claude prints a URL below. Open it and sign in with your Claude account."
   step "Paste the code it gives you back here."
   note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
@@ -368,64 +390,32 @@ else
 fi
 pause
 
-# ── 11 ────────────────────────────────────────────────────────────────────
-stage "Tailnet policy"
-say "The VM will join as tag:pa. The policy must let your devices reach it and each other,"
-say "and let tag:pa reach nothing."
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa; skipping"
-else
-  open_url "https://login.tailscale.com/admin/acls/file"
-  step "In the policy file, merge in the three parts shown below:"
-  step "tagOwners: add tag:pa, owned by autogroup:admin."
-  step "grants: delete any rule whose src is \"*\" (the default allow-all is one), and add"
-  step "  the two grants: your devices to autogroup:self, and your devices to tag:pa."
-  step "ssh: add the rule letting your devices in to tag:pa as user assistant. Keep your"
-  step "  existing ssh rules."
-  step "Save. The console rejects a policy that doesn't parse."
-  printf '\n'
-  sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
-  printf '\n'
-  pause "Press Enter once the policy is saved"
-fi
-
 # ── 12 ────────────────────────────────────────────────────────────────────
-stage "Join the VM to the tailnet as tag:pa"
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa"
+stage "Take the VM off the tailnet"
+say "The VM has no Tailscale identity any more: you reach it with incus exec from the devbox."
+say "Your tailnet's policy and machine list may still name it from before."
+open_url "https://login.tailscale.com/admin/machines"
+step "Machines: if $PA_VM is listed, open its menu and Remove it."
+open_url "https://login.tailscale.com/admin/acls/file"
+step "Access controls: delete everything naming tag:pa: its tagOwners entry, the grant from"
+step "  your devices to tag:pa, and the ssh rule into tag:pa as assistant. Keep the grant that"
+step "  lets your devices reach each other; the result has the shape shown below."
+step "Save. The console rejects a policy that doesn't parse."
+printf '\n'
+sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
+printf '\n'
+if confirm "Is $PA_VM gone from the machines, and tag:pa from the policy?"; then
+  ok "the tailnet no longer knows $PA_VM"
 else
-  say "The VM asks to join; Tailscale prints a login URL below."
-  step "Open the URL, log in as yourself (you own tag:pa, so the VM joins tagged)."
-  step "The command returns once you've approved it."
-  printf '\n'
-  run incus exec "$PA_VM" -- tailscale up --advertise-tags=tag:pa --ssh --hostname="$PA_VM"
-  vm_tagged || { printf '  %s✗ %s isn'"'"'t tagged tag:pa%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
-  ok "$PA_VM joined as tag:pa"
+  SKIPPED+=("take $PA_VM off the tailnet: remove the machine and every tag:pa rule")
 fi
-note "Tagged devices don't expire; the VM reconnects on its own after reboots."
 pause
 
 # ── 13 ────────────────────────────────────────────────────────────────────
-stage "Check your devices"
-say "Your devices still reach each other (from the devbox):"
-while read -r ip host; do
-  if ping -c1 -W2 "$ip" >/dev/null 2>&1; then ok "$host ($ip)"; else warn "$host ($ip) doesn't answer (asleep?)"; fi
-done < <(tailscale status | awk -v vm="$PA_VM" '$1 ~ /^100\./ && $2 != vm && !/offline/ {print $1, $2}')
-printf '\n'
-say "Now from the Mac:"
-step "ssh $PA_USER@$PA_VM   (expect a prompt $PA_USER@$PA_VM; then exit)"
-step "ssh devbox            (your devices still reach the devbox)"
-if confirm "Did both work?"; then
-  ok "SSH over Tailscale works"
-else
-  SKIPPED+=("SSH from the Mac: check the tailnet policy (stage 7) and re-run")
-fi
-pause
-
-# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
-say "From inside the VM: the devbox, its Docker services, the LAN and tailnet peers must be"
-say "unreachable, and the internet and Anthropic's API reachable."
+say "From inside the VM: the web, the devbox, its Docker services, the LAN and tailnet peers"
+say "must be unreachable, with no DNS and no Tailscale, and only Anthropic's API reachable; and"
+say "every other fence: the managed settings, the sandbox, the read-only project."
 printf '\n'
 if "$DEPLOY_DIR/check-isolation.sh"; then
   ok "every fence holds"
@@ -433,11 +423,11 @@ else
   SKIPPED+=("isolation check failed: fix and re-run deploy/home/check-isolation.sh")
 fi
 pause
-
-# ── 15 ────────────────────────────────────────────────────────────────────
+# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
-say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
+say "root; inbox/assistant_chat/ is writable by the capture user alone, not the assistant, and"
+say "on the devbox a nosuid,nodev,noexec"
 say "filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then
@@ -447,7 +437,7 @@ else
 fi
 pause
 
-# ── 16 ────────────────────────────────────────────────────────────────────
+# ── 15 ────────────────────────────────────────────────────────────────────
 stage "Trust the agent project"
 if project_trusted; then
   ok "Claude Code in $PA_VM already trusts $PA_VM_PROJECT"
@@ -465,7 +455,7 @@ else
 fi
 pause
 
-# ── 17 ────────────────────────────────────────────────────────────────────
+# ── 16 ────────────────────────────────────────────────────────────────────
 stage "Turn on Remote Control"
 if remote_control_consented; then
   ok "Remote Control is already turned on in $PA_VM"
@@ -482,7 +472,7 @@ else
 fi
 pause
 
-# ── 18 ────────────────────────────────────────────────────────────────────
+# ── 17 ────────────────────────────────────────────────────────────────────
 stage "Start the Remote Control service"
 say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
 say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
@@ -495,7 +485,7 @@ else
 fi
 pause
 
-# ── 19 ────────────────────────────────────────────────────────────────────
+# ── 18 ────────────────────────────────────────────────────────────────────
 stage "Find the assistant on your phone"
 say "The Claude app and claude.ai/code list the VM under its hostname and the project folder."
 open_url "https://claude.ai/code"
@@ -589,6 +579,71 @@ if "$DEPLOY_DIR/check-librarian.sh"; then
   ok "every fence holds"
 else
   SKIPPED+=("librarian check failed: fix and re-run deploy/home/check-librarian.sh")
+fi
+pause
+}
+
+# private_file PATH: PATH is a file only its owner can read.
+private_file() { [[ -f $1 && $(stat -c %a "$1") == 600 ]]; }
+
+# Gmail's capture (#86): the owner's Cloud project, and the consent. Run in the go-live ticket,
+# and again (stage G2) whenever the token dies.
+gmail_stages() {
+
+# ── G1 ────────────────────────────────────────────────────────────────────
+stage "Your Google Cloud project for Gmail"
+if private_file "$PA_GMAIL_CLIENT"; then
+  ok "the OAuth client is saved at $PA_GMAIL_CLIENT"
+else
+  say "The PA reads Gmail through the Gmail API, read-only, with an OAuth client from a Cloud"
+  say "project of your own. Published \"In production\" and left unverified, for personal use,"
+  say "its refresh token doesn't expire weekly, and no security assessment is needed."
+  open_url "https://console.cloud.google.com/projectcreate"
+  step "Create a project, say pa-gmail, signed in as the Gmail account to capture."
+  step "APIs & Services → Library: enable the Gmail API."
+  step "Google Auth Platform → Branding: an app name and your address. Audience: External."
+  step "Data Access → Add or remove scopes: .../auth/gmail.readonly, and nothing else."
+  step "Audience → Publish app, so it's \"In production\". Don't submit it for verification."
+  step "Clients → Create client → Desktop app. Download its JSON."
+  step "Copy the JSON to this devbox (scp), then give its path below."
+  printf '\n'
+  ask GMAIL_CLIENT_DOWNLOAD "Path of the downloaded client JSON on this devbox:"
+  [[ -f $GMAIL_CLIENT_DOWNLOAD ]] || { printf '  %s✗ no file there%s\n' "$RED" "$RESET"; exit 1; }
+  grep '"installed"' "$GMAIL_CLIENT_DOWNLOAD" >/dev/null ||
+    { printf '  %s✗ that isn'"'"'t a Desktop app client%s\n' "$RED" "$RESET"; exit 1; }
+  mkdir -p "$(dirname "$PA_GMAIL_CLIENT")"
+  chmod 700 "$(dirname "$PA_GMAIL_CLIENT")"
+  install -m 600 "$GMAIL_CLIENT_DOWNLOAD" "$PA_GMAIL_CLIENT"
+  rm -i "$GMAIL_CLIENT_DOWNLOAD"
+  ok "saved at $PA_GMAIL_CLIENT, mode 0600"
+fi
+pause
+
+# ── G2 ────────────────────────────────────────────────────────────────────
+stage "Consent: Gmail, read-only"
+if private_file "$PA_GMAIL_TOKEN" && ! confirm "A token is saved already. Ask for consent again (re-auth)?"; then
+  ok "the token is saved at $PA_GMAIL_TOKEN"
+else
+  say "The consent redirects to a loopback server on this devbox, port $PA_GMAIL_AUTH_PORT."
+  say "Google warns that the app isn't verified: it's your own, so click through once"
+  say "(Advanced → Go to the app) and allow reading your mail. Nothing can change it."
+  step "On the machine with your browser, forward the port in another terminal:"
+  note "    ssh -L $PA_GMAIL_AUTH_PORT:localhost:$PA_GMAIL_AUTH_PORT <this devbox>"
+  step "Open the address printed below in that machine's browser."
+  printf '\n'
+  run "$DEPLOY_DIR/gmail.sh" auth
+  private_file "$PA_GMAIL_TOKEN" && ok "the token is saved at $PA_GMAIL_TOKEN, mode 0600"
+fi
+pause
+
+# ── G3 ────────────────────────────────────────────────────────────────────
+stage "Gmail dry run"
+say "Counts what a two-month backfill would capture, by Gmail category, from labels alone:"
+say "no message is fetched, and nothing but counts is printed."
+if [[ -f $PA_OWNER_ENV ]]; then
+  run "$DEPLOY_DIR/gmail.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("Gmail dry run: needs $PA_OWNER_ENV, then deploy/home/gmail.sh dry-run --window-start <date>")
 fi
 pause
 }
@@ -817,13 +872,77 @@ rm -f "$probe"
 pause
 }
 
+# The nightly backup's USB SSD and its restic repository (#89).
+backup_stages() {
+
+# ── B1 ────────────────────────────────────────────────────────────────────
+stage "The backup drive"
+if mountpoint -q "$PA_BACKUP_MOUNT"; then
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT"
+else
+  say "The nightly backup goes to your USB SSD on the devbox, mounted at $PA_BACKUP_MOUNT by its"
+  say "filesystem's UUID, so no other drive is ever mounted there. Without the drive the devbox"
+  say "still boots, and the status records each backup that finds no repository."
+  step "Plug the SSD into the devbox, and find it in the list below (TRAN usb, its SIZE and MODEL)."
+  step "If it has no ext4 filesystem yet, make one (this erases the drive), with its partition"
+  step "in place of sdX1: sudo mkfs.ext4 -L pa-backup /dev/sdX1, then run lsblk -f to see its UUID."
+  printf '\n'
+  run lsblk -o NAME,TRAN,SIZE,MODEL,FSTYPE,LABEL,UUID
+  printf '\n'
+  ask backup_uuid "The UUID of the SSD's ext4 filesystem:"
+  run "$DEPLOY_DIR/install-backup-drive.sh" "$backup_uuid"
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT, and will be at every boot"
+fi
+pause
+
+# ── B2 ────────────────────────────────────────────────────────────────────
+stage "The backup repository and its password"
+mountpoint -q "$PA_BACKUP_MOUNT" || { printf '  %s✗ the backup drive isn'"'"'t mounted at %s%s\n' "$RED" "$PA_BACKUP_MOUNT" "$RESET"; exit 1; }
+say "restic encrypts the backup with the password in $PA_BACKUP_PASSWORD_FILE, readable only"
+say "by you. Without it the backup can't be restored, so keep a copy in your password manager"
+say "too: it's what restores L0 after the devbox is lost."
+ensure_backup_password "$PA_BACKUP_PASSWORD_FILE"
+ok "the password is in $PA_BACKUP_PASSWORD_FILE, mode 0600"
+if confirm "Show the password now, to copy it into your password manager?"; then
+  printf '\n    %s%s%s\n\n' "$BOLD" "$(cat "$PA_BACKUP_PASSWORD_FILE")" "$RESET"
+else
+  note "It's in $PA_BACKUP_PASSWORD_FILE when you want it."
+fi
+if confirm "Is it saved in your password manager, as \"PA restic backup\"?"; then
+  ok "saved in your password manager"
+else
+  SKIPPED+=("save the restic password in your password manager, from $PA_BACKUP_PASSWORD_FILE")
+  warn "save the restic password in your password manager before you rely on the backup"
+fi
+init_backup_repository "$PA_BACKUP_REPOSITORY" "$PA_BACKUP_PASSWORD_FILE"
+ok "the restic repository is ready at $PA_BACKUP_REPOSITORY"
+note "deploy/home/backup.sh backs up to it, and pa status shows the last backup."
+pause
+}
+
 banner "PA setup"
+if $only_gmail; then
+  gmail_stages
+  finish
+  note "Gmail is captured once PA_GMAIL_TOKEN=$PA_GMAIL_TOKEN is in the capture's environment,"
+  note "after its backfill: pa capture --backfill <window start>."
+  printf '\n'
+  exit 0
+fi
+if $only_backup; then
+  backup_stages
+  finish
+  note "The backup runs by hand: deploy/home/backup.sh, and pa status shows the last one."
+  printf '\n'
+  exit 0
+fi
 if $only_vault; then
   vault_stages
 else
   $only_librarian || assistant_stages
   librarian_stages
   $only_librarian || vault_stages
+  $only_librarian || backup_stages
 fi
 
 finish
@@ -836,4 +955,5 @@ note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the 
 fi
 $only_vault || note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
 $only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
+$only_librarian || $only_vault || note "The backup runs by hand: deploy/home/backup.sh."
 printf '\n'

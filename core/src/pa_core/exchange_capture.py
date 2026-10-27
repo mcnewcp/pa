@@ -1,23 +1,27 @@
-"""Exchange capture: the exchange that just ended in a Claude Code session, as a raw payload.
+"""Exchange capture: the exchange a turn of a Claude Code session made, from the turn's hook events.
 
-Claude Code writes each session as a JSONL transcript: one entry per message block, tool result,
-attachment or bookkeeping record, each user and assistant entry linked to the one before it by
-`parentUuid`. When the assistant stops, the exchange that just ended runs from the first owner
-message after the previous reply to the reply just given.
+A turn fires `UserPromptSubmit` with the owner's prompt, `PostToolUse` after each
+`AskUserQuestion` with the owner's answers, and `Stop` once the assistant has replied, with the
+reply. Each carries the session's id and the turn's `prompt_id`. The capture helper is handed
+each event in turn (ADR-0009): it holds the prompt as pending for its session, adds each
+question asked and answered, and at the stop writes the whole exchange into the inbox. Nothing
+here reads the session's transcript, which the assistant's own process writes.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import sys
-import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
-from pa_core.errors import PaError
+from pa_core.errors import MalformedPayloadError, PaError
 from pa_core.normalizers.assistant_chat import (
     EXTENSION,
     TurnRole,
@@ -26,23 +30,37 @@ from pa_core.normalizers.assistant_chat import (
 )
 
 CAPTURE_VAR = "PA_CAPTURE_EXCHANGES"
-"""Turns capture on for a session when set to 1 in its environment. Off when unset."""
-INBOX_VAR = "PA_CAPTURE_INBOX"
-"""The inbox directory captured exchanges go into (`inbox/assistant_chat/`)."""
-CAPTURE_VARS = (CAPTURE_VAR, INBOX_VAR)
+"""Turns capture on for a session when set to 1 in its environment (the managed hooks check it).
+Only the Remote Control unit sets it."""
+CAPTURE_VARS = (CAPTURE_VAR,)
 """Every variable that configures capture; a session's environment without them captures nothing."""
-TRANSCRIPT_WAIT_SECONDS = 10.0
-"""How long the hook waits for Claude Code to write the reply to the transcript."""
-_TRANSCRIPT_POLL_SECONDS = 0.1
-"""How often the hook looks at the transcript again while it waits for the reply."""
 
-_Entry = dict[str, Any]
+VERBS = ("prompt", "answer", "stop")
+"""What the helper is asked to do with an event: one verb per capture hook."""
+_EVENTS = {"prompt": "UserPromptSubmit", "answer": "PostToolUse", "stop": "Stop"}
 
 ASK_USER_QUESTION = "AskUserQuestion"
 """The tool the assistant asks the owner questions through; its result holds their answers."""
 
-_REPLY_ENDS = frozenset({"end_turn", "stop_sequence", "max_tokens", "refusal"})
-"""Stop reasons that end the assistant's reply; `tool_use` (and none, mid-stream) don't."""
+REFUSED_OPENINGS = {
+    "<task-notification>": "a background task's report",
+    "<cross-session-message": "another session's message",
+}
+"""How the prompts `UserPromptSubmit` fires for, but nobody typed, open (#81). The paths that
+make them are closed before a session starts (the managed settings); the helper refuses them as
+well. It can't tell a scheduled prompt from a typed one, so the denials are the fence."""
+
+PENDING_TTL = timedelta(hours=24)
+"""How long a prompt is held for its turn's stop. An interrupted turn fires no stop, so its
+prompt is dropped by the session's next prompt or, failing that, once it's this old. Long
+enough for a question the assistant asked to wait for the owner's answer."""
+
+MAX_HOOK_INPUT = 1 << 20
+"""The most the helper reads of an event; a longer one is refused whole."""
+
+
+class CaptureRefusedError(PaError):
+    """An event the helper won't take: malformed, too long, or for another hook."""
 
 
 @dataclass(frozen=True)
@@ -59,291 +77,207 @@ class CapturedExchange:
         return exchange_episode_id(self.session_id, self.message_id) + EXTENSION
 
 
-class ReplyNotInTranscriptError(PaError):
-    """The transcript doesn't hold the reply the assistant just gave, or not all of it yet."""
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
-class CaptureConfigError(PaError):
-    """Capture is turned on, but not configured so it can work."""
+class ExchangeCapture:
+    """The capture helper's work: pending prompts in `state`, finished exchanges in `inbox`."""
 
+    def __init__(self, *, inbox: Path, state: Path, clock: Callable[[], datetime] = _now) -> None:
+        self.inbox = inbox
+        self.pending = state / "pending"
+        self.clock = clock
 
-def capture_exchange(transcript: str, *, final_reply: str | None) -> CapturedExchange | None:
-    """The exchange that ends with the assistant's latest reply in `transcript`.
+    def handle(self, verb: str, event: Mapping[str, Any]) -> str | None:
+        """Takes one hook's event; returns a note on why nothing was held or written, if so.
 
-    Keeps the owner's messages, each question the assistant asked the owner through a tool with
-    the owner's answer, and the reply; leaves out tool calls and results, thinking, and the
-    assistant's text around tool calls. None when the turn that just ended didn't start with a
-    message from the owner (a shell command run from the prompt, a background task's report).
+        Raises CaptureRefusedError for an event that isn't the verb's hook's, or is malformed.
+        """
+        if verb not in VERBS:
+            raise CaptureRefusedError(f"no verb {verb!r}: one of {', '.join(VERBS)}")
+        if event.get("hook_event_name") != _EVENTS[verb]:
+            raise CaptureRefusedError(f"{verb} takes a {_EVENTS[verb]} event")
+        session_id = _text(event, "session_id")
+        if verb == "answer":
+            # A tool's event may not carry the turn's prompt_id; when it does, it must match.
+            prompt_id = event.get("prompt_id")
+            self._expire()
+            return self._answer(session_id, prompt_id, event)
+        prompt_id = _text(event, "prompt_id")
+        self._expire()
+        if verb == "prompt":
+            return self._prompt(session_id, prompt_id, event)
+        return self._stop(session_id, prompt_id, event)
 
-    `final_reply` is the reply's text as Claude Code reports it at the stop (None or empty to
-    skip the check). Claude Code writes the transcript asynchronously, so it may not hold that
-    reply yet: then, or when the latest reply in the transcript doesn't end with that text,
-    raises ReplyNotInTranscriptError. Raises MalformedPayloadError for an exchange that ingest
-    would quarantine.
-    """
-    chain = _active_chain(transcript)
-    reply = _final_reply(chain)
-    # Compared loosely: the reported text may be only the reply's last text block, joined
-    # differently.
-    if final_reply and (
-        reply is None or not _squeezed(reply.text).endswith(_squeezed(final_reply))
-    ):
-        raise ReplyNotInTranscriptError(
-            "the transcript doesn't end with the reply the assistant just gave (yet)"
+    def _prompt(self, session_id: str, prompt_id: str, event: Mapping[str, Any]) -> str | None:
+        prompt = event.get("prompt")
+        if not isinstance(prompt, str):
+            raise CaptureRefusedError("the event has no prompt")
+        text = prompt.strip()
+        self._pending_path(session_id).unlink(missing_ok=True)
+        if not text:
+            return "nothing held: the prompt has no text"
+        for opening, what in REFUSED_OPENINGS.items():
+            if text.startswith(opening):
+                return f"refused a prompt that opens as {what}: nobody typed it"
+        self._hold(
+            session_id,
+            {
+                "prompt_id": prompt_id,
+                "started_at": self._timestamp(),
+                "turns": [["owner", text]],
+            },
         )
-    if reply is None:
         return None
-    turns: list[tuple[TurnRole, str]] = []
-    owner_message: _Entry | None = None
-    questions: dict[str, list[str]] = {}
-    for entry in chain[_exchange_start(chain, reply.start) : reply.start]:
-        text = _owner_text(entry)
-        if text:
-            owner_message = owner_message or entry
-            turns.append(("owner", text))
-        questions.update(_questions_asked(entry))
-        for question, answer in _answers(entry, questions):
-            turns.append(("assistant", question))
-            turns.append(("owner", answer))
-    if owner_message is None:
+
+    def _answer(self, session_id: str, prompt_id: object, event: Mapping[str, Any]) -> str | None:
+        """Adds each question the assistant asked and the owner answered, in the order asked.
+
+        A question the owner dismissed without answering is left out.
+        """
+        if event.get("tool_name") != ASK_USER_QUESTION:
+            raise CaptureRefusedError(f"answer takes {ASK_USER_QUESTION}'s results only")
+        pending = self._held(session_id)
+        if pending is None or prompt_id not in (None, pending.get("prompt_id")):
+            return "nothing added: no prompt of the owner's is pending for this turn"
+        tool_input, response = event.get("tool_input"), event.get("tool_response")
+        if not isinstance(tool_input, dict) or not isinstance(response, dict):
+            raise CaptureRefusedError(f"the event has no {ASK_USER_QUESTION} call and result")
+        questions, answers = tool_input.get("questions"), response.get("answers") or {}
+        if not isinstance(questions, list) or not isinstance(answers, dict):
+            raise CaptureRefusedError(f"the event's {ASK_USER_QUESTION} call is malformed")
+        for item in questions:
+            question = item.get("question") if isinstance(item, dict) else None
+            answer = _answer_text(answers.get(question)) if isinstance(question, str) else None
+            if question and question.strip() and answer:
+                pending["turns"] += [["assistant", question.strip()], ["owner", answer]]
+        self._hold(session_id, pending)
         return None
-    turns.append(("assistant", reply.text))
-    session_id, message_id = owner_message["sessionId"], owner_message["uuid"]
-    payload = encode_exchange(
-        session_id=session_id,
-        message_id=message_id,
-        started_at=owner_message["timestamp"],
-        ended_at=reply.ended_at,
-        turns=turns,
-    )
-    return CapturedExchange(session_id=session_id, message_id=message_id, payload=payload)
 
+    def _stop(self, session_id: str, prompt_id: str, event: Mapping[str, Any]) -> str | None:
+        reply = event.get("last_assistant_message")
+        pending = self._held(session_id)
+        self._pending_path(session_id).unlink(missing_ok=True)
+        if pending is None or pending.get("prompt_id") != prompt_id:
+            return "nothing captured: no prompt of the owner's is pending for this turn"
+        if not isinstance(reply, str) or not reply.strip():
+            return "nothing captured: the turn ended without a reply"
+        turns: list[tuple[TurnRole, str]] = [(role, text) for role, text in pending["turns"]]
+        turns.append(("assistant", reply.strip()))
+        payload = encode_exchange(
+            session_id=session_id,
+            message_id=prompt_id,
+            started_at=pending["started_at"],
+            ended_at=self._timestamp(),
+            turns=turns,
+        )
+        _drop(CapturedExchange(session_id, prompt_id, payload), self.inbox)
+        return None
 
-def _active_chain(transcript: str) -> list[_Entry]:
-    """The conversation's entries in order, following `parentUuid` back from the latest one."""
-    by_uuid: dict[str, _Entry] = {}
-    latest: _Entry | None = None
-    for entry in _entries(transcript):
-        if isinstance(entry.get("uuid"), str):
-            by_uuid[entry["uuid"]] = entry
-            latest = entry
-    chain: list[_Entry] = []
-    seen: set[str] = set()
-    while latest is not None and latest["uuid"] not in seen:
-        seen.add(latest["uuid"])
-        chain.append(latest)
-        parent = latest.get("parentUuid") or latest.get("logicalParentUuid")
-        latest = by_uuid.get(parent) if isinstance(parent, str) else None
-    chain.reverse()
-    return chain
+    def _timestamp(self) -> str:
+        now = self.clock()
+        if now.utcoffset() is None:
+            raise ValueError("the capture clock must give a UTC offset")
+        return now.astimezone(UTC).isoformat(timespec="milliseconds")
 
+    def _expire(self) -> None:
+        """Drops every pending prompt held longer than PENDING_TTL, and any unreadable one."""
+        oldest = self.clock() - PENDING_TTL
+        for path in self.pending.glob("*.json") if self.pending.is_dir() else ():
+            try:
+                held = datetime.fromisoformat(json.loads(path.read_text())["started_at"])
+                if held >= oldest:
+                    continue
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            path.unlink(missing_ok=True)
 
-def _entries(transcript: str) -> Iterator[_Entry]:
-    for line in transcript.splitlines():
+    def _pending_path(self, session_id: str) -> Path:
+        # Named by a hash: a session id is the event's, and never becomes a path.
+        return self.pending / (hashlib.sha256(session_id.encode()).hexdigest() + ".json")
+
+    def _held(self, session_id: str) -> dict[str, Any] | None:
         try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue  # a line still being written
-        if isinstance(entry, dict):
-            yield entry
+            return json.loads(self._pending_path(session_id).read_text())
+        except FileNotFoundError:
+            return None
 
-
-@dataclass(frozen=True)
-class _Reply:
-    start: int
-    """Where the reply's first entry is in the chain."""
-    text: str
-    ended_at: str
-
-
-def _final_reply(chain: list[_Entry]) -> _Reply | None:
-    """The reply the chain ends with, if it ends with one.
-
-    One reply is one assistant message, written as one entry per content block.
-    """
-    end = len(chain)
-    while end and chain[end - 1].get("type") not in ("user", "assistant"):
-        end -= 1  # bookkeeping after the reply, such as the turn's duration
-    if not end or not _ends_a_reply(chain[end - 1]):
-        return None
-    message_id = chain[end - 1]["message"].get("id")
-    start = end
-    while start and _is_assistant_message(chain[start - 1], message_id):
-        start -= 1
-    text = "\n\n".join(_texts(chain[start:end]))
-    return _Reply(start, text, chain[end - 1]["timestamp"]) if text else None
-
-
-def _squeezed(text: str) -> str:
-    """`text` without whitespace, to compare texts that differ only in how blocks are joined."""
-    return "".join(text.split())
-
-
-def _exchange_start(chain: list[_Entry], reply_start: int) -> int:
-    """Where the exchange ending at `reply_start` starts: just after the previous reply."""
-    start = reply_start
-    while start and not _ends_a_reply(chain[start - 1]):
-        start -= 1
-    return start
-
-
-def _ends_a_reply(entry: _Entry) -> bool:
-    return entry.get("type") == "assistant" and entry["message"].get("stop_reason") in _REPLY_ENDS
-
-
-def _is_assistant_message(entry: _Entry, message_id: object) -> bool:
-    return entry.get("type") == "assistant" and entry["message"].get("id") == message_id
-
-
-def _texts(entries: list[_Entry]) -> list[str]:
-    return [
-        block["text"]
-        for entry in entries
-        for block in entry["message"].get("content", [])
-        if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
-    ]
-
-
-def _questions_asked(entry: _Entry) -> dict[str, list[str]]:
-    """The questions in each AskUserQuestion call in `entry`, by tool call id."""
-    if entry.get("type") != "assistant":
-        return {}
-    asked: dict[str, list[str]] = {}
-    for block in entry["message"].get("content", []):
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        if block.get("name") != ASK_USER_QUESTION:
-            continue
-        items = (block.get("input") or {}).get("questions") or []
-        asked[block.get("id", "")] = [
-            item["question"]
-            for item in items
-            if isinstance(item, dict) and isinstance(item.get("question"), str)
-        ]
-    return asked
-
-
-def _answers(entry: _Entry, questions: dict[str, list[str]]) -> list[tuple[str, str]]:
-    """Each question asked through a tool that `entry` holds the owner's answer to, in order.
-
-    A question the owner declined to answer is left out with its tool result.
-    """
-    if entry.get("type") != "user":
-        return []
-    content = entry["message"].get("content")
-    result = entry.get("toolUseResult")
-    if not isinstance(content, list) or not isinstance(result, dict):
-        return []
-    answers = result.get("answers")
-    if not isinstance(answers, dict):
-        return []
-    pairs: list[tuple[str, str]] = []
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "tool_result":
-            continue
-        for question in questions.get(block.get("tool_use_id", ""), []):
-            answer = _answer_text(answers.get(question))
-            if answer:
-                pairs.append((question, answer))
-    return pairs
+    def _hold(self, session_id: str, pending: dict[str, Any]) -> None:
+        self.pending.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _write_atomically(self._pending_path(session_id), json.dumps(pending).encode(), mode=0o600)
 
 
 def _answer_text(answer: object) -> str | None:
+    """The owner's answer as text: several choices joined, and None for no answer."""
     if isinstance(answer, list):
         answer = ", ".join(str(choice) for choice in answer)
     return (answer.strip() or None) if isinstance(answer, str) else None
 
 
-def _owner_text(entry: _Entry) -> str | None:
-    """The text of a message the owner wrote, or None for any other entry."""
-    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isCompactSummary"):
-        return None
-    if (entry.get("origin") or {}).get("kind") != "human":
-        return None
-    content = entry["message"].get("content")
-    if isinstance(content, str):
-        return content.strip() or None
-    if not isinstance(content, list):
-        return None
-    texts = [
-        block.get("text", "")
-        for block in content
-        if isinstance(block, dict) and block.get("type") == "text"
-    ]
-    return "\n\n".join(t for t in texts if t).strip() or None
-
-
-def run_stop_hook(
-    hook_input: bytes,
-    environ: Mapping[str, str],
-    *,
-    wait_seconds: float = TRANSCRIPT_WAIT_SECONDS,
-) -> int:
-    """The `Stop` hook: drops the exchange that just ended into the inbox, if capture is on.
-
-    `hook_input` is the JSON Claude Code passes on stdin. Capture is off unless `environ` sets
-    PA_CAPTURE_EXCHANGES to 1, and the inbox directory comes from PA_CAPTURE_INBOX, never from
-    the agent project. The payload is written under a hidden name, then renamed into place, so
-    ingest never reads half of one. Waits up to `wait_seconds` for Claude Code to finish writing
-    the reply to the transcript.
-
-    Returns the hook's exit status: 0, or 1 with the reason on stderr, which Claude Code shows
-    without stopping the session. Never 2, which would make the assistant carry on talking.
-    When capture is on but the turn holds no exchange to capture, says so in one line on stderr
-    and returns 0.
-    """
-    setting = environ.get(CAPTURE_VAR, "").strip()
-    if setting in ("", "0"):
-        return 0
-    try:
-        if setting != "1":
-            raise CaptureConfigError(f"{CAPTURE_VAR} is 1 (on) or 0 (off), not {setting!r}")
-        inbox = _inbox(environ)
-        stop = json.loads(hook_input)
-        transcript = Path(stop["transcript_path"])
-        final_reply = stop.get("last_assistant_message")
-        deadline = time.monotonic() + wait_seconds
-        while True:
-            try:
-                exchange = capture_exchange(transcript.read_text(), final_reply=final_reply)
-                break
-            except ReplyNotInTranscriptError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(_TRANSCRIPT_POLL_SECONDS)
-        if exchange is None:
-            print(
-                "exchange capture: nothing captured: "
-                "no message from the owner opened the turn that just ended",
-                file=sys.stderr,
-            )
-        else:
-            _drop(exchange, inbox)
-    except (PaError, OSError, ValueError, KeyError, TypeError) as error:
-        print(f"exchange capture: {error}", file=sys.stderr)
-        return 1
-    return 0
-
-
-def _inbox(environ: Mapping[str, str]) -> Path:
-    value = environ.get(INBOX_VAR, "").strip()
-    if not value:
-        raise CaptureConfigError(f"capture is on but {INBOX_VAR} is not set")
-    inbox = Path(value)
-    if not inbox.is_absolute() or not inbox.is_dir():
-        raise CaptureConfigError(f"{INBOX_VAR} ({value}) is not an existing absolute directory")
-    return inbox
+def _text(event: Mapping[str, Any], field: str) -> str:
+    value = event.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise CaptureRefusedError(f"the event has no {field}")
+    return value
 
 
 def _drop(exchange: CapturedExchange, inbox: Path) -> None:
-    """Writes the payload into `inbox` under a hidden name, then renames it into place."""
-    target = inbox / exchange.file_name
-    partial = inbox / f".{exchange.file_name}.{os.getpid()}.partial"
+    """Writes the payload into `inbox` under a hidden name, then renames it into place.
+
+    Mode 0644: ingest, on the devbox, reads it as the inbox directory's owner.
+    """
+    if not inbox.is_dir():
+        raise CaptureRefusedError(f"the inbox directory {inbox} is missing (is it mounted?)")
+    _write_atomically(inbox / exchange.file_name, exchange.payload, mode=0o644)
+
+
+def _write_atomically(target: Path, content: bytes, *, mode: int) -> None:
+    partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
     try:
-        with partial.open("wb") as file:
-            file.write(exchange.payload)
+        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        with os.fdopen(fd, "wb") as file:
+            file.write(content)
             file.flush()
             os.fsync(file.fileno())
+        partial.chmod(mode)
         partial.replace(target)
     finally:
         partial.unlink(missing_ok=True)
+
+
+def run_helper(argv: list[str], stdin: BinaryIO, *, clock: Callable[[], datetime] = _now) -> int:
+    """The capture helper: `VERB --inbox DIR --state DIR`, with the hook's event on stdin.
+
+    Returns the hook's exit status: 0, with a note on stderr when nothing was held or written,
+    or 1 with the reason on stderr, which Claude Code shows without stopping the session. Never
+    2, which would block the owner's prompt or make the assistant carry on talking. Prints
+    nothing on stdout, which Claude Code would add to the owner's prompt.
+    """
+    parser = argparse.ArgumentParser(prog="pa-capture", add_help=False)
+    parser.add_argument("verb")
+    parser.add_argument("--inbox", type=Path, required=True)
+    parser.add_argument("--state", type=Path, required=True)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        print("exchange capture: usage: VERB --inbox DIR --state DIR", file=sys.stderr)
+        return 1
+    try:
+        raw = stdin.read(MAX_HOOK_INPUT + 1)
+        if len(raw) > MAX_HOOK_INPUT:
+            raise CaptureRefusedError(f"the event is longer than {MAX_HOOK_INPUT} bytes")
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise CaptureRefusedError("the event isn't JSON") from None
+        if not isinstance(event, dict):
+            raise CaptureRefusedError("the event isn't a JSON object")
+        capture = ExchangeCapture(inbox=args.inbox, state=args.state, clock=clock)
+        note = capture.handle(args.verb, event)
+    except (CaptureRefusedError, MalformedPayloadError, OSError, ValueError) as error:
+        print(f"exchange capture: {error}", file=sys.stderr)
+        return 1
+    if note:
+        print(f"exchange capture: {note}", file=sys.stderr)
+    return 0

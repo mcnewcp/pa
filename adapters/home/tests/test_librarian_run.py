@@ -40,9 +40,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pa_core.status import SourceStatus, Status, read_status, write_status
 from pa_home import librarian
 from pa_home.cli import main
 from pa_home.config import (
+    DataRoot,
     LibrarianConfig,
     load_data_root,
     load_librarian_config,
@@ -51,6 +53,7 @@ from pa_home.config import (
 )
 from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import LIBRARIAN_PROJECT, project_files
+from pa_home.lock import data_root_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -2640,3 +2643,99 @@ def test_a_configured_command_overrides_the_sandboxs_own():
     environ["PA_LIBRARIAN_COMMAND"] = "claude"
     assert load_librarian_config(environ).command == ("claude",)
     assert load_librarian_config({}).sandbox is None
+
+
+def status(data_root: Path) -> Status:
+    return read_status(data_root / "status" / "status.json")
+
+
+def test_a_run_records_the_wikis_current_through_time_and_its_outcome_in_the_status(
+    data_root: Path,
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    started = datetime.now(UTC)
+
+    assert run_librarian() == 0
+
+    wiki = status(data_root).wiki
+    captured_at = datetime.fromisoformat(str(cursor(data_root)).split(" ")[0])
+    assert wiki.current_through == captured_at
+    run = wiki.last_run
+    assert run is not None
+    assert run.succeeded and run.reason is None
+    assert started <= run.at <= datetime.now(UTC)
+    # Observation and consolidation, at the stand-in's $0.0421 a session.
+    assert len(sessions(data_root)) == 2
+    assert run.cost_usd == pytest.approx(0.0842)
+    assert run.warnings == 0
+
+
+def test_the_librarians_record_leaves_the_rest_of_the_status_as_it_was(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    path = data_root / "status" / "status.json"
+    synced = datetime(2026, 10, 1, 6, 10, tzinfo=UTC)
+    gmail = SourceStatus(watermark=synced, cadence=timedelta(minutes=15), quarantined=2)
+    write_status(path, Status(sources={"gmail": gmail}), at=synced)
+
+    assert run_librarian() == 0
+
+    assert status(data_root).sources == {"gmail": gmail}
+    assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_a_failed_run_is_recorded_without_content_and_keeps_the_current_through_time(
+    data_root: Path,
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    through = status(data_root).wiki.current_through
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    script(
+        data_root,
+        observation=[
+            {"write": "people/david-kim.md", "text": "# David Kim\n"},
+            {"fail": "API Error: overloaded"},
+        ],
+    )
+
+    assert run_librarian() != 0
+
+    wiki = status(data_root).wiki
+    assert through is not None and wiki.current_through == through
+    run = wiki.last_run
+    assert run is not None and not run.succeeded
+    assert run.reason == "the run failed in its observation session and was discarded"
+    assert run.cost_usd is None  # the failed session reported no cost
+    assert run.warnings is None
+    text = (data_root / "status" / "status.json").read_text()
+    for content in ("RSVP", "david-kim", "overloaded", "Hotel"):
+        assert content not in text, content
+
+
+def test_a_run_with_no_new_episodes_is_recorded_as_a_run(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    first = status(data_root).wiki
+
+    assert run_librarian() == 0
+
+    wiki = status(data_root).wiki
+    assert wiki.current_through == first.current_through
+    assert wiki.last_run is not None and first.last_run is not None
+    assert wiki.last_run.succeeded and wiki.last_run.at > first.last_run.at
+    assert wiki.last_run.cost_usd == 0
+
+
+def test_pa_librarian_run_skips_while_another_run_holds_the_lock(data_root: Path, capsys):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    capsys.readouterr()
+
+    with data_root_lock(DataRoot(data_root)):
+        assert run_librarian() == 0
+
+    assert capsys.readouterr().out == "librarian: skipped: another run holds the data root's lock\n"
+    assert sessions(data_root) == []
+    assert not (data_root / "status" / "status.json").exists()

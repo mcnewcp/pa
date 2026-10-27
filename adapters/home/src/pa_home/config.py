@@ -40,6 +40,11 @@ BACKUP_PASSWORD_VARS = ("RESTIC_PASSWORD", "RESTIC_PASSWORD_FILE", "RESTIC_PASSW
 # often each source's watermark is expected to move (`PA_<SOURCE>_CADENCE_MINUTES`).
 VAULT_DIR_VAR = "PA_VAULT_DIR"
 VAULT_DAILY_NOTES_VAR = "PA_VAULT_DAILY_NOTES"
+# Gmail: the OAuth token `pa gmail auth` saves (Gmail is captured when it's set), and the OAuth
+# client from the owner's Cloud project that the consent needs. Both live in the owner's
+# configuration directory, readable only by them.
+GMAIL_TOKEN_VAR = "PA_GMAIL_TOKEN"
+GMAIL_CLIENT_VAR = "PA_GMAIL_CLIENT"
 DEFAULT_CADENCE = timedelta(minutes=15)
 """A capture cycle runs every 15 minutes, so each source's watermark moves that often."""
 COLLECTED_SOURCES = (Source.GMAIL, Source.ICLOUD_CALENDAR, Source.OBSIDIAN)
@@ -86,6 +91,12 @@ class DataRoot:
     def wiki_git(self) -> Path:
         """The wiki's git directory, beside the wiki and never inside it."""
         return self.path / WIKI_GIT_DIR
+
+    @property
+    def evals(self) -> Path:
+        """The private eval directory: real-data eval sets, cuts, runs, and verdicts, which
+        never go in the repository."""
+        return self.path / "evals"
 
     @property
     def state(self) -> Path:
@@ -142,6 +153,17 @@ class CaptureConfig:
     """The vault copy, or None when the vault isn't captured."""
     cadences: Mapping[Source, timedelta]
     """Each collected source's expected cadence."""
+    gmail_token: Path | None = None
+    """Gmail's OAuth token, or None when Gmail isn't captured."""
+
+
+@dataclass(frozen=True)
+class GmailConfig:
+    """Where Gmail's OAuth client and token are."""
+
+    token: Path
+    client: Path | None
+    """The OAuth client (a Desktop app client's JSON), needed only to ask for consent."""
 
 
 @dataclass(frozen=True)
@@ -306,7 +328,24 @@ def load_capture_config(environ: Mapping[str, str] = os.environ) -> CaptureConfi
         )
         for source in COLLECTED_SOURCES
     }
-    return CaptureConfig(vault=vault, cadences=cadences)
+    gmail_token = _path(environ, GMAIL_TOKEN_VAR)
+    return CaptureConfig(vault=vault, cadences=cadences, gmail_token=gmail_token)
+
+
+def load_gmail_config(environ: Mapping[str, str] = os.environ) -> GmailConfig:
+    """Where Gmail's token is (it must be configured) and its OAuth client, if configured."""
+    token = _path(environ, GMAIL_TOKEN_VAR)
+    if token is None:
+        raise ConfigError(
+            f"{GMAIL_TOKEN_VAR} is not set: set it to where Gmail's OAuth token is kept, in "
+            "your configuration directory, such as ~/.config/pa/gmail-token.json."
+        )
+    return GmailConfig(token=token, client=_path(environ, GMAIL_CLIENT_VAR))
+
+
+def _path(environ: Mapping[str, str], var: str) -> Path | None:
+    value = environ.get(var, "").strip()
+    return Path(value).expanduser().resolve() if value else None
 
 
 def require_backup_config(environ: Mapping[str, str] = os.environ) -> None:

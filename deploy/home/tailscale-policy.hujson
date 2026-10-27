@@ -1,24 +1,16 @@
-// The parts of the tailnet policy the PA VM needs. Merge them into the tailnet policy file
-// (admin console → Access controls); don't paste over it.
+// The tailnet policy as the PA leaves it. The assistant's VM gave up its Tailscale identity in
+// v0.13 (#91), and no PA VM is on the tailnet: the owner reaches them with `incus exec` on the
+// devbox. Merge this into the tailnet policy file (admin console → Access controls); don't paste
+// over it.
 //
-// - The owner's devices (user-owned, untagged) reach each other and the VM.
-// - The VM (tag:pa) is the source of no rule, so it reaches nothing.
-// - Any rule with "*" as its source also covers tag:pa and must go, including the default
-//   allow-all rule.
+// - Delete everything that names tag:pa: its tagOwners entry, the grant from the owner's devices
+//   to tag:pa, and the ssh rule into tag:pa as assistant.
+// - Keep the grant below, so the owner's devices (user-owned, untagged) still reach each other,
+//   the devbox included (the wiki's Obsidian view pulls over SSH on the tailnet).
+// - Don't bring back a rule with "*" as its source, the default allow-all among them.
 {
-	"tagOwners": {
-		"tag:pa": ["autogroup:admin"],
-	},
-
 	"grants": [
 		// The owner's devices reach each other. Tagged devices aren't anyone's own.
 		{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]},
-		// The owner's devices reach the VM.
-		{"src": ["autogroup:member"], "dst": ["tag:pa"], "ip": ["*"]},
-	],
-
-	"ssh": [
-		// Tailscale SSH into the VM as its unprivileged user. Root is `incus exec` on the devbox.
-		{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:pa"], "users": ["assistant"]},
 	],
 }
