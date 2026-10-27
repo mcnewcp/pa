@@ -149,7 +149,7 @@ def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
                 f"eval set {path} is asked at {eval_set.as_of.isoformat()}, but the cut "
                 f"{cut.name} was taken at {cut.as_of.isoformat()}: set its as_of to the cut's"
             )
-        named ={i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
+        named = {i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
         missing = sorted(named - cut.episode_ids())
         if missing:
             raise EvalSetError(

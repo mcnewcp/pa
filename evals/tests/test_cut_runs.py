@@ -330,9 +330,7 @@ def test_pa_eval_run_over_a_cut_refuses_a_set_citing_an_episode_missing_from_it(
     assert not runs.exists()
 
 
-def test_pa_eval_run_over_a_cut_refuses_a_set_asked_at_another_time(
-    cut, scripts, private, capsys
-):
+def test_pa_eval_run_over_a_cut_refuses_a_set_asked_at_another_time(cut, scripts, private, capsys):
     runs = private / "runs"
     eval_set = write_set_asked_at(private / "set.json", "2026-10-05T20:00:00-05:00")
 
