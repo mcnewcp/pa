@@ -217,7 +217,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=datetime.fromisoformat,
         help="Start the replay at this time (ISO 8601; the owner's time zone if it has no "
         "offset), such as a backfill's window start: the first batch is its week, and nothing "
-        "that occurred before it is offered. Else the replay starts at the first episode.",
+        "that occurred before it is offered but calendar events still going at it, such as a "
+        "series. Else the replay starts at the first episode.",
     )
     replay.add_argument(
         "--batch-days",

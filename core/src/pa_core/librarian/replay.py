@@ -10,8 +10,9 @@ A replay resumes from its last committed run: the next window starts where that 
 
 A windowed replay (one given a window start, such as a backfill's) starts at the window start
 instead: its first window runs from there to the end of its week, and nothing that occurred
-before it is ever offered. The run log records the window start, so a replay resumes with the
-window it started with, even after its first run failed.
+before it is ever offered, but for the calendar events still going at the window start (a
+series that began before it), which the first window takes. The run log records the window
+start, so a replay resumes with the window it started with, even after its first run failed.
 
 A replay's target directory (`ReplayTarget`) holds the wiki's tree (`wiki/`), its git directory
 (`wiki.git/`), and the run log (`run-log.jsonl`).
@@ -269,6 +270,9 @@ def _windows(
         return
     first, latest = min(days), max(days)
     length = timedelta(days=batch_days)
+    # A windowed replay's first window also takes the calendar events still going at the
+    # window start, such as a weekly class that began a year before it.
+    carry_in = window_start is not None and resume_from is None
     if resume_from is not None:
         start = resume_from
         end = _midnight(start.astimezone(time_zone).date() + length, time_zone)
@@ -280,10 +284,11 @@ def _windows(
         if as_of is None and start.astimezone(time_zone).date() > latest:
             return
         last = end >= as_of if as_of is not None else end.astimezone(time_zone).date() > latest
-        yield Window(start, min(end, as_of) if as_of is not None else end), last
+        yield Window(start, min(end, as_of) if as_of is not None else end, carry_in), last
         if last:
             return
         start, end = end, _midnight(end.astimezone(time_zone).date() + length, time_zone)
+        carry_in = False
 
 
 def _monday(day: date) -> date:

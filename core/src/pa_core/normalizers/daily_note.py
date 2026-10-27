@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 from pa_core.envelope import Envelope, Kind, Participant, Role, Source, TimeSpan, episode_id
 from pa_core.errors import MalformedPayloadError
 from pa_core.l0 import raw_ref
+from pa_core.normalizers.capture_header import split_capture_header
 from pa_core.owner import Owner
 
 EXTENSION = ".md"
@@ -36,41 +37,12 @@ def normalize_daily_note(raw: bytes, *, captured_at: datetime, owner: Owner) -> 
     )
 
 
-# A captured note is the note file's bytes behind a capture header: `Name: value` lines, then
-# a blank line. The header records what the file alone does not say: its vault path, and when
-# it was captured, which orders a day's versions.
-_HEADER_END = re.compile(rb"\r?\n\r?\n")
-_HEADER_LINE = re.compile(r"([A-Za-z0-9-]+):(.*)")
-
-
 def _split_capture(raw: bytes) -> tuple[str, datetime, bytes]:
     """The note's vault path and capture time from its capture header, and the note's own
-    bytes after it."""
-    end = _HEADER_END.search(raw)
-    if end is None:
-        raise MalformedPayloadError("daily note has no capture header")
-    fields: dict[str, str] = {}
-    for line in _text(raw[: end.start()]).splitlines():
-        field = _HEADER_LINE.fullmatch(line)
-        if field is None:
-            raise MalformedPayloadError("daily note has no capture header")
-        fields[field[1].lower()] = field[2].strip()
-    path = fields.get("vault-path")
-    if not path:
-        raise MalformedPayloadError("daily note has no Vault-Path in its capture header")
-    return path, _captured_at(fields.get("captured-at")), raw[end.end() :]
-
-
-def _captured_at(value: str | None) -> datetime:
-    if not value:
-        raise MalformedPayloadError("daily note has no Captured-At in its capture header")
-    try:
-        moment = datetime.fromisoformat(value)
-    except ValueError:
-        moment = None
-    if moment is None or moment.utcoffset() is None:
-        raise MalformedPayloadError("daily note's Captured-At is not a time with a UTC offset")
-    return moment.astimezone(UTC)
+    bytes after it. The header records what the file alone does not say: its vault path, and
+    when it was captured, which orders a day's versions."""
+    header, note = split_capture_header(raw, what="daily note", required=("Vault-Path",))
+    return header.require("Vault-Path"), header.captured_at, note
 
 
 # Daily notes are named for their day, which may sit among other words (`2026-10-05 Monday`).

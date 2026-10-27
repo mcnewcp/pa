@@ -7,7 +7,10 @@ episodes new for the next.
 A replay batch is the episodes whose day falls in a window of whole days (a week, in a replay),
 ordered by when they occurred, then episode id. Replays batch by occurrence because eval ingest
 gives almost every episode the same capture time. A windowed replay's first window starts at
-the window start, which may fall within a day: what occurred before it is never offered.
+the window start, which may fall within a day: what occurred before it is never offered, but
+for a calendar event still going at it. A series is one: its `occurred_at` starts at its first
+occurrence and has no end, so a weekly class that began a year before the window is offered in
+the first window.
 
 Episode selection (`pa_core.selection`) decides which of them are offered:
 
@@ -87,6 +90,10 @@ class Window:
 
     start: datetime
     end: datetime
+    carry_in: bool = False
+    """Whether the window also takes calendar events still going at its start, though they
+    started before it: a windowed replay's first window does, so a series that began before
+    the window start is offered (story 85 of #80)."""
 
 
 @dataclass(frozen=True)
@@ -151,7 +158,11 @@ def replay_batch(
         (
             e
             for e in everything
-            if _occurred_from(e, time_zone) >= window.start and (last or days[e.episode_id] < end)
+            if (
+                _occurred_from(e, time_zone) >= window.start
+                or (window.carry_in and _still_going(e, window.start))
+            )
+            and (last or days[e.episode_id] < end)
         ),
         key=lambda e: (e.occurred_at.start, e.episode_id),
     )
@@ -203,6 +214,13 @@ def _occurred_from(envelope: Envelope, time_zone: tzinfo) -> datetime:
     if span.end is not None and _whole_days(span.start, span.end):
         return datetime.combine(span.start.date(), time(), tzinfo=time_zone)
     return span.start
+
+
+def _still_going(envelope: Envelope, moment: datetime) -> bool:
+    """Whether `envelope` is a calendar event still going at `moment`: one that ends after it,
+    or a series, which has no one end."""
+    end = envelope.occurred_at.end
+    return envelope.kind is Kind.CALENDAR_EVENT and (end is None or end > moment)
 
 
 def _whole_days(start: datetime, end: datetime) -> bool:
