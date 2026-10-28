@@ -76,7 +76,7 @@ echo "The librarian project renders for the owner:"
 project=$work/project
 if (
   set -a
-  # shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
+  # shellcheck source=/dev/null # owner.env, written by the wizard's owner stage
   source "$PA_OWNER_ENV"
   set +a
   uv run --quiet --project "$REPO_DIR" pa librarian-project render "$project" \

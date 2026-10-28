@@ -28,7 +28,7 @@ case ${1:-} in
   dry-run)
     require_owner_env
     set -a
-    # shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
+    # shellcheck source=/dev/null # owner.env, written by the wizard's owner stage
     source "$PA_OWNER_ENV"
     set +a
     PA_GMAIL_TOKEN=$PA_GMAIL_TOKEN uv run --project "$REPO_DIR" pa gmail "$@"

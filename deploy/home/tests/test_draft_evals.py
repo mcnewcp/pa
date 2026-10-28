@@ -59,7 +59,7 @@ def calls(tmp_path: Path) -> Path:
 
 def data_root(tmp_path: Path) -> Path:
     """The instance's data root, under the stand-in home."""
-    return tmp_path / "home" / ".local" / "share" / "pa-home-synthetic"
+    return tmp_path / "home" / ".local" / "share" / "pa-home"
 
 
 def draft_evals(

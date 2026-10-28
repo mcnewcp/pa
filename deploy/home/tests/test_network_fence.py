@@ -130,7 +130,7 @@ def test_a_second_nic_or_a_widened_acl_isnt_fenced():
 
 
 def test_the_store_isnt_mounted_into_a_vm_that_isnt_fenced(stand_ins):
-    (stand_ins.home / ".local" / "share" / "pa-home-synthetic" / "l0").mkdir(parents=True)
+    (stand_ins.home / ".local" / "share" / "pa-home" / "l0").mkdir(parents=True)
     stand_ins.answer("incus", "query", stdout=json.dumps(instance(eth0=BUILD_NIC)))
 
     result = stand_ins.run(DEPLOY / "mount-store.sh")
@@ -143,7 +143,7 @@ def test_the_store_isnt_mounted_into_a_vm_that_isnt_fenced(stand_ins):
 
 def mount_store(stand_ins: Any, *, capture: int, assistant: int) -> Any:
     """mount-store.sh into the fenced VM, its users at these uids."""
-    (stand_ins.home / ".local" / "share" / "pa-home-synthetic" / "l0").mkdir(parents=True)
+    (stand_ins.home / ".local" / "share" / "pa-home" / "l0").mkdir(parents=True)
     fenced = instance(eth0=profile()["devices"]["eth0"])
     stand_ins.answer("incus", "query", stdout=json.dumps(fenced))
     stand_ins.answer("incus", "id -u capture", stdout=f"{capture}\n")

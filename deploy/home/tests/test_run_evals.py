@@ -70,7 +70,7 @@ def run_evals(
     for script in (incus, sudo):
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
     home = tmp_path / "home"
-    (home / ".local" / "share" / "pa-home-synthetic" / "inbox" / "assistant_chat").mkdir(
+    (home / ".local" / "share" / "pa-home" / "inbox" / "assistant_chat").mkdir(
         parents=True, exist_ok=True
     )
     environ = {
@@ -196,7 +196,7 @@ CUT_NAME = "20261026T120000Z"
 
 def data_root(tmp_path: Path) -> Path:
     """The instance's data root, under the stand-in home."""
-    return tmp_path / "home" / ".local" / "share" / "pa-home-synthetic"
+    return tmp_path / "home" / ".local" / "share" / "pa-home"
 
 
 @pytest.fixture

@@ -185,10 +185,12 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91): the steps only the owner can do, and
-# the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
-# Run it on the devbox: deploy/home/setup-wizard.sh for everything, Gmail and iCloud Calendar
-# included, or deploy/home/setup-wizard.sh --librarian for
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91, #99): the steps only
+# the owner can do, and the deploy scripts for the rest. Every stage checks its result, and
+# re-running skips what's done. Run it on the devbox: deploy/home/setup-wizard.sh for everything,
+# Gmail and iCloud Calendar included, or deploy/home/setup-wizard.sh --owner for the data root and
+# its owner alone, --go-live to move the assistant's VM from the synthetic data root onto the real
+# one (#99), --librarian for
 # the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
 # client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, --icloud for
 # iCloud Calendar's app-specific password and calendars (#97), a new password too, --backup
@@ -197,24 +199,28 @@ finish() {
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ASSISTANT_STAGES=19
+OWNER_STAGES=2
+ASSISTANT_STAGES=18
 LIBRARIAN_STAGES=7
 VAULT_STAGES=8
 GMAIL_STAGES=3
 ICLOUD_STAGES=3
 BACKUP_STAGES=2
 SCHEDULE_STAGES=2
+GO_LIVE_STAGES=10
 only_librarian=false only_vault=false only_gmail=false only_icloud=false only_backup=false
-only_schedules=false
+only_schedules=false only_owner=false only_go_live=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + GMAIL_STAGES + ICLOUD_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
+  "") TOTAL_STAGES=$((OWNER_STAGES + ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + GMAIL_STAGES + ICLOUD_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
+  --owner) TOTAL_STAGES=$OWNER_STAGES; only_owner=true ;;
+  --go-live) TOTAL_STAGES=$((OWNER_STAGES + GO_LIVE_STAGES)); only_go_live=true ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
   --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
   --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
   --icloud) TOTAL_STAGES=$ICLOUD_STAGES; only_icloud=true ;;
   --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
   --schedules) TOTAL_STAGES=$SCHEDULE_STAGES; only_schedules=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian | --vault | --gmail | --icloud | --backup | --schedules]\n' >&2; exit 2 ;;
+  *) printf 'usage: setup-wizard.sh [--owner | --go-live | --librarian | --vault | --gmail | --icloud | --backup | --schedules]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -255,6 +261,63 @@ remote_control_consented() { claude_config_true remoteDialogSeen; }
 # in_project CMD: runs CMD in the rendered agent project as the assistant user, on this terminal.
 in_project() {
   incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_PROJECT") && $1"
+}
+
+# update_vm asks for the ref to deploy, this checkout's upstream by default, and runs update.sh.
+update_vm() {
+  local upstream default_ref ref
+  upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
+  default_ref=${upstream:-HEAD}
+  printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
+  read -r ref || true
+  run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
+}
+
+# The instance's data root, created empty, and its owner (#99): the owner's real identity, which
+# ingest reads to tell the owner's mail and events from everyone else's, and the agent project is
+# rendered from. Nothing synthetic goes in.
+owner_stages() {
+
+# ── O1 ────────────────────────────────────────────────────────────────────
+stage "Create the instance's data root"
+say "The store stays on the devbox, at $PA_DATA_ROOT, readable by you alone. It starts"
+say "empty: your sources fill it, from the go-live's backfill on. Nothing synthetic goes in."
+run "$DEPLOY_DIR/create-data-root.sh"
+ok "$PA_DATA_ROOT is ready, mode $(stat -c %a "$PA_DATA_ROOT")"
+pause
+
+# ── O2 ────────────────────────────────────────────────────────────────────
+stage "You, the instance's owner"
+if [[ -f $PA_OWNER_ENV ]] && ! confirm "$PA_OWNER_ENV names the owner already. Rewrite it?"; then
+  ok "the owner is in $PA_OWNER_ENV"
+else
+  say "Ingest tells your own mail, events and notes from everyone else's by these, and the"
+  say "assistant knows you by them. They stay in $PA_OWNER_ENV, readable by you alone."
+  printf '\n  %sYour name, as your mail shows it%s ' "$BOLD" "$RESET"
+  read -r owner_name || true
+  printf '  %sYour email addresses, comma-separated (every one you send mail as)%s ' "$BOLD" "$RESET"
+  read -r owner_emails || true
+  printf '  %sOther names people call you, comma-separated (Enter for none)%s ' "$BOLD" "$RESET"
+  read -r owner_other_names || true
+  zone=$(devbox_time_zone || true)
+  printf '  %sYour time zone%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "${zone:-none}" "$RESET"
+  read -r owner_zone || true
+  if ! lines=$(owner_env_lines "$owner_name" "$owner_emails" "$owner_other_names" "${owner_zone:-$zone}"); then
+    printf '  %s✗ %s: nothing was written.%s\n' "$RED" "$lines" "$RESET"; exit 1
+  fi
+  printf '\n'
+  say "$PA_OWNER_ENV will read:"
+  printf '%s\n' "$lines" | sed 's/^/      /'
+  printf '\n'
+  if ! confirm "Are these right?"; then
+    printf '  %s✗ nothing was written: re-run setup-wizard.sh --owner%s\n' "$RED" "$RESET"; exit 1
+  fi
+  (umask 077 && printf '%s\n' "$lines" >"$PA_OWNER_ENV.new")
+  mv "$PA_OWNER_ENV.new" "$PA_OWNER_ENV"
+  ok "wrote $PA_OWNER_ENV, mode $(stat -c %a "$PA_OWNER_ENV")"
+  note "The assistant's VM gets it at the next update.sh (the go-live runs one)."
+fi
+pause
 }
 
 # The assistant's VM, pa-home.
@@ -341,14 +404,6 @@ ok "$PA_VM reaches only the API"
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
-stage "Seed the instance's data root"
-say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
-say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
-run "$DEPLOY_DIR/seed-data-root.sh"
-ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
-pause
-
-# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Give the VM's inbox a filesystem of its own"
 say "The VM writes its inbox directory with its own owners and modes, so root in the VM could"
 say "leave a setuid program or a device node on the devbox, or fill its disk. A $PA_CHAT_INBOX_SIZE"
@@ -357,7 +412,7 @@ run "$DEPLOY_DIR/install-chat-inbox.sh"
 ok "$PA_CHAT_INBOX is its own filesystem"
 pause
 
-# ── 9 ─────────────────────────────────────────────────────────────────────
+# ── 8 ─────────────────────────────────────────────────────────────────────
 stage "Mount the store into the VM"
 say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
 say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
@@ -367,20 +422,16 @@ run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
 say "Snapshots the VM, then pushes in, from this checkout, the code at a ref (a git bundle), a"
 say "wheelhouse built here for its lock, uv, and Claude Code $PA_ASSISTANT_CLAUDE_VERSION, checked"
 say "against Anthropic's signature. The VM syncs offline, and renders the agent project into"
 say "$PA_VM_PROJECT. The ref is resolved here: git fetch first to deploy what's on GitHub."
-upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
-default_ref=${upstream:-HEAD}
-printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
-read -r ref || true
-run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
+update_vm
 pause
 
-# ── 11 ────────────────────────────────────────────────────────────────────
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Log the VM in to Claude"
 require_fenced
 if claude_logged_in; then
@@ -398,7 +449,7 @@ else
 fi
 pause
 
-# ── 12 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Take the VM off the tailnet"
 say "The VM has no Tailscale identity any more: you reach it with incus exec from the devbox."
 say "Your tailnet's policy and machine list may still name it from before."
@@ -419,7 +470,7 @@ else
 fi
 pause
 
-# ── 13 ────────────────────────────────────────────────────────────────────
+# ── 12 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
 say "From inside the VM: the web, the devbox, its Docker services, the LAN and tailnet peers"
 say "must be unreachable, with no DNS and no Tailscale, and only Anthropic's API reachable; and"
@@ -431,7 +482,7 @@ else
   SKIPPED+=("isolation check failed: fix and re-run deploy/home/check-isolation.sh")
 fi
 pause
-# ── 14 ────────────────────────────────────────────────────────────────────
+# ── 13 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
 say "root; inbox/assistant_chat/ is writable by the capture user alone, not the assistant, and"
@@ -445,7 +496,7 @@ else
 fi
 pause
 
-# ── 15 ────────────────────────────────────────────────────────────────────
+# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Trust the agent project"
 if project_trusted; then
   ok "Claude Code in $PA_VM already trusts $PA_VM_PROJECT"
@@ -463,7 +514,7 @@ else
 fi
 pause
 
-# ── 16 ────────────────────────────────────────────────────────────────────
+# ── 15 ────────────────────────────────────────────────────────────────────
 stage "Turn on Remote Control"
 if remote_control_consented; then
   ok "Remote Control is already turned on in $PA_VM"
@@ -480,7 +531,7 @@ else
 fi
 pause
 
-# ── 17 ────────────────────────────────────────────────────────────────────
+# ── 16 ────────────────────────────────────────────────────────────────────
 stage "Start the Remote Control service"
 say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
 say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
@@ -493,7 +544,7 @@ else
 fi
 pause
 
-# ── 18 ────────────────────────────────────────────────────────────────────
+# ── 17 ────────────────────────────────────────────────────────────────────
 stage "Find the assistant on your phone"
 say "The Claude app and claude.ai/code list the VM under its hostname and the project folder."
 open_url "https://claude.ai/code"
@@ -506,7 +557,7 @@ else
 fi
 pause
 
-# ── 19 ────────────────────────────────────────────────────────────────────
+# ── 18 ────────────────────────────────────────────────────────────────────
 stage "Keep your chats out of model training"
 say "Your Remote Control sessions with the assistant are kept in your claude.ai account, like"
 say "any chat. With model-improvement sharing off, Anthropic keeps them for 30 days; with it on,"
@@ -1073,7 +1124,133 @@ fi
 pause
 }
 
+# The go-live (#99): the assistant's VM moved from the synthetic data root onto the real one,
+# after the owner stages, and checked before any collector runs against it. The Claude session
+# then backfills, replays and seeds the wiki, and the schedules go on last (--schedules).
+go_live_stages() {
+
+# ── GL1 ───────────────────────────────────────────────────────────────────
+stage "Pause the PA, and leave the synthetic data root"
+say "Nothing runs against either data root until the wiki is seeded: the timers go off if"
+say "they're on, so no capture cycle lands between the backfill and its replay."
+for timer in "${PA_SCHEDULE_TIMERS[@]}"; do
+  if systemctl is-enabled --quiet "$timer" 2>/dev/null; then
+    run sudo systemctl disable --now "${PA_SCHEDULE_TIMERS[@]}"
+    break
+  fi
+done
+ok "the schedules are off"
+say "Then $PA_VM leaves $PA_SYNTHETIC_DATA_ROOT: Remote Control stops, the store's shares come"
+say "off, and its own filesystems are unmounted (stopping Incus for a moment, not the VMs). Its"
+say "files stay until it's retired (retire-data-root.sh), once the real data root has run a night."
+release_data_root "$PA_SYNTHETIC_DATA_ROOT"
+ok "no VM is shared anything in $PA_SYNTHETIC_DATA_ROOT"
+pause
+
+# ── GL2 ───────────────────────────────────────────────────────────────────
+stage "Give the new inbox directory a filesystem of its own"
+say "As before, but in $PA_DATA_ROOT: $PA_CHAT_INBOX_SIZE, mounted nosuid,nodev,noexec at every"
+say "boot before Incus."
+run "$DEPLOY_DIR/install-chat-inbox.sh"
+ok "$PA_CHAT_INBOX is its own filesystem"
+pause
+
+# ── GL3 ───────────────────────────────────────────────────────────────────
+stage "Give the new wiki filesystems of their own"
+say "The wiki ($PA_WIKI_SIZE) and the replays directory ($PA_REPLAYS_SIZE), which the librarian's"
+say "VM writes. The wiki starts empty: the backfill's replay seeds it."
+run "$DEPLOY_DIR/install-wiki.sh"
+ok "$PA_WIKI and $PA_REPLAYS are filesystems of their own"
+pause
+
+# ── GL4 ───────────────────────────────────────────────────────────────────
+stage "Mount the new store into the VM"
+say "L0, the wiki and the status read-only, and the inbox directory writable, all from"
+say "$PA_DATA_ROOT."
+run "$DEPLOY_DIR/mount-store.sh"
+ok "the store is mounted"
+pause
+
+# ── GL5 ───────────────────────────────────────────────────────────────────
+stage "Render the agent project for you"
+say "update.sh pushes your owner.env in and renders the agent project from it, so the assistant"
+say "knows you, and starts Remote Control again."
+update_vm
+pause
+
+# ── GL6 ───────────────────────────────────────────────────────────────────
+stage "Point the schedules at the new data root"
+if [[ -f $PA_SYSTEMD_DIR/${PA_SCHEDULE_UNITS[0]} ]]; then
+  say "The installed units name the data root: install them again, still off."
+  run "$DEPLOY_DIR/install-schedules.sh"
+  ok "the schedules name $PA_DATA_ROOT, and stay off until --schedules"
+else
+  ok "the schedules aren't installed yet: --schedules installs them"
+fi
+pause
+
+# ── GL7 ───────────────────────────────────────────────────────────────────
+stage "Isolation check, on the real data root"
+say "Every fence again, before anything real arrives. A failure stops here: fix it and"
+say "re-run setup-wizard.sh --go-live."
+printf '\n'
+run "$DEPLOY_DIR/check-isolation.sh"
+ok "every fence holds"
+pause
+
+# ── GL8 ───────────────────────────────────────────────────────────────────
+stage "Store check, on the real data root"
+printf '\n'
+run "$DEPLOY_DIR/check-store.sh"
+ok "the store's mounts hold"
+pause
+
+# ── GL9 ───────────────────────────────────────────────────────────────────
+stage "Gmail dry run"
+say "Counts by Gmail category what a two-month backfill would capture. Nothing but counts."
+if private_file "$PA_GMAIL_TOKEN"; then
+  run "$DEPLOY_DIR/gmail.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("Gmail dry run: set Gmail up first (setup-wizard.sh --gmail), which runs it")
+fi
+pause
+
+# ── GL10 ─────────────────────────────────────────────────────────────────
+stage "iCloud Calendar dry run"
+say "Counts per calendar what a two-month backfill would capture. Nothing but counts."
+if private_file "$PA_ICLOUD_PASSWORD_FILE" && [[ -n $(icloud_value PA_ICLOUD_CALENDARS) ]]; then
+  run "$DEPLOY_DIR/calendar.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("iCloud Calendar dry run: set it up first (setup-wizard.sh --icloud), which runs it")
+fi
+pause
+}
+
+if $only_go_live && synthetic_data_root "$PA_DATA_ROOT" >/dev/null; then
+  printf 'error: the go-live moves onto the real data root, not %s: unset PA_DATA_ROOT\n' "$PA_DATA_ROOT" >&2
+  exit 2
+fi
 banner "PA setup"
+if $only_go_live; then
+  owner_stages
+  go_live_stages
+  finish
+  note "The assistant runs on $PA_DATA_ROOT now, with an empty L0 and no wiki. Hand back to the"
+  note "Claude session, which reports numbers only on the issue, for:"
+  note "  1. the backfill: deploy/home/capture.sh --backfill <window start>"
+  note "  2. the replay: deploy/home/librarian.sh replay $PA_REPLAYS/<name> --window-start <window start>"
+  note "  3. the seed: deploy/home/librarian.sh seed $PA_REPLAYS/<name> --captured-through <backfill's capture time>"
+  note "Only then turn on the schedules: setup-wizard.sh --schedules."
+  printf '\n'
+  exit 0
+fi
+if $only_owner; then
+  owner_stages
+  finish
+  note "The assistant's VM moves onto this data root with setup-wizard.sh --go-live."
+  printf '\n'
+  exit 0
+fi
 if $only_gmail; then
   gmail_stages
   finish
@@ -1105,13 +1282,14 @@ if $only_schedules; then
   printf '\n'
   exit 0
 fi
-# A plain run: the assistant's VM seeds the data root, which the Gmail and iCloud dry runs need,
-# and the schedules come last, once everything they run is set up.
+# A plain run: the data root and its owner first, which the VMs' shares and the Gmail and iCloud
+# dry runs need, and the schedules last, once everything they run is set up.
 if $only_vault; then
   vault_stages
 elif $only_librarian; then
   librarian_stages
 else
+  owner_stages
   assistant_stages
   librarian_stages
   vault_stages

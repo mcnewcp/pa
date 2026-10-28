@@ -90,10 +90,20 @@ PA_GMAIL_AUTH_PORT=8765
 PA_ICLOUD_PASSWORD_FILE=$HOME/.config/pa/icloud-app-password
 PA_ICLOUD_ENV=$HOME/.config/pa/icloud.env
 
-# The instance's data root on the devbox: v0.11's, seeded from the synthetic corpus and
-# disposable (v0.13 starts a fresh one for real sources). owner.env holds the instance owner.
-PA_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
+# The instance's data root on the devbox: v0.13's, holding the owner's real mail, calendars,
+# notes and chats. It starts empty (create-data-root.sh), mode 0700, and owner.env holds the
+# instance owner, whom the owner names in the wizard (setup-wizard.sh --owner). Never seeded from
+# a synthetic corpus: seed-data-root.sh refuses it. PA_DATA_ROOT can name another data root, for
+# the scripts run over the synthetic one.
+PA_REAL_DATA_ROOT=$HOME/.local/share/pa-home
+PA_DATA_ROOT=${PA_DATA_ROOT:-$PA_REAL_DATA_ROOT}
 PA_OWNER_ENV=$PA_DATA_ROOT/owner.env
+# The synthetic data root v0.11 and v0.12 ran on, seeded from a frozen corpus, with the corpus's
+# fictional owner. The go-live takes the assistant's VM off it (setup-wizard.sh --go-live), and
+# retire-data-root.sh removes it once the real one has run a night. Only a data root named like
+# it (pa-home-synthetic, or pa-home-synthetic-<anything>) is ever seeded or retired.
+PA_SYNTHETIC_DATA_ROOT=$HOME/.local/share/pa-home-synthetic
+PA_SYNTHETIC_PREFIX=pa-home-synthetic
 # Real-data evals' private files (DataRoot.evals): run directories from runs over a cut
 # (evals/runs/), and drafts of the real-data eval set with the owner's notes
 # (evals/drafts/<cut>/). The nightly backup takes it whole.
@@ -384,9 +394,64 @@ push_file() {
 # a run can check its sessions captured nothing.
 inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
 
-# require_owner_env stops unless the data root is seeded, owner.env with it.
+# require_owner_env stops unless the data root has its owner (setup-wizard.sh --owner).
 require_owner_env() {
-  [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run seed-data-root.sh first"
+  [[ -f $PA_OWNER_ENV ]] || die "$PA_OWNER_ENV is missing: run setup-wizard.sh --owner first"
+}
+
+# owner_env_lines NAME EMAILS OTHER_NAMES TIME_ZONE prints owner.env's lines for the instance
+# owner, shell-quoted as seed-data-root.sh writes them: EMAILS and OTHER_NAMES comma-separated
+# (spaces around the commas dropped), TIME_ZONE an IANA zone. A value that won't do prints why
+# instead, and fails.
+owner_env_lines() {
+  python3 -I -c '
+import re, shlex, sys, zoneinfo
+name, emails, other_names, zone = (value.strip() for value in sys.argv[1:])
+def items(value):
+    return [item.strip() for item in value.split(",") if item.strip()]
+problems = []
+if not name or not name.isprintable():
+    problems.append("give a name, on one line")
+if not items(emails):
+    problems.append("give an email address")
+for email in items(emails):
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+", email):
+        problems.append(f"{email} isn\x27t an email address")
+if not all(item.isprintable() for item in items(other_names)):
+    problems.append("give the other names on one line")
+zones = {z for z in zoneinfo.available_timezones() if not z.startswith(("posix/", "right/"))}
+if zone not in zones - {"localtime", "posixrules", "Factory"}:
+    shown = zone or "no zone"
+    problems.append(f"{shown} isn\x27t an IANA time zone, such as America/Chicago")
+if problems:
+    print("; ".join(problems))
+    sys.exit(1)
+for key, value in (
+    ("PA_OWNER_NAME", name),
+    ("PA_OWNER_EMAILS", ",".join(items(emails))),
+    ("PA_OWNER_OTHER_NAMES", ",".join(items(other_names))),
+    ("PA_TIME_ZONE", zone),
+):
+    print(f"{key}={shlex.quote(value)}")
+' "$@"
+}
+
+# devbox_time_zone prints the devbox's own time zone, such as America/Chicago.
+devbox_time_zone() {
+  timedatectl show -p Timezone --value 2>/dev/null ||
+    readlink /etc/localtime | sed 's|^.*/zoneinfo/||'
+}
+
+# synthetic_data_root PATH prints PATH, resolved (symbolic links followed, so a link can't lead
+# elsewhere), if it's a synthetic data root: named like PA_SYNTHETIC_DATA_ROOT, and not the real
+# data root. Fails otherwise.
+synthetic_data_root() {
+  local path
+  [[ -n $1 ]] || return 1
+  path=$(realpath -m -- "$1")
+  [[ ${path##*/} == "$PA_SYNTHETIC_PREFIX" || ${path##*/} == "$PA_SYNTHETIC_PREFIX"-* ]] || return 1
+  [[ $path != "$(realpath -m -- "$PA_REAL_DATA_ROOT")" ]] || return 1
+  printf '%s\n' "$path"
 }
 
 # app_specific_password VALUE: VALUE is shaped like an Apple app-specific password, four groups
@@ -530,7 +595,7 @@ render_schedule_unit() {
 job_environment() {
   require_owner_env
   set -a
-  # shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
+  # shellcheck source=/dev/null # owner.env, written by the wizard's owner stage
   source "$PA_OWNER_ENV"
   # shellcheck source=/dev/null # vault.env, written by the wizard
   [[ ! -f $PA_VAULT_ENV ]] || source "$PA_VAULT_ENV"
@@ -568,6 +633,57 @@ for vm in sorted(json.load(sys.stdin), key=lambda vm: vm["name"]):
                 vm_name, at = vm["name"], device.get("path")
                 print(f"{vm_name} is shared {path} (as {source}, at {at})")
 ' "$@"
+}
+
+# own_filesystem_units ROOT prints the mount units of a data root's own filesystems (the VM's
+# inbox directory, the wiki and the replays: install-chat-inbox.sh and install-wiki.sh), one per
+# line.
+own_filesystem_units() {
+  local dir
+  for dir in inbox/assistant_chat wiki replays; do
+    systemd-escape -p --suffix=mount "$1/$dir"
+  done
+}
+
+# stop_own_filesystems ROOT disables each of ROOT's own-filesystem mount units that's installed,
+# and unmounts it. Incus requires each one, so stopping it stops Incus too (but not the VMs); the
+# next incus command starts it again.
+stop_own_filesystems() {
+  local unit
+  while IFS= read -r unit; do
+    [[ -f $PA_SYSTEMD_DIR/$unit ]] || continue
+    sudo systemctl disable --now "$unit"
+    log "stopped $unit"
+  done < <(own_filesystem_units "$1")
+}
+
+# release_data_root ROOT takes the assistant's VM off a data root it no longer runs on (the
+# go-live's synthetic one): Remote Control stopped first, so no exchange lands on the VM's own
+# disk meanwhile (update.sh starts it again), then every disk device of the VM sourced in ROOT
+# taken off, then ROOT's own filesystems unmounted. It stops while any VM is still shared ROOT,
+# and leaves ROOT's files alone. Safe to re-run.
+release_data_root() {
+  local root devices device problems
+  root=$(realpath -m -- "$1")
+  devices=$(incus query "/1.0/instances/$PA_VM" | python3 -I -c '
+import json, os, sys
+root = sys.argv[1]
+for name, device in sorted((json.load(sys.stdin).get("devices") or {}).items()):
+    source = device.get("source", "")
+    if device.get("type") == "disk" and source.startswith("/"):
+        if os.path.commonpath([os.path.normpath(source), root]) == root:
+            print(name)
+' "$root")
+  if [[ -n $devices ]]; then
+    rc_unit stop </dev/null &>/dev/null || true
+    while IFS= read -r device; do
+      incus config device remove "$PA_VM" "$device" >/dev/null
+      log "took $device off $PA_VM"
+    done <<<"$devices"
+  fi
+  problems=$(incus query '/1.0/instances?recursion=1' | shared_into_vms "$root")
+  [[ -z $problems ]] || die "${problems//$'\n'/; }: take it off first"
+  stop_own_filesystems "$root"
 }
 
 # pinned_address HOST prints the first IPv4 address HOST resolves to on the devbox that lies in

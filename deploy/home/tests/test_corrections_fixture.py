@@ -43,7 +43,7 @@ from pa_home.git_wiki import GitWikiRepository
 
 DEPLOY = Path(__file__).resolve().parents[1]
 FIXTURE = DEPLOY / "tests" / "fixtures" / "corrections"
-REPLAYS = Path.home() / ".local" / "share" / "pa-home-synthetic" / "replays"
+REPLAYS = Path.home() / ".local" / "share" / "pa-home" / "replays"
 """PA_REPLAYS in lib.sh."""
 
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",), other_names=("Gus",))
