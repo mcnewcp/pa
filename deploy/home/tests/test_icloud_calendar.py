@@ -159,7 +159,7 @@ def test_calendar_sh_runs_the_dry_run_with_icloud_env_and_the_owners_time_zone(
 ):
     icloud_env(home).parent.mkdir(parents=True)
     icloud_env(home).write_text(f'PA_ICLOUD_USERNAME="{APPLE_ID}"\nPA_ICLOUD_CALENDARS="Home"\n')
-    owner_env = home / ".local" / "share" / "pa-home-synthetic" / "owner.env"
+    owner_env = home / ".local" / "share" / "pa-home" / "owner.env"
     owner_env.parent.mkdir(parents=True)
     owner_env.write_text('PA_TIME_ZONE="America/Chicago"\n')
 

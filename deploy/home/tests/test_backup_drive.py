@@ -336,6 +336,6 @@ def test_backup_sh_runs_pa_backup_against_the_drives_repository_with_the_passwor
             "args": ["pa", "backup"],
             "RESTIC_REPOSITORY": f"{MOUNT}/restic",
             "RESTIC_PASSWORD_FILE": str(password_file(home)),
-            "PA_DATA_DIR": str(home / ".local" / "share" / "pa-home-synthetic"),
+            "PA_DATA_DIR": str(home / ".local" / "share" / "pa-home"),
         }
     ]

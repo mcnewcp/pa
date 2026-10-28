@@ -51,7 +51,7 @@ def update(stand_ins: Any, *args: str, claude: bytes = b"claude 2.1.308"):
     stand_ins.answer("incus", "--version", stdout=f"{CLAUDE_VERSION} (Claude Code)\n")
     # Remote Control isn't enabled yet, so the update doesn't start it.
     stand_ins.answer("incus", "is-enabled", exit=1)
-    data_root = stand_ins.home / ".local" / "share" / "pa-home-synthetic"
+    data_root = stand_ins.home / ".local" / "share" / "pa-home"
     data_root.mkdir(parents=True)
     (data_root / "owner.env").write_text("PA_OWNER_NAME='Argus McNevans'\n")
     downloaded_claude(stand_ins.home, claude)
@@ -149,7 +149,7 @@ def test_owner_env_goes_in_as_roots_readable_by_the_assistant(stand_ins):
     push = push_to(updated(stand_ins, "HEAD"), "/etc/pa/owner.env")
 
     assert push.argv[2:-2] == ["--quiet", "--uid", "0", "--gid", "0", "--mode", "0644"]
-    assert push.argv[-2].endswith("/pa-home-synthetic/owner.env")
+    assert push.argv[-2].endswith("/pa-home/owner.env")
 
 
 def test_root_renders_the_agent_project_behind_the_managed_settings(stand_ins):

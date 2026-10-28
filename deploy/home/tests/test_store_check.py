@@ -21,7 +21,7 @@ def home(tmp_path: Path) -> Path:
 
 
 def data_root(home: Path) -> Path:
-    return home / ".local" / "share" / "pa-home-synthetic"
+    return home / ".local" / "share" / "pa-home"
 
 
 def disk(source: Path | str, path: str, readonly: bool | None = None) -> dict[str, str]:

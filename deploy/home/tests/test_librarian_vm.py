@@ -261,7 +261,7 @@ def test_check_librarian_records_names_that_dont_resolve_and_carries_on(stand_in
     example.com on the devbox resolves, and each is a FAIL or a skip, not the end of the check."""
     for tool in ("getent", "ip", "ss", "ping", "timeout", "findmnt"):
         stand_ins.add(tool)
-    root = stand_ins.home / ".local" / "share" / "pa-home-synthetic"
+    root = stand_ins.home / ".local" / "share" / "pa-home"
     for directory in ("l0", "wiki"):
         (root / directory).mkdir(parents=True)
     (root / "owner.env").write_text("")

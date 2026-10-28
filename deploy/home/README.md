@@ -14,7 +14,9 @@ See the Home hosting bullet in the [roadmap](../../docs/roadmaps/v0.1-prototype.
 Run the wizard on the devbox. It walks through the steps only the owner can do and calls the scripts below for the rest. Each stage checks its result, and re-running it skips what's done.
 
 ```sh
-deploy/home/setup-wizard.sh              # both VMs, the vault copy, Gmail, iCloud Calendar, the backup drive, then the schedules
+deploy/home/setup-wizard.sh              # the data root and its owner, both VMs, the vault copy, Gmail, iCloud Calendar, the backup drive, then the schedules
+deploy/home/setup-wizard.sh --owner      # the data root and its owner alone
+deploy/home/setup-wizard.sh --go-live    # move the assistant's VM from the synthetic data root onto the real one (Going live)
 deploy/home/setup-wizard.sh --librarian  # the librarian's VM alone
 deploy/home/setup-wizard.sh --vault      # the vault copy alone: Obsidian Sync and its headless client
 deploy/home/setup-wizard.sh --gmail      # Gmail's Cloud project and consent, or a re-auth
@@ -32,7 +34,9 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `create-vm.sh [--vm]` | Creates `pa-home` from `profile.yaml` (4 vCPU, 6 GiB RAM, 40 GiB disk, cloud-init, user `assistant`), open, on `pabuild0`. For the librarian: `pa-librarian` from `librarian/profile.yaml` (2 vCPU, 3 GiB RAM, 10 GiB disk, user `librarian`), left stopped |
 | `fence-vm.sh` | Fences `pa-home`: installs its fences while it can still reach a mirror, removes Tailscale, moves it onto `pabr0`, pins the API's names, and installs `pa-pins@pa-home.service` on the devbox ([The network fence](#the-network-fence)) |
 | `pin-hosts.sh` | Pins `api.anthropic.com` and `platform.claude.com` into `pa-home`'s `/etc/hosts`, at addresses the devbox resolved and checked against the API's range |
-| `seed-data-root.sh [--corpus argus\|scale]` | Creates the instance's data root on the devbox from a frozen synthetic corpus (Argus's unless `--corpus scale`), with its owner as the instance owner |
+| `create-data-root.sh` | Creates the instance's data root on the devbox, empty and mode 0700. The wizard's owner stage runs it, then writes `owner.env` |
+| `seed-data-root.sh [--corpus argus\|scale] <dir>` | Seeds a synthetic data root from a frozen corpus (Argus's unless `--corpus scale`), with its fictional owner as the instance owner. `<dir>` must be named like `~/.local/share/pa-home-synthetic`; it refuses the real data root |
+| `retire-data-root.sh <dir>` | Removes a synthetic data root and its mount units, once no VM is shared anything in it; refuses the real data root and the one the scripts run on |
 | `install-chat-inbox.sh` | Makes `inbox/assistant_chat/` a 1 GiB filesystem of its own, mounted `nosuid,nodev,noexec` at every boot before Incus (needs sudo), with `install-own-filesystem.sh` |
 | `install-wiki.sh` | Does the same for `wiki/` (1 GiB) and `replays/` (4 GiB), which the librarian's VM writes |
 | `mount-store.sh` | Mounts L0, the wiki and the status into the VM read-only and `inbox/assistant_chat/` writable; refuses a VM that isn't fenced |
@@ -128,7 +132,15 @@ The `capture` user has the devbox user's uid, 1000: the inbox share keeps owners
 
 ## The store
 
-The data root stays on the devbox, at `~/.local/share/pa-home-synthetic/`. In v0.11 it is seeded from the frozen synthetic corpus, with the corpus's fictional owner as the instance owner (in `owner.env` beside it), and it is disposable: v0.13 starts a fresh one for real sources. Ingest runs on the devbox: in each capture cycle once the schedules are on ([The live schedule](#the-live-schedule)), and by hand with `ingest.sh`.
+The data root stays on the devbox, at `~/.local/share/pa-home/` (`lib.sh`'s `PA_DATA_ROOT`), readable by the devbox user alone (mode 0700). It holds the owner's real mail, calendars, notes and chats, and `owner.env` beside them names the instance owner. Nothing synthetic goes in: `seed-data-root.sh` refuses it.
+
+The wizard's owner stages create it (`setup-wizard.sh --owner`, and the first two stages of a plain run or of `--go-live`):
+
+- `create-data-root.sh` makes it, empty: `inbox/` with the VM's `inbox/assistant_chat/`, `l0/`, `catalog/`, `state/` and `status/`.
+- The owner gives their name, every email address they send mail as (comma-separated), any other names people call them, and their time zone: the devbox's unless they give another, checked as an IANA zone such as `America/Chicago`. The wizard shows the values back, and writes `owner.env`, mode 0600, only once the owner confirms them. Ingest tells the owner's own mail and events from everyone else's by them.
+- Re-run, it keeps `owner.env` unless the owner asks to rewrite it. `update.sh` carries a rewrite into the VM.
+
+It fills from the owner's sources: the go-live's backfill first ([Going live](#going-live)), then each capture cycle. Ingest runs on the devbox: in each capture cycle once the schedules are on ([The live schedule](#the-live-schedule)), and by hand with `ingest.sh`.
 
 Four directories of it are mounted into the VM, and nothing else, the catalog and the wiki's git directory (`wiki.git/`) included:
 
@@ -147,28 +159,50 @@ Ingest reads only regular files and never follows a symbolic link (a link is qua
 
 The wiki and `replays/` are filesystems of their own in the same way (`install-wiki.sh`, `wiki.img` and `replays.img`), since the librarian's VM writes them. The wiki's git directory stays beside the wiki, outside its filesystem.
 
-To start the data root over (stopping a mount stops Incus too, since Incus requires it; the next `incus` command starts it again):
+The real data root is never started over: it holds what can't be captured again, and the backup is how it comes back ([Restoring](#restoring)).
+
+### The synthetic data root
+
+v0.11 and v0.12 ran on a synthetic data root, `~/.local/share/pa-home-synthetic/`, seeded from a frozen corpus, with the corpus's fictional owner as the instance owner. The go-live moves the assistant's VM off it, and `retire-data-root.sh` removes it once the real data root has run a night ([Going live](#going-live)).
+
+`seed-data-root.sh` seeds only a data root named like it (`pa-home-synthetic`, or `pa-home-synthetic-<name>`), given explicitly, never the real one. The other scripts work on a synthetic data root with `PA_DATA_ROOT` set to it:
 
 ```sh
-incus config device remove pa-home pa-l0 pa-chat-inbox pa-wiki
-for dir in inbox/assistant_chat wiki replays; do
-  sudo systemctl disable --now "$(systemd-escape -p --suffix=mount ~/.local/share/pa-home-synthetic/$dir)"
-done
-rm -rf ~/.local/share/pa-home-synthetic
-deploy/home/seed-data-root.sh && deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh
-```
-
-### Reseeding with the scale corpus
-
-The live data root can hold the scale corpus instead, with its wiki seeded from the scale eval wiki rather than built by a second replay: the episode ids are the same. Start the data root over as above, but seed it with the scale corpus, then seed the wiki:
-
-```sh
-deploy/home/seed-data-root.sh --corpus scale && deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh
+export PA_DATA_ROOT=~/.local/share/pa-home-synthetic-scale
+deploy/home/seed-data-root.sh --corpus scale "$PA_DATA_ROOT"
 deploy/home/librarian.sh seed evals/wikis/scale/<librarian version>
-deploy/home/update.sh <ref>   # the assistant's project points at the wiki once it has index.md
+unset PA_DATA_ROOT
 ```
 
-`seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `librarian.sh seed` (`pa librarian seed`, no session) copies the eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Seed right after the reseed; if something was ingested since, give `--captured-through <the reseed's capture time>` (ISO 8601) and it stays new. It refuses a wiki that has runs or files already, and an eval wiki that fails lint.
+`seed-data-root.sh` ingests the corpus at the time it runs: that's the reseed's capture time. `retire-data-root.sh <dir>` removes any of them, with its mount units. It refuses the real data root and the one `PA_DATA_ROOT` names, and it refuses while any VM is shared anything in it.
+
+`librarian.sh seed` (`pa librarian seed`, no session) copies a replay's or an eval wiki's `wiki/` into the data root's empty wiki, regenerates `index.md`, lints it against the data root's L0, and commits it with a cursor that counts every episode in L0 as already in the wiki, so the next `librarian.sh run` takes only what's captured after (chats from the phone, say). Given `--captured-through <time>` (ISO 8601), it counts only what was captured through then, and anything captured after stays new. It refuses a wiki that has runs or files already, and one that fails lint.
+
+## Going live
+
+The go-live (#99) moves the PA from the synthetic data root onto the real one, fills it with two months of the owner's sources, and turns the schedules on. In order:
+
+1. **The sources**, if they aren't set up yet: `setup-wizard.sh --vault`, `--gmail` (the Cloud project and the consent), `--icloud` (the app-specific password and the calendars), and `--backup` (the USB SSD and restic's repository).
+2. **claude.ai's model-improvement sharing off**, at Settings → Privacy ([Remote Control](#remote-control)). Optionally, [Advanced Data Protection](#advanced-data-protection) on.
+3. **`setup-wizard.sh --go-live`**, by the owner, in their own terminal. Its stages, each checked, and skipped on a re-run once done:
+   - the owner stages: the real data root, and `owner.env` with the owner's real identity ([The store](#the-store));
+   - the schedules paused if they're on, so no capture cycle runs before the wiki is seeded;
+   - `pa-home` off the synthetic data root: Remote Control stopped, the store's shares taken off, and the synthetic data root's own filesystems unmounted (it refuses while any VM is still shared anything in it);
+   - `install-chat-inbox.sh` and `install-wiki.sh` for the real data root, then `mount-store.sh`;
+   - `update.sh`, which renders the agent project from the real `owner.env` and starts Remote Control again;
+   - `install-schedules.sh` again if the schedules are installed, since their units name the data root (still off);
+   - the isolation and store checks, which must pass: a failure stops the wizard;
+   - the Gmail and iCloud Calendar dry runs, counts only.
+4. **The backfill**, by the Claude session: `deploy/home/capture.sh --backfill <window start>`, two months back ([The backfill](#the-backfill)). Its counts per source and Gmail category, with the replay's estimated cost, go on the issue, as numbers only.
+5. **The replay**, by the session, into a target under the data root's `replays/`, never the repository: `deploy/home/librarian.sh replay ~/.local/share/pa-home/replays/<name> --window-start <window start>`. Its runs, cost and lint warning counts go on the issue, as numbers only.
+6. **The seed**, by the session: `deploy/home/librarian.sh seed ~/.local/share/pa-home/replays/<name> --captured-through <when the backfill finished>`, so the live wiki starts from the replay with its cursor at the backfill's capture time. Then `update.sh <ref>`, so the agent project points at the wiki.
+7. **The schedules**: `setup-wizard.sh --schedules`, by the owner.
+8. **The first night**: the next morning, `check-schedules.sh` shows the nightly job committed a librarian run and the backup succeeded, and `pa status` shows every source current.
+9. **The synthetic data root retired**, once the real one has run a night: `deploy/home/retire-data-root.sh ~/.local/share/pa-home-synthetic`.
+10. **The Obsidian view repointed** at the real wiki, on the Mac and the phone ([The Obsidian view](#the-obsidian-view)).
+11. **A question from the phone** about this week, answered with citations.
+
+Nothing the session reports on GitHub holds real content: counts, costs, exit codes and statuses only.
 
 ## The backfill
 
@@ -232,9 +266,9 @@ restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/ and evals/, 
 To bring back a whole data root, start from an empty one. Move the old one aside if it's still there, and stop anything that runs against it.
 
 ```sh
-data_root=~/.local/share/pa-home-synthetic          # the instance's data root (lib.sh's PA_DATA_ROOT)
-mkdir -p "$data_root" && restic restore latest --target "$data_root"
-# owner.env: write the instance owner again (PA_OWNER_NAME, PA_OWNER_EMAILS, PA_TIME_ZONE, ...)
+data_root=~/.local/share/pa-home                    # the instance's data root (lib.sh's PA_DATA_ROOT)
+deploy/home/create-data-root.sh && restic restore latest --target "$data_root"
+deploy/home/setup-wizard.sh --owner                 # owner.env: the instance owner again
 deploy/home/install-chat-inbox.sh && deploy/home/install-wiki.sh   # the VMs' own filesystems
 git --git-dir "$data_root/wiki.git" --work-tree "$data_root/wiki" checkout -f main   # the wiki's files
 PA_DATA_DIR=$data_root uv run pa catalog rebuild    # the catalog, from L0
@@ -267,8 +301,8 @@ Don't chat during an eval run: the run fails if the inbox changes while it runs,
 
 ```sh
 deploy/home/ingest.sh && deploy/home/librarian.sh run
-deploy/home/librarian.sh replay ~/.local/share/pa-home-synthetic/replays/<name>   # a rebuild, or an eval wiki
-deploy/home/librarian.sh replay <replays>/<name> --window-start <time>              # a backfill's window only
+deploy/home/librarian.sh replay ~/.local/share/pa-home/replays/<name>   # a rebuild, or an eval wiki
+deploy/home/librarian.sh replay <replays>/<name> --window-start <time>    # a backfill's window only
 ```
 
 With `--window-start` (ISO 8601), the first batch is the window start's week, from the window start, and nothing that occurred before it is ever offered. The run log records it, so `--resume` keeps it.
@@ -310,7 +344,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 ```
 
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
-- `git --git-dir ~/.local/share/pa-home-synthetic/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run.
+- `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run. It's the owner's to read: a development session never prints it.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
 - `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another job holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
 
@@ -326,7 +360,7 @@ On the Mac, clone into Obsidian's iCloud folder, with the git directory outside 
 
 ```sh
 vault="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/pa-wiki"
-git clone --separate-git-dir ~/.pa-wiki.git devbox:.local/share/pa-home-synthetic/wiki.git "$vault"
+git clone --separate-git-dir ~/.pa-wiki.git devbox:.local/share/pa-home/wiki.git "$vault"
 cd "$vault"
 git remote set-url --push origin no-push      # pushing fails
 echo .obsidian/ >> ~/.pa-wiki.git/info/exclude   # Obsidian's settings stay out of git
@@ -336,6 +370,8 @@ git pull --ff-only                            # to refresh, on the Mac
 - **Mac:** `pa-wiki` shows up among Obsidian's iCloud vaults.
 - **Phone:** Obsidian lists the same vault once iCloud has synced it. The phone sees a refresh only after the Mac pulls.
 - **Reading view:** set Obsidian's Settings → Editor → Default view for new tabs to Reading view on both, so an accidental edit doesn't dirty the clone. If `git pull --ff-only` fails because of one, `git checkout -- .` puts the clone back.
+
+To repoint it at the go-live, from the synthetic data root's wiki to the real one: the two wikis share no history, so clone again. On the Mac, quit Obsidian, delete the old clone and its git directory (`rm -rf "$vault" ~/.pa-wiki.git`), and clone as above. Obsidian on both devices opens the new `pa-wiki` in its place once iCloud has synced it; the old pages are gone from the phone too.
 
 A committed eval wiki opens the same way from any clone of this repo: open `evals/wikis/<corpus>/<librarian version>/wiki/` as a vault.
 
@@ -548,8 +584,8 @@ The login, the project's trust and Remote Control's consent live on the old VM's
    ```sh
    incus exec pa-home -- sh -c 'cd /srv/pa/inbox/assistant_chat &&
      printf "#!/bin/sh\nid\n" >.setuid && chmod 4755 .setuid && mknod -m 666 .null c 1 3'
-   ~/.local/share/pa-home-synthetic/inbox/assistant_chat/.setuid   # Permission denied
-   : <~/.local/share/pa-home-synthetic/inbox/assistant_chat/.null  # Permission denied
+   ~/.local/share/pa-home/inbox/assistant_chat/.setuid   # Permission denied
+   : <~/.local/share/pa-home/inbox/assistant_chat/.null  # Permission denied
    incus exec pa-home -- rm /srv/pa/inbox/assistant_chat/.setuid /srv/pa/inbox/assistant_chat/.null
    ```
 3. The VM can't write more than 1 GiB:
