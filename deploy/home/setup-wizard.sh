@@ -185,19 +185,42 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-# Sets up the PA VMs on the devbox (#27, #30, #31, #33, #66): the steps only the owner can do, and
-# the deploy scripts for the rest. Every stage checks its result, and re-running skips what's done.
-# Run it on the devbox: deploy/home/setup-wizard.sh, or deploy/home/setup-wizard.sh --librarian for
-# the librarian's VM alone.
+# Sets up the PA on the devbox (#27, #30, #31, #33, #66, #86, #87, #89, #91, #99): the steps only
+# the owner can do, and the deploy scripts for the rest. Every stage checks its result, and
+# re-running skips what's done. Run it on the devbox: deploy/home/setup-wizard.sh for everything,
+# Gmail and iCloud Calendar included, or deploy/home/setup-wizard.sh --owner for the data root and
+# its owner alone, --go-live to move the assistant's VM from the synthetic data root onto the real
+# one (#99), --librarian for
+# the librarian's VM alone, --vault for the vault copy alone (Obsidian Sync and its headless
+# client), --gmail for Gmail's Cloud project and consent (#86), the re-auth too, --icloud for
+# iCloud Calendar's app-specific password and calendars (#97), a new password too, --backup
+# for the backup drive alone (#89), or --schedules to turn on the schedules alone (#98), once the
+# go-live backfill is replayed and the wiki seeded.
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ASSISTANT_STAGES=19
+OWNER_STAGES=2
+ASSISTANT_STAGES=18
 LIBRARIAN_STAGES=7
+VAULT_STAGES=8
+GMAIL_STAGES=3
+ICLOUD_STAGES=3
+BACKUP_STAGES=2
+SCHEDULE_STAGES=2
+GO_LIVE_STAGES=10
+only_librarian=false only_vault=false only_gmail=false only_icloud=false only_backup=false
+only_schedules=false only_owner=false only_go_live=false
 case ${1:-} in
-  "") TOTAL_STAGES=$((ASSISTANT_STAGES + LIBRARIAN_STAGES)); only_librarian=false ;;
+  "") TOTAL_STAGES=$((OWNER_STAGES + ASSISTANT_STAGES + LIBRARIAN_STAGES + VAULT_STAGES + GMAIL_STAGES + ICLOUD_STAGES + BACKUP_STAGES + SCHEDULE_STAGES)) ;;
+  --owner) TOTAL_STAGES=$OWNER_STAGES; only_owner=true ;;
+  --go-live) TOTAL_STAGES=$((OWNER_STAGES + GO_LIVE_STAGES)); only_go_live=true ;;
   --librarian) TOTAL_STAGES=$LIBRARIAN_STAGES; only_librarian=true ;;
-  *) printf 'usage: setup-wizard.sh [--librarian]\n' >&2; exit 2 ;;
+  --vault) TOTAL_STAGES=$VAULT_STAGES; only_vault=true ;;
+  --gmail) TOTAL_STAGES=$GMAIL_STAGES; only_gmail=true ;;
+  --icloud) TOTAL_STAGES=$ICLOUD_STAGES; only_icloud=true ;;
+  --backup) TOTAL_STAGES=$BACKUP_STAGES; only_backup=true ;;
+  --schedules) TOTAL_STAGES=$SCHEDULE_STAGES; only_schedules=true ;;
+  *) printf 'usage: setup-wizard.sh [--owner | --go-live | --librarian | --vault | --gmail | --icloud | --backup | --schedules]\n' >&2; exit 2 ;;
 esac
 
 # run CMD... shows a command, then runs it; a failure stops the wizard.
@@ -209,9 +232,6 @@ ok() { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
 
 # The checks below read the whole output: with pipefail, grep -q quitting at the first match
 # would fail the pipeline on the writer's SIGPIPE.
-
-# vm_tagged: the VM is on the tailnet as tag:pa.
-vm_tagged() { incus exec "$PA_VM" -- tailscale status --json 2>/dev/null | grep '"tag:pa"' >/dev/null; }
 
 # claude_logged_in: Claude Code in the VM is logged in, as the assistant user.
 claude_logged_in() {
@@ -241,6 +261,63 @@ remote_control_consented() { claude_config_true remoteDialogSeen; }
 # in_project CMD: runs CMD in the rendered agent project as the assistant user, on this terminal.
 in_project() {
   incus exec -t "$PA_VM" -- runuser -l "$PA_USER" -c "cd $(printf %q "$PA_VM_PROJECT") && $1"
+}
+
+# update_vm asks for the ref to deploy, this checkout's upstream by default, and runs update.sh.
+update_vm() {
+  local upstream default_ref ref
+  upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
+  default_ref=${upstream:-HEAD}
+  printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
+  read -r ref || true
+  run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
+}
+
+# The instance's data root, created empty, and its owner (#99): the owner's real identity, which
+# ingest reads to tell the owner's mail and events from everyone else's, and the agent project is
+# rendered from. Nothing synthetic goes in.
+owner_stages() {
+
+# ── O1 ────────────────────────────────────────────────────────────────────
+stage "Create the instance's data root"
+say "The store stays on the devbox, at $PA_DATA_ROOT, readable by you alone. It starts"
+say "empty: your sources fill it, from the go-live's backfill on. Nothing synthetic goes in."
+run "$DEPLOY_DIR/create-data-root.sh"
+ok "$PA_DATA_ROOT is ready, mode $(stat -c %a "$PA_DATA_ROOT")"
+pause
+
+# ── O2 ────────────────────────────────────────────────────────────────────
+stage "You, the instance's owner"
+if [[ -f $PA_OWNER_ENV ]] && ! confirm "$PA_OWNER_ENV names the owner already. Rewrite it?"; then
+  ok "the owner is in $PA_OWNER_ENV"
+else
+  say "Ingest tells your own mail, events and notes from everyone else's by these, and the"
+  say "assistant knows you by them. They stay in $PA_OWNER_ENV, readable by you alone."
+  printf '\n  %sYour name, as your mail shows it%s ' "$BOLD" "$RESET"
+  read -r owner_name || true
+  printf '  %sYour email addresses, comma-separated (every one you send mail as)%s ' "$BOLD" "$RESET"
+  read -r owner_emails || true
+  printf '  %sOther names people call you, comma-separated (Enter for none)%s ' "$BOLD" "$RESET"
+  read -r owner_other_names || true
+  zone=$(devbox_time_zone || true)
+  printf '  %sYour time zone%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "${zone:-none}" "$RESET"
+  read -r owner_zone || true
+  if ! lines=$(owner_env_lines "$owner_name" "$owner_emails" "$owner_other_names" "${owner_zone:-$zone}"); then
+    printf '  %s✗ %s: nothing was written.%s\n' "$RED" "$lines" "$RESET"; exit 1
+  fi
+  printf '\n'
+  say "$PA_OWNER_ENV will read:"
+  printf '%s\n' "$lines" | sed 's/^/      /'
+  printf '\n'
+  if ! confirm "Are these right?"; then
+    printf '  %s✗ nothing was written: re-run setup-wizard.sh --owner%s\n' "$RED" "$RESET"; exit 1
+  fi
+  (umask 077 && printf '%s\n' "$lines" >"$PA_OWNER_ENV.new")
+  mv "$PA_OWNER_ENV.new" "$PA_OWNER_ENV"
+  ok "wrote $PA_OWNER_ENV, mode $(stat -c %a "$PA_OWNER_ENV")"
+  note "The assistant's VM gets it at the next update.sh (the go-live runs one)."
+fi
+pause
 }
 
 # The assistant's VM, pa-home.
@@ -287,35 +364,43 @@ ok "Incus is running"
 pause
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
-stage "Incus storage and bridge"
-say "A btrfs storage pool (snapshots are cheap) and the VM's own bridge, $PA_BRIDGE, IPv4 only."
+stage "Incus storage and bridges"
+say "A btrfs storage pool (snapshots are cheap), and two bridges, IPv4 only:"
+say "- $PA_BRIDGE, the VM's own: no DNS, and an egress ACL ($PA_ACL) on the VM's NIC that lets"
+say "  out TCP 443 to the Anthropic API's range, $PA_API_RANGE, and drops all else;"
+say "- $PA_BUILD_BRIDGE, open, which the VM is built on and leaves before anything is mounted."
 run "$DEPLOY_DIR/incus-setup.sh"
-ok "pool $PA_POOL and bridge $PA_BRIDGE are ready"
+ok "pool $PA_POOL, bridges $PA_BRIDGE and $PA_BUILD_BRIDGE, and ACL $PA_ACL are ready"
 pause
 
 # ── 4 ─────────────────────────────────────────────────────────────────────
-stage "Firewall on the VM's bridge"
-say "Drops everything from the VM to private and tailnet ranges and to the devbox itself,"
-say "except DNS and DHCP. Loads at every boot, before Incus; if it fails, the VM stays down."
+stage "Firewall on the VMs' bridges"
+say "A second fence beside the ACL: from $PA_BRIDGE, only DHCP on the devbox and TCP 443 in the"
+say "API's range; from $PA_BUILD_BRIDGE, DNS and DHCP on the devbox and the internet, but nothing"
+say "of yours. Loads at every boot, before Incus; if it fails, the VMs stay down."
 note "It fences the librarian's bridge too, once that exists (the librarian's stages)."
 run "$DEPLOY_DIR/install-firewall.sh"
 systemctl is-enabled --quiet pa-vm-firewall.service && ok "pa-vm-firewall.service is enabled"
 pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
-stage "Create the VM"
-say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, Tailscale installed."
+stage "Create the VM, open"
+say "Ubuntu 26.04, 4 vCPU, 6 GiB RAM, 40 GiB disk, user $PA_USER, no Tailscale. It's built on"
+say "$PA_BUILD_BRIDGE, so cloud-init can refresh the OS and install its packages: the only time it"
+say "reaches a package mirror. Nothing is shared into it, and it holds no credential, until the"
+say "next stage fences it."
 note "The first run downloads the image and waits for cloud-init: a few minutes."
 run "$DEPLOY_DIR/create-vm.sh"
 ok "$PA_VM is running"
 pause
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
-stage "Seed the instance's data root"
-say "The store stays on the devbox, at $PA_DATA_ROOT. For v0.11 it holds the synthetic"
-say "corpus, with its fictional owner as the instance owner; v0.13 starts a fresh one."
-run "$DEPLOY_DIR/seed-data-root.sh"
-ok "$(find "$PA_L0/episodes" -name '*.json' | wc -l) episodes in L0"
+stage "Fence the VM"
+say "Snapshots the VM, installs its fences while it can still reach a mirror, removes Tailscale"
+say "if it's there, and moves it onto $PA_BRIDGE. The API's two names are pinned into it, since"
+say "it has no DNS, and again at every boot of the devbox (pa-pins@$PA_VM.service)."
+run "$DEPLOY_DIR/fence-vm.sh"
+ok "$PA_VM reaches only the API"
 pause
 
 # ── 7 ─────────────────────────────────────────────────────────────────────
@@ -331,29 +416,29 @@ pause
 stage "Mount the store into the VM"
 say "L0 goes in read-only at $PA_VM_L0, and the wiki at $PA_VM_WIKI, enforced on the devbox so"
 say "even root in the VM can't write them. inbox/assistant_chat/ goes in writable at"
-say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in."
+say "$PA_VM_CHAT_INBOX: the VM's only way back. Nothing else of the data root goes in, and"
+say "nothing at all unless the VM is fenced."
 run "$DEPLOY_DIR/mount-store.sh"
 ok "the store is mounted"
 pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "Deploy the repo into the VM"
-say "Snapshots the VM, installs uv and Claude Code, clones the public repo at a ref and"
-say "runs uv sync, then renders the agent project into $PA_VM_PROJECT. The ref must be"
-say "pushed to GitHub."
-upstream=$(git -C "$DEPLOY_DIR" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
-default_ref=${upstream#origin/}; default_ref=${default_ref:-main}
-printf '  %sRef to deploy%s %s[Enter for %s]%s ' "$BOLD" "$RESET" "$DIM" "$default_ref" "$RESET"
-read -r ref || true
-run "$DEPLOY_DIR/update.sh" "${ref:-$default_ref}"
+say "Snapshots the VM, then pushes in, from this checkout, the code at a ref (a git bundle), a"
+say "wheelhouse built here for its lock, uv, and Claude Code $PA_ASSISTANT_CLAUDE_VERSION, checked"
+say "against Anthropic's signature. The VM syncs offline, and renders the agent project into"
+say "$PA_VM_PROJECT. The ref is resolved here: git fetch first to deploy what's on GitHub."
+update_vm
 pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
 stage "Log the VM in to Claude"
+require_fenced
 if claude_logged_in; then
   ok "Claude Code in $PA_VM is already logged in"
 else
-  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat."
+  say "Claude Code in the VM runs on your Claude subscription, for evals and for chat. The login"
+  say "goes to platform.claude.com, pinned into the VM, and so does every token refresh."
   step "Claude prints a URL below. Open it and sign in with your Claude account."
   step "Paste the code it gives you back here."
   note "Use claude auth login, not setup-token: Remote Control refuses setup tokens."
@@ -365,63 +450,31 @@ fi
 pause
 
 # ── 11 ────────────────────────────────────────────────────────────────────
-stage "Tailnet policy"
-say "The VM will join as tag:pa. The policy must let your devices reach it and each other,"
-say "and let tag:pa reach nothing."
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa; skipping"
+stage "Take the VM off the tailnet"
+say "The VM has no Tailscale identity any more: you reach it with incus exec from the devbox."
+say "Your tailnet's policy and machine list may still name it from before."
+open_url "https://login.tailscale.com/admin/machines"
+step "Machines: if $PA_VM is listed, open its menu and Remove it."
+open_url "https://login.tailscale.com/admin/acls/file"
+step "Access controls: delete everything naming tag:pa: its tagOwners entry, the grant from"
+step "  your devices to tag:pa, and the ssh rule into tag:pa as assistant. Keep the grant that"
+step "  lets your devices reach each other; the result has the shape shown below."
+step "Save. The console rejects a policy that doesn't parse."
+printf '\n'
+sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
+printf '\n'
+if confirm "Is $PA_VM gone from the machines, and tag:pa from the policy?"; then
+  ok "the tailnet no longer knows $PA_VM"
 else
-  open_url "https://login.tailscale.com/admin/acls/file"
-  step "In the policy file, merge in the three parts shown below:"
-  step "tagOwners: add tag:pa, owned by autogroup:admin."
-  step "grants: delete any rule whose src is \"*\" (the default allow-all is one), and add"
-  step "  the two grants: your devices to autogroup:self, and your devices to tag:pa."
-  step "ssh: add the rule letting your devices in to tag:pa as user assistant. Keep your"
-  step "  existing ssh rules."
-  step "Save. The console rejects a policy that doesn't parse."
-  printf '\n'
-  sed 's/^/    /' "$DEPLOY_DIR/tailscale-policy.hujson"
-  printf '\n'
-  pause "Press Enter once the policy is saved"
+  SKIPPED+=("take $PA_VM off the tailnet: remove the machine and every tag:pa rule")
 fi
+pause
 
 # ── 12 ────────────────────────────────────────────────────────────────────
-stage "Join the VM to the tailnet as tag:pa"
-if vm_tagged; then
-  ok "$PA_VM is already on the tailnet as tag:pa"
-else
-  say "The VM asks to join; Tailscale prints a login URL below."
-  step "Open the URL, log in as yourself (you own tag:pa, so the VM joins tagged)."
-  step "The command returns once you've approved it."
-  printf '\n'
-  run incus exec "$PA_VM" -- tailscale up --advertise-tags=tag:pa --ssh --hostname="$PA_VM"
-  vm_tagged || { printf '  %s✗ %s isn'"'"'t tagged tag:pa%s\n' "$RED" "$PA_VM" "$RESET"; exit 1; }
-  ok "$PA_VM joined as tag:pa"
-fi
-note "Tagged devices don't expire; the VM reconnects on its own after reboots."
-pause
-
-# ── 13 ────────────────────────────────────────────────────────────────────
-stage "Check your devices"
-say "Your devices still reach each other (from the devbox):"
-while read -r ip host; do
-  if ping -c1 -W2 "$ip" >/dev/null 2>&1; then ok "$host ($ip)"; else warn "$host ($ip) doesn't answer (asleep?)"; fi
-done < <(tailscale status | awk -v vm="$PA_VM" '$1 ~ /^100\./ && $2 != vm && !/offline/ {print $1, $2}')
-printf '\n'
-say "Now from the Mac:"
-step "ssh $PA_USER@$PA_VM   (expect a prompt $PA_USER@$PA_VM; then exit)"
-step "ssh devbox            (your devices still reach the devbox)"
-if confirm "Did both work?"; then
-  ok "SSH over Tailscale works"
-else
-  SKIPPED+=("SSH from the Mac: check the tailnet policy (stage 7) and re-run")
-fi
-pause
-
-# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Isolation check"
-say "From inside the VM: the devbox, its Docker services, the LAN and tailnet peers must be"
-say "unreachable, and the internet and Anthropic's API reachable."
+say "From inside the VM: the web, the devbox, its Docker services, the LAN and tailnet peers"
+say "must be unreachable, with no DNS and no Tailscale, and only Anthropic's API reachable; and"
+say "every other fence: the managed settings, the sandbox, the read-only project."
 printf '\n'
 if "$DEPLOY_DIR/check-isolation.sh"; then
   ok "every fence holds"
@@ -429,11 +482,11 @@ else
   SKIPPED+=("isolation check failed: fix and re-run deploy/home/check-isolation.sh")
 fi
 pause
-
-# ── 15 ────────────────────────────────────────────────────────────────────
+# ── 13 ────────────────────────────────────────────────────────────────────
 stage "Store check"
 say "From inside the VM: L0 is readable where the agent project says, and unwritable even as"
-say "root; inbox/assistant_chat/ is writable, and on the devbox a nosuid,nodev,noexec"
+say "root; inbox/assistant_chat/ is writable by the capture user alone, not the assistant, and"
+say "on the devbox a nosuid,nodev,noexec"
 say "filesystem of its own; nothing else of the data root is visible."
 printf '\n'
 if "$DEPLOY_DIR/check-store.sh"; then
@@ -443,7 +496,7 @@ else
 fi
 pause
 
-# ── 16 ────────────────────────────────────────────────────────────────────
+# ── 14 ────────────────────────────────────────────────────────────────────
 stage "Trust the agent project"
 if project_trusted; then
   ok "Claude Code in $PA_VM already trusts $PA_VM_PROJECT"
@@ -461,7 +514,7 @@ else
 fi
 pause
 
-# ── 17 ────────────────────────────────────────────────────────────────────
+# ── 15 ────────────────────────────────────────────────────────────────────
 stage "Turn on Remote Control"
 if remote_control_consented; then
   ok "Remote Control is already turned on in $PA_VM"
@@ -478,7 +531,7 @@ else
 fi
 pause
 
-# ── 18 ────────────────────────────────────────────────────────────────────
+# ── 16 ────────────────────────────────────────────────────────────────────
 stage "Start the Remote Control service"
 say "claude remote-control runs as a service in the agent project, as $PA_USER, with exchange"
 say "capture on. It restarts on failure, but a permanent error such as a rejected login leaves"
@@ -491,7 +544,7 @@ else
 fi
 pause
 
-# ── 19 ────────────────────────────────────────────────────────────────────
+# ── 17 ────────────────────────────────────────────────────────────────────
 stage "Find the assistant on your phone"
 say "The Claude app and claude.ai/code list the VM under its hostname and the project folder."
 open_url "https://claude.ai/code"
@@ -501,6 +554,21 @@ if confirm "Is it listed in both?"; then
   ok "the assistant is reachable from your phone"
 else
   SKIPPED+=("Remote Control isn't listed: check incus exec $PA_VM -- journalctl -u $PA_VM_RC_UNIT")
+fi
+pause
+
+# ── 18 ────────────────────────────────────────────────────────────────────
+stage "Keep your chats out of model training"
+say "Your Remote Control sessions with the assistant are kept in your claude.ai account, like"
+say "any chat. With model-improvement sharing off, Anthropic keeps them for 30 days; with it on,"
+say "for 5 years, and may train on them. The PA can't see or change this setting: check it once."
+open_url "https://claude.ai/settings"
+step "Signed in as the account the VM's Claude Code logged in with:"
+step "Settings → Privacy → turn off the model-improvement sharing (Help improve Claude)."
+if confirm "Is it off?"; then
+  ok "your chats are kept 30 days, and not used for training"
+else
+  SKIPPED+=("model-improvement sharing: turn it off at claude.ai, Settings → Privacy")
 fi
 pause
 }
@@ -589,17 +657,661 @@ fi
 pause
 }
 
-banner "PA VM setup"
-$only_librarian || assistant_stages
-librarian_stages
+# private_file PATH: PATH is a file only its owner can read.
+private_file() { [[ -f $1 && $(stat -c %a "$1") == 600 ]]; }
+
+# Gmail's capture (#86): the owner's Cloud project, and the consent. Run in the go-live ticket,
+# and again (stage G2) whenever the token dies.
+gmail_stages() {
+
+# ── G1 ────────────────────────────────────────────────────────────────────
+stage "Your Google Cloud project for Gmail"
+if private_file "$PA_GMAIL_CLIENT"; then
+  ok "the OAuth client is saved at $PA_GMAIL_CLIENT"
+else
+  say "The PA reads Gmail through the Gmail API, read-only, with an OAuth client from a Cloud"
+  say "project of your own. Published \"In production\" and left unverified, for personal use,"
+  say "its refresh token doesn't expire weekly, and no security assessment is needed."
+  open_url "https://console.cloud.google.com/projectcreate"
+  step "Create a project, say pa-gmail, signed in as the Gmail account to capture."
+  step "APIs & Services → Library: enable the Gmail API."
+  step "Google Auth Platform → Branding: an app name, your address as the support and developer"
+  say "  contacts, https://github.com/mcnewcp/pa as the home page, and its #readme as the privacy"
+  say "  policy. Publishing needs all four; nothing checks them unless the app is verified."
+  step "Audience: External."
+  step "Data Access → Add or remove scopes: .../auth/gmail.readonly, and nothing else."
+  step "Audience → Publish app, so it's \"In production\". Don't submit it for verification."
+  step "Clients → Create client → Desktop app. Download its JSON."
+  step "Copy the JSON to this devbox (scp), then give its path below."
+  printf '\n'
+  ask GMAIL_CLIENT_DOWNLOAD "Path of the downloaded client JSON on this devbox:"
+  [[ -f $GMAIL_CLIENT_DOWNLOAD ]] || { printf '  %s✗ no file there%s\n' "$RED" "$RESET"; exit 1; }
+  grep '"installed"' "$GMAIL_CLIENT_DOWNLOAD" >/dev/null ||
+    { printf '  %s✗ that isn'"'"'t a Desktop app client%s\n' "$RED" "$RESET"; exit 1; }
+  mkdir -p "$(dirname "$PA_GMAIL_CLIENT")"
+  chmod 700 "$(dirname "$PA_GMAIL_CLIENT")"
+  install -m 600 "$GMAIL_CLIENT_DOWNLOAD" "$PA_GMAIL_CLIENT"
+  rm -i "$GMAIL_CLIENT_DOWNLOAD"
+  ok "saved at $PA_GMAIL_CLIENT, mode 0600"
+fi
+pause
+
+# ── G2 ────────────────────────────────────────────────────────────────────
+stage "Consent: Gmail, read-only"
+if private_file "$PA_GMAIL_TOKEN" && ! confirm "A token is saved already. Ask for consent again (re-auth)?"; then
+  ok "the token is saved at $PA_GMAIL_TOKEN"
+else
+  say "The consent redirects to a loopback server on this devbox, port $PA_GMAIL_AUTH_PORT."
+  say "Google warns that the app isn't verified: it's your own, so click through once"
+  say "(Advanced → Go to the app) and allow reading your mail. Nothing can change it."
+  step "On the machine with your browser, forward the port in another terminal:"
+  note "    ssh -L $PA_GMAIL_AUTH_PORT:localhost:$PA_GMAIL_AUTH_PORT <this devbox>"
+  step "Open the address printed below in that machine's browser."
+  printf '\n'
+  run "$DEPLOY_DIR/gmail.sh" auth
+  private_file "$PA_GMAIL_TOKEN" && ok "the token is saved at $PA_GMAIL_TOKEN, mode 0600"
+fi
+pause
+
+# ── G3 ────────────────────────────────────────────────────────────────────
+stage "Gmail dry run"
+say "Counts what a two-month backfill would capture, by Gmail category, from labels alone:"
+say "no message is fetched, and nothing but counts is printed."
+if [[ -f $PA_OWNER_ENV ]]; then
+  run "$DEPLOY_DIR/gmail.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("Gmail dry run: needs $PA_OWNER_ENV, then deploy/home/gmail.sh dry-run --window-start <date>")
+fi
+pause
+}
+
+# icloud_value KEY prints KEY's value in icloud.env, if it's set there.
+icloud_value() {
+  [[ -f $PA_ICLOUD_ENV ]] || return 0
+  # shellcheck source=/dev/null # icloud.env, written by the stages below
+  (source "$PA_ICLOUD_ENV" && printf '%s' "${!1:-}")
+}
+
+# iCloud Calendar's capture (#97): an app-specific password for the Apple ID, and the calendars to
+# capture. Run in the go-live ticket, and again (stage C1) whenever the password is revoked.
+icloud_stages() {
+
+# ── C1 ────────────────────────────────────────────────────────────────────
+stage "An app-specific password for iCloud Calendar"
+if private_file "$PA_ICLOUD_PASSWORD_FILE" && [[ -n $(icloud_value PA_ICLOUD_USERNAME) ]] &&
+  ! confirm "A password is saved already. Save a new one (it was revoked, or iCloud refuses it)?"; then
+  ok "the app-specific password is saved at $PA_ICLOUD_PASSWORD_FILE"
+else
+  say "The PA reads your calendars over CalDAV, read-only, signed in as your Apple ID with an"
+  say "app-specific password: one Apple generates for one app, which you can revoke on its own."
+  warn "Not your Apple ID password. Generate a new app-specific password and give that below:"
+  warn "your Apple ID password doesn't work over CalDAV, and must never be saved on the devbox."
+  open_url "https://account.apple.com/account/manage"
+  step "Sign in → Sign-In and Security → App-Specific Passwords → Generate an app-specific password."
+  step "Name it pa-devbox. Apple shows it once, as four groups of four letters: abcd-efgh-ijkl-mnop."
+  printf '\n  %sYour Apple ID (the email you sign in to iCloud with)%s ' "$BOLD" "$RESET"
+  read -r apple_id || true
+  [[ -n $apple_id ]] || { printf '  %s✗ no Apple ID given%s\n' "$RED" "$RESET"; exit 1; }
+  printf '  %sThe app-specific password (hidden)%s ' "$BOLD" "$RESET"
+  read -rs app_password || true
+  printf '\n'
+  if ! app_specific_password "$app_password"; then
+    printf '  %s✗ that isn'"'"'t an app-specific password (abcd-efgh-ijkl-mnop): nothing was saved.%s\n' "$RED" "$RESET"
+    note "If that was your Apple ID password, generate an app-specific password at account.apple.com"
+    note "and re-run setup-wizard.sh --icloud with it."
+    exit 1
+  fi
+  mkdir -p "$(dirname "$PA_ICLOUD_PASSWORD_FILE")"
+  chmod 700 "$(dirname "$PA_ICLOUD_PASSWORD_FILE")"
+  (umask 077 && printf '%s\n' "$app_password" >"$PA_ICLOUD_PASSWORD_FILE")
+  chmod 600 "$PA_ICLOUD_PASSWORD_FILE"
+  unset app_password
+  set_env_value "$PA_ICLOUD_ENV" PA_ICLOUD_USERNAME "$apple_id"
+  ok "saved at $PA_ICLOUD_PASSWORD_FILE, mode 0600, and the Apple ID in $PA_ICLOUD_ENV"
+fi
+note "Checking that iCloud takes it: the calendars the account serves."
+run "$DEPLOY_DIR/calendar.sh" calendars
+ok "iCloud takes the app-specific password"
+pause
+
+# ── C2 ────────────────────────────────────────────────────────────────────
+stage "The calendars to capture"
+say "The PA captures only the calendars you name here, by the names listed below (the Calendar"
+say "app's names). A calendar of reminders (VTODO) holds no events to capture."
+run "$DEPLOY_DIR/calendar.sh" calendars
+current=$(icloud_value PA_ICLOUD_CALENDARS)
+if [[ -n $current ]]; then
+  printf '\n  %sCalendars, comma-separated%s %s[Enter keeps %s]%s ' "$BOLD" "$RESET" "$DIM" "$current" "$RESET"
+else
+  printf '\n  %sCalendars, comma-separated, such as Home,Work,Family Calendar%s ' "$BOLD" "$RESET"
+fi
+read -r calendars || true
+calendars=${calendars:-$current}
+[[ -n $calendars ]] || { printf '  %s✗ no calendar named%s\n' "$RED" "$RESET"; exit 1; }
+set_env_value "$PA_ICLOUD_ENV" PA_ICLOUD_CALENDARS "$calendars"
+ok "wrote PA_ICLOUD_CALENDARS to $PA_ICLOUD_ENV"
+pause
+
+# ── C3 ────────────────────────────────────────────────────────────────────
+stage "iCloud Calendar dry run"
+say "Counts, per calendar, what a two-month backfill would take: each event or series with an"
+say "occurrence since then, and everything upcoming. Nothing but counts is printed."
+if [[ -f $PA_OWNER_ENV ]]; then
+  run "$DEPLOY_DIR/calendar.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("iCloud Calendar dry run: needs $PA_OWNER_ENV, then deploy/home/calendar.sh dry-run --window-start <date>")
+fi
+pause
+}
+
+# The vault copy (#87): ob runs the installed headless client, for the owner's steps.
+ob() { "$PA_VAULT_SYNC_DIR/bin/ob" "$@"; }
+
+# vault_logged_in: the headless client is logged in to the owner's Obsidian account. Its list of
+# remote vaults names them, so it's dropped.
+vault_logged_in() { [[ -x $PA_VAULT_SYNC_DIR/bin/ob ]] && ob sync-list-remote --json >/dev/null 2>&1; }
+
+# vault_pull_only: the vault copy is set up to sync, pull-only.
+vault_pull_only() { "$PA_VAULT_SYNC_DIR/bin/pa-vault-sync" check "$PA_VAULT" >/dev/null 2>&1; }
+
+# vault_daily_notes: the daily-notes folder vault.env names, if it has.
+vault_daily_notes() {
+  [[ -f $PA_VAULT_ENV ]] || return 0
+  # shellcheck source=/dev/null # vault.env, written by the sync stage
+  (source "$PA_VAULT_ENV" && printf '%s' "${PA_VAULT_DAILY_NOTES:-}")
+}
+
+# newest_daily_note prints when the newest daily note in the copy last changed (seconds since the
+# epoch), or 0 if there's none yet. Never a name.
+newest_daily_note() {
+  local daily
+  daily=$(vault_daily_notes)
+  [[ -n $daily && -d $PA_VAULT/$daily ]] || { echo 0; return; }
+  find "$PA_VAULT/$daily" -type f -name '*.md' -not -path '*/.*' -printf '%T@\n' |
+    sort -n | awk '{last=$1} END {printf "%d\n", last}'
+}
+
+# daily_note_count prints how many daily notes the copy holds.
+daily_note_count() {
+  local daily
+  daily=$(vault_daily_notes)
+  [[ -n $daily && -d $PA_VAULT/$daily ]] || { echo 0; return; }
+  find "$PA_VAULT/$daily" -type f -name '*.md' -not -path '*/.*' | wc -l
+}
+
+# The vault copy on the devbox: Obsidian Sync and its headless client, pull-only (#87).
+vault_stages() {
+
+# ── V1 ────────────────────────────────────────────────────────────────────
+stage "Subscribe to Obsidian Sync"
+say "The devbox reads your daily notes from a copy of your vault, which Obsidian's headless Sync"
+say "client keeps, pull-only. Sync is a subscription on your Obsidian account."
+if vault_logged_in && vault_pull_only; then
+  ok "the devbox already syncs the vault, so you're subscribed"
+  pause
+else
+  open_url "https://obsidian.md/account/sync"
+  step "Log in to your Obsidian account (create one if you have none)."
+  step "Subscribe to Sync. Either plan works: the PA needs one vault."
+  pause "Press Enter once you're subscribed"
+fi
+
+# ── V2 ────────────────────────────────────────────────────────────────────
+stage "Move the vault from iCloud to Sync, on the Mac"
+if vault_pull_only; then
+  ok "the devbox already syncs the vault, so it's on Sync"
+else
+  say "Obsidian advises against running Sync on a folder iCloud syncs too, since the two conflict."
+  say "So the vault leaves iCloud first (obsidian.md/help/sync/switch), and Sync takes over."
+  step "On the phone, open the vault and let iCloud catch up. Then don't edit on the phone"
+  step "  until the next stage."
+  step "Back the vault up first: copy its folder somewhere outside iCloud, or run Time Machine."
+  step "In Obsidian on the Mac: the vault profile icon (bottom left) → Manage vaults…"
+  step "  Close the vault's window, and keep Manage vaults open."
+  step "More options next to the vault → Move vault → a folder outside iCloud, Desktop and"
+  step "  Documents, such as ~/vaults."
+  step "Open the vault. Settings → General → Account: log in. Settings → Core plugins: Sync on."
+  step "Settings → Sync → Remote vault: Choose → Create new vault. Name it, pick a region, and"
+  step "  give an encryption password: that makes it end-to-end encrypted. Keep the password in"
+  step "  your password manager: the devbox asks for it."
+  step "Connect, and unlock it with the password. Close the Start syncing prompt; set a device"
+  step "  name; then Start syncing, and wait for the green check."
+  open_url "https://obsidian.md/help/sync/switch"
+  if confirm "Is the vault out of iCloud, and synced with a green check?"; then
+    ok "the Mac syncs the vault through Obsidian Sync"
+  else
+    SKIPPED+=("moving the vault to Sync on the Mac (re-run: setup-wizard.sh --vault)")
+  fi
+fi
+pause
+
+# ── V3 ────────────────────────────────────────────────────────────────────
+stage "Switch the phone to Sync"
+if vault_pull_only; then
+  ok "the devbox already syncs the vault, so the phone is on Sync"
+else
+  say "The Mac's move took the vault out of iCloud, so the phone's iCloud copy goes as iCloud"
+  say "catches up. The phone gets the vault from Sync instead, kept on the phone, off iCloud."
+  step "Open Obsidian on the phone. In the vault switcher: Setup Obsidian Sync, and log in."
+  step "Connect next to the remote vault. Name the local vault as on the Mac, with Save in"
+  step "  iCloud Drive off, and Create. Unlock it with the encryption password."
+  step "Start syncing, and wait until it's done: the vault shows a vault icon, not a cloud."
+  step "If the switcher still lists the old iCloud vault, remove it from the list."
+  step "Edit a note on the phone, and see it on the Mac within a minute."
+  if confirm "Does the phone sync the vault, off iCloud?"; then
+    ok "the phone syncs the vault through Obsidian Sync"
+  else
+    SKIPPED+=("switching the phone to Sync (re-run: setup-wizard.sh --vault)")
+  fi
+fi
+pause
+
+# ── V4 ────────────────────────────────────────────────────────────────────
+stage "Install the headless Sync client"
+say "Obsidian's headless client, obsidian-headless $PA_VAULT_SYNC_VERSION, is in open beta, so it's"
+say "pinned, and so is the Node it runs on, $PA_NODE_VERSION. Both go under $PA_VAULT_SYNC_DIR,"
+say "checked against their pinned checksums, with the $PA_VAULT_SYNC_UNIT unit, not started yet."
+run "$DEPLOY_DIR/install-vault-sync.sh"
+ok "the client is installed"
+pause
+
+# ── V5 ────────────────────────────────────────────────────────────────────
+stage "Log the client in"
+if vault_logged_in; then
+  ok "the client is already logged in"
+else
+  say "The client logs in to your Obsidian account. Its login stays on the devbox, in"
+  say "$PA_VAULT_SYNC_CONFIG, the devbox user's alone; no VM is ever shared it."
+  step "Give your Obsidian account's email and password below, and a 2FA code if it asks."
+  printf '\n'
+  run ob login
+  vault_logged_in || { printf '  %s✗ the client isn'"'"'t logged in%s\n' "$RED" "$RESET"; exit 1; }
+  ok "the client is logged in"
+fi
+pause
+
+# ── V6 ────────────────────────────────────────────────────────────────────
+stage "Set up the sync, pull-only"
+if vault_pull_only; then
+  ok "$PA_VAULT already syncs pull-only"
+else
+  say "The copy goes in $PA_VAULT, outside the data root, and is set to pull-only before it"
+  say "first syncs: it downloads what your devices change and ignores any change made here, so"
+  say "nothing on the devbox ever reaches them."
+  step "Type the remote vault's name, as Settings → Sync shows it on the Mac."
+  step "If it's end-to-end encrypted, the client then asks for its encryption password."
+  printf '\n  %sRemote vault%s ' "$BOLD" "$RESET"
+  read -r remote || true
+  [[ -n $remote ]] || { printf '  %s✗ no vault named%s\n' "$RED" "$RESET"; exit 1; }
+  run ob sync-setup --vault "$remote" --path "$PA_VAULT" --device-name "$PA_VAULT_DEVICE_NAME"
+  run ob sync-config --path "$PA_VAULT" --mode pull-only >/dev/null
+  vault_pull_only || { printf '  %s✗ %s isn'"'"'t set up pull-only%s\n' "$RED" "$PA_VAULT" "$RESET"; exit 1; }
+  ok "$PA_VAULT syncs pull-only"
+fi
+printf '\n'
+say "The vault collector reads only your daily notes, from one folder: the one Obsidian's"
+say "Settings → Daily notes → New file location names, relative to the vault (such as Daily)."
+current=$(vault_daily_notes)
+if [[ -n $current ]]; then
+  printf '  %sDaily-notes folder%s %s[Enter keeps the current one]%s ' "$BOLD" "$RESET" "$DIM" "$RESET"
+else
+  printf '  %sDaily-notes folder%s ' "$BOLD" "$RESET"
+fi
+read -r daily || true
+daily=${daily:-$current}
+daily=${daily%/}
+if [[ -z $daily || $daily == /* || /$daily/ == */../* || $daily == *[\"\$\`\\]* ]]; then
+  printf '  %s✗ give a folder inside the vault, such as Daily%s\n' "$RED" "$RESET"; exit 1
+fi
+# Double quotes, so both bash and a systemd EnvironmentFile read it.
+mkdir -p "$(dirname "$PA_VAULT_ENV")"
+(umask 077 && printf 'PA_VAULT_DIR="%s"\nPA_VAULT_DAILY_NOTES="%s"\n' "$PA_VAULT" "$daily" >"$PA_VAULT_ENV")
+ok "wrote PA_VAULT_DIR and PA_VAULT_DAILY_NOTES to $PA_VAULT_ENV"
+pause
+
+# ── V7 ────────────────────────────────────────────────────────────────────
+stage "Start the sync service"
+say "$PA_VAULT_SYNC_UNIT runs the client continuously, as you, at every boot. It can write only"
+say "the copy and its own state, and it refuses to run unless the vault is set up pull-only."
+if systemctl is-enabled --quiet "$PA_VAULT_SYNC_UNIT" && systemctl is-active --quiet "$PA_VAULT_SYNC_UNIT"; then
+  ok "$PA_VAULT_SYNC_UNIT is already running"
+else
+  run "$DEPLOY_DIR/install-vault-sync.sh" --enable
+fi
+note "Waiting for the first sync to bring the daily notes (up to 10 minutes)…"
+for _ in $(seq 60); do
+  (($(daily_note_count) > 0)) && break
+  sleep 10
+done
+if (($(daily_note_count) > 0)); then
+  ok "$(daily_note_count) daily notes have arrived"
+else
+  warn "no daily notes yet: check the folder name, and journalctl -u $PA_VAULT_SYNC_UNIT"
+fi
+printf '\n'
+if "$DEPLOY_DIR/check-vault-sync.sh"; then
+  ok "the vault copy checks out"
+else
+  SKIPPED+=("vault sync check failed: fix and re-run deploy/home/check-vault-sync.sh")
+fi
+pause
+
+# ── V8 ────────────────────────────────────────────────────────────────────
+stage "Check from the phone"
+say "Two checks: an edit on the phone reaches the devbox within minutes, and a file written on"
+say "the devbox never reaches the phone."
+before=$(newest_daily_note)
+step "On the phone, edit a daily note (today's will do), and let Sync finish."
+pause "Press Enter once you've edited it"
+started=$(date +%s)
+for _ in $(seq 60); do
+  (($(newest_daily_note) > before)) && break
+  sleep 5
+done
+if (($(newest_daily_note) > before)); then
+  ok "the edit reached the devbox, $(($(date +%s) - started)) seconds after you pressed Enter"
+else
+  SKIPPED+=("the phone's edit didn't reach the devbox in 5 minutes: check deploy/home/check-vault-sync.sh")
+fi
+printf '\n'
+probe=$PA_VAULT/pa-pull-only-check.md
+note "Writing $(basename "$probe") into the copy, and giving Sync 2 minutes to (not) carry it…"
+printf 'Written on the devbox by the PA setup wizard. It must never reach your devices.\n' >"$probe"
+sleep 120
+step "On the phone and the Mac, search the vault for pa-pull-only-check."
+if confirm "Is it missing on both?"; then
+  ok "nothing written on the devbox reaches your devices"
+else
+  SKIPPED+=("the devbox's file reached your devices: stop $PA_VAULT_SYNC_UNIT, and delete pa-pull-only-check on the Mac")
+fi
+rm -f "$probe"
+pause
+}
+
+# The nightly backup's USB SSD and its restic repository (#89).
+backup_stages() {
+
+# ── B1 ────────────────────────────────────────────────────────────────────
+stage "The backup drive"
+if mountpoint -q "$PA_BACKUP_MOUNT"; then
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT"
+else
+  say "The nightly backup goes to your USB SSD on the devbox, mounted at $PA_BACKUP_MOUNT by its"
+  say "filesystem's UUID, so no other drive is ever mounted there. Without the drive the devbox"
+  say "still boots, and the status records each backup that finds no repository."
+  step "Plug the SSD into the devbox, and find it in the list below (TRAN usb, its SIZE and MODEL)."
+  step "If it has no ext4 filesystem yet, make one (this erases the drive), with its partition"
+  step "in place of sdX1: sudo mkfs.ext4 -L pa-backup /dev/sdX1, then run lsblk -f to see its UUID."
+  printf '\n'
+  run lsblk -o NAME,TRAN,SIZE,MODEL,FSTYPE,LABEL,UUID
+  printf '\n'
+  ask backup_uuid "The UUID of the SSD's ext4 filesystem:"
+  run "$DEPLOY_DIR/install-backup-drive.sh" "$backup_uuid"
+  ok "the backup drive is mounted at $PA_BACKUP_MOUNT, and will be at every boot"
+fi
+pause
+
+# ── B2 ────────────────────────────────────────────────────────────────────
+stage "The backup repository and its password"
+mountpoint -q "$PA_BACKUP_MOUNT" || { printf '  %s✗ the backup drive isn'"'"'t mounted at %s%s\n' "$RED" "$PA_BACKUP_MOUNT" "$RESET"; exit 1; }
+say "restic encrypts the backup with the password in $PA_BACKUP_PASSWORD_FILE, readable only"
+say "by you. Without it the backup can't be restored, so keep a copy in your password manager"
+say "too: it's what restores L0 after the devbox is lost."
+ensure_backup_password "$PA_BACKUP_PASSWORD_FILE"
+ok "the password is in $PA_BACKUP_PASSWORD_FILE, mode 0600"
+if confirm "Show the password now, to copy it into your password manager?"; then
+  printf '\n    %s%s%s\n\n' "$BOLD" "$(cat "$PA_BACKUP_PASSWORD_FILE")" "$RESET"
+else
+  note "It's in $PA_BACKUP_PASSWORD_FILE when you want it."
+fi
+if confirm "Is it saved in your password manager, as \"PA restic backup\"?"; then
+  ok "saved in your password manager"
+else
+  SKIPPED+=("save the restic password in your password manager, from $PA_BACKUP_PASSWORD_FILE")
+  warn "save the restic password in your password manager before you rely on the backup"
+fi
+init_backup_repository "$PA_BACKUP_REPOSITORY" "$PA_BACKUP_PASSWORD_FILE"
+ok "the restic repository is ready at $PA_BACKUP_REPOSITORY"
+note "deploy/home/backup.sh backs up to it, and pa status shows the last backup."
+pause
+}
+
+# The schedules (#98): the capture cycle every 15 minutes and the nightly job overnight. Turned on
+# last in the go-live ticket, once the backfill is replayed and the wiki seeded.
+schedule_stages() {
+
+# ── S1 ────────────────────────────────────────────────────────────────────
+stage "Turn on the schedules"
+say "Two timers on the devbox, run as you with this checkout's code. pa-capture.timer runs the"
+say "capture cycle every 15 minutes: each source collected, ingested, and its watermark"
+say "published. pa-nightly.timer runs the nightly job at $PA_NIGHTLY_AT: a cycle that also"
+say "reconciles the calendars, then the librarian run, then the backup. Both catch up at boot"
+say "after the devbox was off, and a job that finds another holding the data root's lock skips."
+schedules_on=false
+if systemctl is-enabled --quiet "$PA_CAPTURE_TIMER" && systemctl is-enabled --quiet "$PA_NIGHTLY_TIMER"; then
+  ok "both timers are enabled already"
+  run "$DEPLOY_DIR/install-schedules.sh"
+  schedules_on=true
+elif [[ ! -d $PA_WIKI_GIT ]]; then
+  warn "not yet: the wiki isn't seeded. Backfill, replay, and seed it first (deploy/home/README.md)."
+  SKIPPED+=("turn on the schedules once the wiki is seeded: setup-wizard.sh --schedules")
+else
+  warn "Turn them on only after the backfill's replay seeded the wiki, with no capture since:"
+  warn "a cycle in between would be both replayed and offered again."
+  if confirm "Is the wiki seeded from the backfill's replay, with no capture since?"; then
+    run "$DEPLOY_DIR/install-schedules.sh" --enable
+    ok "both timers are enabled, and will be at every boot"
+    schedules_on=true
+  else
+    SKIPPED+=("turn on the schedules once the wiki is seeded: setup-wizard.sh --schedules")
+  fi
+fi
+pause
+
+# ── S2 ────────────────────────────────────────────────────────────────────
+stage "The first capture cycle, confined"
+if $schedules_on; then
+  say "Starts one capture cycle now as the timer does, in its confined service, then checks"
+  say "both timers, each job's last run, and pa status. Times and counts only."
+  printf '  %s$ %s%s\n' "$DIM" "sudo systemctl start pa-capture.service" "$RESET"
+  sudo systemctl start pa-capture.service || warn "the cycle failed: the check below says why"
+  printf '\n'
+  if "$DEPLOY_DIR/check-schedules.sh"; then
+    ok "the schedules check out"
+  else
+    SKIPPED+=("schedule check failed: see deploy/home/check-schedules.sh and pa status")
+  fi
+else
+  note "Skipped: the schedules aren't on yet."
+fi
+pause
+}
+
+# The go-live (#99): the assistant's VM moved from the synthetic data root onto the real one,
+# after the owner stages, and checked before any collector runs against it. The Claude session
+# then backfills, replays and seeds the wiki, and the schedules go on last (--schedules).
+go_live_stages() {
+
+# ── GL1 ───────────────────────────────────────────────────────────────────
+stage "Pause the PA, and leave the synthetic data root"
+say "Nothing runs against either data root until the wiki is seeded: the timers go off if"
+say "they're on, so no capture cycle lands between the backfill and its replay."
+for timer in "${PA_SCHEDULE_TIMERS[@]}"; do
+  if systemctl is-enabled --quiet "$timer" 2>/dev/null; then
+    run sudo systemctl disable --now "${PA_SCHEDULE_TIMERS[@]}"
+    break
+  fi
+done
+ok "the schedules are off"
+say "Then $PA_VM leaves $PA_SYNTHETIC_DATA_ROOT: Remote Control stops, the store's shares come"
+say "off, and its own filesystems are unmounted (stopping Incus for a moment, not the VMs). Its"
+say "files stay until it's retired (retire-data-root.sh), once the real data root has run a night."
+release_data_root "$PA_SYNTHETIC_DATA_ROOT"
+ok "no VM is shared anything in $PA_SYNTHETIC_DATA_ROOT"
+pause
+
+# ── GL2 ───────────────────────────────────────────────────────────────────
+stage "Give the new inbox directory a filesystem of its own"
+say "As before, but in $PA_DATA_ROOT: $PA_CHAT_INBOX_SIZE, mounted nosuid,nodev,noexec at every"
+say "boot before Incus."
+run "$DEPLOY_DIR/install-chat-inbox.sh"
+ok "$PA_CHAT_INBOX is its own filesystem"
+pause
+
+# ── GL3 ───────────────────────────────────────────────────────────────────
+stage "Give the new wiki filesystems of their own"
+say "The wiki ($PA_WIKI_SIZE) and the replays directory ($PA_REPLAYS_SIZE), which the librarian's"
+say "VM writes. The wiki starts empty: the backfill's replay seeds it."
+run "$DEPLOY_DIR/install-wiki.sh"
+ok "$PA_WIKI and $PA_REPLAYS are filesystems of their own"
+pause
+
+# ── GL4 ───────────────────────────────────────────────────────────────────
+stage "Mount the new store into the VM"
+say "L0, the wiki and the status read-only, and the inbox directory writable, all from"
+say "$PA_DATA_ROOT."
+run "$DEPLOY_DIR/mount-store.sh"
+ok "the store is mounted"
+pause
+
+# ── GL5 ───────────────────────────────────────────────────────────────────
+stage "Render the agent project for you"
+say "update.sh pushes your owner.env in and renders the agent project from it, so the assistant"
+say "knows you, and starts Remote Control again."
+update_vm
+pause
+
+# ── GL6 ───────────────────────────────────────────────────────────────────
+stage "Point the schedules at the new data root"
+if [[ -f $PA_SYSTEMD_DIR/${PA_SCHEDULE_UNITS[0]} ]]; then
+  say "The installed units name the data root: install them again, still off."
+  run "$DEPLOY_DIR/install-schedules.sh"
+  ok "the schedules name $PA_DATA_ROOT, and stay off until --schedules"
+else
+  ok "the schedules aren't installed yet: --schedules installs them"
+fi
+pause
+
+# ── GL7 ───────────────────────────────────────────────────────────────────
+stage "Isolation check, on the real data root"
+say "Every fence again, before anything real arrives. A failure stops here: fix it and"
+say "re-run setup-wizard.sh --go-live."
+printf '\n'
+run "$DEPLOY_DIR/check-isolation.sh"
+ok "every fence holds"
+pause
+
+# ── GL8 ───────────────────────────────────────────────────────────────────
+stage "Store check, on the real data root"
+printf '\n'
+run "$DEPLOY_DIR/check-store.sh"
+ok "the store's mounts hold"
+pause
+
+# ── GL9 ───────────────────────────────────────────────────────────────────
+stage "Gmail dry run"
+say "Counts by Gmail category what a two-month backfill would capture. Nothing but counts."
+if private_file "$PA_GMAIL_TOKEN"; then
+  run "$DEPLOY_DIR/gmail.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("Gmail dry run: set Gmail up first (setup-wizard.sh --gmail), which runs it")
+fi
+pause
+
+# ── GL10 ─────────────────────────────────────────────────────────────────
+stage "iCloud Calendar dry run"
+say "Counts per calendar what a two-month backfill would capture. Nothing but counts."
+if private_file "$PA_ICLOUD_PASSWORD_FILE" && [[ -n $(icloud_value PA_ICLOUD_CALENDARS) ]]; then
+  run "$DEPLOY_DIR/calendar.sh" dry-run --window-start "$(date -d '2 months ago' +%F)"
+else
+  SKIPPED+=("iCloud Calendar dry run: set it up first (setup-wizard.sh --icloud), which runs it")
+fi
+pause
+}
+
+if $only_go_live && synthetic_data_root "$PA_DATA_ROOT" >/dev/null; then
+  printf 'error: the go-live moves onto the real data root, not %s: unset PA_DATA_ROOT\n' "$PA_DATA_ROOT" >&2
+  exit 2
+fi
+banner "PA setup"
+if $only_go_live; then
+  owner_stages
+  go_live_stages
+  finish
+  note "The assistant runs on $PA_DATA_ROOT now, with an empty L0 and no wiki. Hand back to the"
+  note "Claude session, which reports numbers only on the issue, for:"
+  note "  1. the backfill: deploy/home/capture.sh --backfill <window start>"
+  note "  2. the replay: deploy/home/librarian.sh replay $PA_REPLAYS/<name> --window-start <window start>"
+  note "  3. the seed: deploy/home/librarian.sh seed $PA_REPLAYS/<name> --captured-through <backfill's capture time>"
+  note "Only then turn on the schedules: setup-wizard.sh --schedules."
+  printf '\n'
+  exit 0
+fi
+if $only_owner; then
+  owner_stages
+  finish
+  note "The assistant's VM moves onto this data root with setup-wizard.sh --go-live."
+  printf '\n'
+  exit 0
+fi
+if $only_gmail; then
+  gmail_stages
+  finish
+  note "capture.sh and the schedules capture Gmail now its token is saved, once it's backfilled:"
+  note "deploy/home/capture.sh --backfill <window start>."
+  printf '\n'
+  exit 0
+fi
+if $only_icloud; then
+  icloud_stages
+  finish
+  note "capture.sh and the schedules capture iCloud Calendar now $PA_ICLOUD_ENV names the"
+  note "calendars, once they're backfilled: deploy/home/capture.sh --backfill <window start>."
+  printf '\n'
+  exit 0
+fi
+if $only_backup; then
+  backup_stages
+  finish
+  note "The nightly job backs up once the schedules are on (setup-wizard.sh --schedules);"
+  note "deploy/home/backup.sh backs up by hand, and pa status shows the last one."
+  printf '\n'
+  exit 0
+fi
+if $only_schedules; then
+  schedule_stages
+  finish
+  note "deploy/home/check-schedules.sh checks them, and pa status shows how current the PA is."
+  printf '\n'
+  exit 0
+fi
+# A plain run: the data root and its owner first, which the VMs' shares and the Gmail and iCloud
+# dry runs need, and the schedules last, once everything they run is set up.
+if $only_vault; then
+  vault_stages
+elif $only_librarian; then
+  librarian_stages
+else
+  owner_stages
+  assistant_stages
+  librarian_stages
+  vault_stages
+  gmail_stages
+  icloud_stages
+  backup_stages
+  schedule_stages
+fi
 
 finish
-if ! $only_librarian; then
+if ! $only_librarian && ! $only_vault; then
 note "Still to prove for #27's acceptance run (see deploy/home/README.md):"
 note "  - reboot the devbox, then re-run deploy/home/check-isolation.sh"
 note "  - roll back: deploy/home/update.sh <ref>, change something, deploy/home/rollback.sh"
 note "And for #30's: deploy/home/run-evals.sh runs the eval set in the VM."
 note "And for #31's: chat from your phone, then deploy/home/ingest.sh lands the exchanges."
 fi
-note "The librarian runs by hand: deploy/home/ingest.sh, then deploy/home/librarian.sh run."
+$only_vault || note "The nightly job runs the librarian once the schedules are on: deploy/home/check-schedules.sh."
+$only_librarian || note "The vault copy: deploy/home/check-vault-sync.sh, again after a reboot of the devbox."
+$only_librarian || $only_vault || note "Backfill the sources: deploy/home/capture.sh --backfill <window start> ends with the counts and the replay's estimate."
+$only_librarian || $only_vault || note "Until then the librarian and the backup run by hand: librarian.sh run, backup.sh."
 printf '\n'

@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "deny": [
+      "WebFetch", "WebSearch", "mcp__*",
+      "RemoteTrigger", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "PushNotification",
+      "Monitor", "Agent", "Task", "TaskStop", "ListAgents", "SendMessage", "Workflow", "Skill",
+      "DesignSync", "Artifact", "SendFeedback", "ReportFindings", "NotebookEdit",
+      "EnterWorktree", "ExitWorktree", "LSP", "PowerShell", "FetchInboxMessage", "SendUserFile",
+      "Edit(//home/**)", "Edit(//var/tmp/**)", "Edit(//dev/shm/**)", "Edit(//run/**)",
+      "Edit(//var/lock/**)", "Edit(//srv/pa/inbox/**)", "Edit(//srv/pa/agent/**)", "Edit(//etc/**)",
+      "Edit(//opt/**)", "Edit(//usr/**)", "Edit(//var/lib/pa-capture/**)",
+      "Read(//home/assistant/.claude.json)", "Read(//home/assistant/.claude/.credentials.json)",
+      "Read(//var/lib/pa-capture/**)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture prompt"}]}],
+    "PostToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture answer"}]}],
+    "Stop": [{"hooks": [{"type": "command", "timeout": 30,
+      "command": "[ \"$PA_CAPTURE_EXCHANGES\" = 1 ] || exit 0; exec /usr/bin/sudo -n -u capture /usr/local/libexec/pa-capture stop"}]}]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true,
+    "filesystem": {
+      "allowWrite": ["/srv/pa/scratch"],
+      "denyRead": ["/home/assistant/.claude.json", "/home/assistant/.claude/.credentials.json", "/var/lib/pa-capture"]
+    },
+    "network": {"allowedDomains": [], "allowManagedDomainsOnly": true}
+  },
+  "allowedMcpServers": [],
+  "allowManagedMcpServersOnly": true,
+  "disableClaudeAiConnectors": true,
+  "disableSkillShellExecution": true,
+  "strictPluginOnlyCustomization": true,
+  "autoMemoryEnabled": false,
+  "claudeMdExcludes": ["/home/assistant/**"],
+  "outputStyle": "default",
+  "crossSessionInbound": "refuse",
+  "channelsEnabled": false,
+  "autoContinueAtUsageLimit": false,
+  "env": {
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_DISABLE_CRON": "1",
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+    "CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+    "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+    "CLAUDE_CODE_TMPDIR": "/tmp",
+    "DISABLE_AUTOUPDATER": "1",
+    "DISABLE_UPDATES": "1",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+  }
+}

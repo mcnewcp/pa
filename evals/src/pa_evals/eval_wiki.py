@@ -12,6 +12,9 @@ librarian version (`frozen.eval_wiki`): `evals/wikis/<corpus>/<librarian version
 committed when a reported result uses it, so a failure can be diagnosed from the repository.
 
 The run log names the librarian version that built the wiki; the results record it.
+
+A run over a cut (`pa_home.cut`) is given the cut's own wiki instead: the live wiki at its last
+commit when the cut was taken (`cut_wiki`). Its librarian version is the one that commit names.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from pathlib import Path
 
 from pa_core.errors import PaError
 from pa_core.librarian.replay import ReplayTarget, RunLogEntry, RunLogError, read_run_log
+from pa_home.cut import Cut
 
 
 class EvalWikiError(PaError):
@@ -60,6 +64,17 @@ def load_eval_wiki(directory: Path) -> EvalWiki:
             f"{run_log} ends with a failed run: finish the replay with --resume first"
         )
     return EvalWiki(tree, versions[0])
+
+
+UNNAMED_VERSION = "unnamed (the cut's wiki commit names none)"
+"""The librarian version of a cut's wiki whose last commit names none, such as a seed."""
+
+
+def cut_wiki(cut: Cut) -> EvalWiki:
+    """The wiki a cut holds, as a files-plus-wiki run over the cut is given it."""
+    if cut.wiki is None or cut.manifest.wiki is None:
+        raise EvalWikiError(f"the cut {cut.name} holds no wiki: the data root had none")
+    return EvalWiki(cut.wiki, cut.manifest.wiki.librarian_version or UNNAMED_VERSION)
 
 
 def _entries(run_log: Path) -> list[RunLogEntry]:

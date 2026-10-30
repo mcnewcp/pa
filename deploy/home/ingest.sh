@@ -6,7 +6,7 @@ source "$(dirname "$0")/lib.sh"
 
 require_owner_env
 set -a
-# shellcheck source=/dev/null # owner.env, written by seed-data-root.sh
+# shellcheck source=/dev/null # owner.env, written by the wizard's owner stage
 source "$PA_OWNER_ENV"
 set +a
 PA_DATA_DIR=$PA_DATA_ROOT uv run --project "$REPO_DIR" pa ingest

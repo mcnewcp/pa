@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from pa_core.catalog import Catalog
 from pa_core.envelope import Envelope, Source
 from pa_core.errors import EpisodeConflictError, MalformedPayloadError, PaError
 from pa_core.l0 import L0Store, QuarantineRecord
-from pa_core.normalizers import Normalizer, normalizer_for, payload_extension
+from pa_core.normalizers import Normalizer, id_pins_content, normalizer_for, payload_extension
 from pa_core.owner import Owner
 
 
@@ -30,6 +31,8 @@ class IngestSummary:
     ingested: int = 0
     unchanged: int = 0
     quarantined: int = 0
+    quarantined_from: Counter[str] = field(default_factory=Counter)
+    """How many were quarantined from each inbox directory (`""` for the inbox root)."""
     # Each payload left in the inbox because ingest may not remove it, and why.
     left: list[str] = field(default_factory=list)
 
@@ -65,7 +68,7 @@ def ingest(
     left in the inbox, not landed, so it doesn't land again on every run; the summary says why.
     """
     summary = IngestSummary()
-    for payload_file in _waiting_payloads(inbox):
+    for payload_file in waiting_payloads(inbox):
         inbox_name = payload_file.relative_to(inbox).as_posix()
         if not _removable(payload_file):
             summary.left.append(
@@ -75,9 +78,13 @@ def ingest(
         try:
             raw = _read_payload(payload_file)
         except MalformedPayloadError as error:
-            summary.add(_quarantine(store, inbox_name, b"", str(error), now()))
+            outcome = _quarantine(store, inbox_name, b"", str(error), now())
         else:
-            summary.add(_land(inbox_name, raw, store, catalog, owner, now()))
+            outcome = _land(inbox_name, raw, store, catalog, owner, now())
+        summary.add(outcome)
+        if outcome is Outcome.QUARANTINED:
+            directory = PurePosixPath(inbox_name).parent.as_posix()
+            summary.quarantined_from[directory if directory != "." else ""] += 1
         try:
             payload_file.unlink()
         except PermissionError as error:
@@ -147,7 +154,7 @@ def _land(
             store.put(envelope, raw)
         catalog.add(envelope)
         return Outcome.INGESTED
-    if existing.content_hash == envelope.content_hash:
+    if existing.content_hash == envelope.content_hash or id_pins_content(envelope.source, raw):
         # Indexing is idempotent, and catches the catalog up when an earlier run wrote the
         # episode but stopped before cataloging it.
         catalog.add(existing)
@@ -161,8 +168,9 @@ def _leftover_episode(
 ) -> tuple[Envelope, bytes] | None:
     """The envelope and raw payload an interrupted ingest left at `envelope.raw_ref`, if any.
 
-    None unless the leftover raw payload normalizes to the same content as `envelope`, so a
-    recapture that differs only in volatile fields finishes the episode instead of conflicting.
+    None unless the leftover raw payload normalizes to the same content as `envelope`, or to
+    its id where that pins its content, so a recapture that differs only in volatile fields
+    finishes the episode instead of conflicting.
     """
     raw = store.get_raw(envelope.raw_ref)
     if raw is None:
@@ -171,7 +179,9 @@ def _leftover_episode(
         leftover = normalizer_for(envelope.source, owner)(raw, captured_at=at)
     except Exception:
         return None
-    if (leftover.episode_id, leftover.content_hash) != (envelope.episode_id, envelope.content_hash):
+    if leftover.episode_id != envelope.episode_id:
+        return None
+    if leftover.content_hash != envelope.content_hash and not id_pins_content(envelope.source, raw):
         return None
     return leftover, raw
 
@@ -222,7 +232,7 @@ def is_hidden(inbox_name: PurePath) -> bool:
     return any(part.startswith(".") for part in inbox_name.parts)
 
 
-def _waiting_payloads(inbox: Path) -> list[Path]:
+def waiting_payloads(inbox: Path) -> list[Path]:
     """Raw payload files, and symbolic links, under the inbox, in path order.
 
     Symbolic links are listed so they are quarantined; the walk never follows one.

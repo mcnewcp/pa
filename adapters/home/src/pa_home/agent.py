@@ -17,7 +17,6 @@ from pa_home.agent_project import AGENT_PROJECT, render_agent_project
 from pa_home.claude_cli import (
     ClaudeCliError,
     ClaudeCliTimeoutError,
-    now_statement,
     result_number,
     run_print_stream,
     without_capture,
@@ -88,11 +87,36 @@ class AsOfMethod(StrEnum):
     """Appended to Claude Code's system prompt."""
     PREAMBLE = "preamble"
     """Stated in the message, before the question."""
+    BOTH = "both"
+    """Appended to the system prompt, and stated before the question too."""
     NONE = "none"
     """Not told at all (the control: the agent falls back to the real date)."""
 
 
-DEFAULT_AS_OF_METHOD = AsOfMethod.SYSTEM_PROMPT
+DEFAULT_AS_OF_METHOD = AsOfMethod.BOTH
+
+
+def as_of_statement(now: datetime) -> str:
+    """What the agent is told about the current time (see docs/adr/0003).
+
+    Claude Code also states the machine's date in every session's context ("Today's date is
+    <date>."), which can't be turned off, so the statement says outright that it isn't now and
+    names the date that date arithmetic starts from.
+
+    Raises ValueError if `now` has no UTC offset, since the agent is told it with one.
+    """
+    if now.utcoffset() is None:
+        raise ValueError(f"a session's now must have a UTC offset (got {now.isoformat()})")
+    offset = now.strftime("%z")
+    day = f"{now:%A, %B} {now.day}, {now:%Y}"
+    return (
+        f"It is now {day}, {now:%H:%M} (UTC{offset[:3]}:{offset[3:]}; {now.isoformat()}). "
+        "That is the current date and time for this whole conversation. Claude Code also states "
+        "a date in your context (\"Today's date is ...\"): that is the machine's clock, not now, "
+        "so don't use it or mention it. Work out today, tomorrow, this week, how many days are "
+        "left, and whether anything is overdue, has passed or has happened yet from "
+        f"{day} alone."
+    )
 
 
 def wall_clock() -> datetime:
@@ -106,8 +130,10 @@ class ClaudeAgent:
     Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
     in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
     up, with a fresh scratch directory beside it. What the session may do comes from the
-    project's settings.json in auto permission mode, as in chat. Exchange capture is always
-    off: the session's environment drops its settings, whatever the caller's environment says.
+    project's settings.json in auto permission mode, as in chat, and in the home VM from its
+    managed settings and sandbox too, which every session there runs under. Exchange capture
+    is always off: the session's environment drops its settings, whatever the caller's
+    environment says.
     """
 
     def __init__(
@@ -134,26 +160,28 @@ class ClaudeAgent:
         owner: Owner,
         l0: Path,
         wiki: Path | None = None,
+        status: Path | None = None,
         now: datetime | None = None,
     ) -> AgentAnswer:
         """The agent's answer to `question`, asked at `now` (default: the clock's time).
 
         Given a `wiki`, the agent reads it beside `l0` and is told how to find its way with it;
-        without one, it reads L0 alone.
+        without one, it reads L0 alone. Given a `status` file, it reads it too, and is told to
+        scope what it says by how current each source is.
 
         Raises ValueError if that time has no UTC offset, since the agent is told it with one.
         """
         now = now or self._clock()
-        statement = now_statement(now)
+        statement = as_of_statement(now)
         prompt = question
         # Auto, the mode the Claude app starts sessions in, so eval sessions run as the owner's do.
         args = ["--no-session-persistence", "--permission-mode", "auto"]
         if self._model:
             args += ["--model", self._model]
         system_prompt = ROLE
-        if self._as_of_method is AsOfMethod.SYSTEM_PROMPT:
+        if self._as_of_method in (AsOfMethod.SYSTEM_PROMPT, AsOfMethod.BOTH):
             system_prompt += f"\n\n{statement}"
-        elif self._as_of_method is AsOfMethod.PREAMBLE:
+        if self._as_of_method in (AsOfMethod.PREAMBLE, AsOfMethod.BOTH):
             prompt = f"{statement}\n\n{question}"
         args += ["--append-system-prompt", system_prompt]
         with tempfile.TemporaryDirectory(prefix="pa-agent-") as directory:
@@ -161,7 +189,13 @@ class ClaudeAgent:
             scratch = Path(directory) / "scratch"
             scratch.mkdir()
             render_agent_project(
-                workdir, owner=owner, l0=l0, scratch=scratch, wiki=wiki, source=self._project
+                workdir,
+                owner=owner,
+                l0=l0,
+                scratch=scratch,
+                wiki=wiki,
+                status=status,
+                source=self._project,
             )
             # claude -p never trusts a folder, so it drops a project's allow rules and
             # additional directories. Passing the same file as flag settings keeps them.

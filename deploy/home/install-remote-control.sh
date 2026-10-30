@@ -33,9 +33,9 @@ StartLimitBurst=5
 [Service]
 User=$PA_USER
 WorkingDirectory=$PA_VM_PROJECT
-# Capture is on for Remote Control sessions and nothing else, into the VM's inbox directory.
+# Capture is on for Remote Control sessions and nothing else: the managed settings' capture
+# hooks hand each turn to the capture helper only where this is set (#94).
 Environment=PA_CAPTURE_EXCHANGES=1
-Environment=PA_CAPTURE_INBOX=$PA_VM_CHAT_INBOX
 # Captures written before the inbox is mounted would go to the VM's own disk and never land.
 ExecStartPre=/usr/bin/mountpoint -q $PA_VM_CHAT_INBOX
 ExecStart=$PA_VM_CLAUDE remote-control

@@ -1,6 +1,7 @@
-"""seed-data-root.sh: a fresh data root seeded from a frozen corpus, Argus's or the scale
-corpus, with the corpus's owner as the instance owner. It runs here with HOME in a temporary
-directory and a stand-in `uv` that runs Python as uv would and records the `pa` commands."""
+"""seed-data-root.sh: a fresh synthetic data root seeded from a frozen corpus, Argus's or the
+scale corpus, with the corpus's owner as the instance owner. It seeds only a data root named like
+the synthetic one, never the real one (#99). It runs here with HOME in a temporary directory and
+a stand-in `uv` that runs Python as uv would and records the `pa` commands."""
 
 from __future__ import annotations
 
@@ -24,12 +25,12 @@ command = argv[argv.index("--project") + 2:]
 if command[0] == "python":
     os.execv({sys.executable!r}, [{sys.executable!r}, *command[1:]])
 with open(os.environ["CALLS"], "a") as calls:
-    calls.write(json.dumps(command) + "\\n")
+    calls.write(json.dumps([*command, os.environ.get("PA_DATA_DIR")]) + "\\n")
 """
 
 
-def seed_data_root(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Runs the script; returns how it ended and the data root it seeds."""
+def seed_data_root(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Runs the script, with `{home}` in an argument standing for HOME."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     uv = bin_dir / "uv"
@@ -37,8 +38,8 @@ def seed_data_root(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProc
     uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    result = subprocess.run(
-        ["bash", str(SEED), *args],
+    return subprocess.run(
+        ["bash", str(SEED), *(arg.replace("{home}", str(home)) for arg in args)],
         capture_output=True,
         text=True,
         env={
@@ -48,7 +49,10 @@ def seed_data_root(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProc
         },
         check=False,
     )
-    return result, home / ".local" / "share" / "pa-home-synthetic"
+
+
+def share(tmp_path: Path) -> Path:
+    return tmp_path / "home" / ".local" / "share"
 
 
 def payloads(*directories: Path) -> set[str]:
@@ -60,14 +64,19 @@ def payloads(*directories: Path) -> set[str]:
     }
 
 
+SYNTHETIC = "{home}/.local/share/pa-home-synthetic"
+
+
 @pytest.mark.parametrize(
     ("args", "corpus"),
     [((), "argus"), (("--corpus", "argus"), "argus"), (("--corpus", "scale"), "scale")],
 )
-def test_a_data_root_is_seeded_from_the_corpus_named_and_ingested(
+def test_a_synthetic_data_root_is_seeded_from_the_corpus_named_and_ingested(
     tmp_path: Path, args: tuple[str, ...], corpus: str
 ):
-    result, root = seed_data_root(tmp_path, *args)
+    result = seed_data_root(tmp_path, *args, SYNTHETIC)
+
+    root = share(tmp_path) / "pa-home-synthetic"
 
     assert result.returncode == 0, result.stderr
     assert payloads(root / "inbox") == payloads(*frozen.CORPORA[corpus].payloads)
@@ -75,12 +84,53 @@ def test_a_data_root_is_seeded_from_the_corpus_named_and_ingested(
     assert "PA_OWNER_NAME='Argus McNevans'" in owner
     assert "PA_TIME_ZONE=America/Chicago" in owner
     calls = [json.loads(line) for line in (tmp_path / "calls").read_text().splitlines()]
-    assert calls == [["pa", "ingest"]]
+    assert calls == [["pa", "ingest", str(root)]]
+    assert not (share(tmp_path) / "pa-home").exists()
+
+
+def test_a_synthetic_data_root_of_another_name_is_seeded_there(tmp_path: Path):
+    result = seed_data_root(tmp_path, f"{SYNTHETIC}-scale")
+
+    root = share(tmp_path) / "pa-home-synthetic-scale"
+    assert result.returncode == 0, result.stderr
+    assert (root / "owner.env").is_file()
+    assert (root / "inbox" / "assistant_chat").is_dir()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        (),  # the deploy default, the real data root, is never seeded by default
+        ("{home}/.local/share/pa-home",),
+        ("{home}/.local/share/pa-home/../pa-home",),
+        ("{home}/.local/share/pa-home-real",),
+        ("{home}/.local/share/my-pa-home-synthetic",),
+    ],
+)
+def test_anything_but_a_synthetic_data_root_is_refused(tmp_path: Path, target: tuple[str, ...]):
+    result = seed_data_root(tmp_path, *target)
+
+    assert result.returncode != 0
+    assert "seeds only a synthetic data root" in result.stderr or "usage" in result.stderr
+    assert not share(tmp_path).exists() or not any(share(tmp_path).iterdir())
+    assert not (tmp_path / "calls").exists()
+
+
+def test_a_synthetic_name_that_leads_to_the_real_data_root_is_refused(tmp_path: Path):
+    real = share(tmp_path) / "pa-home"
+    real.mkdir(parents=True)
+    (share(tmp_path) / "pa-home-synthetic").symlink_to(real)
+
+    result = seed_data_root(tmp_path, SYNTHETIC)
+
+    assert result.returncode != 0
+    assert "seeds only a synthetic data root" in result.stderr
+    assert list(real.iterdir()) == []
 
 
 def test_an_unknown_corpus_is_refused(tmp_path: Path):
-    result, root = seed_data_root(tmp_path, "--corpus", "enron")
+    result = seed_data_root(tmp_path, "--corpus", "enron", SYNTHETIC)
 
     assert result.returncode != 0
     assert "argus or scale" in result.stderr
-    assert not root.exists()
+    assert not (share(tmp_path) / "pa-home-synthetic").exists()

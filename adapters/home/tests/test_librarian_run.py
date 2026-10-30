@@ -40,9 +40,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pa_core.envelope import Source
+from pa_core.status import SourceStatus, Status, read_status, write_status
 from pa_home import librarian
 from pa_home.cli import main
 from pa_home.config import (
+    DataRoot,
     LibrarianConfig,
     load_data_root,
     load_librarian_config,
@@ -51,6 +54,7 @@ from pa_home.config import (
 )
 from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import LIBRARIAN_PROJECT, project_files
+from pa_home.lock import data_root_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -81,102 +85,15 @@ def email(
     ).encode()
 
 
-def stand_in_claude(directory: Path) -> Path:
-    script = directory / "claude"
-    script.write_text(
-        f"#!{sys.executable}\n"
-        + textwrap.dedent(
-            f"""\
-            import json, os, re, sys, time
-            from pathlib import Path
-            LOG = Path({str(directory / "sessions.jsonl")!r})
-            SCRIPT = Path({str(directory / "script.json")!r})
-            """
-        )
-        + textwrap.dedent(
-            """\
-            argv = sys.argv[1:]
-            prompt = sys.stdin.read()
-            settings = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())
-            wiki = Path(settings["permissions"]["additionalDirectories"][1])
-            phase = re.search(r"^Phase: (\\w+)$", prompt, re.M)[1]
-            listing = re.search(r"^```json\\n(.*?)^```$", prompt, re.M | re.S)
-            episodes = json.loads(listing[1]) if listing else []
-            table = re.search(r"^## Identity table$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
-            identity = json.loads(table[1]) if table else None
-            found = re.search(r"^## Lint warnings$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
-            warnings = json.loads(found[1]) if found else None
-            found = re.search(r"^## Lint errors$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
-            errors = json.loads(found[1]) if found else None
-            phase_inputs = prompt[:table.start()] if table else prompt
-            inputs = [json.loads(block) for block in
-                      re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
-            claude_md = Path("CLAUDE.md")
-            with LOG.open("a") as log:
-                log.write(json.dumps({
-                    "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
-                    "claude_md": claude_md.read_text() if claude_md.exists() else None,
-                    "settings": settings, "episodes": episodes, "identity": identity,
-                    "warnings": warnings, "errors": errors, "inputs": inputs,
-                }) + "\\n")
-            script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
-
-            def write(path, text, mode="w"):
-                target = wiki / path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with target.open(mode) as file:
-                    file.write(text)
-
-            default = {"observation": [{"observe": True}]}
-            # A resumed session follows `<phase>_resume`; a new one, `<phase>`.
-            key = f"{phase}_resume" if "--resume" in argv else phase
-            for action in script.get(key, default.get(key, [])):
-                if action.get("when") not in (None, *(e.get("subject") for e in episodes)):
-                    continue
-                if "observe" in action:
-                    for episode in episodes:
-                        slugs = action.get("links", {}).get(episode["subject"], ["someone"])
-                        links = " and ".join(f"[[{slug}]]" for slug in slugs)
-                        write(f"days/{episode['day']}.md",
-                              f"- {episode['kind']} about {episode['subject']} with "
-                              f"{links} [ep:{episode['id']}]\\n", "a")
-                elif "delete" in action:
-                    (wiki / action["delete"]).unlink()
-                elif "write" in action:
-                    write(action["write"], action["text"])
-                elif "append" in action:
-                    write(action["append"], action["text"], "a")
-                elif "symlink" in action:
-                    (wiki / action["symlink"]).parent.mkdir(parents=True, exist_ok=True)
-                    (wiki / action["symlink"]).symlink_to(action["to"])
-                elif "mkdir" in action:
-                    (wiki / action["mkdir"]).mkdir(parents=True, exist_ok=True)
-                elif "sleep" in action:
-                    time.sleep(action["sleep"])
-                elif "fail" in action:
-                    print(json.dumps({"type": "result", "subtype": "error_during_execution",
-                                      "is_error": True, "result": action["fail"]}))
-                    sys.exit(1)
-            print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": "Done.", "session_id": "session-1",
-                              "total_cost_usd": 0.0421, "num_turns": 6,
-                              "duration_ms": 18250}))
-            """
-        )
-    )
-    script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    return script
-
-
 @pytest.fixture
-def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: Path) -> Path:
     root = tmp_path / "pa-data"
     monkeypatch.setenv("PA_DATA_DIR", str(root))
     monkeypatch.setenv("PA_OWNER_NAME", "Argus McNevans")
     monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com")
     monkeypatch.setenv("PA_OWNER_OTHER_NAMES", "Gus")
     monkeypatch.setenv("PA_TIME_ZONE", "America/Chicago")
-    monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(stand_in_claude(tmp_path)))
+    monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(stand_in_claude))
     for var in (
         "PA_LIBRARIAN_MODEL",
         "PA_LIBRARIAN_EFFORT",
@@ -2016,6 +1933,7 @@ def test_the_run_log_records_each_runs_batch_sessions_cost_and_the_librarian_ver
         "commit": first["commit"],
         "occurred_from": "2026-09-28T05:00:00+00:00",
         "occurred_to": "2026-10-05T05:00:00+00:00",
+        "window_start": None,
         "episodes": 1,
         "skipped": 0,
         "librarian_version": version,
@@ -2345,6 +2263,154 @@ def test_a_seed_starts_only_a_fresh_wiki_from_one_that_lints_clean(
     assert (wiki_files(data_root) if (data_root / "wiki").exists() else {}) == before
 
 
+# Replaying a window of L0, for the backfill (#84)
+
+# REPLAYED, plus mail early in the week of 5 Oct, before a window that starts at noon on 6 Oct.
+BEFORE_THE_WINDOW = {
+    **REPLAYED,
+    **wedding_mail("Save the date", "Mon, 5 Oct 2026 09:00:00 -0500"),
+    **wedding_mail("Seating", "Tue, 6 Oct 2026 09:00:00 -0500"),
+}
+WINDOW_START = "2026-10-06T12:00:00"
+
+
+def test_a_windowed_replay_starts_at_the_window_starts_week_and_never_offers_earlier_episodes(
+    data_root: Path, tmp_path: Path
+):
+    ingest(data_root, BEFORE_THE_WINDOW)
+    target = tmp_path / "backfill"
+
+    assert replay(target, "--window-start", WINDOW_START) == 0
+
+    # The hotel mail (the week before) and the mail earlier in the window start's week, the
+    # same day's included, are never offered.
+    assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
+    assert [told_now(s) for s in sessions(data_root, "observation")] == [
+        "2026-10-12T00:00:00-05:00",
+        "2026-10-26T00:00:00-05:00",
+    ]
+    # The first batch is the rest of the window start's week, from the window start.
+    assert [(e["occurred_from"], e["occurred_to"], e["skipped"]) for e in run_log(target)] == [
+        ("2026-10-06T17:00:00+00:00", "2026-10-12T05:00:00+00:00", 0),
+        ("2026-10-19T05:00:00+00:00", "2026-10-26T05:00:00+00:00", 0),
+    ]
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+
+
+def captured_event(uid: str, summary: str, start: str, end: str, *extra: str) -> bytes:
+    """A calendar resource as the CalDAV collector lands it, captured in the backfill."""
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        "DTSTAMP:20261025T120000Z",
+        f"DTSTART;TZID=America/Chicago:{start}",
+        f"DTEND;TZID=America/Chicago:{end}",
+        f"SUMMARY:{summary}",
+        *extra,
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    header = "Calendar: Family\nCaptured-At: 2026-10-25T07:00:00-05:00\n\n"
+    return header.encode() + "".join(f"{line}\r\n" for line in lines).encode()
+
+
+def test_a_windowed_replay_offers_what_was_still_going_at_the_window_start_in_its_first_batch(
+    data_root: Path, tmp_path: Path
+):
+    # A weekly class that started a year before the window, an all-day event over the window
+    # start, and a single event over by then.
+    ingest(
+        data_root,
+        {
+            **BEFORE_THE_WINDOW,
+            "icloud_calendar/pottery.ics": captured_event(
+                "pottery@example.com",
+                "Pottery class",
+                "20250902T183000",
+                "20250902T200000",
+                "RRULE:FREQ=WEEKLY;BYDAY=TU",
+            ),
+            "icloud_calendar/dentist.ics": captured_event(
+                "dentist@example.com", "Dentist", "20261006T090000", "20261006T100000"
+            ),
+            "icloud_calendar/retreat.ics": captured_event(
+                "retreat@example.com", "Retreat", "20261005T090000", "20261007T170000"
+            ),
+        },
+    )
+    target = tmp_path / "backfill"
+
+    assert replay(target, "--window-start", WINDOW_START) == 0
+
+    assert [sorted(subjects) for subjects in observed_subjects(data_root)] == [
+        ["Pottery class", "RSVP", "Retreat"],
+        ["Menu"],
+    ]
+
+
+def test_a_windowed_replay_resumes_from_its_last_committed_batch_within_its_window(
+    data_root: Path, tmp_path: Path, capsys
+):
+    ingest(data_root, BEFORE_THE_WINDOW)
+    target = tmp_path / "backfill"
+    # The first batch fails, so there's no committed batch yet to resume from.
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "RSVP"}])
+    assert replay(target, "--window-start", WINDOW_START) != 0
+    script(data_root, observation=[{"observe": True}, {"fail": "API Error", "when": "Menu"}])
+
+    # Resuming keeps the window it started with, given again or not, and refuses another.
+    capsys.readouterr()
+    assert replay(target, "--resume", "--window-start", "2026-09-28T00:00:00") != 0
+    assert "window start" in capsys.readouterr().err
+    assert replay(target, "--resume") != 0
+    script(data_root)
+    assert replay(target, "--resume", "--window-start", WINDOW_START) == 0
+
+    assert observed_subjects(data_root) == [["RSVP"], ["RSVP"], ["Menu"], ["Menu"]]
+    assert [(e["status"], e["occurred_from"][:10]) for e in run_log(target)] == [
+        ("failed", "2026-10-06"),
+        ("committed", "2026-10-06"),
+        ("failed", "2026-10-19"),
+        ("committed", "2026-10-19"),
+    ]
+    assert sorted(replay_git(target, "ls-tree", "-r", "--name-only", "HEAD").split()) == [
+        "days/2026-10-07.md",
+        "days/2026-10-20.md",
+        "index.md",
+    ]
+
+
+def test_a_wiki_seeded_from_a_windowed_replay_carries_on_from_the_backfills_capture_time(
+    data_root: Path, tmp_path: Path
+):
+    # The backfill: mail from before the window, and the RSVP in it.
+    ingest(data_root, wedding_mail("Save the date", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    ingest(data_root, wedding_mail("RSVP", "Wed, 7 Oct 2026 09:00:00 -0500"))
+    backfill_captured = datetime.now(UTC)
+    target = tmp_path / "backfill"
+    assert replay(target, "--window-start", WINDOW_START) == 0
+    # Captured after the backfill, before the seed.
+    ingest(data_root, wedding_mail("Menu", "Tue, 20 Oct 2026 09:00:00 -0500"))
+
+    assert seed(str(target), "--captured-through", backfill_captured.isoformat()) == 0
+
+    seeded = cursor(data_root)
+    assert seeded is not None
+    captured_at, _, episode_id = seeded.partition(" ")
+    assert datetime.fromisoformat(captured_at) <= backfill_captured
+    assert episode_id.startswith("gmail_")
+    # Neither the mail from before the window nor the RSVP is offered again; only the menu is.
+    assert run_librarian() == 0
+    assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
+    assert wiki_files(data_root)["days/2026-10-07.md"].count("[ep:") == 1
+
+
 # The librarian's sandbox (#66)
 
 
@@ -2544,3 +2610,99 @@ def test_a_configured_command_overrides_the_sandboxs_own():
     environ["PA_LIBRARIAN_COMMAND"] = "claude"
     assert load_librarian_config(environ).command == ("claude",)
     assert load_librarian_config({}).sandbox is None
+
+
+def status(data_root: Path) -> Status:
+    return read_status(data_root / "status" / "status.json")
+
+
+def test_a_run_records_the_wikis_current_through_time_and_its_outcome_in_the_status(
+    data_root: Path,
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    started = datetime.now(UTC)
+
+    assert run_librarian() == 0
+
+    wiki = status(data_root).wiki
+    captured_at = datetime.fromisoformat(str(cursor(data_root)).split(" ")[0])
+    assert wiki.current_through == captured_at
+    run = wiki.last_run
+    assert run is not None
+    assert run.succeeded and run.reason is None
+    assert started <= run.at <= datetime.now(UTC)
+    # Observation and consolidation, at the stand-in's $0.0421 a session.
+    assert len(sessions(data_root)) == 2
+    assert run.cost_usd == pytest.approx(0.0842)
+    assert run.warnings == 0
+
+
+def test_the_librarians_record_leaves_the_rest_of_the_status_as_it_was(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    path = data_root / "status" / "status.json"
+    synced = datetime(2026, 10, 1, 6, 10, tzinfo=UTC)
+    gmail = SourceStatus(watermark=synced, cadence=timedelta(minutes=15), quarantined=2)
+    write_status(path, Status(sources={Source.GMAIL: gmail}), at=synced)
+
+    assert run_librarian() == 0
+
+    assert status(data_root).sources == {"gmail": gmail}
+    assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_a_failed_run_is_recorded_without_content_and_keeps_the_current_through_time(
+    data_root: Path,
+):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    through = status(data_root).wiki.current_through
+    ingest(
+        data_root,
+        {"gmail/rsvp.eml": email(message_id="rsvp-0002@example.net", subject="RSVP")},
+    )
+    script(
+        data_root,
+        observation=[
+            {"write": "people/david-kim.md", "text": "# David Kim\n"},
+            {"fail": "API Error: overloaded"},
+        ],
+    )
+
+    assert run_librarian() != 0
+
+    wiki = status(data_root).wiki
+    assert through is not None and wiki.current_through == through
+    run = wiki.last_run
+    assert run is not None and not run.succeeded
+    assert run.reason == "the run failed in its observation session and was discarded"
+    assert run.cost_usd is None  # the failed session reported no cost
+    assert run.warnings is None
+    text = (data_root / "status" / "status.json").read_text()
+    for content in ("RSVP", "david-kim", "overloaded", "Hotel"):
+        assert content not in text, content
+
+
+def test_a_run_with_no_new_episodes_is_recorded_as_a_run(data_root: Path):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    assert run_librarian() == 0
+    first = status(data_root).wiki
+
+    assert run_librarian() == 0
+
+    wiki = status(data_root).wiki
+    assert wiki.current_through == first.current_through
+    assert wiki.last_run is not None and first.last_run is not None
+    assert wiki.last_run.succeeded and wiki.last_run.at > first.last_run.at
+    assert wiki.last_run.cost_usd == 0
+
+
+def test_pa_librarian_run_skips_while_another_run_holds_the_lock(data_root: Path, capsys):
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    capsys.readouterr()
+
+    with data_root_lock(DataRoot(data_root)):
+        assert run_librarian() == 0
+
+    assert capsys.readouterr().out == "librarian: skipped: another job holds the data root's lock\n"
+    assert sessions(data_root) == []
+    assert not (data_root / "status" / "status.json").exists()
