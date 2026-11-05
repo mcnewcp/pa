@@ -21,13 +21,16 @@ show() { systemctl show "$1" -p "$2" --value; }
 for timer in "${PA_SCHEDULE_TIMERS[@]}"; do
   service=${timer%.timer}.service
   if systemctl is-enabled --quiet "$timer" && systemctl is-active --quiet "$timer"; then
-    pass "$timer is enabled and waiting: last started $(show "$timer" LastTriggerUSec)," \
-      "next $(show "$timer" NextElapseUSecRealtime)"
+    last=$(show "$timer" LastTriggerUSec)
+    pass "$timer is enabled and waiting: last started ${last:-never}, next $(show "$timer" NextElapseUSecRealtime)"
   else
     fail "$timer isn't enabled and waiting: install-schedules.sh --enable"
   fi
   result=$(show "$service" Result) status=$(show "$service" ExecMainStatus)
-  if [[ $result == success ]]; then
+  # systemd reports a job that has never run as a success.
+  if [[ -z $(show "$service" ExecMainStartTimestamp) ]]; then
+    printf '  SKIP  %s\n' "$service hasn't run yet"
+  elif [[ $result == success ]]; then
     pass "$service's last run succeeded (exit $status)"
   else
     fail "$service's last run: $result (exit $status); pa status below says which step and why"

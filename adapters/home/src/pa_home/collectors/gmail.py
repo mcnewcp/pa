@@ -60,6 +60,11 @@ class HistoryExpired(Exception):
     """Gmail no longer keeps the history from the position asked for."""
 
 
+class MessageGone(Exception):
+    """The message was listed, but is gone by the time it's asked for: a draft replaced on its
+    next save, or mail deleted since. There's nothing to capture."""
+
+
 @dataclass(frozen=True)
 class GmailMessage:
     raw: bytes
@@ -85,11 +90,11 @@ class GmailClient(Protocol):
         ...
 
     def fetch(self, message_id: str) -> GmailMessage:
-        """The raw message, with its label ids."""
+        """The raw message, with its label ids. Raises MessageGone if it's gone since listed."""
         ...
 
     def label_ids(self, message_id: str) -> frozenset[str]:
-        """The message's label ids alone, without fetching the message."""
+        """The message's label ids alone, without fetching the message (or MessageGone)."""
         ...
 
     def label_names(self) -> Mapping[str, str]:
@@ -146,7 +151,10 @@ class GmailCollector:
         for message_id in dict.fromkeys(message_ids):
             if not _MESSAGE_ID.fullmatch(message_id):
                 raise CollectionError("Gmail gave a message id that isn't a plain id")
-            message = self.client.fetch(message_id)
+            try:
+                message = self.client.fetch(message_id)
+            except MessageGone:
+                continue
             if message.label_ids & EXCLUDED:
                 continue
             inbox.write(message_id, self._payload(message))
@@ -183,7 +191,10 @@ def count_by_category(client: GmailClient, start: datetime, end: datetime) -> Co
     zero; mail with no category (or Personal) is Primary, as episode selection reads it."""
     counts = Counter(dict.fromkeys(Category, 0))
     for message_id in dict.fromkeys(client.ids_between(start, end)):
-        labels = client.label_ids(message_id)
+        try:
+            labels = client.label_ids(message_id)
+        except MessageGone:
+            continue
         if labels & EXCLUDED:
             continue
         found = [category for i, category in _CATEGORIES.items() if i in labels]

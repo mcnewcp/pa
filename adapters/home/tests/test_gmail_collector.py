@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -25,7 +25,7 @@ from pa_core.status import read_status
 from pa_home import cli
 from pa_home.capture import CycleOutcome, capture_cycle
 from pa_home.cli import main
-from pa_home.collectors.gmail import GmailCollector, GmailMessage, HistoryExpired
+from pa_home.collectors.gmail import GmailCollector, GmailMessage, HistoryExpired, MessageGone
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
@@ -86,14 +86,22 @@ class FakeGmail:
             if start <= m.received < end and not m.labels & {"SPAM", "TRASH"}
         ]
 
+    def delete(self, message_id: str) -> None:
+        """Gone from the mailbox, as a draft is on each save, but still in the history."""
+        self.mail[message_id] = replace(self.mail[message_id], raw=b"")
+
     def fetch(self, message_id: str) -> GmailMessage:
         self._check()
         self.fetched.append(message_id)
         mail = self.mail[message_id]
+        if not mail.raw:
+            raise MessageGone
         return GmailMessage(raw=mail.raw, label_ids=mail.labels)
 
     def label_ids(self, message_id: str) -> frozenset[str]:
         self._check()
+        if not self.mail[message_id].raw:
+            raise MessageGone
         return self.mail[message_id].labels
 
     def label_names(self) -> dict[str, str]:
@@ -208,6 +216,26 @@ def test_a_collection_collects_only_the_mail_new_since_the_last(
 
     assert outcome.collected == {Source.GMAIL: 1}
     assert gmail.fetched == ["m2"]
+    assert sorted(mail_in_l0(data_root)) == ["m1", "m2"]
+    assert read_status(data_root.status).sources[Source.GMAIL].watermark == clock.now
+
+
+def test_a_message_gone_by_the_time_its_fetched_is_passed_over(
+    data_root: DataRoot, gmail: FakeGmail
+):
+    # Gmail's history names every draft saved, and each save replaces the last: by the time
+    # the collection fetches one, it's gone (#99).
+    gmail.deliver("m1", email("m1"), ["INBOX"])
+    clock = Clock(START)
+    backfill(data_root, gmail, clock)
+    gmail.deliver("d1", email("d1"), ["DRAFT"], received=START + timedelta(minutes=1))
+    gmail.delete("d1")
+    gmail.deliver("m2", email("m2"), ["INBOX"], received=START + timedelta(minutes=5))
+    clock.now = START + timedelta(minutes=15)
+
+    outcome = run_cycle(data_root, gmail, clock)
+
+    assert outcome.collected == {Source.GMAIL: 1}
     assert sorted(mail_in_l0(data_root)) == ["m1", "m2"]
     assert read_status(data_root.status).sources[Source.GMAIL].watermark == clock.now
 

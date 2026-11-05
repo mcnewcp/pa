@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from pa_home.collectors import CollectionError
+from pa_home.collectors.gmail import MessageGone
 from pa_home.gmail_api import GoogleGmailClient
 
 
@@ -104,3 +105,19 @@ def test_a_refusal_without_a_plain_reason_code_names_only_the_status(body: Any):
     with pytest.raises(CollectionError) as failed:
         gmail.history_position()
     assert str(failed.value) == "Gmail refused access (HTTP 403): run pa gmail auth"
+
+
+def test_a_message_gone_since_it_was_listed_is_message_gone():
+    gmail, _, _ = client(refusal(404, "notFound"), refusal(404, "notFound"))
+
+    with pytest.raises(MessageGone):
+        gmail.fetch("18c2f0a1b2c3d4e5")
+    with pytest.raises(MessageGone):
+        gmail.label_ids("18c2f0a1b2c3d4e5")
+
+
+def test_another_not_found_still_fails_the_collection():
+    gmail, _, _ = client(refusal(404, "notFound"))
+
+    with pytest.raises(CollectionError, match=r"Gmail answered HTTP 404 notFound"):
+        gmail.label_names()

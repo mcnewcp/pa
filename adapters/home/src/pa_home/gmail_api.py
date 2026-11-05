@@ -28,7 +28,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 from pa_core.atomic import write_atomically
 from pa_home.collectors import CollectionError
-from pa_home.collectors.gmail import GmailMessage, HistoryExpired
+from pa_home.collectors.gmail import GmailMessage, HistoryExpired, MessageGone
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 """Read-only: the PA can read the owner's mail and never change it."""
@@ -84,7 +84,7 @@ class GoogleGmailClient:
         return ids
 
     def fetch(self, message_id: str) -> GmailMessage:
-        found = self._get(f"messages/{message_id}", [("format", "raw")])
+        found = self._get(f"messages/{message_id}", [("format", "raw")], gone_on_404=True)
         raw = found["raw"]
         return GmailMessage(
             raw=base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)),
@@ -92,7 +92,7 @@ class GoogleGmailClient:
         )
 
     def label_ids(self, message_id: str) -> frozenset[str]:
-        found = self._get(f"messages/{message_id}", [("format", "minimal")])
+        found = self._get(f"messages/{message_id}", [("format", "minimal")], gone_on_404=True)
         return frozenset(found.get("labelIds", []))
 
     def label_names(self) -> Mapping[str, str]:
@@ -121,6 +121,7 @@ class GoogleGmailClient:
         params: list[tuple[str, str | int]] | None = None,
         *,
         expired_on_404: bool = False,
+        gone_on_404: bool = False,
     ) -> dict[str, Any]:
         for wait in (*_WAITS_SECONDS, None):
             try:
@@ -138,6 +139,8 @@ class GoogleGmailClient:
                 return response.json()
             if status == 404 and expired_on_404:
                 raise HistoryExpired
+            if status == 404 and gone_on_404:
+                raise MessageGone
             answer = f"HTTP {status}" + (f" {reason}" if (reason := _reason(response)) else "")
             limited = status in _BUSY or (status == 403 and reason in _RATE_LIMITED)
             if not limited:
