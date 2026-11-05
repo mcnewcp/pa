@@ -194,7 +194,7 @@ The go-live (#99) moves the PA from the synthetic data root onto the real one, f
    - the isolation and store checks, which must pass: a failure stops the wizard;
    - the Gmail and iCloud Calendar dry runs, counts only.
 4. **The backfill**, by the Claude session: `deploy/home/capture.sh --backfill <window start>`, two months back ([The backfill](#the-backfill)). Its counts per source and Gmail category, with the replay's estimated cost, go on the issue, as numbers only.
-5. **The replay**, by the session, into a target under the data root's `replays/`, never the repository: `deploy/home/librarian.sh replay ~/.local/share/pa-home/replays/<name> --window-start <window start>`. Its runs, cost and lint warning counts go on the issue, as numbers only.
+5. **The replay**, by the session, into a target under the data root's `replays/`, never the repository: `deploy/home/librarian.sh replay ~/.local/share/pa-home/replays/<name> --window-start <window start>`. It runs a week at a time up to now, and its last batch takes what's still ahead (calendar events months out), told the real time as now. Its runs, cost and lint warning counts go on the issue, as numbers only.
 6. **The seed**, by the session: `deploy/home/librarian.sh seed ~/.local/share/pa-home/replays/<name> --captured-through <when the backfill finished>`, so the live wiki starts from the replay with its cursor at the backfill's capture time. Then `update.sh <ref>`, so the agent project points at the wiki.
 7. **The schedules**: `setup-wizard.sh --schedules`, by the owner.
 8. **The first night**: the next morning, `check-schedules.sh` shows the nightly job committed a librarian run and the backup succeeded, and `pa status` shows every source current.

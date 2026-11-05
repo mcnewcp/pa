@@ -265,8 +265,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay.add_argument(
         "--as-of",
         type=datetime.fromisoformat,
-        help="Replay up to this time (ISO 8601; the owner's time zone if it has no offset), "
-        "else up to the latest episode. A corpus is captured at this time.",
+        help="Replay up to this time (ISO 8601; the owner's time zone if it has no offset); the "
+        "last batch takes what occurs after it. Else up to now for the data root, or up to the "
+        "latest episode for a corpus, which is captured at this time.",
     )
     replay.add_argument(
         "--window-start",
@@ -712,6 +713,10 @@ def _replay(
         )
     if as_of is not None and as_of.utcoffset() is None:
         as_of = as_of.replace(tzinfo=time_zone)
+    if as_of is None and data_root is not None:
+        # The data root holds what's ahead too (calendar events years out): a replay up to its
+        # latest episode would tell sessions a future time as now, so it ends now (#99).
+        as_of = datetime.now(time_zone)
     if window_start is not None and window_start.utcoffset() is None:
         window_start = window_start.replace(tzinfo=time_zone)
 

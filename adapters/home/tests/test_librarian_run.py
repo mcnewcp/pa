@@ -2119,6 +2119,23 @@ def test_a_replay_up_to_an_as_of_time_ends_there_and_its_last_batch_takes_the_re
     )
 
 
+def test_a_replay_of_the_data_root_ends_now_and_its_last_batch_takes_whats_still_ahead(
+    data_root: Path, tmp_path: Path
+):
+    # A calendar holds events scheduled years ahead (#99). Replaying up to the latest one would
+    # tell sessions a future time as now; a replay of the data root ends now instead.
+    ingest(data_root, {**REPLAYED, **wedding_mail("Anniversary", "Mon, 1 Jan 2035 09:00:00 -0600")})
+    target = tmp_path / "rebuilt"
+    before = datetime.now(UTC)
+
+    assert replay(target) == 0
+
+    assert observed_subjects(data_root)[-1][-1] == "Anniversary"
+    told = [datetime.fromisoformat(told_now(s)) for s in sessions(data_root, "observation")]
+    assert before <= told[-1] <= datetime.now(UTC)
+    assert all(t <= told[-1] for t in told)
+
+
 def test_a_replay_over_a_corpus_ingests_it_into_a_throwaway_data_root(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
