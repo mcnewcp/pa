@@ -12,8 +12,10 @@ Every failure is a CollectionError whose reason names what failed, never what wa
 from __future__ import annotations
 
 import base64
+import re
 import stat
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -38,14 +40,22 @@ _TIMEOUT_SECONDS = 60
 _HISTORY_TYPES = ("messageAdded", "labelRemoved")
 _RESCUED_FROM = frozenset({"SPAM", "TRASH", "DRAFT"})
 DEFAULT_AUTH_PORT = 8765
+# Gmail's per-user rate limit answers 403 with one of these reasons (or 429), and a busy server
+# 5xx: each is waited out, doubling the wait, as Google asks, for about two minutes in all.
+_RATE_LIMITED = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
+_BUSY = frozenset({429, 500, 502, 503, 504})
+_WAITS_SECONDS = (1, 2, 4, 8, 16, 32, 64)
+# Google's reason codes are bare words; anything else in an error body isn't repeated.
+_REASON = re.compile(r"[A-Za-z]{1,64}")
 
 
 class GoogleGmailClient:
     """The Gmail account whose token is at `token`. Nothing is read until the first call, so a
     missing or dead token fails the Gmail collection alone."""
 
-    def __init__(self, token: Path) -> None:
+    def __init__(self, token: Path, *, sleep: Callable[[float], None] = time.sleep) -> None:
         self.token = token
+        self._sleep = sleep
         self._session: AuthorizedSession | None = None
 
     def history_position(self) -> str:
@@ -112,25 +122,32 @@ class GoogleGmailClient:
         *,
         expired_on_404: bool = False,
     ) -> dict[str, Any]:
-        try:
-            response = self._authorized().get(
-                f"{_API}/{path}", params=params, timeout=_TIMEOUT_SECONDS
-            )
-        except RefreshError as error:
-            raise CollectionError(
-                "Gmail refused the token (expired or revoked): run pa gmail auth"
-            ) from error
-        except (requests.RequestException, GoogleAuthError) as error:
-            raise CollectionError(f"couldn't reach Gmail ({type(error).__name__})") from error
-        if response.status_code == 404 and expired_on_404:
-            raise HistoryExpired
-        if response.status_code in (401, 403):
-            raise CollectionError(
-                f"Gmail refused access (HTTP {response.status_code}): run pa gmail auth"
-            )
-        if response.status_code != 200:
-            raise CollectionError(f"Gmail answered HTTP {response.status_code}")
-        return response.json()
+        for wait in (*_WAITS_SECONDS, None):
+            try:
+                response = self._authorized().get(
+                    f"{_API}/{path}", params=params, timeout=_TIMEOUT_SECONDS
+                )
+            except RefreshError as error:
+                raise CollectionError(
+                    "Gmail refused the token (expired or revoked): run pa gmail auth"
+                ) from error
+            except (requests.RequestException, GoogleAuthError) as error:
+                raise CollectionError(f"couldn't reach Gmail ({type(error).__name__})") from error
+            status = response.status_code
+            if status == 200:
+                return response.json()
+            if status == 404 and expired_on_404:
+                raise HistoryExpired
+            answer = f"HTTP {status}" + (f" {reason}" if (reason := _reason(response)) else "")
+            limited = status in _BUSY or (status == 403 and reason in _RATE_LIMITED)
+            if not limited:
+                if status in (401, 403):
+                    raise CollectionError(f"Gmail refused access ({answer}): run pa gmail auth")
+                raise CollectionError(f"Gmail answered {answer}")
+            if wait is None:
+                raise CollectionError(f"Gmail's rate limit ({answer}) didn't lift: try again later")
+            self._sleep(wait)
+        raise AssertionError("unreachable")
 
     def _authorized(self) -> AuthorizedSession:
         if self._session is None:
@@ -143,6 +160,16 @@ class GoogleGmailClient:
                 ) from error
             self._session = AuthorizedSession(credentials)
         return self._session
+
+
+def _reason(response: requests.Response) -> str | None:
+    """Google's reason code for a refusal (`userRateLimitExceeded`), if it gave a bare one."""
+    try:
+        errors = response.json()["error"]["errors"]
+        reason = errors[0]["reason"]
+    except (ValueError, LookupError, TypeError):
+        return None
+    return reason if isinstance(reason, str) and _REASON.fullmatch(reason) else None
 
 
 def require_private_token(token: Path) -> None:
