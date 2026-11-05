@@ -134,3 +134,27 @@ def test_unreadable_vm_devices_fail_the_share_checks_and_the_check_carries_on(st
     assert result.returncode == 1
     assert "  FAIL  can't read pa-home's devices" in result.stdout
     assert "  FAIL  can't read the VMs' devices" in result.stdout
+
+
+def test_an_l0_with_no_episodes_yet_skips_the_episode_checks(stand_ins):
+    # A fresh data root (#99) has no episodes until the backfill: there's nothing to read or
+    # change, which is neither a pass nor a failure.
+    stand_ins.answer("incus", "find", "/srv/pa/l0/episodes", stdout="")
+
+    out = stand_ins.run(Path(LIB).parent / "check-store.sh").stdout
+
+    assert "  SKIP  L0 has no episodes yet: run the backfill on the devbox" in out
+    assert "read an episode" not in out
+    assert "change an episode" not in out
+    assert "created a file in /srv/pa/l0" in out  # the create probes still run
+
+
+def test_an_episode_in_l0_is_read_and_its_writes_are_probed(stand_ins):
+    # The stand-in lets every command succeed, so the write probes report the episode written.
+    stand_ins.answer("incus", "find", "/srv/pa/l0/episodes", stdout="/srv/pa/l0/episodes/a.json\n")
+
+    out = stand_ins.run(Path(LIB).parent / "check-store.sh").stdout
+
+    assert "  PASS  assistant reads episodes under /srv/pa/l0" in out
+    assert "  FAIL  root opened /srv/pa/l0/episodes/a.json for writing" in out
+    assert "SKIP  L0 has no episodes" not in out
