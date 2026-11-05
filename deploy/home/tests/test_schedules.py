@@ -419,10 +419,21 @@ def test_installing_needs_the_checkouts_venv(installer: Any, instance: dict[str,
 # Checking them
 
 
-def check(installer: Any, instance: dict[str, str], nightly_result: str):
+def check(
+    installer: Any,
+    instance: dict[str, str],
+    nightly_result: str,
+    *,
+    nightly_ran: str = "Mon 2026-10-26 03:00:00 CDT",
+):
     installer.answer("systemctl", "pa-nightly.service", "Result", stdout=f"{nightly_result}\n")
     installer.answer("systemctl", "Result", stdout="success\n")
     installer.answer("systemctl", "ExecMainStatus", stdout="0\n")
+    installer.answer(
+        "systemctl", "pa-nightly.service", "ExecMainStartTimestamp", stdout=f"{nightly_ran}\n"
+    )
+    installer.answer("systemctl", "ExecMainStartTimestamp", stdout="Mon 2026-10-26 03:00:00 CDT\n")
+    installer.answer("systemctl", "pa-nightly.timer", "LastTriggerUSec", stdout=f"{nightly_ran}\n")
     installer.answer("systemctl", "LastTriggerUSec", stdout="Mon 2026-10-26 03:00:00 CDT\n")
     installer.answer("systemctl", "NextElapse", stdout="Tue 2026-10-27 03:00:00 CDT\n")
     return installer.run(DEPLOY / "check-schedules.sh", env=instance)
@@ -435,11 +446,27 @@ def test_the_check_passes_with_both_timers_waiting_and_each_jobs_last_run_succee
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "FAIL" not in result.stdout
-    assert "pa-nightly.timer is enabled and waiting: last started Mon 2026-10-26" in result.stdout
+    assert (
+        "PASS  pa-nightly.timer is enabled and waiting: last started Mon 2026-10-26 03:00:00 CDT, "
+        "next Tue 2026-10-27 03:00:00 CDT"
+    ) in result.stdout
+    assert "PASS  pa-nightly.service's last run succeeded (exit 0)" in result.stdout
     # Then pa status, with the instance's configuration.
     [status] = [json.loads(line) for line in Path(instance["PA_LOG"]).read_text().splitlines()]
     assert status["argv"] == ["status"]
     assert status["env"]["PA_TIME_ZONE"] == "America/Chicago"
+
+
+def test_a_job_that_hasnt_run_yet_is_neither_a_pass_nor_a_failure(
+    installer: Any, instance: dict[str, str]
+):
+    # Just enabled (#99): systemd reports a job that never ran as a success.
+    result = check(installer, instance, "success", nightly_ran="")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "pa-nightly.timer is enabled and waiting: last started never, next Tue" in result.stdout
+    assert "SKIP  pa-nightly.service hasn't run yet" in result.stdout
+    assert "pa-nightly.service's last run" not in result.stdout
 
 
 def test_the_check_fails_when_a_jobs_last_run_failed(installer: Any, instance: dict[str, str]):
