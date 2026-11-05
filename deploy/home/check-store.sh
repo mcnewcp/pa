@@ -27,7 +27,10 @@ else
   fail "$PA_VM_PROJECT/CLAUDE.md doesn't name $PA_VM_L0 (run update.sh)"
 fi
 episode=$(incus exec "$PA_VM" -- find "$PA_VM_L0/episodes" -name '*.json' -print -quit 2>/dev/null || true)
-if [[ -n $episode ]] && in_vm_as "$PA_USER" cat "$episode"; then
+# A fresh data root has none until the backfill (#99): nothing to read or change yet.
+if [[ -z $episode ]]; then
+  printf '  SKIP  %s\n' "L0 has no episodes yet: run the backfill on the devbox"
+elif in_vm_as "$PA_USER" cat "$episode"; then
   pass "$PA_USER reads episodes under $PA_VM_L0"
 else
   fail "$PA_USER can't read an episode under $PA_VM_L0"
@@ -42,7 +45,9 @@ for user in "$PA_USER" root; do
     pass "$user can't create a file in $PA_VM_L0"
   fi
   # shellcheck disable=SC2016 # $1 is expanded by the shell in the VM
-  if [[ -n $episode ]] && in_vm_as "$user" sh -c ': >>"$1"' sh "$episode"; then
+  if [[ -z $episode ]]; then
+    :
+  elif in_vm_as "$user" sh -c ': >>"$1"' sh "$episode"; then
     fail "$user opened $episode for writing"
   else
     pass "$user can't change an episode"
