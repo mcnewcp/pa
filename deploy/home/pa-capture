@@ -1,0 +1,11 @@
+#!/bin/sh
+# The capture helper (#94), at /usr/local/libexec/pa-capture in the assistant's VM, root's and
+# mode 0755 (install-assistant-fences.sh). The managed settings' capture hooks run it as the
+# capture user, the chat inbox's owner, through the one sudo rule (sudoers-pa-capture), with
+# the hook's event on stdin and one argument: prompt, answer or stop. sudo resets the
+# environment, so everything it needs is written here: the rendered agent project's hook
+# script, run isolated with the code's interpreter, the inbox directory it writes, and the
+# directory it holds pending prompts in.
+[ $# -eq 1 ] || { echo "usage: pa-capture prompt|answer|stop" >&2; exit 1; }
+exec /opt/pa/.venv/bin/python -I /srv/pa/agent/.claude/hooks/capture_exchange.py "$1" \
+  --inbox /srv/pa/inbox/assistant_chat --state /var/lib/pa-capture

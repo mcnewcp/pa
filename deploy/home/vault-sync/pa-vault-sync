@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Runs Obsidian's headless Sync client over the vault copy, with the pinned Node and client
+# installed beside it (install-vault-sync.sh lays them out):
+#
+#   pa-vault-sync check VAULT   says whether VAULT is set up to sync pull-only
+#   pa-vault-sync run VAULT     checks, then syncs VAULT continuously (pa-vault-sync.service)
+#
+# Pull-only downloads what the owner's devices change and ignores every change made here, so
+# nothing written into the copy ever reaches them. A vault set up any other way, or not at all,
+# is refused with status 78 (EX_CONFIG), which the unit doesn't restart on.
+#
+# It never prints the configuration it reads, which names the remote vault.
+set -euo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+node=$here/node/bin/node
+client=$here/node_modules/obsidian-headless/cli.js
+refused=78
+
+usage() { echo "usage: pa-vault-sync check|run VAULT" >&2; exit 2; }
+
+# pull_only VAULT: VAULT is set up to sync, pull-only; else says why not on stderr.
+pull_only() {
+  local config mode
+  if ! config=$("$node" "$client" sync-config --path "$1" --json 2>/dev/null); then
+    echo "no sync is set up for $1: run ob sync-setup (the wizard's sync stage)" >&2
+    return 1
+  fi
+  mode=$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("syncMode") or "bidirectional")' \
+    <<<"$config") || { echo "the sync configuration for $1 can't be read" >&2; return 1; }
+  if [[ $mode != pull-only ]]; then
+    echo "$1 syncs $mode, not pull-only: run ob sync-config --path $1 --mode pull-only" >&2
+    return 1
+  fi
+}
+
+(($# == 2)) || usage
+command=$1 vault=$2
+
+case $command in
+  check)
+    pull_only "$vault" || exit "$refused"
+    echo "$vault syncs pull-only"
+    ;;
+  run)
+    pull_only "$vault" || exit "$refused"
+    exec "$node" "$client" sync --continuous --path "$vault"
+    ;;
+  *) usage ;;
+esac

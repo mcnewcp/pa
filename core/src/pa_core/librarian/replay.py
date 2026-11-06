@@ -8,6 +8,12 @@ after it. A window with no episodes has no run.
 
 A replay resumes from its last committed run: the next window starts where that one ended.
 
+A windowed replay (one given a window start, such as a backfill's) starts at the window start
+instead: its first window runs from there to the end of its week, and nothing that occurred
+before it is ever offered, but for the calendar events still going at the window start (a
+series that began before it), which the first window takes. The run log records the window
+start, so a replay resumes with the window it started with, even after its first run failed.
+
 A replay's target directory (`ReplayTarget`) holds the wiki's tree (`wiki/`), its git directory
 (`wiki.git/`), and the run log (`run-log.jsonl`).
 
@@ -18,6 +24,7 @@ ends: a JSON object per line, with these keys in this order.
 - `commit`: the run's commit, or null when it failed.
 - `occurred_from`, `occurred_to`: the batch's window, UTC ISO 8601. The end is what the
   sessions were told is now.
+- `window_start`: the replay's window start, UTC ISO 8601, or null when it has none.
 - `episodes`: how many episodes were offered; `skipped`: how many of the window's weren't.
 - `librarian_version`, `model`, `effort`: the librarian that ran.
 - `sessions`: `{phase, session_id, cost_usd, turns, resumes}` for each session the run ran, in
@@ -29,7 +36,8 @@ ends: a JSON object per line, with these keys in this order.
   failed.
 - `error`: why the run failed, or null.
 
-Entries written before `resumes` and `lint_warnings` were recorded read with them null.
+Entries written before `resumes`, `lint_warnings` and `window_start` were recorded read with
+them null.
 """
 
 from __future__ import annotations
@@ -42,9 +50,10 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, PlainSerializer, ValidationError
 
+from pa_core.envelope import Envelope
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch
+from pa_core.librarian.batch import Batch, Window, episode_day, replay_batch, replay_takes
 from pa_core.librarian.run import (
     LOOP_AGE_DAYS,
     OCCURRED_TO_FIELD,
@@ -67,6 +76,10 @@ BATCH_DAYS = 7
 
 RUN_LOG = "run-log.jsonl"
 """The run log's name in a replay's target directory."""
+
+REFERENCE_COST_PER_OFFERED = 0.064
+"""The scale corpus's reference replay's cost per offered episode, in US dollars: $42.37 for
+659 offered episodes (#80). A backfill's estimate uses it until a replay has run here."""
 
 
 @dataclass(frozen=True)
@@ -113,6 +126,7 @@ class RunLogEntry(BaseModel):
     commit: str | None
     occurred_from: _Utc
     occurred_to: _Utc
+    window_start: _Utc | None = None
     episodes: int
     skipped: int
     librarian_version: str
@@ -143,6 +157,37 @@ def read_run_log(path: Path) -> list[RunLogEntry]:
     return entries
 
 
+def cost_per_offered(run_log: Path) -> float | None:
+    """What the replay whose run log is at `run_log` cost per offered episode, over its
+    committed runs that reported a cost; None when it has none that offered anything."""
+    runs = [
+        entry
+        for entry in read_run_log(run_log)
+        if entry.status == "committed" and entry.cost_usd is not None
+    ]
+    offered = sum(entry.episodes for entry in runs)
+    if offered == 0:
+        return None
+    return sum(entry.cost_usd or 0.0 for entry in runs) / offered
+
+
+@dataclass(frozen=True)
+class ReplayScope:
+    """What a windowed replay would take, and how many of them it would offer."""
+
+    taken: tuple[Envelope, ...]
+    offered: int
+
+
+def replay_scope(store: L0Store, *, time_zone: tzinfo, window_start: datetime) -> ReplayScope:
+    """What a replay of `store` from `window_start` (to the end of L0) would take and offer:
+    its windows put together, whose first carries in the calendar events still going."""
+    window = Window(window_start, window_start, carry_in=True)
+    taken = tuple(e for e in store.envelopes() if replay_takes(e, window, time_zone))
+    batch = replay_batch(store, window, time_zone=time_zone, last=True)
+    return ReplayScope(taken, len(batch.episodes) if batch is not None else 0)
+
+
 class ReplayError(LibrarianRunError):
     """A replay that can't start or resume."""
 
@@ -165,6 +210,7 @@ def replay_librarian(
     run_log: Path,
     batch_days: int = BATCH_DAYS,
     as_of: datetime | None = None,
+    window_start: datetime | None = None,
     page_threshold: int = PAGE_THRESHOLD,
     loop_age_days: int = LOOP_AGE_DAYS,
     progress: Callable[[RunOutcome], None] = lambda _: None,
@@ -179,9 +225,13 @@ def replay_librarian(
     """
     if batch_days < 1:
         raise ReplayError(f"a replay batch must be at least 1 day, not {batch_days}")
+    if window_start is not None and as_of is not None and window_start >= as_of:
+        raise ReplayError(f"the window start ({window_start}) isn't before the as-of time")
+    window_start = _window_start(run_log, window_start)
     resume_from = _resume_point(repository, librarian)
     runs: list[RunOutcome] = []
-    for window, last in _windows(store, time_zone, batch_days, resume_from, as_of):
+    windows = _windows(store, time_zone, batch_days, resume_from, as_of, window_start)
+    for window, last in windows:
         batch = replay_batch(store, window, time_zone=time_zone, last=last)
         if batch is None:
             continue
@@ -199,12 +249,30 @@ def replay_librarian(
                 batch=batch,
             )
         except LibrarianRunError as error:
-            _log(run_log, _entry(batch, librarian, error=error))
+            _log(run_log, _entry(batch, librarian, window_start, error=error))
             raise
-        _log(run_log, _entry(batch, librarian, outcome=outcome))
+        _log(run_log, _entry(batch, librarian, window_start, outcome=outcome))
         runs.append(outcome)
         progress(outcome)
     return ReplayOutcome(tuple(runs))
+
+
+def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
+    """The replay's window start: the one its run log records, once it has run (`given` may
+    only repeat it), else `given`."""
+    if not run_log.exists():
+        return given
+    entries = read_run_log(run_log)
+    if not entries:
+        return given
+    recorded = entries[0].window_start
+    if given is not None and given != recorded:
+        started = f"at window start {recorded.isoformat()}" if recorded else "without one"
+        raise ReplayError(
+            f"the replay was started {started}, not at window start {given.isoformat()}; "
+            "resume it with the window it started with"
+        )
+    return recorded
 
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
@@ -230,24 +298,37 @@ def _windows(
     batch_days: int,
     resume_from: datetime | None,
     as_of: datetime | None,
+    window_start: datetime | None,
 ) -> Iterator[tuple[Window, bool]]:
     """Each window to replay, and whether it's the last."""
     days = [episode_day(e, time_zone) for e in store.envelopes()]
     if not days:
         return
     first, latest = min(days), max(days)
-    start = resume_from or _midnight(first - timedelta(days=first.weekday()), time_zone)
     length = timedelta(days=batch_days)
+    # A windowed replay's first window also takes the calendar events still going at the
+    # window start, such as a weekly class that began a year before it.
+    carry_in = window_start is not None and resume_from is None
+    if resume_from is not None:
+        start = resume_from
+        end = _midnight(start.astimezone(time_zone).date() + length, time_zone)
+    else:
+        # The first window is the window start's week (else the first episode's), from it.
+        start = window_start or _midnight(_monday(first), time_zone)
+        end = _midnight(_monday(start.astimezone(time_zone).date()) + length, time_zone)
     while as_of is None or start < as_of:
-        start_day = start.astimezone(time_zone).date()
-        if as_of is None and start_day > latest:
+        if as_of is None and start.astimezone(time_zone).date() > latest:
             return
-        end = _midnight(start_day + length, time_zone)
-        last = end >= as_of if as_of is not None else start_day + length > latest
-        yield Window(start, min(end, as_of) if as_of is not None else end), last
+        last = end >= as_of if as_of is not None else end.astimezone(time_zone).date() > latest
+        yield Window(start, min(end, as_of) if as_of is not None else end, carry_in), last
         if last:
             return
-        start = end
+        start, end = end, _midnight(end.astimezone(time_zone).date() + length, time_zone)
+        carry_in = False
+
+
+def _monday(day: date) -> date:
+    return day - timedelta(days=day.weekday())
 
 
 def _midnight(day: date, time_zone: tzinfo) -> datetime:
@@ -257,6 +338,7 @@ def _midnight(day: date, time_zone: tzinfo) -> datetime:
 def _entry(
     batch: Batch,
     librarian: Librarian,
+    window_start: datetime | None,
     *,
     outcome: RunOutcome | None = None,
     error: LibrarianRunError | None = None,
@@ -277,6 +359,7 @@ def _entry(
         commit=outcome.commit if outcome else None,
         occurred_from=batch.window.start,
         occurred_to=batch.window.end,
+        window_start=window_start,
         episodes=len(batch.episodes),
         skipped=batch.captured - len(batch.episodes),
         librarian_version=librarian.version,

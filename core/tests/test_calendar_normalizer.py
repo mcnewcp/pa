@@ -187,7 +187,7 @@ SWIM_EVENT = SWIM[SWIM.index(b"BEGIN:VEVENT") : SWIM.index(b"END:VCALENDAR")]
         (SWIM.replace(b"END:VCALENDAR", SWIM_EVENT + b"END:VCALENDAR"), "2 events"),
         (SWIM.replace(SWIM_EVENT, b""), "0 events"),
         (SWIM.replace(b"END:VCALENDAR\r\n", b""), "not a complete VCALENDAR"),
-        (b"Swim lessons on Saturday at 9", "unreadable line"),
+        (b"Swim lessons on Saturday at 9", "no capture header"),
         (SWIM.replace(b"Theo & June", "Th\xe9o".encode("latin-1")), "not UTF-8"),
     ],
     ids=[

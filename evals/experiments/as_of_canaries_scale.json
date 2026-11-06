@@ -1,0 +1,53 @@
+{
+  "as_of": "2026-10-14T20:00:00-05:00",
+  "owner": {
+    "name": "Argus McNevans",
+    "email_addresses": ["argus@example.com"],
+    "other_names": ["Gus"]
+  },
+  "time_zone": "America/Chicago",
+  "questions": [
+    {
+      "id": "kitchen-stands",
+      "category": "canary",
+      "question": "Where do things stand with the kitchen remodel?",
+      "expected_answer": "No contractor is hired yet. Birchwood Remodeling (Hannah Lee) quoted $44,900 with the sink moved to an island, starting in January; Rick Alvarez quoted $38,400 (about $42,900 with the island sink), starting the week of November 16. Rick never sent the revised quote he promised by October 2 and hasn't answered the October 8 follow-up, so as of October 13 they're leaning toward Birchwood. Birchwood's estimate is still good, until about October 21, a week from today (October 14). An answer that says the estimate has lapsed or may have lapsed is wrong.",
+      "evidence": ["gmail_ab7b0a0734865612", "gmail_485a11c462c79a3e", "obsidian_2bb585fc98d39664"]
+    },
+    {
+      "id": "contractor-leaning",
+      "category": "canary",
+      "question": "Which contractor are we leaning toward for the kitchen?",
+      "expected_answer": "Birchwood Remodeling (Hannah Lee), as of Oct 13, even though it costs more ($44,900), because Rick never sent the revised quote he promised by Oct 2 and didn't answer the Oct 8 follow-up. On Sept 24 they had been leaning toward Rick. An answer that also says Birchwood's estimate has lapsed or may have lapsed is wrong: it's good until about October 21, a week from today (October 14).",
+      "evidence": ["obsidian_90dbf83cb88a5202", "obsidian_2bb585fc98d39664"]
+    },
+    {
+      "id": "cabinet-guy-update",
+      "category": "canary",
+      "question": "Did the cabinet guy ever send me his updated price?",
+      "expected_answer": "No. Rick Alvarez (Alvarez Kitchen & Bath) said on Sept 29 he'd send the revised quote by Friday Oct 2. It never came: Argus followed up on Oct 8, and as of his Oct 13 note there was still no quote and no reply, so they're now leaning toward Birchwood. An answer that also says Birchwood's estimate has lapsed or may have lapsed is wrong: it's good until about October 21, a week from today (October 14).",
+      "evidence": ["gmail_485a11c462c79a3e", "gmail_86fe03525fb36d4c", "obsidian_2bb585fc98d39664"]
+    },
+    {
+      "id": "hannah-lee",
+      "category": "canary",
+      "question": "How do I know Hannah Lee?",
+      "expected_answer": "She's with Birchwood Remodeling. Hannah rebuilt the basement after the April flood (June 22 to July 10, $12,100). In September she quoted the kitchen remodel ($44,900 with the island sink), and as of October 13 Argus and Mara are leaning toward Birchwood for the kitchen. An answer that also says her estimate has lapsed or may have lapsed is wrong: it's good until about October 21, a week from today (October 14).",
+      "evidence": ["gmail_c84f52df048b64d9", "gmail_ab7b0a0734865612", "obsidian_2bb585fc98d39664"]
+    },
+    {
+      "id": "swim-instructor",
+      "category": "canary",
+      "question": "What's the name of the kids' swim instructor?",
+      "expected_answer": "Unknown: nothing captured names a swim instructor, and the kids aren't registered yet. An answer that also says registration has closed or may have closed is wrong: it closes Friday, October 16 at 5 pm, two days from today (October 14).",
+      "evidence": []
+    },
+    {
+      "id": "cholesterol",
+      "category": "canary",
+      "question": "What were my cholesterol numbers from the blood work?",
+      "expected_answer": "Unknown, because the results aren't due yet: the draw was October 13, yesterday, and results come to the patient portal in 3 to 5 days, around October 16 to 18. An answer that says the results should be in by now, may already be posted, or are overdue is wrong.",
+      "evidence": []
+    }
+  ]
+}

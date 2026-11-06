@@ -190,10 +190,10 @@ def test_any_tool_beyond_the_file_tools_fails_even_one_no_list_names():
 
 def test_a_missing_file_tool_fails():
     assert fence_problems(session(tools=["Read"])).stdout.splitlines() == [
-        "it lacks the file tool Edit",
-        "it lacks the file tool Glob",
-        "it lacks the file tool Grep",
-        "it lacks the file tool Write",
+        "it lacks the tool Edit",
+        "it lacks the tool Glob",
+        "it lacks the tool Grep",
+        "it lacks the tool Write",
     ]
 
 
@@ -254,3 +254,32 @@ def test_a_changed_or_extra_rule_differs_from_the_repos():
 
     assert acl_differs(as_incus_reports(widened))
     assert acl_differs(as_incus_reports(extra))
+
+
+def test_check_librarian_records_names_that_dont_resolve_and_carries_on(stand_ins: Any):
+    """check-librarian.sh run whole on stand-ins: neither the API's name in the VM nor
+    example.com on the devbox resolves, and each is a FAIL or a skip, not the end of the check."""
+    for tool in ("getent", "ip", "ss", "ping", "timeout", "findmnt"):
+        stand_ins.add(tool)
+    root = stand_ins.home / ".local" / "share" / "pa-home"
+    for directory in ("l0", "wiki"):
+        (root / directory).mkdir(parents=True)
+    (root / "owner.env").write_text("")
+    # `uv run pa librarian-project render DIR` lays out the project directory.
+    uv = stand_ins.bin / "uv"
+    uv.write_text('#!/usr/bin/env bash\nwhile [[ $1 != render ]]; do shift; done; mkdir -p "$2"\n')
+    uv.chmod(0o755)
+    stand_ins.answer("findmnt", "OPTIONS", stdout="rw,nosuid,nodev,noexec\n")
+    stand_ins.answer("getent", "api.anthropic.com", stdout="160.79.104.10 STREAM api\n")
+    stand_ins.answer("getent", "ahostsv4", exit=2)
+    stand_ins.answer("ip", "route get", stdout="1.1.1.1 via 127.0.0.1 dev lo src 127.0.0.1\n")
+    stand_ins.answer("ping", exit=1)
+    stand_ins.answer("timeout", exit=1)
+    stand_ins.answer("incus", "exec", "getent hosts", exit=2)
+
+    result = stand_ins.run(LIB.parent / "check-librarian.sh")
+
+    assert result.returncode == 1
+    assert "  FAIL  api.anthropic.com doesn't resolve in the VM" in result.stdout
+    assert "  skip  example.com doesn't resolve on the devbox either" in result.stdout
+    assert "the setup token" in result.stdout

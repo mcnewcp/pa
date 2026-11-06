@@ -24,6 +24,10 @@ if [[ $PA_VM_ROLE == librarian ]]; then
 fi
 incus start "$PA_VM"
 wait_for_agent
-# A snapshot from before the store was mounted has no store devices.
-[[ -d $PA_L0 ]] && "$DEPLOY_DIR/mount-store.sh"
+# The snapshot's /etc/hosts may pin addresses the API's names no longer resolve to.
+"$DEPLOY_DIR/pin-hosts.sh"
+# A snapshot from before the store was mounted has no store devices. One from before the fence
+# (pre-fence-*) still has the build bridge's NIC: mount-store.sh refuses it, and fence-vm.sh
+# fences it again.
+if [[ -d $PA_L0 ]]; then "$DEPLOY_DIR/mount-store.sh"; fi
 log "$PA_VM is back at $snapshot"
