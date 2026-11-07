@@ -14,4 +14,7 @@ job_environment
 unset PA_LIBRARIAN_COMMAND RESTIC_PASSWORD RESTIC_PASSWORD_COMMAND RESTIC_REPOSITORY_FILE
 export PA_LIBRARIAN_SANDBOX=$DEPLOY_DIR/librarian-sandbox.sh
 export RESTIC_REPOSITORY=$PA_BACKUP_REPOSITORY RESTIC_PASSWORD_FILE=$PA_BACKUP_PASSWORD_FILE
+# systemd gives the job the system's PATH alone, and restic's release binary installs without
+# sudo in ~/.local/bin: after the system's directories, so a packaged restic wins (#99).
+export PATH=$PATH:$HOME/.local/bin
 exec "$PA_BIN" nightly

@@ -332,6 +332,16 @@ def test_the_nightly_job_runs_with_its_own_sandbox_and_backup_repository(
     assert "RESTIC_REPOSITORY_FILE" not in env
 
 
+def test_the_nightly_job_finds_restic_installed_in_the_owners_bin_directory(
+    home: Path, instance: dict[str, str]
+):
+    """systemd starts the job with the system's PATH alone; restic's release binary installs
+    without sudo in ~/.local/bin, after the system's directories so a packaged restic wins (#99)."""
+    call = run_job("nightly.sh", home, instance)
+
+    assert call["env"]["PATH"].split(":") == ["/usr/bin", "/bin", str(home / ".local" / "bin")]
+
+
 @pytest.mark.parametrize("script", ["capture.sh", "nightly.sh"])
 def test_a_job_refuses_an_instance_without_its_owner(home: Path, tmp_path: Path, script: str):
     result = subprocess.run(
@@ -467,6 +477,19 @@ def test_a_job_that_hasnt_run_yet_is_neither_a_pass_nor_a_failure(
     assert "pa-nightly.timer is enabled and waiting: last started never, next Tue" in result.stdout
     assert "SKIP  pa-nightly.service hasn't run yet" in result.stdout
     assert "pa-nightly.service's last run" not in result.stdout
+
+
+def test_a_timer_whose_job_is_under_way_has_its_next_start_once_the_run_ends(
+    installer: Any, instance: dict[str, str]
+):
+    # systemd works out a timer's next start only once the run it started ends.
+    installer.answer("systemctl", "pa-capture.timer", "NextElapse", stdout="\n")
+    result = check(installer, instance, "success")
+
+    assert (
+        "PASS  pa-capture.timer is enabled and waiting: last started Mon 2026-10-26 03:00:00 CDT, "
+        "next once the run under way ends"
+    ) in result.stdout
 
 
 def test_the_check_fails_when_a_jobs_last_run_failed(installer: Any, instance: dict[str, str]):
