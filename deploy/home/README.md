@@ -255,7 +255,7 @@ The nightly job backs up once the schedules are on ([The live schedule](#the-liv
 
 ### Restoring
 
-Restic needs the repository and its password. On a new devbox, first install restic, plug in the SSD, and run `install-backup-drive.sh <UUID>`. Then write the password from your password manager to `~/.config/pa/restic.password`, mode 0600.
+Restic needs the repository and its password. On a new devbox, first install restic (a package, or its release binary in `~/.local/bin`, where the nightly job looks too), plug in the SSD, and run `install-backup-drive.sh <UUID>`. Then write the password from your password manager to `~/.config/pa/restic.password`, mode 0600.
 
 ```sh
 export RESTIC_REPOSITORY=/mnt/pa-backup/restic RESTIC_PASSWORD_FILE=~/.config/pa/restic.password

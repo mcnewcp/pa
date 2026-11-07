@@ -21,8 +21,9 @@ show() { systemctl show "$1" -p "$2" --value; }
 for timer in "${PA_SCHEDULE_TIMERS[@]}"; do
   service=${timer%.timer}.service
   if systemctl is-enabled --quiet "$timer" && systemctl is-active --quiet "$timer"; then
-    last=$(show "$timer" LastTriggerUSec)
-    pass "$timer is enabled and waiting: last started ${last:-never}, next $(show "$timer" NextElapseUSecRealtime)"
+    last=$(show "$timer" LastTriggerUSec) next=$(show "$timer" NextElapseUSecRealtime)
+    # systemd works out a timer's next start only once the run it started ends.
+    pass "$timer is enabled and waiting: last started ${last:-never}, next ${next:-once the run under way ends}"
   else
     fail "$timer isn't enabled and waiting: install-schedules.sh --enable"
   fi
