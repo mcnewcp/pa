@@ -260,15 +260,40 @@ def instance(home: Path, tmp_path: Path) -> dict[str, str]:
     pa = tmp_path / "pa"
     pa.write_text(f"#!{sys.executable}\n{STAND_IN_PA}")
     pa.chmod(pa.stat().st_mode | stat.S_IXUSR)
+    incus = tmp_path / "job-bin" / "incus"
+    incus.parent.mkdir()
+    incus.write_text(STAND_IN_INCUS)
+    incus.chmod(incus.stat().st_mode | stat.S_IXUSR)
     return {"PA_BIN": str(pa), "PA_LOG": str(tmp_path / "pa.jsonl")}
 
 
+# Never the devbox's own Incus: it records its arguments, then says what INCUS_SAYS holds, or
+# fails as an unreachable VM does.
+STAND_IN_INCUS = """\
+#!/bin/sh
+printf '%s\\n' "$*" >>"$INCUS_LOG"
+[ -n "${INCUS_SAYS:-}" ] || exit 1
+printf '%s\\n' "$INCUS_SAYS"
+"""
+
+
+def job_bin(env: dict[str, str]) -> Path:
+    return Path(env["PA_LOG"]).parent / "job-bin"
+
+
 def run_job(script: str, home: Path, env: dict[str, str], *args: str) -> dict:
+    stand_ins = job_bin(env)
     result = subprocess.run(
         [str(DEPLOY / script), *args],
         capture_output=True,
         text=True,
-        env={"HOME": str(home), "USER": "owner", "PATH": "/usr/bin:/bin", **env},
+        env={
+            "HOME": str(home),
+            "USER": "owner",
+            "PATH": f"{stand_ins}:/usr/bin:/bin",
+            "INCUS_LOG": str(stand_ins / "incus.log"),
+            **env,
+        },
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -339,7 +364,35 @@ def test_the_nightly_job_finds_restic_installed_in_the_owners_bin_directory(
     without sudo in ~/.local/bin, after the system's directories so a packaged restic wins (#99)."""
     call = run_job("nightly.sh", home, instance)
 
-    assert call["env"]["PATH"].split(":") == ["/usr/bin", "/bin", str(home / ".local" / "bin")]
+    assert call["env"]["PATH"].split(":") == [
+        str(job_bin(instance)),
+        "/usr/bin",
+        "/bin",
+        str(home / ".local" / "bin"),
+    ]
+
+
+def test_the_nightly_job_is_told_when_the_assistants_login_ends(
+    home: Path, instance: dict[str, str]
+):
+    """Read in the assistant's VM, as its user: the time only, never the login itself."""
+    call = run_job("nightly.sh", home, {**instance, "INCUS_SAYS": "2026-12-06T17:53:00+00:00"})
+
+    assert call["env"]["PA_ASSISTANT_LOGIN_EXPIRES"] == "2026-12-06T17:53:00+00:00"
+    asked = (job_bin(instance) / "incus.log").read_text()
+    assert asked.startswith(
+        f"exec {value('PA_VM', home)} -- runuser -u {value('PA_USER', home)} -- "
+    )
+    assert "refreshTokenExpiresAt" in asked
+
+
+def test_a_nightly_job_whose_assistant_vm_doesnt_answer_still_runs(
+    home: Path, instance: dict[str, str]
+):
+    call = run_job("nightly.sh", home, {**instance, "PA_ASSISTANT_LOGIN_EXPIRES": "stale"})
+
+    assert call["argv"] == ["nightly"]
+    assert "PA_ASSISTANT_LOGIN_EXPIRES" not in call["env"]
 
 
 @pytest.mark.parametrize("script", ["capture.sh", "nightly.sh"])

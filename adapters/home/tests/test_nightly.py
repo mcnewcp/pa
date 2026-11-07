@@ -11,7 +11,7 @@ import json
 import stat
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,7 +19,7 @@ import pytest
 
 from pa_core.envelope import Source
 from pa_core.owner import Owner
-from pa_core.status import read_status
+from pa_core.status import AssistantLogin, Status, read_status, write_status
 from pa_home.capture import capture_cycle
 from pa_home.cli import main
 from pa_home.collectors import SourceInbox
@@ -52,7 +52,12 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
     monkeypatch.setenv("PA_OWNER_EMAILS", "argus@example.com")
     monkeypatch.setenv("PA_TIME_ZONE", "America/Chicago")
     monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(stand_in_claude))
-    for var in ("PA_LIBRARIAN_SANDBOX", "PA_GMAIL_TOKEN", "PA_ICLOUD_CALENDARS"):
+    for var in (
+        "PA_LIBRARIAN_SANDBOX",
+        "PA_GMAIL_TOKEN",
+        "PA_ICLOUD_CALENDARS",
+        "PA_ASSISTANT_LOGIN_EXPIRES",
+    ):
         monkeypatch.delenv(var, raising=False)
     restic = tmp_path / "bin" / "restic"
     restic.parent.mkdir()
@@ -395,3 +400,46 @@ def test_the_status_says_the_nightly_job_is_running_from_its_start_until_it_ends
 
     assert calendar.running_since == started
     assert status(data_root).nightly.running_since is None
+
+
+def test_the_nightly_job_records_when_the_assistants_login_ends(
+    data_root: Path, vault: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # nightly.sh reads it from the assistant's VM: the time its refresh token stops working.
+    monkeypatch.setenv("PA_ASSISTANT_LOGIN_EXPIRES", "2026-12-06T17:53:00+00:00")
+    write_note(vault, "2020-01-01", "## Plans\nSwim on Saturdays.\n")
+
+    assert main(["nightly"]) == 0
+
+    login = status(data_root).assistant_login
+    assert login is not None
+    assert login.expires_at == datetime(2026, 12, 6, 17, 53, tzinfo=UTC)
+
+
+def test_the_nightly_job_records_a_logged_out_assistant(
+    data_root: Path, vault: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_ASSISTANT_LOGIN_EXPIRES", "none")
+    write_note(vault, "2020-01-01", "## Plans\nSwim on Saturdays.\n")
+
+    assert main(["nightly"]) == 0
+
+    login = status(data_root).assistant_login
+    assert login is not None and login.expires_at is None
+
+
+@pytest.mark.parametrize("given", [None, "next month"])
+def test_a_night_that_cant_tell_when_the_login_ends_keeps_what_was_recorded(
+    data_root: Path, vault: Path, monkeypatch: pytest.MonkeyPatch, given: str | None
+):
+    # The VM didn't answer (nothing given), or what came back isn't a time.
+    if given is not None:
+        monkeypatch.setenv("PA_ASSISTANT_LOGIN_EXPIRES", given)
+    checked = datetime(2026, 11, 7, 9, 0, tzinfo=UTC)
+    before = AssistantLogin(checked_at=checked, expires_at=checked + timedelta(days=29))
+    write_status(DataRoot(data_root).status, Status(assistant_login=before), at=checked)
+    write_note(vault, "2020-01-01", "## Plans\nSwim on Saturdays.\n")
+
+    assert main(["nightly"]) == 0
+
+    assert status(data_root).assistant_login == before

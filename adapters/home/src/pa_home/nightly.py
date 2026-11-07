@@ -5,7 +5,9 @@
 2. the librarian run, over everything captured since its cursor;
 3. the backup, which then holds the night's wiki.
 
-The status says the job is running, from its start until it ends, so neither `pa status` nor
+It records first when the assistant's own Claude login ends, as nightly.sh found it in the
+assistant's VM, so the owner hears in time to log in again. The status says the job is
+running, from its start until it ends, so neither `pa status` nor
 the assistant calls a source stale while the job holds the capture cycles back. Each step
 records its outcome in the status, and a step that fails doesn't stop the next: the
 backup runs whatever the librarian did. The one exception closes the gap the lock is for: when
@@ -25,7 +27,7 @@ from zoneinfo import ZoneInfo
 from pa_core.envelope import Source
 from pa_core.librarian.run import RunOutcome
 from pa_core.owner import Owner
-from pa_core.status import NightlyStatus, read_status, write_status
+from pa_core.status import AssistantLogin, NightlyStatus, read_status, write_status
 from pa_home import librarian
 from pa_home.agent import wall_clock
 from pa_home.backup import back_up, backup_failure_reason
@@ -33,6 +35,10 @@ from pa_home.capture import CycleOutcome, failure_reason, run_capture_cycle
 from pa_home.collectors import Collector
 from pa_home.config import ConfigError, DataRoot, load_librarian_config
 from pa_home.lock import LockHeld, data_root_lock
+
+LOGIN_VAR = "PA_ASSISTANT_LOGIN_EXPIRES"
+"""When the assistant's login ends (ISO 8601), or `none` when it's logged out: nightly.sh reads
+it in the assistant's VM."""
 
 HELD_BACK = (
     "held back: the capture cycle before it failed to ingest, and the run would pass over "
@@ -111,6 +117,7 @@ def _night(
     now: Callable[[], datetime],
 ) -> NightlyOutcome:
     outcome = NightlyOutcome()
+    _record_login(data_root, environ.get(LOGIN_VAR), now)
     try:
         outcome.capture = run_capture_cycle(
             data_root,
@@ -144,6 +151,26 @@ def _night(
     except Exception as error:
         outcome.backup_failure = backup_failure_reason(error)
     return outcome
+
+
+def _record_login(data_root: DataRoot, given: str | None, now: Callable[[], datetime]) -> None:
+    """Record when the assistant's login ends, as `given` (`LOGIN_VAR`). Without a time given,
+    or one with no offset, the VM didn't say: what was recorded stands."""
+    try:
+        expires = None if given == "none" else datetime.fromisoformat(given or "")
+    except ValueError:
+        return
+    if expires is not None and expires.utcoffset() is None:
+        return
+    try:
+        status = read_status(data_root.status)
+        login = AssistantLogin(checked_at=now(), expires_at=expires)
+        write_status(
+            data_root.status, status.model_copy(update={"assistant_login": login}), at=now()
+        )
+    except Exception:
+        # As for the running mark: the steps after it say why the status can't be written.
+        pass
 
 
 def _not_run(

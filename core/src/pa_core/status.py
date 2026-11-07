@@ -28,6 +28,8 @@ STALE_AFTER_CADENCES = 2
 """A source is stale once its watermark is more than this many cadences behind now."""
 NIGHTLY_BOUND = timedelta(hours=3)
 """How long the nightly job may run before it stops holding staleness off."""
+LOGIN_WARNING = timedelta(days=7)
+"""How long before the assistant's login ends that the owner is told to log in again."""
 
 
 class _Model(BaseModel):
@@ -90,6 +92,16 @@ class NightlyStatus(_Model):
     the data root's lock, so capture cycles skip and watermarks wait."""
 
 
+class AssistantLogin(_Model):
+    """When the assistant's own Claude login ends, as the nightly job last found it."""
+
+    checked_at: AwareDatetime
+    expires_at: AwareDatetime | None = None
+    """When its refresh token stops working, so the login ends and the owner can't reach the
+    assistant until they log in again; refreshing the access token doesn't move it. None when
+    the assistant was found logged out."""
+
+
 class Status(_Model):
     version: int = STATUS_VERSION
     updated_at: AwareDatetime | None = None
@@ -99,11 +111,21 @@ class Status(_Model):
     wiki: WikiStatus = WikiStatus()
     backup: JobStatus = JobStatus()
     nightly: NightlyStatus = NightlyStatus()
+    assistant_login: AssistantLogin | None = None
+    """None until the nightly job first checks it."""
 
     def nightly_running(self, *, now: datetime) -> bool:
         """Whether the nightly job is running, and has run no longer than `NIGHTLY_BOUND`."""
         since = self.nightly.running_since
         return since is not None and now - since <= NIGHTLY_BOUND
+
+    def login_ending(self, *, now: datetime) -> bool:
+        """Whether the assistant was found logged out, or its login ends within
+        `LOGIN_WARNING` of `now`. Never checked, nothing is known to end."""
+        login = self.assistant_login
+        if login is None:
+            return False
+        return login.expires_at is None or login.expires_at - now <= LOGIN_WARNING
 
     def stale(self, source: Source, *, now: datetime) -> bool:
         """Whether `source` is stale at `now`: never collected, or its watermark more than

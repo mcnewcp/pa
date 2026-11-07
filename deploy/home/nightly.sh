@@ -3,8 +3,9 @@
 # the instance's configuration (lib.sh job_environment): one process holding the data root's lock
 # throughout, which runs a capture cycle with reconciliation, the librarian run (its sessions in
 # the librarian's VM, librarian-sandbox.sh), and the backup to the USB SSD's restic repository,
-# each recorded in the status. It skips if another job holds the lock. pa-nightly.service runs
-# it overnight (pa-nightly.timer, install-schedules.sh); run it by hand too.
+# each recorded in the status, and when the assistant's Claude login ends. It skips if another
+# job holds the lock. pa-nightly.service runs it overnight (pa-nightly.timer,
+# install-schedules.sh); run it by hand too.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -17,4 +18,10 @@ export RESTIC_REPOSITORY=$PA_BACKUP_REPOSITORY RESTIC_PASSWORD_FILE=$PA_BACKUP_P
 # systemd gives the job the system's PATH alone, and restic's release binary installs without
 # sudo in ~/.local/bin: after the system's directories, so a packaged restic wins (#99).
 export PATH=$PATH:$HOME/.local/bin
+# When the assistant's login ends, for the status (#99): nothing when its VM doesn't answer.
+if expires=$(assistant_login_expiry); then
+  export PA_ASSISTANT_LOGIN_EXPIRES=$expires
+else
+  unset PA_ASSISTANT_LOGIN_EXPIRES
+fi
 exec "$PA_BIN" nightly

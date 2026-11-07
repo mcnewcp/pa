@@ -618,6 +618,16 @@ def _print_status(data_root: DataRoot) -> None:
         f"backup: last success {moment(status.backup.last_success)}; "
         f"last failure {failure(status.backup.last_failure)}"
     )
+    login = status.assistant_login
+    if login is None:
+        print("assistant login: not checked yet")
+    else:
+        ends = "logged out" if login.expires_at is None else f"ends {moment(login.expires_at)}"
+        again = "; log in again (deploy/home/README.md, Remote Control)"
+        print(
+            f"assistant login: {ends} (checked {moment(login.checked_at)})"
+            f"{again if status.login_ending(now=now) else ''}"
+        )
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
