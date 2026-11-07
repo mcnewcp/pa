@@ -7,7 +7,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pa_core.envelope import Source
-from pa_core.status import NightlyStatus, SourceStatus, Status, read_status, write_status
+from pa_core.status import (
+    AssistantLogin,
+    NightlyStatus,
+    SourceStatus,
+    Status,
+    read_status,
+    write_status,
+)
 
 AT = datetime(2026, 10, 20, 13, 15, tzinfo=UTC)
 
@@ -55,3 +62,20 @@ def test_a_nightly_job_running_longer_than_three_hours_no_longer_holds_staleness
     stuck = a_status(timedelta(hours=4), nightly_since=NOW - timedelta(hours=3, minutes=1))
 
     assert stuck.stale(Source.GMAIL, now=NOW)
+
+
+def a_login(ends_in: timedelta | None) -> Status:
+    """The assistant's login checked now, ending `ends_in` from now (None: logged out)."""
+    ends = None if ends_in is None else NOW + ends_in
+    return Status(assistant_login=AssistantLogin(checked_at=NOW, expires_at=ends))
+
+
+def test_the_assistants_login_is_ending_within_a_week_of_its_end():
+    assert not a_login(timedelta(days=7, minutes=1)).login_ending(now=NOW)
+    assert a_login(timedelta(days=7)).login_ending(now=NOW)
+    assert a_login(timedelta(days=-1)).login_ending(now=NOW)
+
+
+def test_a_logged_out_assistant_is_ending_and_one_never_checked_isnt():
+    assert a_login(None).login_ending(now=NOW)
+    assert not Status().login_ending(now=NOW)

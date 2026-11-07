@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pa_core.envelope import Source
-from pa_core.status import NightlyStatus, SourceStatus, Status, write_status
+from pa_core.status import AssistantLogin, NightlyStatus, SourceStatus, Status, write_status
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.lock import data_root_lock
@@ -180,3 +180,52 @@ def test_pa_status_says_when_the_nightly_job_started(
     assert re.search(
         r"^nightly: running since \d{4}-\d{2}-\d{2} \d{2}:\d{2}", capsys.readouterr().out, re.M
     )
+
+
+def login_line(
+    data_root: Path, capsys: pytest.CaptureFixture[str], ends_in: timedelta | None
+) -> str:
+    """`pa status`'s line for the assistant's login, checked an hour ago and ending `ends_in`
+    from now (None: logged out)."""
+    now = datetime.now(UTC)
+    ends = None if ends_in is None else now + ends_in
+    login = AssistantLogin(checked_at=now - timedelta(hours=1), expires_at=ends)
+    write_status(DataRoot(data_root).status, Status(assistant_login=login), at=now)
+    assert main(["status"]) == 0
+    [line] = [line for line in capsys.readouterr().out.splitlines() if line.startswith("assistant")]
+    return line
+
+
+def test_pa_status_says_when_the_assistants_login_ends(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    line = login_line(data_root, capsys, timedelta(days=29))
+
+    assert re.fullmatch(
+        r"assistant login: ends \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+ "
+        r"\(checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+\)",
+        line,
+    )
+
+
+@pytest.mark.parametrize(
+    ("ends_in", "said"),
+    [(timedelta(days=6), "assistant login: ends "), (None, "assistant login: logged out ")],
+)
+def test_pa_status_says_to_log_the_assistant_in_again_within_a_week_of_its_end(
+    data_root: Path, capsys: pytest.CaptureFixture[str], ends_in: timedelta | None, said: str
+):
+    line = login_line(data_root, capsys, ends_in)
+
+    assert line.startswith(said)
+    assert line.endswith("; log in again (deploy/home/README.md, Remote Control)")
+
+
+def test_pa_status_before_the_login_is_checked_says_so(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    write_a_status(data_root, timedelta(minutes=5), nightly_for=None)
+
+    assert main(["status"]) == 0
+
+    assert "assistant login: not checked yet" in capsys.readouterr().out.splitlines()

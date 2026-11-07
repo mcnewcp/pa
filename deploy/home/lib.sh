@@ -588,6 +588,24 @@ render_schedule_unit() {
     -e "s|@NIGHTLY_AT@|$PA_NIGHTLY_AT|g" "$DEPLOY_DIR/schedules/$1"
 }
 
+# assistant_login_expiry prints when the assistant's Claude login in the VM ends, in ISO 8601:
+# when its refresh token stops working (refreshing the access token doesn't move it), or `none`
+# when it's logged out. It reads that time alone, never the login. Fails when the VM doesn't say.
+assistant_login_expiry() {
+  incus exec "$PA_VM" -- runuser -u "$PA_USER" -- python3 -c '
+import datetime, json, os
+try:
+    login = json.load(open(os.path.expanduser("~/.claude/.credentials.json")))["claudeAiOauth"]
+except FileNotFoundError:
+    login = {}
+if not login.get("refreshToken"):
+    print("none")
+else:
+    ends = login["refreshTokenExpiresAt"] / 1000
+    print(datetime.datetime.fromtimestamp(ends, datetime.timezone.utc).isoformat())
+' 2>/dev/null
+}
+
 # job_environment exports what the capture cycle and the nightly job read: the data root, the
 # owner (owner.env), the vault copy (vault.env), iCloud Calendar (icloud.env and the password
 # file), and Gmail's token, each only once its setup has written it. The scheduled jobs and

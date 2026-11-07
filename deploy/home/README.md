@@ -285,6 +285,12 @@ Check the repository itself now and then (`restic check`). It reads the reposito
 `pa-remote-control.service` in the VM runs `claude remote-control` in the rendered agent project, as `assistant`, so the owner chats with the assistant from the Claude app on their phone and from claude.ai/code. Both list it as `pa-home → agent`: the VM's hostname and the project's folder. It's the only thing that turns exchange capture on (`PA_CAPTURE_EXCHANGES=1`), so each exchange of a session lands in the inbox, through the capture helper, for `ingest.sh` ([Exchange capture](#exchange-capture)).
 
 - It runs on the `claude auth login` subscription login. Remote Control refuses `setup-token` tokens. The login refreshes its token through `platform.claude.com` when it's needed, so that name stays pinned; without it Remote Control ends once the access token expires.
+- **The login ends** about a month after `claude auth login` (29 days for the login of 2026-11-07). Its refresh token has a fixed expiry, `refreshTokenExpiresAt`, that refreshing the 8-hour access token doesn't move. Past it, Claude Code clears the login, and the phone gets `OAuth session expired and could not be refreshed` (#99). The nightly job reads that time, and only that time, from the VM into the status. `pa status` prints it as `assistant login: ends …`. Within 7 days of the end, `pa status` says to log in again, and so does the assistant, at the end of an answer. To log in again, run this from the devbox, then restart Remote Control:
+
+  ```sh
+  incus exec -t pa-home -- runuser -l assistant -c "/usr/local/bin/claude auth login"
+  incus exec pa-home -- systemctl restart pa-remote-control
+  ```
 - Don't set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` for it: Remote Control refuses to start under it (#81).
 - It waits until the inbox directory is mounted, so no capture goes to the VM's own disk.
 - It restarts on failure, but five failed starts in five minutes leave it stopped, so a permanent error such as a rejected login doesn't loop. `journalctl -u pa-remote-control` in the VM says why; fix it, then run `install-remote-control.sh` to start it again.

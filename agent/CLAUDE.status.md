@@ -26,3 +26,8 @@ Use it like this:
   collector has stopped.
 - If the status file is missing, or a source in it has no watermark, say you can't tell how
   current that source is, rather than treating it as up to date.
+- `assistant_login.expires_at` is when your own login to Claude ends, as the nightly job last
+  found it: after it, the owner can't reach you until they log in again. When it's within 7
+  days of now, say so in one line at the end of your answer, whatever the question: the date,
+  in the owner's local time, and that they log in again on the devbox as
+  `deploy/home/README.md` says under Remote Control.
