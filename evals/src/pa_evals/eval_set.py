@@ -15,6 +15,7 @@ from pydantic import AwareDatetime, Field, ValidationError, field_validator, mod
 from pa_core.errors import PaError
 from pa_core.owner import Owner
 from pa_evals.models import FrozenModel
+from pa_home.cut import Cut
 
 type Category = Literal[
     "single_fact_recall",
@@ -120,10 +121,39 @@ class EvalSet(FrozenModel):
         return self.model_copy(update={"questions": [q for q in self.questions if q.id in ids]})
 
 
-def load_eval_set(path: Path) -> EvalSet:
+def format_problems(error: ValidationError) -> str:
+    """Where a file or reply fails its format and why, never quoting what it holds: a real-data
+    set's questions and answers are private."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: {problem['msg']}"
+        for problem in error.errors(include_input=False, include_url=False)
+    )
+
+
+def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:
+    """The eval set in `path`. Over a `cut`, refused unless it's asked at the cut's as-of time
+    and every episode it names (each question's evidence, and the adversarial episodes) is in
+    the cut."""
     try:
-        return EvalSet.model_validate_json(path.read_bytes())
+        eval_set = EvalSet.model_validate_json(path.read_bytes())
     except FileNotFoundError as error:
         raise EvalSetError(f"eval set not found: {path}") from error
     except ValidationError as error:
-        raise EvalSetError(f"eval set {path} does not match the format: {error}") from error
+        raise EvalSetError(
+            f"eval set {path} does not match the format: {format_problems(error)}"
+        ) from None
+    if cut is not None:
+        if eval_set.as_of != cut.as_of:
+            # The two times alone: nothing else of the set is quoted.
+            raise EvalSetError(
+                f"eval set {path} is asked at {eval_set.as_of.isoformat()}, but the cut "
+                f"{cut.name} was taken at {cut.as_of.isoformat()}: set its as_of to the cut's"
+            )
+        named = {i for q in eval_set.questions for i in q.evidence} | set(eval_set.adversarial)
+        missing = sorted(named - cut.episode_ids())
+        if missing:
+            raise EvalSetError(
+                f"eval set {path} names episodes that are not in the cut {cut.name}: "
+                + ", ".join(missing)
+            )
+    return eval_set

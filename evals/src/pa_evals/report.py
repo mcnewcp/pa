@@ -54,9 +54,26 @@ def _new_dir(runs_dir: Path, name: str) -> Path:
             candidate = runs_dir / f"{name}-{attempt}"
 
 
+def _asked(results: RunResults) -> list[str]:
+    """What the run asked against: the ingested corpus, or the cut."""
+    lines: list[str] = []
+    if results.cut is not None:
+        cut = results.cut
+        wiki = "no wiki" if cut.wiki_commit is None else f"wiki at {cut.wiki_commit[:12]}"
+        lines.append(
+            f"- Cut: {cut.name}, taken {cut.as_of.isoformat()}, {cut.episodes} episodes, {wiki}"
+        )
+    if results.ingest is not None:
+        ingest = results.ingest
+        lines.append(
+            f"- Ingest: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
+            f"quarantined {ingest.quarantined}"
+        )
+    return lines
+
+
 def render_report(results: RunResults) -> str:
     overall = results.overall
-    ingest = results.ingest
     lines = ["# Eval run", ""]
     if results.configuration is not None:
         lines.append(f"- Configuration: {results.configuration}")
@@ -67,8 +84,7 @@ def render_report(results: RunResults) -> str:
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
     lines += [
         f"- As of: {results.as_of.isoformat()}",
-        f"- Ingest: ingested {ingest.ingested}, unchanged {ingest.unchanged}, "
-        f"quarantined {ingest.quarantined}",
+        *_asked(results),
         f"- Questions: {overall.questions} ({overall.failed} failed)",
         "",
         "## Overall",

@@ -38,7 +38,11 @@ class StreamedPrint:
 
 
 def now_statement(now: datetime) -> str:
-    """What a session is told about the current time (see docs/adr/0003).
+    """What a librarian session is told about the current time (see docs/adr/0003).
+
+    The agent is told more, in `pa_home.agent.as_of_statement`: with Sonnet this much alone let
+    the real date into some eval answers (#79). The librarian keeps it, since its version
+    doesn't cover this text and a change would go unrecorded.
 
     Raises ValueError if `now` has no UTC offset, since the session is told it with one.
     """

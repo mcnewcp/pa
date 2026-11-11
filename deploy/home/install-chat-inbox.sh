@@ -6,7 +6,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-[[ -d $PA_L0 ]] || die "$PA_DATA_ROOT has no L0: run seed-data-root.sh first"
+[[ -d $PA_L0 ]] || die "$PA_DATA_ROOT has no L0: run create-data-root.sh first"
 if ! mountpoint -q "$PA_CHAT_INBOX" && [[ -n $(ls -A "$PA_CHAT_INBOX" 2>/dev/null) ]]; then
   die "$PA_CHAT_INBOX isn't empty: run ingest.sh, then re-run this"
 fi

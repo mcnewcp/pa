@@ -29,15 +29,22 @@ from pa_evals.agent import (
     ScriptedAnswer,
 )
 from pa_evals.comparison import COMPARISON, write_runs
-from pa_evals.configurations import CONFIGURATIONS, DEFAULT_CONFIGURATION, Configuration
-from pa_evals.eval_set import load_eval_set
-from pa_evals.eval_wiki import EvalWiki, load_eval_wiki
+from pa_evals.configurations import (
+    CONFIGURATIONS,
+    DEFAULT_CONFIGURATION,
+    Configuration,
+    WikiChoiceError,
+)
+from pa_evals.eval_set import EvalSet, load_eval_set
+from pa_evals.eval_wiki import EvalWiki, cut_wiki, load_eval_wiki
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
+from pa_evals.real_data import require_private
 from pa_evals.report import format_cost, format_score
 from pa_evals.results import RunResults
 from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
+from pa_home.cut import Cut, load_cut
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 DEFAULT_RUNS_DIR = WORKSPACE / "evals" / "runs"
@@ -48,10 +55,12 @@ AS_OF_ADR = "docs/adr/0003-as-of-time-injection.md"
 """Where the as-of injection methods were compared, and why the default won."""
 
 AS_OF_REASONS: dict[AsOfMethod, str] = {
-    AsOfMethod.SYSTEM_PROMPT: "the default: it and a preamble both passed every as-of canary, "
-    "and it leaves the question exactly as asked and works in an interactive session too",
-    AsOfMethod.PREAMBLE: "the alternative: it passed every as-of canary too, but it adds to the "
-    "question, and the agent credits the date to the owner",
+    AsOfMethod.BOTH: "the default: told in the system prompt and again before the question, it "
+    "was the one method to pass every as-of canary with Sonnet",
+    AsOfMethod.SYSTEM_PROMPT: "an alternative: it leaves the question exactly as asked, but it "
+    "didn't pass every as-of canary with Sonnet",
+    AsOfMethod.PREAMBLE: "an alternative: it adds to the question, and it didn't pass every "
+    "as-of canary with Sonnet",
     AsOfMethod.NONE: "the control: the agent is not told the as-of time, so it goes by the "
     "real date",
 }
@@ -222,10 +231,17 @@ def add_run_command(commands: Any) -> None:
     )
     run.add_argument(
         "--corpus",
-        default=frozen.DEFAULT_CORPUS,
         help=f"A frozen corpus by name ({', '.join(frozen.CORPORA)}), asked with its own eval "
         "set, or a directory of raw payloads, asked with --eval-set "
         f"(default: {frozen.DEFAULT_CORPUS}).",
+    )
+    run.add_argument(
+        "--cut",
+        type=Path,
+        metavar="DIR",
+        help="Ask a cut of the store (`pa cut`) instead of a corpus, with no ingest, and with "
+        "--eval-set; files-plus-wiki asks with the cut's own wiki. The cut, the eval set, and "
+        "--runs-dir are refused inside the repository.",
     )
     run.add_argument(
         "--eval-set",
@@ -280,19 +296,24 @@ def add_run_command(commands: Any) -> None:
 
 
 def _run(args: argparse.Namespace) -> int:
-    payloads, eval_set_path = _corpus(args.corpus, args.eval_set)
-    eval_set = load_eval_set(eval_set_path)
+    configuration = CONFIGURATIONS[args.configuration]
+    corpus: tuple[Path, ...] | Cut
+    if args.cut is not None:
+        corpus, eval_set = _over_cut(args)
+        wiki = cut_wiki(corpus) if configuration.wiki else None
+    else:
+        corpus, eval_set_path = _corpus(args.corpus or frozen.DEFAULT_CORPUS, args.eval_set)
+        eval_set = load_eval_set(eval_set_path)
+        wiki = _wiki(configuration, args.wiki)
     if args.only:
         eval_set = eval_set.only(*args.only)
-    configuration = CONFIGURATIONS[args.configuration]
-    wiki = _wiki(configuration, args.wiki)
     agent = AGENTS[args.agent].build(args)
     judge = JUDGES[args.judge].build(args)
-    setup = _setup(args)
+    setup = _setup(args, corpus)
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
         results = run_eval(
-            payloads,
+            corpus,
             eval_set,
             agent,
             judge,
@@ -322,6 +343,22 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _over_cut(args: argparse.Namespace) -> tuple[Cut, EvalSet]:
+    """The cut in `--cut` and the eval set asked over it, refused inside the repository along
+    with the run directory, and the set refused unless the cut holds every episode it names."""
+    if args.corpus is not None:
+        raise CorpusChoiceError("give --cut and --corpus one at a time: a run asks one or other")
+    if args.eval_set is None:
+        raise CorpusChoiceError("--cut DIR needs --eval-set FILE")
+    if args.wiki is not None:
+        raise WikiChoiceError("a run over a cut asks with the cut's own wiki: drop --wiki")
+    cut_dir = require_private(args.cut, "--cut")
+    eval_set_path = require_private(args.eval_set, "--eval-set")
+    require_private(args.runs_dir, "--runs-dir")
+    cut = load_cut(cut_dir)
+    return cut, load_eval_set(eval_set_path, cut=cut)
+
+
 def _corpus(corpus: str, eval_set: Path | None) -> tuple[tuple[Path, ...], Path]:
     """The payload directories and eval set for `--corpus` (a name or a directory)."""
     if corpus in frozen.CORPORA:
@@ -347,11 +384,16 @@ def _wiki(configuration: Configuration, directory: Path | None) -> EvalWiki | No
     return None if directory is None else load_eval_wiki(directory)
 
 
-def _setup(args: argparse.Namespace) -> dict[str, str]:
+def _setup(args: argparse.Namespace, corpus: tuple[Path, ...] | Cut) -> dict[str, str]:
     """How the run was set up, as shown at the top of the report."""
+    asked = (
+        {"cut": corpus.name}
+        if isinstance(corpus, Cut)
+        else {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
+    )
     return {
         "commit": _workspace_commit(),
-        "corpus": args.corpus,
+        **asked,
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
         "judge": args.judge,

@@ -53,7 +53,8 @@ class _Exchange(_Strict):
 
     session_id: _Text
     message_id: _Text
-    """The transcript id of the owner's message that opened the exchange."""
+    """The id of the owner's message that opened the exchange: the turn's `prompt_id`, which
+    Claude Code gives its hooks (ADR-0009)."""
     started_at: AwareDatetime
     """When the owner's message was sent."""
     ended_at: AwareDatetime

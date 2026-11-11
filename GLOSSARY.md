@@ -22,6 +22,30 @@ _Avoid_: Company, vendor, entity
 A system the PA captures from, such as Gmail, iCloud Calendar, or the Obsidian vault.
 _Avoid_: Feed, channel, integration
 
+**Collector**:
+The process that brings one source's new and changed items into the inbox as raw payloads, on a schedule and without the owner's help.
+_Avoid_: Crawler, importer, sync
+
+**Backfill**:
+A one-time capture of a source's history from before the PA started, bounded by a window of time.
+_Avoid_: Import, replay, history load
+
+**Reconciliation**:
+A collector's periodic comparison of everything a source holds within its window against what it has already captured: changed items land as new versions, and items gone from the source land as deletions.
+_Avoid_: Snapshot, full sync, sweep
+
+**Watermark**:
+The time through which a source is known to be fully captured into L0. An absence ("nothing from Jay since Friday") is only as true as its source's watermark.
+_Avoid_: Cursor, last sync, sync time
+
+**Capture cycle**:
+One pass of every collector, then ingest, then publishing each watermark whose payloads have landed, all under the data root's lock, every 15 minutes. A cycle that finds the lock held skips.
+_Avoid_: Sync, poll, run
+
+**Nightly job**:
+The overnight job that holds the data root's lock throughout while it runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+_Avoid_: Cron, batch, nightly run
+
 **Raw payload**:
 An original item exactly as a source produced it (an email message, a calendar event, a note). Raw payloads are never modified.
 _Avoid_: Original, blob
@@ -77,7 +101,7 @@ A promise by someone to do something for someone, made in a statement and open u
 _Avoid_: Task, to-do, action item
 
 **Calendar event**:
-Something on the owner's calendar at a set time, such as a meeting or an appointment. It can be moved or cancelled; each change arrives as a new episode, and the latest shows where it stands now.
+Something on the owner's calendar at a set time, such as a meeting or an appointment. It can be moved, cancelled, or deleted; each change arrives as a new episode, and the latest shows where it stands now.
 _Avoid_: Appointment, meeting, event
 
 **Open loop**:
@@ -177,6 +201,10 @@ _Avoid_: Mode, variant, arm
 **Eval wiki**:
 The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
 _Avoid_: Test wiki, fixture wiki
+
+**Cut**:
+A frozen copy of the store, taken now, that a real-data eval set is asked against: every episode captured by then, the live wiki at its last commit, and the status file. It lives under the data root, never in the repository, so the set's answers never change as L0 grows.
+_Avoid_: Snapshot (that's a backup's), frozen corpus (that's synthetic)
 
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".

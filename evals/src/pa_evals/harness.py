@@ -6,13 +6,16 @@ import shutil
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pa_core.catalog import open_catalog
+from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
 from pa_core.l0 import L0Store
 from pa_core.owner import Owner
+from pa_core.status import SourceStatus, Status, WikiStatus, write_status
 from pa_evals.agent import AgentRequest, AgentRunner
 from pa_evals.citations import opened, parse_citations
 from pa_evals.configurations import DEFAULT_CONFIGURATION, Configuration
@@ -21,6 +24,7 @@ from pa_evals.eval_wiki import EvalWiki
 from pa_evals.injection import check_wiki, require_in_l0
 from pa_evals.judge import Judge, JudgeRequest
 from pa_evals.results import (
+    CutResult,
     IngestCounts,
     InjectionChecks,
     QuestionResult,
@@ -29,7 +33,8 @@ from pa_evals.results import (
     ToolCallResult,
     WikiResult,
 )
-from pa_home.config import DataRoot
+from pa_home.config import COLLECTED_SOURCES, DEFAULT_CADENCE, DataRoot
+from pa_home.cut import Cut
 from pa_home.filesystem_l0 import FilesystemL0
 
 DEFAULT_CONCURRENCY = 4
@@ -40,7 +45,7 @@ class CorpusCopyError(PaError):
 
 
 def run_eval(
-    corpus: Path | Sequence[Path],
+    corpus: Path | Sequence[Path] | Cut,
     eval_set: EvalSet,
     agent: AgentRunner,
     judge: Judge,
@@ -51,6 +56,12 @@ def run_eval(
     setup: Mapping[str, str] | None = None,
 ) -> RunResults:
     """Ingest `corpus` into a fresh throwaway data root, then ask and score every question.
+
+    `corpus` may be a cut instead (`pa_home.cut`), which is asked as it is, with no ingest: its
+    L0 and its status file are copied into the throwaway data root with nothing in them
+    writable, and the results record the cut in place of the ingest. Each question's agent is
+    given the cut's status file; over a frozen corpus, it's given one laid for the time the
+    question is asked at, with every source's watermark at that time (`_lay_statuses`).
 
     Every file under `corpus` (hidden files aside) is a raw payload, laid out as the inbox is:
     one directory per source (ADR-0004). It is copied into the inbox as it is. A corpus in
@@ -75,13 +86,25 @@ def run_eval(
     owner = eval_set.owner.to_owner()
     with tempfile.TemporaryDirectory(prefix="pa-eval-") as directory:
         data_root = DataRoot(Path(directory))
-        _copy_into_inbox(corpus, data_root.inbox)
-        store = FilesystemL0(data_root.l0)
-        with open_catalog(data_root.catalog, store) as catalog:
-            # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
-            summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
-            known = {entry.episode_id for entry in catalog.entries()}
+        counts = None
+        if isinstance(corpus, Cut):
+            lay_cut(corpus, data_root)
+            store = FilesystemL0(data_root.l0)
+            known = {envelope.episode_id for envelope in store.envelopes()}
+        else:
+            _copy_into_inbox(corpus, data_root.inbox)
+            store = FilesystemL0(data_root.l0)
+            with open_catalog(data_root.catalog, store) as catalog:
+                # Captured "at" the as-of time, so nothing in L0 shows the real date to the agent.
+                summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: eval_set.as_of)
+                known = {entry.episode_id for entry in catalog.entries()}
+            counts = IngestCounts(
+                ingested=summary.ingested,
+                unchanged=summary.unchanged,
+                quarantined=summary.quarantined,
+            )
         laid = None if wiki is None else _lay_wiki(wiki, data_root.wiki)
+        status_at = _status_at(corpus, eval_set, data_root, wiki=laid is not None)
         checks = None
         if laid is not None:
             require_in_l0(eval_set.adversarial, known)
@@ -91,7 +114,10 @@ def run_eval(
             )
 
         def ask(question: EvalQuestion) -> QuestionResult:
-            return _ask(question, eval_set, data_root, laid, owner, store, known, agent, judge)
+            status = status_at(eval_set.as_of_for(question))
+            return _ask(
+                question, eval_set, data_root, laid, status, owner, store, known, agent, judge
+            )
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             questions = list(pool.map(ask, eval_set.questions))
@@ -105,9 +131,8 @@ def run_eval(
         wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
         injection_checks=checks,
         as_of=eval_set.as_of,
-        ingest=IngestCounts(
-            ingested=summary.ingested, unchanged=summary.unchanged, quarantined=summary.quarantined
-        ),
+        ingest=counts,
+        cut=_cut_result(corpus) if isinstance(corpus, Cut) else None,
         overall=Scores.over(questions),
         categories={name: Scores.over(results) for name, results in categories.items()},
         questions=questions,
@@ -119,6 +144,7 @@ def _ask(
     eval_set: EvalSet,
     data_root: DataRoot,
     wiki: Path | None,
+    status: Path | None,
     owner: Owner,
     store: L0Store,
     known: set[str],
@@ -135,7 +161,7 @@ def _ask(
         evidence=question.evidence,
         status="failed",
     )
-    request = AgentRequest(question.id, question.question, as_of, data_root, owner, wiki)
+    request = AgentRequest(question.id, question.question, as_of, data_root, owner, wiki, status)
     answer = _attempt(lambda: agent.answer(request))
     if isinstance(answer, _Failure):
         recall = 0.0 if question.evidence else None
@@ -218,13 +244,81 @@ def _attempt[T](call: Callable[[], T]) -> T | _Failure:
 
 def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     """Copy the eval wiki's tree to `target`, beside the throwaway L0, with nothing in it
-    writable: no file can be changed, and no directory can take a new file."""
+    writable."""
     shutil.copytree(wiki.tree, target)
-    for directory, _, files in target.walk(top_down=False):
+    _make_read_only(target)
+    return target
+
+
+def _status_at(
+    corpus: Path | Sequence[Path] | Cut, eval_set: EvalSet, data_root: DataRoot, *, wiki: bool
+) -> Callable[[datetime], Path | None]:
+    """The status file a question's agent is given, by the time it's asked at: over a cut, the
+    cut's own (none if it was taken without one); over a frozen corpus, one laid for that
+    time."""
+    if isinstance(corpus, Cut):
+        status = data_root.status if corpus.status is not None else None
+        return lambda _: status
+    return _lay_statuses(eval_set, data_root.path / "statuses", wiki=wiki).__getitem__
+
+
+def _lay_statuses(eval_set: EvalSet, directory: Path, *, wiki: bool) -> dict[datetime, Path]:
+    """Lay a status file in `directory` for each time the set's questions are asked at, with
+    nothing writable, and return each time's file.
+
+    A frozen corpus has no capture cycle, so each file says what one would have: every
+    collected source's watermark at that time, at the cycle's cadence, with no failures. Every
+    episode is captured at the set's as-of time, so with a `wiki` (replayed over all of them)
+    the wiki is current through that time.
+    """
+    statuses: dict[datetime, Path] = {}
+    for as_of in sorted({eval_set.as_of_for(question) for question in eval_set.questions}):
+        path = directory / f"{as_of.astimezone(UTC):%Y%m%dT%H%M%SZ}" / "status.json"
+        sources: dict[Source, SourceStatus] = {
+            source: SourceStatus(watermark=as_of, cadence=DEFAULT_CADENCE, last_attempt=as_of)
+            for source in COLLECTED_SOURCES
+        }
+        current_through = eval_set.as_of if wiki else None
+        status = Status(sources=sources, wiki=WikiStatus(current_through=current_through))
+        write_status(path, status, at=as_of)
+        statuses[as_of] = path
+    if statuses:
+        _make_read_only(directory)
+    return statuses
+
+
+def lay_cut(cut: Cut, data_root: DataRoot) -> None:
+    """Copy the cut's L0 and status file into the throwaway data root, with nothing in them
+    writable. Never its wiki: a run with one lays it as the run's eval wiki, and a draft is
+    written without it."""
+    if cut.l0.is_dir():
+        shutil.copytree(cut.l0, data_root.l0)
+    else:
+        data_root.l0.mkdir()
+    _make_read_only(data_root.l0)
+    if cut.status is not None:
+        data_root.status.parent.mkdir()
+        shutil.copyfile(cut.status, data_root.status)
+        _make_read_only(data_root.status.parent)
+
+
+def _cut_result(cut: Cut) -> CutResult:
+    wiki = cut.manifest.wiki
+    return CutResult(
+        name=cut.name,
+        as_of=cut.as_of,
+        episodes=cut.manifest.episodes,
+        wiki_commit=None if wiki is None else wiki.commit,
+    )
+
+
+def _make_read_only(top: Path) -> None:
+    """Leave nothing under `top` writable: no file can be changed, and no directory can take a
+    new file."""
+    for directory, _, files in top.walk(top_down=False):
         for name in files:
             (directory / name).chmod(_READ_ONLY_FILE)
         directory.chmod(_READ_ONLY_DIRECTORY)
-    return target
 
 
 _READ_ONLY_FILE = 0o444

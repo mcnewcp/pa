@@ -1,13 +1,13 @@
-"""Stop hook: drops the exchange that just ended into the inbox as an `assistant_chat` payload.
+"""The capture hooks' code: holds the owner's prompt, then writes the exchange into the inbox.
 
-Claude Code runs it after each reply, with the hook input on stdin.
-It does nothing unless the session's environment turns capture on (PA_CAPTURE_EXCHANGES=1)
-and names the inbox directory (PA_CAPTURE_INBOX). See pa_core.exchange_capture.
+In the home VM, the capture helper (/usr/local/libexec/pa-capture) runs it as the capture user,
+the inbox's owner, for each of the managed settings' capture hooks: `prompt`, `answer` or
+`stop`, with the hook's event on stdin and the inbox and its state directory as options. See
+pa_core.exchange_capture.
 """
 
-import os
 import sys
 
-from pa_core.exchange_capture import run_stop_hook
+from pa_core.exchange_capture import run_helper
 
-sys.exit(run_stop_hook(sys.stdin.buffer.read(), os.environ))
+sys.exit(run_helper(sys.argv[1:], sys.stdin.buffer))

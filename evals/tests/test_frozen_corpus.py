@@ -55,6 +55,7 @@ def harness_l0(eval_set: EvalSet) -> tuple[IngestCounts, dict[str, str]]:
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(frozen.PAYLOADS, one_question, ListingAgent(), ScriptedJudge({}))
+    assert results.ingest is not None
     return results.ingest, episodes
 
 

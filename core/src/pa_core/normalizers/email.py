@@ -144,6 +144,6 @@ def _message_id(value: object) -> str:
 def _date(value: object) -> datetime:
     moment = getattr(value, "datetime", None)
     if not isinstance(moment, datetime):
-        raise MalformedPayloadError(f"email has no valid Date header (got {value!r})")
+        raise MalformedPayloadError("email has no valid Date header")
     # RFC 5322 reads a "-0000" offset as UTC with the sender's local zone unknown.
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)

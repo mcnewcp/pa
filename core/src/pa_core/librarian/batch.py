@@ -6,7 +6,11 @@ episodes new for the next.
 
 A replay batch is the episodes whose day falls in a window of whole days (a week, in a replay),
 ordered by when they occurred, then episode id. Replays batch by occurrence because eval ingest
-gives almost every episode the same capture time.
+gives almost every episode the same capture time. A windowed replay's first window starts at
+the window start, which may fall within a day: what occurred before it is never offered, but
+for a calendar event still going at it. A series is one: its `occurred_at` starts at its first
+occurrence and has no end, so a weekly class that began a year before the window is offered in
+the first window.
 
 Episode selection (`pa_core.selection`) decides which of them are offered:
 
@@ -16,9 +20,11 @@ Episode selection (`pa_core.selection`) decides which of them are offered:
   supersedes;
 - a chat with its owner turns, read from its raw payload: they are its only evidence.
 
-Known limitation: a daily note's capture time comes from its own capture header, so a note
-ingested after a run but captured (by its header) before that run's cursor is never offered.
-That's fine for the frozen corpora; real collectors (v0.13) need to revisit it.
+A daily note's (or a calendar resource's) capture time comes from its own capture header, so a
+note ingested after a run but captured (by its header) before that run's cursor would never be
+offered. On the home instance the data root's lock rules that out (#98): a capture cycle holds it
+from collection through ingest, and a run holds it throughout, so a run never starts between a
+collection and its ingest.
 """
 
 from __future__ import annotations
@@ -77,14 +83,19 @@ class BatchEpisode:
 
 @dataclass(frozen=True)
 class Window:
-    """When a replay batch's episodes occurred: the days from `start` up to `end`.
+    """When a replay batch's episodes occurred: from `start` up to the day of `end`.
 
-    Both are midnights in the owner's time zone, except a replay's last window, which ends at
-    the replay's as-of time if it has one. The batch's sessions are told `end` is now.
+    Both are midnights in the owner's time zone, except that a windowed replay's first window
+    starts at the window start, and a replay's last window ends at the replay's as-of time if
+    it has one. The batch's sessions are told `end` is now.
     """
 
     start: datetime
     end: datetime
+    carry_in: bool = False
+    """Whether the window also takes calendar events still going at its start, though they
+    started before it: a windowed replay's first window does, so a series that began before
+    the window start is offered (story 85 of #80)."""
 
 
 @dataclass(frozen=True)
@@ -136,20 +147,20 @@ def replay_batch(
     store: L0Store, window: Window, *, time_zone: tzinfo, last: bool = False
 ) -> Batch | None:
     """The episodes whose day (in `time_zone`) falls in `window`, or None if there are none.
+    None that occurred before the window's start is taken, even on its day.
 
     The `last` window of a replay also takes every episode after it (a calendar event booked
     for after the as-of time). The cursor is the last episode by capture time of everything up
     to the window's end, so a replayed wiki carries on in production where the replay stopped.
     """
     everything = list(store.envelopes())
-    first = window.start.astimezone(time_zone).date()
     end = window.end.astimezone(time_zone).date()
     days = {e.episode_id: episode_day(e, time_zone) for e in everything}
     taken = sorted(
         (
             e
             for e in everything
-            if days[e.episode_id] >= first and (last or days[e.episode_id] < end)
+            if replay_takes(e, window, time_zone) and (last or days[e.episode_id] < end)
         ),
         key=lambda e: (e.occurred_at.start, e.episode_id),
     )
@@ -163,6 +174,15 @@ def replay_batch(
         last_captured=max(e.captured_at for e in taken),
         cursor=max(_position(e) for e in replayed),
         window=window,
+    )
+
+
+def replay_takes(envelope: Envelope, window: Window, time_zone: tzinfo) -> bool:
+    """Whether `window` takes `envelope` by when it occurred, from the window's start (its end
+    aside): it occurred since then, or it's a calendar event still going then and the window
+    carries those in."""
+    return _occurred_from(envelope, time_zone) >= window.start or (
+        window.carry_in and _still_going(envelope, window.start)
     )
 
 
@@ -192,6 +212,22 @@ def episode_day(envelope: Envelope, time_zone: tzinfo) -> date:
     if span.end is not None and _whole_days(span.start, span.end):
         return span.start.date()
     return span.start.astimezone(time_zone).date()
+
+
+def _occurred_from(envelope: Envelope, time_zone: tzinfo) -> datetime:
+    """When `envelope` occurred, for a window's start: the midnight (in `time_zone`) of its
+    day when it spans whole days (see `episode_day`), else when it started."""
+    span = envelope.occurred_at
+    if span.end is not None and _whole_days(span.start, span.end):
+        return datetime.combine(span.start.date(), time(), tzinfo=time_zone)
+    return span.start
+
+
+def _still_going(envelope: Envelope, moment: datetime) -> bool:
+    """Whether `envelope` is a calendar event still going at `moment`: one that ends after it,
+    or a series, which has no one end."""
+    end = envelope.occurred_at.end
+    return envelope.kind is Kind.CALENDAR_EVENT and (end is None or end > moment)
 
 
 def _whole_days(start: datetime, end: datetime) -> bool:

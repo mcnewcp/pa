@@ -1,0 +1,11 @@
+# Lets bubblewrap, and only bubblewrap, make the user namespace Claude Code's Bash sandbox runs
+# in, unconfined, in place of Ubuntu's bwrap-userns-restrict: that one moves bubblewrap's children
+# into a profile without CAP_SYS_ADMIN, and every sandboxed command then fails (#81).
+# install-assistant-fences.sh installs it in the assistant's VM as /etc/apparmor.d/pa-bwrap.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile pa-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/pa-bwrap>
+}
