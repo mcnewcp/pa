@@ -43,7 +43,7 @@ One pass of every collector, then ingest, then publishing each watermark whose p
 _Avoid_: Sync, poll, run
 
 **Nightly job**:
-The overnight job that holds the data root's lock throughout while it runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends, then runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
 _Avoid_: Cron, batch, nightly run
 
 **Raw payload**:
@@ -81,6 +81,14 @@ _Avoid_: Journal, log
 **Catalog**:
 A derived, rebuildable index of the episodes in L0, for fast lookups by id, source, time, and participant.
 _Avoid_: Database, manifest
+
+**Real data root**:
+The data root the owner's PA runs on, `~/.local/share/pa-home`: L0 captured from the owner's own sources, the live wiki, and the status. It is never started over, since it holds what can't be captured again; the backup is how it comes back. A development session sees it only as structure: names, kinds, counts, and sizes.
+_Avoid_: Production, live store, real store
+
+**Synthetic data root**:
+A data root seeded from a frozen synthetic corpus, with the corpus's fictional owner as the instance owner, named like `~/.local/share/pa-home-synthetic`. v0.11 and v0.12 ran on one; it is retired once the real data root has run a night.
+_Avoid_: Test data root, staging, demo store
 
 ## The owner's world
 
@@ -205,6 +213,10 @@ _Avoid_: Test wiki, fixture wiki
 **Cut**:
 A frozen copy of the store, taken now, that a real-data eval set is asked against: every episode captured by then, the live wiki at its last commit, and the status file. It lives under the data root, never in the repository, so the set's answers never change as L0 grows.
 _Avoid_: Snapshot (that's a backup's), frozen corpus (that's synthetic)
+
+**Verdict**:
+The judgement of the wiki on the real-data eval set: files plus wiki against files alone, at least 3 runs each over the same cut. It comes in two parts. The public verdict, committed to the repository, holds numbers only: correctness by category with its spread, evidence recall, citation validity, cost, the search decision, and the prototype's outcome. The private verdict, under the real data root, holds the failure analysis: each failed answer, with the evidence its session never opened.
+_Avoid_: Report, scorecard, results
 
 **As-of time**:
 The moment an eval question is asked from; the assistant treats it as "now".
