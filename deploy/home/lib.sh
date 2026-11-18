@@ -592,7 +592,7 @@ render_schedule_unit() {
 # when its refresh token stops working (refreshing the access token doesn't move it), or `none`
 # when it's logged out. It reads that time alone, never the login. Fails when the VM doesn't say.
 assistant_login_expiry() {
-  incus exec "$PA_VM" -- runuser -u "$PA_USER" -- python3 -c '
+  incus exec "$PA_VM" -- runuser -u "$PA_USER" -- python3 -I -c '
 import datetime, json, os
 try:
     login = json.load(open(os.path.expanduser("~/.claude/.credentials.json")))["claudeAiOauth"]
