@@ -14,6 +14,7 @@ source "$(dirname "$0")/lib.sh"
 failed=0
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; failed=1; }
+skip() { printf '  SKIP  %s\n' "$1"; }
 
 # show UNIT PROPERTY prints the unit's PROPERTY.
 show() { systemctl show "$1" -p "$2" --value; }
@@ -30,7 +31,7 @@ for timer in "${PA_SCHEDULE_TIMERS[@]}"; do
   result=$(show "$service" Result) status=$(show "$service" ExecMainStatus)
   # systemd reports a job that has never run as a success.
   if [[ -z $(show "$service" ExecMainStartTimestamp) ]]; then
-    printf '  SKIP  %s\n' "$service hasn't run yet"
+    skip "$service hasn't run yet"
   elif [[ $result == success ]]; then
     pass "$service's last run succeeded (exit $status)"
   else

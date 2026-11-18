@@ -21,18 +21,8 @@ refuse() {
 root=$(synthetic_data_root "$1") || refuse "$1"
 [[ $root != "$(realpath -m -- "$PA_DATA_ROOT")" ]] || refuse "$1"
 
-problems=$(incus query '/1.0/instances?recursion=1' | shared_into_vms "$root")
-[[ -z $problems ]] ||
-  die "${problems//$'\n'/; }: take it off first (setup-wizard.sh --go-live does, for pa-home)"
-
-stop_own_filesystems "$root"
-removed=false
-while IFS= read -r unit; do
-  [[ -f $PA_SYSTEMD_DIR/$unit ]] || continue
-  sudo rm -f "$PA_SYSTEMD_DIR/$unit"
-  removed=true
-done < <(own_filesystem_units "$root")
-if $removed; then sudo systemctl daemon-reload; fi
+require_unshared "$root" "setup-wizard.sh --go-live does, for pa-home"
+remove_own_filesystems "$root"
 
 if [[ ! -e $root ]]; then
   log "$root is already retired"
