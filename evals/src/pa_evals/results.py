@@ -58,6 +58,10 @@ class QuestionResult(BaseModel):
     cited_opened: list[str] | None = None
     """Cited ids whose contents reached the session (see `pa_evals.citations.opened`); None
     where tool calls weren't recorded."""
+    evidence_opened: list[str] | None = None
+    """Evidence ids whose contents reached the session, cited or not, so evidence never found
+    can be told from evidence found and left uncited; None where tool calls weren't recorded,
+    and in results written before it was."""
 
 
 class Scores(BaseModel):

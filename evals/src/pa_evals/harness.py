@@ -169,8 +169,8 @@ def _ask(
 
     cited = parse_citations(answer.text)
     calls = answer.tool_calls
-    existing = [episode_id for episode_id in cited if episode_id in known]
-    episodes = tuple(e for e in (store.get(i) for i in existing) if e is not None)
+    existing = {episode_id for episode_id in [*cited, *question.evidence] if episode_id in known}
+    episodes = {e.episode_id: e for e in (store.get(i) for i in existing) if e is not None}
     result = result.model_copy(
         update={
             "answer": answer.text,
@@ -183,9 +183,10 @@ def _ask(
                 ToolCallResult(tool=c.tool, input=dict(c.input), errored=c.errored) for c in calls
             ],
             "cited": cited,
-            "cited_opened": None
+            "cited_opened": None if calls is None else opened(cited, calls, episodes),
+            "evidence_opened": None
             if calls is None
-            else opened(cited, calls, {e.episode_id: e for e in episodes}),
+            else opened(question.evidence, calls, episodes),
             "unknown_citations": [episode_id for episode_id in cited if episode_id not in known],
             "evidence_recall": _evidence_recall(question.evidence, cited),
         }
@@ -198,7 +199,7 @@ def _ask(
                 expected_answer=question.expected_answer,
                 as_of=as_of,
                 answer=answer.text,
-                cited_episodes=episodes,
+                cited_episodes=tuple(episodes[i] for i in dict.fromkeys(cited) if i in episodes),
             )
         )
     )

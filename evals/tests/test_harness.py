@@ -447,6 +447,25 @@ def test_a_citation_counts_as_opened_only_when_the_session_read_its_file(eval_se
     assert results.overall.cited_opened == 0.25
 
 
+def test_each_answer_records_which_of_its_evidence_reached_the_session_cited_or_not(eval_set):
+    """So a verdict can tell evidence never found from evidence found and left uncited (#100)."""
+    eval_set = eval_set.only("swim-lessons-plan", "who-asked-about-hotel")
+    answers = {
+        # Opened the note without citing it, and never opened the calendar event.
+        "swim-lessons-plan": AgentAnswer(
+            f"Saturdays [ep:{DEADLINE_EMAIL}].", tool_calls=(read(SWIM_NOTE), read(DEADLINE_EMAIL))
+        ),
+        # Its tool calls weren't recorded, so what reached it is unknown.
+        "who-asked-about-hotel": f"You [ep:{FIRST_EMAIL}].",
+    }
+    verdicts = {q.id: correct() for q in eval_set.questions}
+
+    swim, hotel = run(eval_set, answers, verdicts).questions
+
+    assert swim.evidence_opened == [SWIM_NOTE]
+    assert hotel.evidence_opened is None
+
+
 def test_the_share_of_cited_episodes_opened_pools_the_citations_of_answers_with_tool_calls(
     eval_set,
 ):
