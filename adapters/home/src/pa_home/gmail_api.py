@@ -65,7 +65,7 @@ class GoogleGmailClient:
         params: list[tuple[str, str | int]] = [("startHistoryId", position)]
         params += [("historyTypes", kind) for kind in _HISTORY_TYPES]
         ids: list[str] = []
-        for page in self._pages("history", params, expired_on_404=True):
+        for page in self._pages("history", params, on_404=HistoryExpired):
             for record in page.get("history", []):
                 ids += [added["message"]["id"] for added in record.get("messagesAdded", [])]
                 ids += [
@@ -84,7 +84,7 @@ class GoogleGmailClient:
         return ids
 
     def fetch(self, message_id: str) -> GmailMessage:
-        found = self._get(f"messages/{message_id}", [("format", "raw")], gone_on_404=True)
+        found = self._get(f"messages/{message_id}", [("format", "raw")], on_404=MessageGone)
         raw = found["raw"]
         return GmailMessage(
             raw=base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)),
@@ -92,7 +92,7 @@ class GoogleGmailClient:
         )
 
     def label_ids(self, message_id: str) -> frozenset[str]:
-        found = self._get(f"messages/{message_id}", [("format", "minimal")], gone_on_404=True)
+        found = self._get(f"messages/{message_id}", [("format", "minimal")], on_404=MessageGone)
         return frozenset(found.get("labelIds", []))
 
     def label_names(self) -> Mapping[str, str]:
@@ -104,12 +104,12 @@ class GoogleGmailClient:
         path: str,
         params: list[tuple[str, str | int]],
         *,
-        expired_on_404: bool = False,
+        on_404: type[Exception] | None = None,
     ) -> Iterator[dict[str, Any]]:
         token: str | None = None
         while True:
             paging = [("maxResults", _PAGE)] + ([("pageToken", token)] if token else [])
-            page = self._get(path, params + paging, expired_on_404=expired_on_404)
+            page = self._get(path, params + paging, on_404=on_404)
             yield page
             token = page.get("nextPageToken")
             if not token:
@@ -120,9 +120,10 @@ class GoogleGmailClient:
         path: str,
         params: list[tuple[str, str | int]] | None = None,
         *,
-        expired_on_404: bool = False,
-        gone_on_404: bool = False,
+        on_404: type[Exception] | None = None,
     ) -> dict[str, Any]:
+        """Gmail's answer to GET `path`. A 404 raises `on_404` where given (a history position
+        expired, a message gone); every other failure is a CollectionError."""
         for wait in (*_WAITS_SECONDS, None):
             try:
                 response = self._authorized().get(
@@ -137,10 +138,8 @@ class GoogleGmailClient:
             status = response.status_code
             if status == 200:
                 return response.json()
-            if status == 404 and expired_on_404:
-                raise HistoryExpired
-            if status == 404 and gone_on_404:
-                raise MessageGone
+            if status == 404 and on_404 is not None:
+                raise on_404
             answer = f"HTTP {status}" + (f" {reason}" if (reason := _reason(response)) else "")
             limited = status in _BUSY or (status == 403 and reason in _RATE_LIMITED)
             if not limited:

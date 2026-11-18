@@ -1,8 +1,8 @@
 """`pa-eval verdict`: the real-data verdict (#100), over synthetic run directories.
 
 The public verdict, committed to the repository, holds numbers only: no question, expected
-answer, answer, reasoning, or id from the real set. The private verdict, under the data root,
-holds the failure analysis.
+answer, answer, reasoning, or id from the real-data eval set. The private verdict, under the data
+root, holds the failure analysis.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ REPO = Path(__file__).resolve().parents[2]
 AS_OF = datetime(2026, 11, 18, 20, 27, 37, tzinfo=UTC)
 CUT = CutResult(name="20261118T202737Z", as_of=AS_OF, episodes=1616, wiki_commit="59b9ce244da8")
 
-# Distinctive text that stands for the real set's: none of it may reach the public verdict.
+# Distinctive text that stands for the real-data eval set's: none of it may reach the public
+# verdict.
 QUESTION = "When does Juniper's quilting class move to Thursdays?"
 EXPECTED = "From Dec 4, at the Elm Street library."
 ANSWER = "It moves on Dec 11, per the flyer."
@@ -29,6 +30,8 @@ REASONING = "Wrong date: the email says Dec 4."
 FOUND = "gmail_5a1e0c0ffee0b0b0"
 NEVER_FOUND = "obsidian_d00dfeedfacecafe"
 PRIVATE = (QUESTION, EXPECTED, ANSWER, REASONING, FOUND, NEVER_FOUND, "r01", "r02")
+# A run's setup holds prose besides its settings: the public verdict shows the settings alone.
+SETUP_PROSE = "told twice, it was the one method to pass every canary"
 
 
 def answer(
@@ -37,11 +40,12 @@ def answer(
     *,
     correct: bool,
     recall: float = 1.0,
-    opened: Sequence[str] = (FOUND,),
+    opened: Sequence[str] | None = (FOUND,),
     cost: float = 0.10,
 ) -> QuestionResult:
     """An answer with `recall` of its two evidence episodes cited (1.0: both; 0.5: FOUND
-    only), of which the session `opened` those given."""
+    only), of which the session `opened` those given (None: its tool calls weren't
+    recorded)."""
     cited = [FOUND, NEVER_FOUND] if recall == 1.0 else [FOUND]
     return QuestionResult(
         id=question_id,
@@ -61,8 +65,8 @@ def answer(
         turns=4,
         duration_ms=12_000,
         tool_calls=[],
-        cited_opened=[i for i in cited if i in opened],
-        evidence_opened=list(opened),
+        cited_opened=None if opened is None else [i for i in cited if i in opened],
+        evidence_opened=None if opened is None else list(opened),
     )
 
 
@@ -73,7 +77,16 @@ def a_run(configuration: str, questions: list[QuestionResult], cut: CutResult = 
         categories[category] = Scores.over([q for q in questions if q.category == category])
     return RunResults(
         configuration=configuration,
-        setup={"agent": "claude (sonnet)", "judge": "model (sonnet)"},
+        setup={
+            "commit": "4377b4857b17",
+            "cut": cut.name,
+            "agent": "claude",
+            "agent model": "sonnet",
+            "as-of method": "both",
+            "why this as-of method": SETUP_PROSE,
+            "judge": "model",
+            "judge model": "sonnet",
+        },
         wiki=WikiResult(librarian_version="0d5e1a2b3c4d") if "wiki" in configuration else None,
         as_of=AS_OF,
         cut=cut,
@@ -121,28 +134,22 @@ def verdict(
     files_alone: list[RunResults],
     files_plus_wiki: list[RunResults],
     *,
-    private: Path | None = None,
+    paths: dict[str, Path] | None = None,
 ) -> tuple[int, str, str]:
-    """Run `pa-eval verdict`, returning its exit code, the public and the private verdict."""
+    """Run `pa-eval verdict`, returning its exit code, the public and the private verdict.
+    `paths` gives options a path in place of the one their runs are written to."""
     real = tmp_path / "data-root" / "evals"
-    public_path, private_path = tmp_path / "verdict.md", private or real / "verdict-private.md"
-    code = main(
-        [
-            "verdict",
-            "--files-alone",
-            str(write(real / "runs" / "fa", files_alone)),
-            "--files-plus-wiki",
-            str(write(real / "runs" / "fw", files_plus_wiki)),
-            "--scale-files-alone",
-            str(scale["files-alone"]),
-            "--scale-files-plus-wiki",
-            str(scale["files-plus-wiki"]),
-            "--public",
-            str(public_path),
-            "--private",
-            str(private_path),
-        ]
-    )
+    options = {
+        "--files-alone": write(real / "runs" / "fa", files_alone),
+        "--files-plus-wiki": write(real / "runs" / "fw", files_plus_wiki),
+        "--scale-files-alone": scale["files-alone"],
+        "--scale-files-plus-wiki": scale["files-plus-wiki"],
+        "--public": tmp_path / "verdict.md",
+        "--private": real / "verdict-private.md",
+        **(paths or {}),
+    }
+    code = main(["verdict", *(str(item) for option in options.items() for item in option)])
+    public_path, private_path = options["--public"], options["--private"]
     read = lambda path: path.read_text() if path.exists() else ""  # noqa: E731
     return code, read(public_path), read(private_path)
 
@@ -163,7 +170,38 @@ def test_the_public_verdict_holds_numbers_only(tmp_path: Path, scale: dict[str, 
     assert "| Evidence recall | 1.00 (1.00 to 1.00) | 1.00 (1.00 to 1.00) |" in public
     assert "| Citation validity | 1.00 (1.00 to 1.00) | 1.00 (1.00 to 1.00) |" in public
     assert "| Total cost | $0.60 | $0.60 |" in public
-    assert "1616 episodes" in public and "59b9ce244da8" in public
+    assert "1616 episodes" in public
+
+
+def test_the_public_verdict_names_the_live_wiki_but_not_its_commit(
+    tmp_path: Path, scale: dict[str, Path]
+):
+    """The live wiki's history stays unprinted, its commits included."""
+    _, public, _ = verdict(
+        tmp_path, scale, runs("files-alone", [True] * 3), runs("files-plus-wiki", [True] * 3)
+    )
+
+    assert "the live wiki" in public
+    assert CUT.wiki_commit is not None and CUT.wiki_commit not in public
+
+
+def test_the_public_verdict_shows_the_runs_settings_and_no_other_setup(
+    tmp_path: Path, scale: dict[str, Path]
+):
+    _, public, _ = verdict(
+        tmp_path, scale, runs("files-alone", [True] * 3), runs("files-plus-wiki", [True] * 3)
+    )
+
+    for line in (
+        "  - Agent: claude",
+        "  - Agent model: sonnet",
+        "  - Judge: model",
+        "  - Judge model: sonnet",
+        "  - Commit: 4377b4857b17",
+        "  - As-of method: both",
+    ):
+        assert line in public.splitlines()
+    assert SETUP_PROSE not in public
 
 
 def test_the_private_verdict_holds_each_failed_answer_and_what_its_session_never_opened(
@@ -183,22 +221,51 @@ def test_the_private_verdict_holds_each_failed_answer_and_what_its_session_never
     assert "files-plus-wiki, run" not in private  # it failed nothing
 
 
-def test_a_private_verdict_inside_the_repository_is_refused(
-    tmp_path: Path, scale: dict[str, Path], capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("option", ["--files-alone", "--files-plus-wiki", "--private"])
+def test_real_data_inside_the_repository_is_refused(
+    tmp_path: Path, scale: dict[str, Path], capsys: pytest.CaptureFixture[str], option: str
 ):
-    private = REPO / "evals" / "runs" / "verdict-private.md"
+    """The real runs and the private verdict are real data: none is read or written in the
+    repository."""
+    inside = REPO / "evals" / "runs" / "verdict-inside-the-repository"
 
     code, public, _ = verdict(
         tmp_path,
         scale,
         runs("files-alone", [True] * 3),
         runs("files-plus-wiki", [True] * 3),
-        private=private,
+        paths={option: inside},
     )
 
     assert code == 1
-    assert "--private" in capsys.readouterr().err
-    assert not private.exists() and public == ""
+    assert option in capsys.readouterr().err
+    assert not inside.exists() and public == ""
+
+
+@pytest.mark.parametrize(
+    ("files_alone", "files_plus_wiki", "refused"),
+    [(2, 3, "--files-alone"), (3, 2, "--files-plus-wiki")],
+)
+def test_a_verdict_over_fewer_than_three_runs_of_either_configuration_is_refused(
+    tmp_path: Path,
+    scale: dict[str, Path],
+    capsys: pytest.CaptureFixture[str],
+    files_alone: int,
+    files_plus_wiki: int,
+    refused: str,
+):
+    """#100 asks each configuration over 3 runs, so a difference can be told from noise."""
+    code, public, private = verdict(
+        tmp_path,
+        scale,
+        runs("files-alone", [True] * files_alone),
+        runs("files-plus-wiki", [True] * files_plus_wiki),
+    )
+
+    assert code == 1
+    error = capsys.readouterr().err
+    assert refused in error and "3 runs" in error
+    assert public == "" and private == ""
 
 
 @pytest.mark.parametrize(
@@ -247,6 +314,20 @@ def test_search_is_needed_only_when_recall_is_lower_and_the_missed_evidence_was_
 
     expected = "**Needed:" if needed else "**Not needed:"
     assert expected in public
+
+
+def test_search_cant_be_decided_when_recall_is_lower_but_no_session_recorded_what_it_opened(
+    tmp_path: Path, scale: dict[str, Path]
+):
+    _, public, _ = verdict(
+        tmp_path,
+        scale,
+        runs("files-alone", [True] * 3, recall=0.5, opened=None),
+        runs("files-plus-wiki", [True] * 3),
+    )
+
+    assert "**Can't be decided:**" in public
+    assert "**Not needed:" not in public and "**Needed:" not in public
 
 
 def test_runs_over_different_cuts_are_refused(

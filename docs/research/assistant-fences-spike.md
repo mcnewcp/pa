@@ -26,7 +26,7 @@ The VM's layout, as the fenced assistant would have it:
 | # | Fence | Result |
 |---|---|---|
 | 1 | Remote Control from the phone and the Mac, with egress only to TCP 443 in Anthropic's API range, DNS off, and the hostnames pinned | **Pass.** Two hostnames are needed |
-| 2 | The subscription login refreshes its token unattended for a day | **Pass**: three refreshes in 37 hours, through `platform.claude.com` |
+| 2 | The subscription login refreshes its token unattended for a day | **Pass**: three refreshes in 37 hours, through `platform.claude.com`. But the login itself ends about 29 days after it's made (2026-11-07, #99: see **Token refresh**) |
 | 3 | Bash runs in Claude Code's sandbox, fails closed, has no unsandboxed escape, and writes only to scratch | **Pass**, with an AppArmor profile for bubblewrap |
 | 4 | Root-owned managed settings deny the web tools, MCP, Remote Control's own tools, and the tools that schedule prompts or reach out remotely, whatever the flags | **Pass**, for 12 flag sets. Remote Control's own two tools were found from the phone, denied, and gone from a later phone session |
 | 5 | Every way a prompt can reach a session other than the owner typing it is denied or never captured | **Pass**, for the 12 found |
@@ -75,6 +75,8 @@ The login wrote `~/.claude/.credentials.json` at 00:56 UTC on 2026-10-25, with a
 - **The session after it worked.** The owner opened a new phone session 38 hours after the login, and its three exchanges were captured.
 
 So an unattended day costs nothing, and the egress fence must let the refresh through: losing `platform.claude.com` would end Remote Control once the access token expired.
+
+> **Note, 2026-11-07 (#99).** An unattended day costs nothing, but an unattended month does. The refresh token has a fixed expiry, `refreshTokenExpiresAt` in `~/.claude/.credentials.json`, about 29 days after `claude auth login`, and refreshing the access token doesn't move it. Past it, Claude Code clears the login, and Remote Control stops until the owner logs in again. The status now warns 7 days ahead (#133).
 
 ## The sandbox
 

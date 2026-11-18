@@ -12,6 +12,7 @@ source "$(dirname "$0")/lib.sh"
 failed=0
 pass() { printf '  PASS  %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; failed=1; }
+skip() { printf '  SKIP  %s\n' "$*"; }
 
 # in_vm_as USER COMMAND... runs COMMAND in the VM as USER, quietly; its status is the result.
 in_vm_as() {
@@ -29,7 +30,7 @@ fi
 episode=$(incus exec "$PA_VM" -- find "$PA_VM_L0/episodes" -name '*.json' -print -quit 2>/dev/null || true)
 # A fresh data root has none until the backfill (#99): nothing to read or change yet.
 if [[ -z $episode ]]; then
-  printf '  SKIP  %s\n' "L0 has no episodes yet: run the backfill on the devbox"
+  skip "L0 has no episodes yet: run the backfill on the devbox"
 elif in_vm_as "$PA_USER" cat "$episode"; then
   pass "$PA_USER reads episodes under $PA_VM_L0"
 else
@@ -72,7 +73,7 @@ else
 fi
 page=$(incus exec "$PA_VM" -- find "$PA_VM_WIKI" -name '*.md' -print -quit 2>/dev/null || true)
 if [[ -z $page ]]; then
-  printf '  SKIP  %s\n' "the wiki has no pages yet: run pa librarian run on the devbox"
+  skip "the wiki has no pages yet: run pa librarian run on the devbox"
 elif in_vm_as "$PA_USER" cat "$page"; then
   pass "$PA_USER reads pages under $PA_VM_WIKI"
 else
@@ -103,7 +104,7 @@ else
   fail "$PA_VM_PROJECT/CLAUDE.md doesn't name $PA_VM_STATUS_FILE (run update.sh)"
 fi
 if ! incus exec "$PA_VM" -- test -f "$PA_VM_STATUS_FILE" 2>/dev/null; then
-  printf '  SKIP  %s\n' "no status file yet: run pa capture on the devbox"
+  skip "no status file yet: run pa capture on the devbox"
 elif in_vm_as "$PA_USER" cat "$PA_VM_STATUS_FILE"; then
   pass "$PA_USER reads $PA_VM_STATUS_FILE"
 else

@@ -2,15 +2,19 @@
 
 It comes in two parts. The public verdict, committed to the repository, holds numbers only:
 correctness by category with its spread, evidence recall, citation validity, cost, the search
-decision and the prototype's outcome. Nothing from the real set reaches it: no question,
-expected answer, answer, reasoning, or question or episode id, and categories are the eval
-set's fixed names. The private verdict, kept under the data root, holds the failure analysis:
-each failed answer, with what its session never opened.
+decision and the prototype's outcome. Nothing from the real-data eval set reaches it: no
+question, expected answer, answer, reasoning, or question or episode id, and categories are the
+eval set's fixed names. Nor does the live wiki's history: the cut names the live wiki, never its
+commit. The private verdict, kept under the data root, holds the failure analysis: each failed
+answer, with what its session never opened.
+
+Each configuration is asked over at least 3 runs, so a difference can be told from noise.
 
 **Search** (a search engine for v0.13.1) is needed only when, in some configuration, both
-hold: evidence recall on the real set is lower than on the scale corpus by more than the spread
-of either, and most of the evidence the answers missed never reached their sessions, so it was
-never found, rather than found and left uncited.
+hold: evidence recall on the real-data eval set is lower than on the scale corpus by more than
+the spread of either, and most of the evidence the answers missed never reached their sessions,
+so it was never found, rather than found and left uncited. When recall is lower but no answer
+recorded which evidence its session opened, it can't be decided.
 
 **The prototype's eval part** is met when files plus wiki scores at least as well overall as
 files alone, as the mean over their runs. The phone demo, its other part, is the owner's to
@@ -23,14 +27,27 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pa_core.errors import PaError
-from pa_evals.comparison import OVERALL, Spread, correctness, counts
-from pa_evals.results import QuestionResult, RunResults, median
+from pa_evals.comparison import (
+    OVERALL,
+    Spread,
+    answers,
+    correctness,
+    counts,
+    format_difference,
+    format_spread,
+    table_cell,
+)
+from pa_evals.report import format_cost, format_score, format_turns
+from pa_evals.results import QuestionResult, RunResults, cited_opened, median
 
 FILES_ALONE = "files-alone"
 FILES_PLUS_WIKI = "files-plus-wiki"
-CONFIGURATIONS = (FILES_ALONE, FILES_PLUS_WIKI)
+MIN_RUNS = 3
+"""Each configuration's runs, at the least (#100)."""
 NEVER_FOUND_SHARE = 0.5
 """More than this share of the evidence missed never reached the sessions: it was never found."""
+SETUP_SHOWN = ("agent", "agent model", "judge", "judge model", "commit", "as-of method")
+"""The settings of a run's setup the public verdict shows; the rest of it is prose."""
 
 
 class VerdictError(PaError):
@@ -38,12 +55,26 @@ class VerdictError(PaError):
 
 
 @dataclass(frozen=True)
-class Search:
-    """One configuration's evidence recall on the real set against the scale corpus's, and
-    what became of the evidence its answers missed."""
+class ConfigurationRuns:
+    """The runs of each eval configuration a verdict compares."""
+
+    files_alone: Sequence[RunResults]
+    files_plus_wiki: Sequence[RunResults]
+
+    def by_name(self) -> dict[str, Sequence[RunResults]]:
+        """Each configuration's name and runs, files alone first."""
+        return {FILES_ALONE: self.files_alone, FILES_PLUS_WIKI: self.files_plus_wiki}
+
+
+@dataclass(frozen=True)
+class SearchDecision:
+    """One configuration's evidence recall on the real-data eval set against the scale
+    corpus's, and what became of the evidence its answers missed."""
 
     real: Spread | None
     scale: Spread | None
+    recorded: int
+    """Answers whose tool calls were recorded, so what their sessions opened is known."""
     missed: int
     """Evidence episodes left uncited, over every answer whose tool calls were recorded."""
     never_found: int
@@ -65,15 +96,37 @@ class Search:
         share = self.never_found_share
         return self.lower and share is not None and share > NEVER_FOUND_SHARE
 
+    @property
+    def undecided(self) -> bool:
+        """Whether recall is lower, but nothing says whether the missed evidence was found."""
+        return self.lower and self.never_found_share is None
+
+
+@dataclass(frozen=True)
+class PrototypeOutcome:
+    """Overall correctness in each configuration, which decides the prototype's eval part."""
+
+    files_alone: Spread
+    files_plus_wiki: Spread
+
+    @property
+    def met(self) -> bool:
+        return self.files_plus_wiki.mean >= self.files_alone.mean - 1e-9
+
 
 def check_runs(name: str, configuration: str, runs: Sequence[RunResults]) -> None:
-    """Refuse runs that aren't all of `configuration` (given by the option `name`), or that
-    weren't asked over a cut."""
+    """Refuse runs that aren't all of `configuration` (given by the option `name`), that
+    weren't asked over a cut, or that are fewer than MIN_RUNS."""
     others = sorted({run.configuration or "unnamed" for run in runs} - {configuration})
     if others:
         raise VerdictError(f"{name} holds runs of {', '.join(others)}, not {configuration}")
     if any(run.cut is None for run in runs):
         raise VerdictError(f"{name} holds a run that wasn't asked over a cut")
+    if len(runs) < MIN_RUNS:
+        raise VerdictError(
+            f"{name} holds {len(runs)} run{'s' if len(runs) != 1 else ''}; a verdict needs "
+            f"{MIN_RUNS} runs of each configuration"
+        )
 
 
 def check_same_cut(runs: Sequence[RunResults]) -> None:
@@ -84,47 +137,48 @@ def check_same_cut(runs: Sequence[RunResults]) -> None:
         )
 
 
-def spread(runs: Sequence[RunResults], score: str) -> Spread | None:
+def overall_spread(runs: Sequence[RunResults], score: str) -> Spread | None:
     """An overall score's mean and spread over the runs that have it."""
     values = [getattr(run.overall, score) for run in runs]
     present = [value for value in values if value is not None]
     return Spread.over(present) if present else None
 
 
-def search(real: Sequence[RunResults], scale: Sequence[RunResults]) -> Search:
-    missed = never_found = 0
-    for q in _answers(real):
+def search_decision(real: Sequence[RunResults], scale: Sequence[RunResults]) -> SearchDecision:
+    recorded = missed = never_found = 0
+    for q in answers(real):
         if q.evidence_opened is None:
             continue
+        recorded += 1
         uncited = [e for e in q.evidence if e not in q.cited]
         missed += len(uncited)
         never_found += sum(e not in q.evidence_opened for e in uncited)
-    return Search(
-        spread(real, "evidence_recall"), spread(scale, "evidence_recall"), missed, never_found
+    return SearchDecision(
+        overall_spread(real, "evidence_recall"),
+        overall_spread(scale, "evidence_recall"),
+        recorded,
+        missed,
+        never_found,
     )
 
 
-def prototype_met(files_alone: Sequence[RunResults], files_plus_wiki: Sequence[RunResults]) -> bool:
-    alone = correctness(files_alone, OVERALL)
-    wiki = correctness(files_plus_wiki, OVERALL)
-    assert alone is not None and wiki is not None
-    return wiki.mean >= alone.mean - 1e-9
+def prototype_outcome(real: ConfigurationRuns) -> PrototypeOutcome:
+    files_alone = correctness(real.files_alone, OVERALL)
+    files_plus_wiki = correctness(real.files_plus_wiki, OVERALL)
+    assert files_alone is not None and files_plus_wiki is not None
+    return PrototypeOutcome(files_alone, files_plus_wiki)
 
 
-def render_public(
-    files_alone: Sequence[RunResults],
-    files_plus_wiki: Sequence[RunResults],
-    scale_files_alone: Sequence[RunResults],
-    scale_files_plus_wiki: Sequence[RunResults],
-) -> str:
+def render_public(real: ConfigurationRuns, scale: ConfigurationRuns) -> str:
     """The public verdict: numbers only."""
-    configurations = {FILES_ALONE: files_alone, FILES_PLUS_WIKI: files_plus_wiki}
-    first = files_alone[0]
+    first = real.files_alone[0]
     assert first.cut is not None
     cut = first.cut
     asked = {c: sum(q.category == c for q in first.questions) for c in first.categories}
-    versions = sorted({run.wiki.librarian_version for run in files_plus_wiki if run.wiki})
-    setup = ", ".join(f"{key} {value}" for key, value in sorted(first.setup.items()))
+    versions = sorted({run.wiki.librarian_version for run in real.files_plus_wiki if run.wiki})
+    settings = [
+        f"  - {key.capitalize()}: {first.setup[key]}" for key in SETUP_SHOWN if key in first.setup
+    ]
     lines = [
         "# v0.13 verdict: the wiki on real data",
         "",
@@ -132,13 +186,13 @@ def render_public(
         "under the data root.",
         "",
         f"- **The cut:** taken {cut.as_of.strftime('%Y-%m-%d %H:%M UTC')}, {cut.episodes} "
-        f"episodes, the live wiki at {cut.wiki_commit or 'none'}.",
+        f"episodes{' and the live wiki' if cut.wiki_commit else ', no wiki'}.",
         f"- **The set:** {len(first.questions)} questions, asked at the cut's time.",
-        f"- **The runs:** files alone {len(files_alone)}, files plus wiki "
-        f"{len(files_plus_wiki)}"
+        f"- **The runs:** files alone {len(real.files_alone)}, files plus wiki "
+        f"{len(real.files_plus_wiki)}"
         + (f" (librarian version {', '.join(versions)})" if versions else "")
-        + (f"; {setup}" if setup else "")
         + ".",
+        *(["- **The setup:**", *settings] if settings else []),
         "",
         "## Correctness by category",
         "",
@@ -149,12 +203,13 @@ def render_public(
         "|---|---|---|---|",
     ]
     for category in [*asked, OVERALL]:
-        alone = correctness(files_alone, category)
-        wiki = correctness(files_plus_wiki, category)
+        files_alone = correctness(real.files_alone, category)
+        files_plus_wiki = correctness(real.files_plus_wiki, category)
         count = len(first.questions) if category == OVERALL else asked[category]
         lines.append(
-            f"| {category} ({count}) | {_spread(alone)} | {_spread(wiki)} | "
-            f"{_difference(alone, wiki)} |"
+            f"| {category} ({count}) | {format_spread(files_alone)} | "
+            f"{format_spread(files_plus_wiki)} | "
+            f"{format_difference(files_alone, files_plus_wiki)} |"
         )
 
     lines += [
@@ -168,79 +223,64 @@ def render_public(
         ("Evidence recall", "evidence_recall"),
         ("Citation validity", "citation_validity"),
     ):
-        cells = [_spread(spread(runs, score)) for runs in configurations.values()]
+        cells = [format_spread(overall_spread(runs, score)) for runs in real.by_name().values()]
         lines.append(f"| {label} | {' | '.join(cells)} |")
     rows = {
-        "Cited episodes opened": lambda runs: _score(_cited_opened(_answers(runs))),
-        "Total cost": lambda runs: _dollars(_total_cost(_answers(runs))),
-        "Per answer, median cost": lambda runs: _dollars(
-            median([q.cost_usd for q in _answers(runs)]), places=3
+        "Cited episodes opened": lambda runs: format_score(cited_opened(answers(runs))),
+        "Total cost": lambda runs: _dollars(_total_cost(answers(runs))),
+        "Per answer, median cost": lambda runs: format_cost(
+            median([q.cost_usd for q in answers(runs)])
         ),
-        "Per answer, median turns": lambda runs: _number(median([q.turns for q in _answers(runs)])),
+        "Per answer, median turns": lambda runs: format_turns(
+            median([q.turns for q in answers(runs)])
+        ),
         "Failed answers (agent or judge)": lambda runs: str(
-            sum(q.status == "failed" for q in _answers(runs))
+            sum(q.status == "failed" for q in answers(runs))
         ),
     }
     for label, cell in rows.items():
-        lines.append(f"| {label} | {' | '.join(cell(runs) for runs in configurations.values())} |")
+        lines.append(f"| {label} | {' | '.join(cell(runs) for runs in real.by_name().values())} |")
 
-    searches = {
-        FILES_ALONE: search(files_alone, scale_files_alone),
-        FILES_PLUS_WIKI: search(files_plus_wiki, scale_files_plus_wiki),
+    scale_runs = scale.by_name()
+    decisions = {
+        name: search_decision(runs, scale_runs[name]) for name, runs in real.by_name().items()
     }
     lines += [
         "",
         "## Search",
         "",
-        "Evidence recall on the real set against the scale corpus's (v0.12.1), in the same "
-        "configuration, and of the evidence the answers left uncited, how much never reached "
-        "their sessions.",
+        "Evidence recall on the real-data eval set against the scale corpus's (v0.12.1), in the "
+        "same configuration, and of the evidence the answers left uncited, how much never "
+        "reached their sessions.",
         "",
-        "| | Real set | Scale corpus | Lower by more than the spread | Missed evidence never "
-        "opened |",
+        "| | Real-data eval set | Scale corpus | Lower by more than the spread | Missed evidence "
+        "never opened |",
         "|---|---|---|---|---|",
     ]
-    for name, found in searches.items():
-        never = (
-            "n/a (none missed)"
-            if found.never_found_share is None
-            else f"{found.never_found} of {found.missed} ({found.never_found_share:.2f})"
-        )
+    for name, decision in decisions.items():
         lines.append(
-            f"| {_label(name)} | {_spread(found.real)} | {_spread(found.scale)} | "
-            f"{'yes' if found.lower else 'no'} | {never} |"
+            f"| {_label(name)} | {format_spread(decision.real)} | "
+            f"{format_spread(decision.scale)} | {'yes' if decision.lower else 'no'} | "
+            f"{_never_opened(decision)} |"
         )
-    needed = [name for name, found in searches.items() if found.needed]
-    lines.append("")
-    if needed:
-        lines.append(
-            f"**Needed:** in {', '.join(_label(n).lower() for n in needed)}, recall is lower than "
-            "the scale corpus's by more than the spread, and most of the missed evidence was "
-            "never opened. Plan v0.13.1's search engine."
-        )
-    else:
-        lines.append(
-            "**Not needed:** in neither configuration is recall lower than the scale corpus's "
-            "by more than the spread while most of the missed evidence was never opened."
-        )
+    lines += ["", _search_conclusion(decisions)]
 
-    alone, wiki = correctness(files_alone, OVERALL), correctness(files_plus_wiki, OVERALL)
-    assert alone is not None and wiki is not None
-    met = prototype_met(files_alone, files_plus_wiki)
+    prototype = prototype_outcome(real)
     lines += [
         "",
         "## The prototype",
         "",
-        f"{'**Met.**' if met else '**Not met.**'} Files plus wiki scores {wiki.mean:.2f} overall "
-        f"against files alone's {alone.mean:.2f}, over {wiki.runs} and {alone.runs} runs. "
-        "The phone demo, the criterion's other part, is the owner's to confirm.",
+        f"{'**Met.**' if prototype.met else '**Not met.**'} Files plus wiki scores "
+        f"{prototype.files_plus_wiki.mean:.2f} overall against files alone's "
+        f"{prototype.files_alone.mean:.2f}, over {prototype.files_plus_wiki.runs} and "
+        f"{prototype.files_alone.runs} runs. The phone demo, the criterion's other part, is the "
+        "owner's to confirm.",
     ]
     return "\n".join(lines) + "\n"
 
 
-def render_private(files_alone: Sequence[RunResults], files_plus_wiki: Sequence[RunResults]) -> str:
+def render_private(real: ConfigurationRuns) -> str:
     """The private verdict: every question's outcome in every run, and each failed answer."""
-    configurations = {FILES_ALONE: files_alone, FILES_PLUS_WIKI: files_plus_wiki}
     lines = [
         "# v0.13 verdict, private: the failure analysis",
         "",
@@ -251,12 +291,14 @@ def render_private(files_alone: Sequence[RunResults], files_plus_wiki: Sequence[
         "| Question | Category | Files alone | Files plus wiki | Asked |",
         "|---|---|---|---|---|",
     ]
-    for q in files_alone[0].questions:
+    for q in real.files_alone[0].questions:
         outcomes = [
-            ", ".join(_outcome(run, q.id) for run in runs) for runs in configurations.values()
+            ", ".join(_outcome(run, q.id) for run in runs) for runs in real.by_name().values()
         ]
-        lines.append(f"| {q.id} | {q.category} | {' | '.join(outcomes)} | {_cell(q.question)} |")
-    for name, runs in configurations.items():
+        lines.append(
+            f"| {q.id} | {q.category} | {' | '.join(outcomes)} | {table_cell(q.question)} |"
+        )
+    for name, runs in real.by_name().items():
         for number, run in enumerate(runs, start=1):
             for q in run.questions:
                 if q.correct is True:
@@ -264,6 +306,37 @@ def render_private(files_alone: Sequence[RunResults], files_plus_wiki: Sequence[
                 lines += ["", f"## {name}, run {number}: {q.id} ({q.category})", ""]
                 lines += _failure(q)
     return "\n".join(lines) + "\n"
+
+
+def _never_opened(decision: SearchDecision) -> str:
+    share = decision.never_found_share
+    if share is not None:
+        return f"{decision.never_found} of {decision.missed} ({share:.2f})"
+    return "n/a (not recorded)" if decision.recorded == 0 else "n/a (none missed)"
+
+
+def _search_conclusion(decisions: dict[str, SearchDecision]) -> str:
+    def named(names: list[str]) -> str:
+        return ", ".join(_label(name).lower() for name in names)
+
+    needed = [name for name, decision in decisions.items() if decision.needed]
+    undecided = [name for name, decision in decisions.items() if decision.undecided]
+    if needed:
+        return (
+            f"**Needed:** in {named(needed)}, recall is lower than the scale corpus's by more "
+            "than the spread, and most of the missed evidence was never opened. Plan v0.13.1's "
+            "search engine."
+        )
+    if undecided:
+        return (
+            f"**Can't be decided:** in {named(undecided)}, recall is lower than the scale "
+            "corpus's by more than the spread, but no answer recorded which evidence its session "
+            "opened, so evidence never found can't be told from evidence found and left uncited."
+        )
+    return (
+        "**Not needed:** in neither configuration is recall lower than the scale corpus's by "
+        "more than the spread while most of the missed evidence was never opened."
+    )
 
 
 def _failure(q: QuestionResult) -> list[str]:
@@ -297,24 +370,14 @@ def _evidence(q: QuestionResult, episode_id: str) -> str:
 
 
 def _outcome(run: RunResults, question_id: str) -> str:
-    found = [q for q in run.questions if q.id == question_id]
-    if not found:
+    asked = [q for q in run.questions if q.id == question_id]
+    if not asked:
         return "-"
-    return "yes" if found[0].correct is True else "no"
+    return "yes" if asked[0].correct is True else "no"
 
 
-def _answers(runs: Sequence[RunResults]) -> list[QuestionResult]:
-    return [q for run in runs for q in run.questions]
-
-
-def _cited_opened(answers: Sequence[QuestionResult]) -> float | None:
-    recorded = [q for q in answers if q.cited_opened is not None]
-    cited = sum(len(q.cited) for q in recorded)
-    return sum(len(q.cited_opened or []) for q in recorded) / cited if cited else None
-
-
-def _total_cost(answers: Sequence[QuestionResult]) -> float | None:
-    costs = [q.cost_usd for q in answers if q.cost_usd is not None]
+def _total_cost(results: Sequence[QuestionResult]) -> float | None:
+    costs = [q.cost_usd for q in results if q.cost_usd is not None]
     return sum(costs) if costs else None
 
 
@@ -322,28 +385,6 @@ def _label(configuration: str) -> str:
     return {FILES_ALONE: "Files alone", FILES_PLUS_WIKI: "Files plus wiki"}[configuration]
 
 
-def _spread(value: Spread | None) -> str:
-    return "n/a" if value is None else f"{value.mean:.2f} ({value.low:.2f} to {value.high:.2f})"
-
-
-def _difference(reference: Spread | None, other: Spread | None) -> str:
-    if reference is None or other is None:
-        return "n/a"
-    mark = " (counts)" if counts(reference, other) else ""
-    return f"{other.mean - reference.mean:+.2f}{mark}"
-
-
-def _score(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:.2f}"
-
-
-def _dollars(value: float | None, places: int = 2) -> str:
-    return "n/a" if value is None else f"${value:.{places}f}"
-
-
-def _number(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:g}"
-
-
-def _cell(text: str) -> str:
-    return text.replace("|", "\\|").replace("\n", " ")
+def _dollars(value: float | None) -> str:
+    """A total in dollars to the cent (an answer's cost, format_cost, is to the tenth of one)."""
+    return "n/a" if value is None else f"${value:.2f}"

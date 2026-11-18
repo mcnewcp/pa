@@ -17,6 +17,7 @@ from pa_evals.real_data import require_private
 from pa_evals.verdict import (
     FILES_ALONE,
     FILES_PLUS_WIKI,
+    ConfigurationRuns,
     check_runs,
     check_same_cut,
     render_private,
@@ -57,19 +58,15 @@ def _verdict(args: argparse.Namespace) -> int:
     files_alone_dir = require_private(args.files_alone, "--files-alone")
     files_plus_wiki_dir = require_private(args.files_plus_wiki, "--files-plus-wiki")
     private = require_private(args.private, "--private")
-    files_alone = load_runs(files_alone_dir)
-    files_plus_wiki = load_runs(files_plus_wiki_dir)
-    check_runs("--files-alone", FILES_ALONE, files_alone)
-    check_runs("--files-plus-wiki", FILES_PLUS_WIKI, files_plus_wiki)
-    check_same_cut([*files_alone, *files_plus_wiki])
-    public = render_public(
-        files_alone,
-        files_plus_wiki,
-        load_runs(args.scale_files_alone),
-        load_runs(args.scale_files_plus_wiki),
+    real = ConfigurationRuns(load_runs(files_alone_dir), load_runs(files_plus_wiki_dir))
+    check_runs("--files-alone", FILES_ALONE, real.files_alone)
+    check_runs("--files-plus-wiki", FILES_PLUS_WIKI, real.files_plus_wiki)
+    check_same_cut([*real.files_alone, *real.files_plus_wiki])
+    scale = ConfigurationRuns(
+        load_runs(args.scale_files_alone), load_runs(args.scale_files_plus_wiki)
     )
-    private.parent.mkdir(parents=True, exist_ok=True)
-    write_atomically(private, render_private(files_alone, files_plus_wiki).encode(), mode=0o600)
-    args.public.write_text(public)
+    public = render_public(real, scale)
+    write_atomically(private, render_private(real).encode(), mode=0o600)
+    write_atomically(args.public, public.encode())
     print(f"verdict: public {args.public}, private {private}")
     return 0

@@ -375,13 +375,14 @@ def test_the_nightly_job_finds_restic_installed_in_the_owners_bin_directory(
 def test_the_nightly_job_is_told_when_the_assistants_login_ends(
     home: Path, instance: dict[str, str]
 ):
-    """Read in the assistant's VM, as its user: the time only, never the login itself."""
+    """Read in the assistant's VM, as its user, by an isolated Python (nothing from its working
+    directory or environment loads): the time only, never the login itself."""
     call = run_job("nightly.sh", home, {**instance, "INCUS_SAYS": "2026-12-06T17:53:00+00:00"})
 
     assert call["env"]["PA_ASSISTANT_LOGIN_EXPIRES"] == "2026-12-06T17:53:00+00:00"
     asked = (job_bin(instance) / "incus.log").read_text()
     assert asked.startswith(
-        f"exec {value('PA_VM', home)} -- runuser -u {value('PA_USER', home)} -- "
+        f"exec {value('PA_VM', home)} -- runuser -u {value('PA_USER', home)} -- python3 -I -c "
     )
     assert "refreshTokenExpiresAt" in asked
 

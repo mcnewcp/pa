@@ -143,7 +143,8 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         notes = [f"configuration {', '.join(names)}"] if names else []
         notes += [f"wiki librarian version {', '.join(versions)}"] if versions else []
         noted = f" ({'; '.join(notes)})" if notes else ""
-        lines.append(f"- {_cell(label)}: {len(runs)} run{'s' if len(runs) != 1 else ''}{noted}")
+        plural = "s" if len(runs) != 1 else ""
+        lines.append(f"- {table_cell(label)}: {len(runs)} run{plural}{noted}")
     lines += [
         "",
         "## Correctness by category",
@@ -152,12 +153,12 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     ]
     if others:
         lines.append(
-            f"A difference from {_cell(reference)} counts only when it is larger than the spread "
-            "of either side, and is marked (counts); a single run has no spread, so it never "
-            "counts."
+            f"A difference from {table_cell(reference)} counts only when it is larger than the "
+            "spread of either side, and is marked (counts); a single run has no spread, so it "
+            "never counts."
         )
-    header = [_cell(label) for label in labels] + [
-        f"{_cell(other)} vs {_cell(reference)}" for other in others
+    header = [table_cell(label) for label in labels] + [
+        f"{table_cell(other)} vs {table_cell(reference)}" for other in others
     ]
     lines += [
         "",
@@ -166,9 +167,9 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     ]
     for category in [*categories, OVERALL]:
         spreads = {label: correctness(runs, category) for label, runs in configurations.items()}
-        cells = [_spread(spreads[label]) for label in labels]
-        cells += [_difference(spreads[reference], spreads[other]) for other in others]
-        lines.append(f"| {_cell(category)} | {' | '.join(cells)} |")
+        cells = [format_spread(spreads[label]) for label in labels]
+        cells += [format_difference(spreads[reference], spreads[other]) for other in others]
+        lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
 
     lines += [
         "",
@@ -177,15 +178,15 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         "Median cost, turns, and duration over every answer in every run that reports them "
         "(n/a: none do).",
         "",
-        f"| Category | {' | '.join(_cell(label) for label in labels)} |",
+        f"| Category | {' | '.join(table_cell(label) for label in labels)} |",
         f"|---|{'---|' * len(labels)}",
     ]
     for category in [*categories, OVERALL]:
         cells = [
-            _efficiency(_answers(runs, None if category == OVERALL else category))
+            _efficiency(answers(runs, None if category == OVERALL else category))
             for runs in configurations.values()
         ]
-        lines.append(f"| {_cell(category)} | {' | '.join(cells)} |")
+        lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
 
     lines += [
         "",
@@ -194,15 +195,15 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         "Of the episodes cited by every answer in every run whose tool calls were recorded, the "
         "share whose contents reached the session (n/a: none cite anything).",
         "",
-        f"| Category | {' | '.join(_cell(label) for label in labels)} |",
+        f"| Category | {' | '.join(table_cell(label) for label in labels)} |",
         f"|---|{'---|' * len(labels)}",
     ]
     for category in [*categories, OVERALL]:
         cells = [
-            format_score(cited_opened(_answers(runs, None if category == OVERALL else category)))
+            format_score(cited_opened(answers(runs, None if category == OVERALL else category)))
             for runs in configurations.values()
         ]
-        lines.append(f"| {_cell(category)} | {' | '.join(cells)} |")
+        lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
     return "\n".join(lines) + "\n"
 
 
@@ -215,31 +216,35 @@ def _categories(configurations: Iterable[Sequence[RunResults]]) -> list[str]:
     return list(seen)
 
 
-def _answers(runs: Sequence[RunResults], category: str | None) -> list[QuestionResult]:
+def answers(runs: Sequence[RunResults], category: str | None = None) -> list[QuestionResult]:
+    """Every answer in every run, on `category` alone if given."""
     return [q for run in runs for q in run.questions if category is None or q.category == category]
 
 
-def _spread(spread: Spread | None) -> str:
+def format_spread(spread: Spread | None) -> str:
+    """A mean over runs with its spread, or n/a where no run has it."""
     if spread is None:
         return "n/a"
     return f"{spread.mean:.2f} ({spread.low:.2f} to {spread.high:.2f})"
 
 
-def _difference(reference: Spread | None, other: Spread | None) -> str:
+def format_difference(reference: Spread | None, other: Spread | None) -> str:
+    """`other`'s mean less `reference`'s, marked (counts) when larger than either's spread."""
     if reference is None or other is None:
         return "n/a"
     mark = " (counts)" if counts(reference, other) else ""
     return f"{other.mean - reference.mean:+.2f}{mark}"
 
 
-def _efficiency(answers: Sequence[QuestionResult]) -> str:
-    cost = median([q.cost_usd for q in answers])
-    turns = median([q.turns for q in answers])
-    duration = median([q.duration_ms for q in answers])
+def _efficiency(results: Sequence[QuestionResult]) -> str:
+    cost = median([q.cost_usd for q in results])
+    turns = median([q.turns for q in results])
+    duration = median([q.duration_ms for q in results])
     if (cost, turns, duration) == (None, None, None):
         return "n/a"
     return f"{format_cost(cost)}, {format_turns(turns)} turns, {format_duration(duration)}"
 
 
-def _cell(text: str) -> str:
-    return text.replace("|", "\\|")
+def table_cell(text: str) -> str:
+    """`text` made safe for one Markdown table cell: its pipes escaped, on one line."""
+    return text.replace("|", "\\|").replace("\n", " ")

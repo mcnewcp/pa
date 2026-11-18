@@ -592,7 +592,7 @@ render_schedule_unit() {
 # when its refresh token stops working (refreshing the access token doesn't move it), or `none`
 # when it's logged out. It reads that time alone, never the login. Fails when the VM doesn't say.
 assistant_login_expiry() {
-  incus exec "$PA_VM" -- runuser -u "$PA_USER" -- python3 -c '
+  incus exec "$PA_VM" -- runuser -u "$PA_USER" -- python3 -I -c '
 import datetime, json, os
 try:
     login = json.load(open(os.path.expanduser("~/.claude/.credentials.json")))["claudeAiOauth"]
@@ -663,16 +663,45 @@ own_filesystem_units() {
   done
 }
 
+# installed_own_filesystem_units ROOT prints those of ROOT's own-filesystem mount units installed
+# in PA_SYSTEMD_DIR, one per line.
+installed_own_filesystem_units() {
+  local unit
+  while IFS= read -r unit; do
+    [[ ! -f $PA_SYSTEMD_DIR/$unit ]] || printf '%s\n' "$unit"
+  done < <(own_filesystem_units "$1")
+}
+
 # stop_own_filesystems ROOT disables each of ROOT's own-filesystem mount units that's installed,
 # and unmounts it. Incus requires each one, so stopping it stops Incus too (but not the VMs); the
 # next incus command starts it again.
 stop_own_filesystems() {
   local unit
   while IFS= read -r unit; do
-    [[ -f $PA_SYSTEMD_DIR/$unit ]] || continue
     sudo systemctl disable --now "$unit"
     log "stopped $unit"
-  done < <(own_filesystem_units "$1")
+  done < <(installed_own_filesystem_units "$1")
+}
+
+# remove_own_filesystems ROOT stops ROOT's own-filesystem mount units (stop_own_filesystems), then
+# removes each one installed, for a data root that's retired. Safe to re-run.
+remove_own_filesystems() {
+  local units unit
+  stop_own_filesystems "$1"
+  units=$(installed_own_filesystem_units "$1")
+  [[ -n $units ]] || return 0
+  while IFS= read -r unit; do
+    sudo rm -f "$PA_SYSTEMD_DIR/$unit"
+  done <<<"$units"
+  sudo systemctl daemon-reload
+}
+
+# require_unshared ROOT [HOW] dies while any VM is shared ROOT, a directory in it, or a directory
+# holding it (shared_into_vms), naming each, and HOW to take it off if given.
+require_unshared() {
+  local problems
+  problems=$(incus query '/1.0/instances?recursion=1' | shared_into_vms "$1")
+  [[ -z $problems ]] || die "${problems//$'\n'/; }: take it off first${2:+ ($2)}"
 }
 
 # release_data_root ROOT takes the assistant's VM off a data root it no longer runs on (the
@@ -681,7 +710,7 @@ stop_own_filesystems() {
 # taken off, then ROOT's own filesystems unmounted. It stops while any VM is still shared ROOT,
 # and leaves ROOT's files alone. Safe to re-run.
 release_data_root() {
-  local root devices device problems
+  local root devices device
   root=$(realpath -m -- "$1")
   devices=$(incus query "/1.0/instances/$PA_VM" | python3 -I -c '
 import json, os, sys
@@ -699,8 +728,7 @@ for name, device in sorted((json.load(sys.stdin).get("devices") or {}).items()):
       log "took $device off $PA_VM"
     done <<<"$devices"
   fi
-  problems=$(incus query '/1.0/instances?recursion=1' | shared_into_vms "$root")
-  [[ -z $problems ]] || die "${problems//$'\n'/; }: take it off first"
+  require_unshared "$root"
   stop_own_filesystems "$root"
 }
 
