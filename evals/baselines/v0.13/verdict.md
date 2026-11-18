@@ -2,9 +2,16 @@
 
 Numbers only. The questions, answers and failure analysis are in the private verdict under the data root.
 
-- **The cut:** taken 2026-11-18 20:27 UTC, 1616 episodes, the live wiki at 59b9ce244da81f938e5386d56a7930ce9a5b0624.
+- **The cut:** taken 2026-11-18 20:27 UTC, 1616 episodes and the live wiki.
 - **The set:** 26 questions, asked at the cut's time.
-- **The runs:** files alone 3, files plus wiki 3 (librarian version 665463df6ee7); agent claude, agent model sonnet, as-of method both, as-of methods compared in docs/adr/0003-as-of-time-injection.md, commit 4377b4857b177963f579a91e8452e2b77ecf2c81, cut 20261118T202737Z, judge model, judge model sonnet, why this as-of method the default: told in the system prompt and again before the question, it was the one method to pass every as-of canary with Sonnet.
+- **The runs:** files alone 3, files plus wiki 3 (librarian version 665463df6ee7).
+- **The setup:**
+  - Agent: claude
+  - Agent model: sonnet
+  - Judge: model
+  - Judge model: sonnet
+  - Commit: 4377b4857b177963f579a91e8452e2b77ecf2c81
+  - As-of method: both
 
 ## Correctness by category
 
@@ -40,9 +47,9 @@ Mean over runs, with the spread from the lowest run to the highest. A difference
 
 ## Search
 
-Evidence recall on the real set against the scale corpus's (v0.12.1), in the same configuration, and of the evidence the answers left uncited, how much never reached their sessions.
+Evidence recall on the real-data eval set against the scale corpus's (v0.12.1), in the same configuration, and of the evidence the answers left uncited, how much never reached their sessions.
 
-| | Real set | Scale corpus | Lower by more than the spread | Missed evidence never opened |
+| | Real-data eval set | Scale corpus | Lower by more than the spread | Missed evidence never opened |
 |---|---|---|---|---|
 | Files alone | 0.94 (0.92 to 0.99) | 0.90 (0.88 to 0.93) | no | 3 of 8 (0.38) |
 | Files plus wiki | 0.95 (0.94 to 0.95) | 0.92 (0.90 to 0.94) | no | 3 of 14 (0.21) |
