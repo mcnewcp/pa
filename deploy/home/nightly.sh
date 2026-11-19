@@ -3,7 +3,8 @@
 # the instance's configuration (lib.sh job_environment): one process holding the data root's lock
 # throughout, which runs a capture cycle with reconciliation, the librarian run (its sessions in
 # the librarian's VM, librarian-sandbox.sh), and the backup to the USB SSD's restic repository,
-# each recorded in the status, and when the assistant's Claude login ends. It skips if another
+# each recorded in the status, and when the assistant's Claude login ends. It also steps the
+# assistant's clock to the devbox's if it has drifted (lib.sh step_vm_clock). It skips if another
 # job holds the lock. pa-nightly.service runs it overnight (pa-nightly.timer,
 # install-schedules.sh); run it by hand too.
 set -euo pipefail
@@ -24,4 +25,6 @@ if expires=$(assistant_login_expiry); then
 else
   unset PA_ASSISTANT_LOGIN_EXPIRES
 fi
+# The assistant's VM reaches no time server (#135). A clock left as it is doesn't stop the job.
+step_vm_clock || true
 exec "$PA_BIN" nightly
