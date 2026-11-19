@@ -227,14 +227,17 @@ PA_VM_SANDBOX_PACKAGES=(bubblewrap socat apparmor)
 PA_VM_BWRAP_PROFILE=/etc/apparmor.d/pa-bwrap
 PA_VM_UBUNTU_BWRAP_PROFILE=/etc/apparmor.d/bwrap-userns-restrict
 # What would only knock on the fence (#91), masked so nothing starts it: apt's lists, upgrades and
-# unattended upgrades (the OS is refreshed by rebuilding the VM), the clock's sync (it comes from
-# the hypervisor), and Ubuntu's news and Pro timers. Masking a unit the image lacks is harmless.
+# unattended upgrades (the OS is refreshed by rebuilding the VM), the clock's sync (the nightly job
+# steps the clock instead, step_vm_clock), and Ubuntu's news and Pro timers. Masking a unit the
+# image lacks is harmless.
 PA_VM_QUIET_UNITS=(
   apt-daily.timer apt-daily.service apt-daily-upgrade.timer apt-daily-upgrade.service
   unattended-upgrades.service systemd-timesyncd.service motd-news.timer motd-news.service
   ua-timer.timer esm-cache.service fwupd-refresh.timer
 )
 PA_VM_APT_NO_PERIODIC=/etc/apt/apt.conf.d/99-pa-no-periodic
+# How far the VM's clock may drift from the devbox's before the nightly job steps it (#135): 1 s.
+PA_VM_CLOCK_SLACK_NS=1000000000
 # Claude Code in the VM: a pinned release, downloaded and verified on the devbox like the
 # librarian's and pushed in by update.sh, root's. Bump it deliberately: a new release can add tools
 # (the isolation check fails on any it doesn't expect). 2.1.308 is the release #81's spike proved
@@ -604,6 +607,28 @@ else:
     ends = login["refreshTokenExpiresAt"] / 1000
     print(datetime.datetime.fromtimestamp(ends, datetime.timezone.utc).isoformat())
 ' 2>/dev/null
+}
+
+# step_vm_clock steps the VM's clock to the devbox's when they're more than PA_VM_CLOCK_SLACK_NS
+# apart (#135). The offset is measured from the devbox, either side of reading the VM's clock,
+# and the VM steps its own clock by it, so the time it takes to reach the VM isn't added. Fails,
+# saying why, when the clocks can't be read or the step fails.
+step_vm_clock() {
+  local before vm_now after offset
+  before=$(date +%s%N)
+  vm_now=$(incus exec "$PA_VM" -- date +%s%N </dev/null 2>/dev/null) || vm_now=""
+  after=$(date +%s%N)
+  if ! [[ $before =~ ^[0-9]+$ && $vm_now =~ ^[0-9]+$ && $after =~ ^[0-9]+$ ]]; then
+    log "$PA_VM's clock couldn't be read: it's left as it is"
+    return 1
+  fi
+  offset=$((vm_now - (before + after) / 2))
+  ((offset > PA_VM_CLOCK_SLACK_NS || -offset > PA_VM_CLOCK_SLACK_NS)) || return 0
+  log "$PA_VM's clock is $((offset / 1000000)) ms off the devbox's: stepping it"
+  # shellcheck disable=SC2016 # expanded by the shell in the VM
+  incus exec "$PA_VM" -- sh -c 'now=$(date +%s%N) && t=$((now - $1)) &&
+    date -u -s "@$((t / 1000000000)).$(printf %09d $((t % 1000000000)))"' sh "$offset" \
+    </dev/null >/dev/null || { log "$PA_VM's clock couldn't be stepped"; return 1; }
 }
 
 # job_environment exports what the capture cycle and the nightly job read: the data root, the

@@ -244,6 +244,37 @@ with open(os.environ["PA_LOG"], "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}) + "\\n")
 """
 
+# Never the devbox's own Incus: it records its arguments, then tells the VM's clock as VM_CLOCK
+# holds it, or says what INCUS_SAYS holds, or fails as an unreachable VM does.
+STAND_IN_INCUS = """\
+import json, os, sys
+argv = sys.argv[1:]
+with open(os.environ["INCUS_LOG"], "a") as log:
+    log.write(json.dumps(argv) + "\\n")
+says = os.environ.get("VM_CLOCK" if argv[-2:] == ["date", "+%s%N"] else "INCUS_SAYS")
+if not says:
+    sys.exit(1)
+print(says)
+"""
+
+# The devbox's clock, in nanoseconds: each reading the next of DEVBOX_CLOCKS. The real `date` for
+# the rest.
+STAND_IN_DATE = """\
+import os, sys
+clocks = os.environ.get("DEVBOX_CLOCKS", "").split()
+if sys.argv[1:] != ["+%s%N"] or not clocks:
+    os.execv("/usr/bin/date", ["date", *sys.argv[1:]])
+read = os.environ["INCUS_LOG"] + ".clock"
+count = int(open(read).read()) if os.path.exists(read) else 0
+open(read, "w").write(str(count + 1))
+print(clocks[count])
+"""
+
+
+def executable(path: Path, text: str) -> None:
+    path.write_text(text)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
 
 @pytest.fixture
 def instance(home: Path, tmp_path: Path) -> dict[str, str]:
@@ -258,27 +289,20 @@ def instance(home: Path, tmp_path: Path) -> dict[str, str]:
         'PA_ICLOUD_USERNAME="argus@example.com"\nPA_ICLOUD_CALENDARS="Home,Work"\n'
     )
     pa = tmp_path / "pa"
-    pa.write_text(f"#!{sys.executable}\n{STAND_IN_PA}")
-    pa.chmod(pa.stat().st_mode | stat.S_IXUSR)
-    incus = tmp_path / "job-bin" / "incus"
-    incus.parent.mkdir()
-    incus.write_text(STAND_IN_INCUS)
-    incus.chmod(incus.stat().st_mode | stat.S_IXUSR)
+    executable(pa, f"#!{sys.executable}\n{STAND_IN_PA}")
+    (tmp_path / "job-bin").mkdir()
+    for name, stand_in in (("incus", STAND_IN_INCUS), ("date", STAND_IN_DATE)):
+        executable(tmp_path / "job-bin" / name, f"#!{sys.executable}\n{stand_in}")
     return {"PA_BIN": str(pa), "PA_LOG": str(tmp_path / "pa.jsonl")}
-
-
-# Never the devbox's own Incus: it records its arguments, then says what INCUS_SAYS holds, or
-# fails as an unreachable VM does.
-STAND_IN_INCUS = """\
-#!/bin/sh
-printf '%s\\n' "$*" >>"$INCUS_LOG"
-[ -n "${INCUS_SAYS:-}" ] || exit 1
-printf '%s\\n' "$INCUS_SAYS"
-"""
 
 
 def job_bin(env: dict[str, str]) -> Path:
     return Path(env["PA_LOG"]).parent / "job-bin"
+
+
+def incus_calls(env: dict[str, str]) -> list[list[str]]:
+    log = job_bin(env) / "incus.jsonl"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def run_job(script: str, home: Path, env: dict[str, str], *args: str) -> dict:
@@ -291,7 +315,7 @@ def run_job(script: str, home: Path, env: dict[str, str], *args: str) -> dict:
             "HOME": str(home),
             "USER": "owner",
             "PATH": f"{stand_ins}:/usr/bin:/bin",
-            "INCUS_LOG": str(stand_ins / "incus.log"),
+            "INCUS_LOG": str(stand_ins / "incus.jsonl"),
             **env,
         },
         check=False,
@@ -380,7 +404,7 @@ def test_the_nightly_job_is_told_when_the_assistants_login_ends(
     call = run_job("nightly.sh", home, {**instance, "INCUS_SAYS": "2026-12-06T17:53:00+00:00"})
 
     assert call["env"]["PA_ASSISTANT_LOGIN_EXPIRES"] == "2026-12-06T17:53:00+00:00"
-    asked = (job_bin(instance) / "incus.log").read_text()
+    [asked] = [" ".join(argv) for argv in incus_calls(instance) if "runuser" in argv]
     assert asked.startswith(
         f"exec {value('PA_VM', home)} -- runuser -u {value('PA_USER', home)} -- python3 -I -c "
     )
@@ -394,6 +418,59 @@ def test_a_nightly_job_whose_assistant_vm_doesnt_answer_still_runs(
 
     assert call["argv"] == ["nightly"]
     assert "PA_ASSISTANT_LOGIN_EXPIRES" not in call["env"]
+
+
+def clock_steps(env: dict[str, str]) -> list[list[str]]:
+    """What the job ran in the assistant's VM as root, other than reading its clock: the login is
+    read as the assistant's user."""
+    return [
+        argv[argv.index("--") + 1 :]
+        for argv in incus_calls(env)
+        if argv[-2:] != ["date", "+%s%N"] and "runuser" not in argv
+    ]
+
+
+def clock_set_by(command: list[str], vm_clock: str, tmp_path: Path) -> list[str]:
+    """Runs a command the job sent the VM, here, with a stand-in `date` reading `vm_clock`, and
+    returns each `date -s` it ran, its arguments joined."""
+    vm_bin = tmp_path / "vm-bin"
+    vm_bin.mkdir()
+    executable(
+        vm_bin / "date",
+        "#!/bin/sh\n"
+        f'[ "$*" = +%s%N ] && {{ echo {vm_clock}; exit; }}\n'
+        f'printf "%s\\n" "$*" >>{tmp_path / "vm-date.log"}\n',
+    )
+    subprocess.run(command, env={"PATH": f"{vm_bin}:/usr/bin:/bin"}, check=True)
+    return (tmp_path / "vm-date.log").read_text().splitlines()
+
+
+# The devbox reads its clock either side of reading the VM's, 100 ms apart, and takes the
+# midpoint: 1795052915.070506855.
+DEVBOX_CLOCKS = "1795052915020506855 1795052915120506855"
+
+
+@pytest.mark.parametrize("vm_clock", ["1795052842570506855", "1795052987570506855"])
+def test_the_nightly_job_steps_the_assistants_drifting_clock_to_the_devboxs(
+    home: Path, instance: dict[str, str], tmp_path: Path, vm_clock: str
+):
+    """The VM reaches no time server (#135): its clock runs 72.5 s slow, or fast, and is put
+    right."""
+    run_job("nightly.sh", home, {**instance, "DEVBOX_CLOCKS": DEVBOX_CLOCKS, "VM_CLOCK": vm_clock})
+
+    [step] = clock_steps(instance)
+    assert clock_set_by(step, vm_clock, tmp_path) == ["-u -s @1795052915.070506855"]
+
+
+def test_the_nightly_job_leaves_a_clock_within_a_second_of_the_devboxs(
+    home: Path, instance: dict[str, str]
+):
+    """Stepping the clock by the time it takes to reach the VM would only add jitter."""
+    clocks = {"DEVBOX_CLOCKS": DEVBOX_CLOCKS, "VM_CLOCK": "1795052915970506855"}
+
+    run_job("nightly.sh", home, {**instance, **clocks})
+
+    assert clock_steps(instance) == []
 
 
 @pytest.mark.parametrize("script", ["capture.sh", "nightly.sh"])

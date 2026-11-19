@@ -43,7 +43,7 @@ One pass of every collector, then ingest, then publishing each watermark whose p
 _Avoid_: Sync, poll, run
 
 **Nightly job**:
-The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends, then runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends and steps the assistant's VM clock to the devbox's if it has drifted, then runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
 _Avoid_: Cron, batch, nightly run
 
 **Raw payload**:
