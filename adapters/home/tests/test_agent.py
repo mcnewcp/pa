@@ -251,6 +251,19 @@ def test_given_a_wiki_the_agent_reads_it_beside_l0_and_is_told_how(tmp_path: Pat
     assert "--add-dir" not in seen["argv"]
 
 
+def test_given_a_status_file_the_agent_reads_it_and_is_told_how(tmp_path: Path, l0: Path):
+    status = tmp_path / "data" / "status" / "status.json"
+    status.parent.mkdir(parents=True)
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("Has Dave written back?", owner=OWNER, l0=l0, status=status)
+
+    seen = _seen(tmp_path)
+    directories = seen["settings"]["permissions"]["additionalDirectories"]
+    assert directories[0] == str(l0) and directories[-1] == str(status.parent)
+    assert f"`{status}`" in seen["claude_md"] and "watermark" in seen["claude_md"]
+
+
 def test_without_a_wiki_the_agent_reads_l0_alone(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
 
@@ -330,6 +343,22 @@ def test_now_is_appended_to_the_system_prompt(tmp_path: Path, l0: Path):
     assert seen["prompt"] == "What day of the week is it?"
 
 
+def test_the_agent_is_told_that_the_date_in_its_environment_is_not_now(tmp_path: Path, l0: Path):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.BOTH)
+
+    agent.answer("Is the hotel block still open?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    preamble, _ = seen["prompt"].rsplit("\n\n", 1)
+    for statement in (system_prompt, preamble):
+        # Claude Code states the machine's date as "Today's date is <date>." in every session.
+        assert "Today's date is" in statement
+        assert "not now" in statement
+        # Date arithmetic is done from the as-of date, named again where it's asked for.
+        assert "days are left" in statement and "from Saturday, October 10, 2026" in statement
+
+
 def test_now_can_be_stated_in_a_message_before_the_question(tmp_path: Path, l0: Path):
     agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)), as_of_method=AsOfMethod.PREAMBLE)
 
@@ -338,6 +367,21 @@ def test_now_can_be_stated_in_a_message_before_the_question(tmp_path: Path, l0: 
     seen = _seen(tmp_path)
     [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
     assert "2026" not in system_prompt
+    preamble, question = seen["prompt"].rsplit("\n\n", 1)
+    assert "Saturday, October 10, 2026, 09:00" in preamble
+    assert question == "What day of the week is it?"
+
+
+def test_by_default_now_is_stated_both_in_the_system_prompt_and_before_the_question(
+    tmp_path: Path, l0: Path
+):
+    agent = ClaudeAgent(executable=str(_fake_claude(tmp_path)))
+
+    agent.answer("What day of the week is it?", owner=OWNER, l0=l0, now=SATURDAY_MORNING)
+
+    seen = _seen(tmp_path)
+    [system_prompt] = _flag_values(seen["argv"], "--append-system-prompt")
+    assert "Saturday, October 10, 2026, 09:00" in system_prompt
     preamble, question = seen["prompt"].rsplit("\n\n", 1)
     assert "Saturday, October 10, 2026, 09:00" in preamble
     assert question == "What day of the week is it?"
@@ -417,36 +461,35 @@ def test_an_agent_that_runs_too_long_is_stopped_with_a_timeout_error(tmp_path: P
         agent.answer("When does the hotel block close?", owner=OWNER, l0=l0)
 
 
-TWO_EXCHANGES = (
-    Path(__file__).parents[3] / "core/tests/fixtures/claude_code_transcripts/two_exchanges.jsonl"
-)
-INSTALL_REPLY = (
-    "L0 doesn't say when the countertop will be installed. Birchwood's last email only "
-    "confirms the order [ep:gmail_0123456789abcdef]."
-)
-
-
 def test_an_agent_run_captures_no_exchange_even_where_capture_is_on(
-    tmp_path: Path, l0: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, l0: Path, monkeypatch: pytest.MonkeyPatch, vm_hooks
 ):
     """Eval runs are never captured, even from a shell where the chat service's settings leak."""
-    inbox = tmp_path / "data" / "inbox" / "assistant_chat"
-    inbox.mkdir(parents=True)
     monkeypatch.setenv("PA_CAPTURE_EXCHANGES", "1")
-    monkeypatch.setenv("PA_CAPTURE_INBOX", str(inbox))
+    monkeypatch.setenv("PA_TEST_SUDOERS", str(vm_hooks.sudoers))
+    settings = tmp_path / "managed-settings.json"
+    settings.write_text(json.dumps(vm_hooks.settings))
     hook_statuses = tmp_path / "hook_statuses.json"
-    # The stand-in stops the way Claude Code does: it fires the project's Stop hooks.
+    # The stand-in runs a turn the way Claude Code does in the VM: it fires the managed
+    # settings' prompt hooks, then their stop hooks, in its own environment, with the VM's
+    # paths standing for a test's (see conftest.py).
     claude = _fake_claude(
         tmp_path,
         f"""\
         import subprocess
-        stop = {{"session_id": "3f0c9a7e-5b21-4d8e-a6f3-91c2e7d40b58",
-                 "transcript_path": {str(TWO_EXCHANGES)!r}, "hook_event_name": "Stop",
-                 "stop_hook_active": False, "last_assistant_message": {INSTALL_REPLY!r}}}
+        turn = {{"session_id": "3f0c9a7e-5b21-4d8e-a6f3-91c2e7d40b58",
+                 "prompt_id": "6b1d7f4e-2c3a-4e5b-9a8d-0f1e2d3c4b5a"}}
+        events = [
+            {{**turn, "hook_event_name": "UserPromptSubmit", "prompt": prompt}},
+            {{**turn, "hook_event_name": "Stop", "stop_hook_active": False,
+              "last_assistant_message": reply}},
+        ]
+        hooks = json.loads(Path({str(settings)!r}).read_text())["hooks"]
         statuses = [
-            subprocess.run([hook["command"], *hook["args"]], input=json.dumps(stop), text=True,
+            subprocess.run(hook["command"], shell=True, input=json.dumps(event), text=True,
                            env={{**os.environ, "CLAUDE_PROJECT_DIR": os.getcwd()}}).returncode
-            for group in settings["hooks"]["Stop"] for hook in group["hooks"]
+            for event in events
+            for group in hooks[event["hook_event_name"]] for hook in group["hooks"]
         ]
         Path({str(hook_statuses)!r}).write_text(json.dumps(statuses))
         """,
@@ -455,8 +498,9 @@ def test_an_agent_run_captures_no_exchange_even_where_capture_is_on(
 
     agent.answer("When are they installing the countertop?", owner=OWNER, l0=l0)
 
-    assert json.loads(hook_statuses.read_text()) == [0]
-    assert list(inbox.iterdir()) == []
+    assert json.loads(hook_statuses.read_text()) == [0, 0]
+    assert list(vm_hooks.inbox.iterdir()) == []
+    assert [p for p in vm_hooks.state.rglob("*") if p.is_file()] == []
 
 
 def test_a_missing_claude_executable_is_an_agent_error(tmp_path: Path, l0: Path):

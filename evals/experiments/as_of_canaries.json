@@ -34,17 +34,17 @@
       "id": "hotel-block-open",
       "category": "canary",
       "question": "Is the hotel block for Dave's wedding still open?",
-      "expected_answer": "No: it closed on October 9, and today is October 12.",
+      "expected_answer": "Yes: it closes on October 9, which is tomorrow (today is October 8).",
       "evidence": ["gmail_94f6b4cbc55a3b85"],
-      "as_of": "2026-10-12T09:00:00-05:00"
+      "as_of": "2026-10-08T09:00:00-05:00"
     },
     {
       "id": "swim-started",
       "category": "canary",
       "question": "Have the kids' swim lessons started yet?",
-      "expected_answer": "Yes: they started on Saturday, October 17 at 9 am at the Westside YMCA, a week before today (October 24).",
+      "expected_answer": "No: they start on Saturday, October 17 at 9 am at the Westside YMCA, three days from today (October 14).",
       "evidence": ["icloud_calendar_9d69b653f9a42b18"],
-      "as_of": "2026-10-24T10:00:00-05:00"
+      "as_of": "2026-10-14T10:00:00-05:00"
     }
   ]
 }

@@ -1,0 +1,5 @@
+# /etc/sudoers.d/pa-capture in the assistant's VM, root's and mode 0440
+# (install-assistant-fences.sh). The assistant may run the capture helper as the capture user,
+# with exactly one of its three verbs, and nothing else: the managed settings' capture hooks do
+# (#94). Its sandboxed shell can't use it, since nothing there gains privileges.
+assistant ALL=(capture) NOPASSWD: /usr/local/libexec/pa-capture prompt, /usr/local/libexec/pa-capture answer, /usr/local/libexec/pa-capture stop

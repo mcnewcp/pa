@@ -1,0 +1,46 @@
+# Obsidian's headless Sync client, keeping the vault copy on the devbox, pull-only (#87).
+# install-vault-sync.sh renders the @…@ names from lib.sh and installs it.
+[Unit]
+Description=PA: the vault copy, by Obsidian headless Sync, pull-only
+Wants=network-online.target
+After=network-online.target
+# Never give up restarting after a run of failures: see Restart= below.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=@USER@
+# Refuses (78) unless the vault is set up pull-only, then syncs continuously.
+ExecStart=@RUNNER@ run @VAULT@
+# A dropped connection or a crash restarts it, forever. A permanent error doesn't: the vault not
+# set up pull-only (78), the client not logged in (2), or no sync set up (3).
+Restart=always
+RestartSec=30
+RestartPreventExitStatus=2 3 78
+# The client prints the name of each note it downloads; its own log keeps them. Errors still
+# reach the journal.
+StandardOutput=null
+StandardError=journal
+# It writes only the vault copy and its own state.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@VAULT@ @CONFIG@
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

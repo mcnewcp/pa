@@ -47,6 +47,10 @@ class AgentRequest:
     wiki: Path | None = None
     """The eval wiki's read-only tree beside the throwaway L0, in a files-plus-wiki run; None
     in files alone."""
+    status: Path | None = None
+    """The read-only status file saying how current L0 and the wiki are: over a frozen corpus,
+    one laid with every source's watermark at `as_of`; over a cut, the cut's own. None for a
+    cut taken without one."""
 
 
 class AgentRunner(Protocol):
@@ -67,6 +71,7 @@ class ClaudeAgentRunner:
             owner=request.owner,
             l0=request.data_root.l0,
             wiki=request.wiki,
+            status=request.status,
             now=request.as_of,
         )
 

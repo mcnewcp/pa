@@ -24,18 +24,25 @@ sudo /usr/local/sbin/pa-vm-firewall
 sudo nft list table inet pa_vm >/dev/null || die "table inet pa_vm isn't loaded"
 log "firewall loaded and enabled at boot"
 
-# ufw drops input and forwarded traffic by default, which would leave the VM with no DHCP, DNS
-# or way out. Let those through ufw; pa_vm's drops still fence everything else. ufw saves its
-# rules itself and skips ones it already has.
+# ufw drops input and forwarded traffic by default, which would leave a VM with no DHCP or way
+# out. Let through what each bridge may have; pa_vm's drops still fence everything else. ufw
+# saves its rules itself and skips ones it already has.
 if sudo ufw status | grep -q '^Status: active'; then
-  sudo ufw allow in on "$PA_BRIDGE" to any port 67 proto udp comment 'PA VM DHCP'
-  sudo ufw allow in on "$PA_BRIDGE" to any port 53 comment 'PA VM DNS'
-  sudo ufw route allow in on "$PA_BRIDGE" comment 'PA VM out'
-  log "ufw lets the VM's DHCP, DNS and outbound traffic through"
-  # The librarian's VM gets DHCP and its way to the API, and nothing more: its bridge has no DNS,
-  # and the route rule names only the API's range, a fence of its own beside pa_vm and the ACL.
+  # The fenced VMs get DHCP and their way to the API, and nothing more: their bridges have no DNS,
+  # and the route rules name only the API's range, a fence of their own beside pa_vm and the ACLs.
+  # Before #91 the assistant's VM had DNS and every way out: those rules go.
+  sudo ufw route delete allow in on "$PA_ASSISTANT_BRIDGE" >/dev/null 2>&1 || true
+  sudo ufw delete allow in on "$PA_ASSISTANT_BRIDGE" to any port 53 >/dev/null 2>&1 || true
+  sudo ufw allow in on "$PA_ASSISTANT_BRIDGE" to any port 67 proto udp comment 'PA VM DHCP'
+  sudo ufw route allow in on "$PA_ASSISTANT_BRIDGE" to "$PA_API_RANGE" port 443 proto tcp \
+    comment 'PA VM to the Anthropic API'
   sudo ufw allow in on "$PA_LIBRARIAN_BRIDGE" to any port 67 proto udp comment 'PA librarian DHCP'
   sudo ufw route allow in on "$PA_LIBRARIAN_BRIDGE" to "$PA_API_RANGE" port 443 proto tcp \
     comment 'PA librarian to the Anthropic API'
-  log "ufw lets the librarian's DHCP and its traffic to $PA_API_RANGE:443 through"
+  log "ufw lets the VMs' DHCP and their traffic to $PA_API_RANGE:443 through"
+  # The bridge the assistant's VM is built on gets DHCP, DNS and its way out.
+  sudo ufw allow in on "$PA_BUILD_BRIDGE" to any port 67 proto udp comment 'PA VM build DHCP'
+  sudo ufw allow in on "$PA_BUILD_BRIDGE" to any port 53 comment 'PA VM build DNS'
+  sudo ufw route allow in on "$PA_BUILD_BRIDGE" comment 'PA VM build out'
+  log "ufw lets the build bridge's DHCP, DNS and outbound traffic through"
 fi

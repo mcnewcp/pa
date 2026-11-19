@@ -9,6 +9,7 @@ The inbox has one directory per source (`inbox/gmail/`, `inbox/icloud_calendar/`
 
 ## Consequences
 
-- Every writer of the inbox (the corpus generator, the eval harness, the transcript hook, and the future collectors) writes into its source's directory. The frozen corpus is laid out the same way.
+- Every writer of the inbox (the corpus generator, the eval harness, the capture helper, and the collectors) writes into its source's directory. The frozen corpus is laid out the same way.
+- In the home VM, `inbox/assistant_chat/` has one writer: the capture helper, running as a separate capture user and building each exchange from hook events, never the transcript ([ADR-0009](0009-capture-by-a-separate-user.md), amending this). Nothing else the VM runs can write it, so the directory confines the VM to exchanges, and only the harness's own hooks can write those.
 - Episode ids are unchanged: they still come from the raw payload alone (ADR-0001). The directory chooses the normalizer; it doesn't feed the id.
 - Ingest validates `assistant_chat` payloads strictly against their schema, since they come from the least trusted writer.

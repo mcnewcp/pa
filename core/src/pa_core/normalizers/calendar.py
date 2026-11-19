@@ -1,20 +1,74 @@
-"""Calendar normalizer: one iCalendar event (`.ics`) from iCloud Calendar to an envelope."""
+"""Calendar normalizer: one iCalendar resource (`.ics`) from iCloud Calendar to an envelope.
+
+It reads two shapes (ADR-0008):
+
+- **An export**, as the frozen corpus has: one VEVENT, with its calendar's name in
+  `X-WR-CALNAME`. Its version is the event's SEQUENCE and LAST-MODIFIED, and it normalizes
+  exactly as it always has.
+- **A captured resource**, as a CalDAV collector lands it: the bytes the server served, behind
+  a capture header with `Calendar` and `Captured-At`, and `Deleted-At` once it's gone from its
+  calendar. A series' body says how it repeats in words and lists its occurrences in a window
+  around `Captured-At` (#96).
+"""
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.envelope import Envelope, Kind, Participant, Role, Source, TimeSpan, episode_id
 from pa_core.errors import MalformedPayloadError
 from pa_core.l0 import raw_ref
+from pa_core.normalizers.capture_header import CaptureHeader, split_capture_header
+from pa_core.normalizers.recurrence import (
+    OccurrenceWindow,
+    Override,
+    Series,
+    any_occurrence_on_or_after,
+    describe,
+    last_end,
+    occurrences_between,
+)
 
 EXTENSION = ".ics"
 
+OCCURRENCE_WINDOW = OccurrenceWindow(months_before=2, months_after=6)
+"""Which occurrences a captured series lists, around its capture. Changing it means a
+renormalize."""
 
-def normalize_calendar_event(raw: bytes, *, captured_at: datetime) -> Envelope:
+
+def normalize_calendar_event(
+    raw: bytes, *, captured_at: datetime, window: OccurrenceWindow = OCCURRENCE_WINDOW
+) -> Envelope:
+    """The resource's envelope. A captured resource's `captured_at` is its capture header's,
+    not the `captured_at` given, and a captured series lists its occurrences in `window`
+    around it."""
+    if _is_export(raw):
+        return _export(raw, captured_at)
+    return _captured(raw, window)
+
+
+def id_pins_content(raw: bytes) -> bool:
+    """Whether `raw`'s episode id already says everything its envelope can: true for a captured
+    resource, whose version is a digest of its content (ADR-0008).
+
+    Its occurrence list is anchored on `Captured-At`, which the version leaves out, so the same
+    resource captured again later is the same episode with a list from another window. The
+    version that landed first stands until the series changes.
+    """
+    return not _is_export(raw)
+
+
+def _is_export(raw: bytes) -> bool:
+    """Whether `raw` is an export with no capture header: it opens with its BEGIN line."""
+    return raw.lstrip()[:6].upper() == b"BEGIN:"
+
+
+def _export(raw: bytes, captured_at: datetime) -> Envelope:
     calendar = _parse(raw)
     event = _only_event(calendar)
     native_id = event.text("UID")
@@ -26,19 +80,281 @@ def normalize_calendar_event(raw: bytes, *, captured_at: datetime) -> Envelope:
         raise MalformedPayloadError("calendar event has no DTSTART")
     end = _moment(event, "DTEND", calendar_zone)
     eid = episode_id(Source.ICLOUD_CALENDAR, native_id, _version(event))
+    occurred_at = TimeSpan(start=start, end=end)
+    return _envelope(
+        eid,
+        native_id,
+        event,
+        occurred_at,
+        captured_at,
+        calendar.text("X-WR-CALNAME"),
+        repeats=event.text("RRULE"),
+    )
+
+
+def occurs_on_or_after(resource: bytes, moment: datetime) -> bool:
+    """Whether the calendar resource has an occurrence still going at `moment` or starting
+    after it, with a series' exclusions, added dates and overrides applied.
+
+    `resource` is a resource as a calendar server serves it, or as a collector lands it behind
+    its capture header. Raises MalformedPayloadError for one the normalizer would quarantine.
+    """
+    served = resource if _is_export(resource) else _split(resource)[1]
+    read = _read(served)
+    if read.series is not None:
+        return any_occurrence_on_or_after(read.series, moment)
+    assert read.end is not None
+    return read.end > moment or read.start >= moment
+
+
+def _split(raw: bytes) -> tuple[CaptureHeader, bytes]:
+    return split_capture_header(raw, what="calendar resource", required=("Calendar",))
+
+
+@dataclass(frozen=True)
+class _Resource:
+    """A captured resource, read: the calendar, its one event or its series' master and UID,
+    when it starts and ends, and the series, if it repeats."""
+
+    calendar: _Component
+    master: _Component
+    native_id: str
+    start: datetime
+    end: datetime | None
+    """A series' is its last occurrence's end, and None when its rule never ends."""
+    series: Series | None
+
+
+def _read(served: bytes) -> _Resource:
+    calendar = _parse(served)
+    master, native_id = _series_master(calendar)
+    calendar_zone = calendar.text("X-WR-TIMEZONE")
+    start = _moment(master, "DTSTART", calendar_zone)
+    if start is None:
+        raise MalformedPayloadError("calendar event has no DTSTART")
+    if "RRULE" in master.properties or "RDATE" in master.properties:
+        series = _series(calendar, master, start, calendar_zone)
+        return _Resource(calendar, master, native_id, start, last_end(series), series)
+    end = _end(master, start, calendar_zone)
+    return _Resource(calendar, master, native_id, start, end, None)
+
+
+def _captured(raw: bytes, window: OccurrenceWindow) -> Envelope:
+    header, served = _split(raw)
+    read = _read(served)
+    # A deletion is the last-known bytes landed again, as their own episode: its version is
+    # the deleted one's, marked, and it was captured when the collector found it gone.
+    deleted_at = header.time("Deleted-At")
+    calendar_name = header.require("Calendar")
+    version = _resource_version(calendar_name, read.calendar)
+    eid = episode_id(
+        Source.ICLOUD_CALENDAR, read.native_id, f"deleted:{version}" if deleted_at else version
+    )
+    repeats = listed = None
+    if read.series is not None:
+        repeats = describe(read.series)
+        # The list is anchored on the capture, which the version leaves out: see
+        # `id_pins_content`. A deleted series has no occurrences left to list.
+        if deleted_at is None:
+            listed = _occurrence_list(read.series, *window.around(header.captured_at))
+    return _envelope(
+        eid,
+        read.native_id,
+        read.master,
+        TimeSpan(start=read.start, end=read.end),
+        deleted_at or header.captured_at,
+        calendar_name,
+        deleted=deleted_at is not None,
+        repeats=repeats,
+        occurrences=listed,
+    )
+
+
+def _series(
+    calendar: _Component, master: _Component, start: datetime, calendar_zone: str | None
+) -> Series:
+    """The series a resource's master and its overrides make."""
+    overrides = []
+    for event in calendar.children:
+        recurrence_id = _moment(event, "RECURRENCE-ID", calendar_zone)
+        if recurrence_id is None or event.name != "VEVENT":
+            continue
+        override_start = _moment(event, "DTSTART", calendar_zone) or recurrence_id
+        overrides.append(
+            Override(
+                recurrence_id,
+                override_start,
+                _end(event, override_start, calendar_zone),
+                cancelled=(event.text("STATUS") or "").upper() == "CANCELLED",
+            )
+        )
+    return Series(
+        start=start,
+        all_day=_is_date(master, "DTSTART"),
+        length=_end(master, start, calendar_zone) - start,
+        rule=master.text("RRULE"),
+        added=tuple(_moments(master, "RDATE", calendar_zone)),
+        removed=tuple(_moments(master, "EXDATE", calendar_zone)),
+        overrides=tuple(overrides),
+    )
+
+
+def _occurrence_list(series: Series, start: datetime, end: datetime) -> str:
+    """The series' occurrences from `start` to `end`, a line each, in the event's own time
+    zone with its offset."""
+    zone = series.start.tzinfo
+    lines = [
+        f"Occurrences from {start.astimezone(zone):%Y-%m-%d} to {end.astimezone(zone):%Y-%m-%d}:"
+    ]
+    for occurrence in occurrences_between(series, start, end):
+        line = f"- {_span(occurrence.start, occurrence.end, all_day=series.all_day)}"
+        if occurrence.moved_from is not None:
+            line += f" (moved from {occurrence.moved_from:%a %Y-%m-%d})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _span(start: datetime, end: datetime, *, all_day: bool) -> str:
+    """An occurrence's day and times, with its UTC offset, or an all-day one's days."""
+    if all_day:
+        last_day = max(start, end - timedelta(days=1))
+        if last_day.date() == start.date():
+            return f"{start:%a %Y-%m-%d}"
+        return f"{start:%a %Y-%m-%d} to {last_day:%a %Y-%m-%d}"
+    offset = start.isoformat()[-6:] if start.utcoffset() else "+00:00"
+    if end.date() == start.date():
+        return f"{start:%a %Y-%m-%d %H:%M} to {end:%H:%M} {offset}"
+    return f"{start:%a %Y-%m-%d %H:%M} to {end:%a %Y-%m-%d %H:%M} {offset}"
+
+
+def _resource_version(calendar_name: str, calendar: _Component) -> str:
+    """Which version of a captured resource this is: a digest of its calendar's name and the
+    content of every event in it, apart from what changes when nothing has (ADR-0008).
+
+    Content, not just SEQUENCE and LAST-MODIFIED, because iCloud ends a series with an UNTIL
+    and bumps neither (#85). The calendar's name, because an event moved to another calendar
+    is a new resource there with the same UID and content. Left out:
+
+    - DTSTAMP, which changes with every time the event is served;
+    - alarms (VALARM), which are the owner's reminders on their own devices, not part of the
+      event, and the envelope never shows them. A client may mark an alarm `ACKNOWLEDGED`
+      (RFC 9074) when its reminder is dismissed, so keeping them could make a version of a
+      series each time one of its reminders goes off;
+    - the order of the events, which says nothing.
+    """
+    events = sorted(
+        json.dumps(_content(event), ensure_ascii=False)
+        for event in calendar.children
+        if event.name == "VEVENT"
+    )
+    canonical = json.dumps([calendar_name, events], ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _content(component: _Component) -> list[object]:
+    """`component`'s properties but DTSTAMP, and its components but alarms, in a canonical
+    form."""
+    properties = [
+        [name, [[sorted(prop.params.items()), prop.value] for prop in values]]
+        for name, values in sorted(component.properties.items())
+        if name != "DTSTAMP"
+    ]
+    children = [
+        [child.name, _content(child)] for child in component.children if child.name != "VALARM"
+    ]
+    return [properties, children]
+
+
+def _end(event: _Component, start: datetime, calendar_zone: str | None) -> datetime:
+    """When a captured event ends: its DTEND, else its DURATION after its start, else as
+    RFC 5545 has it: at its start for a time, at the next midnight for a date."""
+    end = _moment(event, "DTEND", calendar_zone)
+    if end is not None:
+        return end
+    duration = event.text("DURATION")
+    if duration is not None:
+        return start + _duration(duration)
+    return start + timedelta(days=1) if _is_date(event, "DTSTART") else start
+
+
+def _is_date(event: _Component, name: str) -> bool:
+    """Whether the property `name` is a date (an all-day event's), not a time."""
+    prop = event.first(name)
+    return prop is not None and len(prop.value.strip()) == len("YYYYMMDD")
+
+
+# A DURATION (RFC 5545): weeks alone, or days and a time of hours, minutes and seconds.
+_DURATION = re.compile(
+    r"([+-]?)P(?:(\d+)W|(?=\d|T\d)(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?)"
+)
+
+
+def _duration(value: str) -> timedelta:
+    match = _DURATION.fullmatch(value.upper())
+    if match is None:
+        raise MalformedPayloadError("calendar event has an unreadable DURATION")
+    sign, weeks, days, hours, minutes, seconds = match.groups()
+    length = timedelta(
+        weeks=int(weeks or 0),
+        days=int(days or 0),
+        hours=int(hours or 0),
+        minutes=int(minutes or 0),
+        seconds=int(seconds or 0),
+    )
+    return -length if sign == "-" else length
+
+
+def _series_master(calendar: _Component) -> tuple[_Component, str]:
+    """The event a captured resource is about, and its UID: the resource's one event, or the
+    master of its series.
+
+    A resource holds one event, or a series: its master and an override (`RECURRENCE-ID`) for
+    each occurrence changed, all with one UID.
+    """
+    events = [child for child in calendar.children if child.name == "VEVENT"]
+    if not events:
+        raise MalformedPayloadError("calendar resource has no events")
+    uids = {event.text("UID") or "" for event in events}
+    if "" in uids:
+        raise MalformedPayloadError("calendar event has no UID")
+    if len(uids) > 1:
+        raise MalformedPayloadError(
+            f"calendar resource has events with {len(uids)} UIDs; expected one series"
+        )
+    masters = [event for event in events if "RECURRENCE-ID" not in event.properties]
+    if len(masters) != 1:
+        raise MalformedPayloadError(
+            f"calendar resource has {len(masters)} events without a RECURRENCE-ID; "
+            "expected one series master"
+        )
+    return masters[0], uids.pop()
+
+
+def _envelope(
+    eid: str,
+    native_id: str,
+    event: _Component,
+    occurred_at: TimeSpan,
+    captured_at: datetime,
+    calendar: str | None,
+    *,
+    deleted: bool = False,
+    repeats: str | None = None,
+    occurrences: str | None = None,
+) -> Envelope:
     return Envelope.seal(
         episode_id=eid,
         source=Source.ICLOUD_CALENDAR,
         kind=Kind.CALENDAR_EVENT,
         native_id=native_id,
-        occurred_at=TimeSpan(start=start, end=end),
+        occurred_at=occurred_at,
         captured_at=captured_at,
         participants=_participants(event),
-        calendar_name=calendar.text("X-WR-CALNAME"),
+        calendar_name=calendar,
         subject=event.text("SUMMARY"),
         thread_ref=native_id,
-        body=_body(event),
-        raw_ref=raw_ref(Source.ICLOUD_CALENDAR, start, eid, EXTENSION),
+        body=_body(event, deleted=deleted, repeats=repeats, occurrences=occurrences),
+        raw_ref=raw_ref(Source.ICLOUD_CALENDAR, occurred_at.start, eid, EXTENSION),
     )
 
 
@@ -60,17 +376,26 @@ def _address(value: str) -> str:
     return value.strip()
 
 
-def _body(event: _Component) -> str:
-    """The event's status, location and repeat rule as labelled lines, then its description."""
-    status = event.text("STATUS")
+def _body(
+    event: _Component,
+    *,
+    deleted: bool = False,
+    repeats: str | None = None,
+    occurrences: str | None = None,
+) -> str:
+    """The event's status, location and how it repeats as labelled lines, then a series' list
+    of occurrences, then its description. A deleted event's status is `deleted`.
+
+    An export repeats as its RRULE reads; a captured series in words, with its list."""
+    status = "deleted" if deleted else event.text("STATUS")
     fields = [
         ("Status", status.lower() if status else None),
         ("Location", event.text("LOCATION")),
-        ("Repeats", event.text("RRULE")),
+        ("Repeats", repeats),
     ]
     header = "\n".join(f"{label}: {value}" for label, value in fields if value)
     description = (event.text("DESCRIPTION") or "").replace("\r\n", "\n")
-    return "\n\n".join(part for part in (header, description) if part)
+    return "\n\n".join(part for part in (header, occurrences, description) if part)
 
 
 def _version(event: _Component) -> str:
@@ -101,15 +426,27 @@ def _moment(event: _Component, name: str, calendar_zone: str | None) -> datetime
     prop = event.first(name)
     if prop is None:
         return None
-    match = _DATE_TIME.fullmatch(prop.value.strip())
+    return _value_moment(prop.value, prop, name, calendar_zone)
+
+
+def _moments(event: _Component, name: str, calendar_zone: str | None) -> list[datetime]:
+    """Every moment of a property that may repeat and list several, as EXDATE and RDATE do. An
+    RDATE period (`start/end`) gives its start."""
+    return [
+        _value_moment(value.partition("/")[0], prop, name, calendar_zone)
+        for prop in event.properties.get(name, [])
+        for value in prop.value.split(",")
+    ]
+
+
+def _value_moment(value: str, prop: _Property, name: str, calendar_zone: str | None) -> datetime:
+    match = _DATE_TIME.fullmatch(value.strip())
     try:
         if match is None or (match[3] and not match[2]):
             raise ValueError
         naive = datetime.strptime(match[1] + (match[2] or "000000"), "%Y%m%d%H%M%S")
     except ValueError:
-        raise MalformedPayloadError(
-            f"calendar event has an unreadable {name} ({prop.value!r})"
-        ) from None
+        raise MalformedPayloadError(f"calendar event has an unreadable {name}") from None
     if match[3]:
         return naive.replace(tzinfo=UTC)
     return naive.replace(tzinfo=_zone(prop.params.get("TZID") or calendar_zone))
@@ -121,7 +458,7 @@ def _zone(name: str | None) -> tzinfo:
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
-        raise MalformedPayloadError(f"calendar names an unknown time zone ({name!r})") from None
+        raise MalformedPayloadError("calendar names an unknown time zone") from None
 
 
 # iCalendar (RFC 5545) is lines of `NAME;PARAM=value:VALUE`, folded at 75 octets, grouped into
@@ -177,7 +514,7 @@ def _parse(raw: bytes) -> _Component:
         elif stack:
             stack[-1].properties.setdefault(name, []).append(_Property(value, params))
         else:
-            raise MalformedPayloadError(f"calendar has a property outside any component: {name}")
+            raise MalformedPayloadError("calendar has a property outside any component")
     if root is None or root.name != "VCALENDAR" or stack:
         raise MalformedPayloadError("payload is not a complete VCALENDAR")
     return root
@@ -194,7 +531,7 @@ _NAME = re.compile(r"[A-Za-z0-9-]+")
 def _content_line(line: str) -> tuple[str, dict[str, str], str]:
     name_match = _NAME.match(line)
     if name_match is None:
-        raise MalformedPayloadError(f"calendar has an unreadable line: {line[:40]!r}")
+        raise MalformedPayloadError("calendar has an unreadable line")
     position = name_match.end()
     params: dict[str, str] = {}
     while (param := _PARAM.match(line, position)) is not None:
@@ -202,7 +539,7 @@ def _content_line(line: str) -> tuple[str, dict[str, str], str]:
         params[param[1].upper()] = quoted[1] if quoted else param[2]
         position = param.end()
     if not line.startswith(":", position):
-        raise MalformedPayloadError(f"calendar has an unreadable line: {line[:40]!r}")
+        raise MalformedPayloadError("calendar has an unreadable line")
     return name_match[0].upper(), params, line[position + 1 :]
 
 

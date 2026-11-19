@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
-# Usage: seed-data-root.sh [--corpus argus|scale]
+# Usage: seed-data-root.sh [--corpus argus|scale] <synthetic data root>
 #
-# Seeds the instance's data root on the devbox from a frozen synthetic corpus (pa_evals.frozen):
+# Seeds a synthetic data root on the devbox from a frozen synthetic corpus (pa_evals.frozen):
 # Argus's, by default, or the scale corpus (Argus's payloads and the extension's), with the
 # corpus's fictional owner as the instance owner, and ingests it with this checkout's code; the
 # ingest's time is the reseed's capture time. Leaves a data root that already has an L0 alone.
-# It is disposable: deploy/home/README.md says how to start it over, and how to seed its wiki
-# from the corpus's eval wiki afterwards (librarian.sh seed).
+#
+# The data root is named, never defaulted, and must be named like the synthetic one
+# (PA_SYNTHETIC_DATA_ROOT: pa-home-synthetic, or pa-home-synthetic-<anything>): the real data
+# root, the deploy default, never holds a fictional owner or episode (#99). The other scripts work
+# on a synthetic data root with PA_DATA_ROOT set to it. deploy/home/README.md says how to seed its
+# wiki from the corpus's eval wiki afterwards (librarian.sh seed).
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-usage() { die "usage: seed-data-root.sh [--corpus argus|scale]"; }
+usage() { die "usage: seed-data-root.sh [--corpus argus|scale] <synthetic data root>"; }
 corpus=argus
 case ${1:-} in
-  --corpus) (($# == 2)) || usage; corpus=$2 ;;
-  --corpus=*) (($# == 1)) || usage; corpus=${1#--corpus=} ;;
-  "") ;;
-  *) usage ;;
+  --corpus) (($# == 3)) || usage; corpus=$2; shift 2 ;;
+  --corpus=*) (($# == 2)) || usage; corpus=${1#--corpus=}; shift ;;
+  *) (($# == 1)) || usage ;;
 esac
 [[ $corpus == argus || $corpus == scale ]] || die "--corpus takes argus or scale, not $corpus"
+target=$(synthetic_data_root "$1") ||
+  die "seed-data-root.sh seeds only a synthetic data root, named like $PA_SYNTHETIC_DATA_ROOT," \
+    "never the real one ($PA_REAL_DATA_ROOT): not $1"
+# Every path below, and ingest.sh's, follows it.
+export PA_DATA_ROOT=$target
+source "$DEPLOY_DIR/lib.sh"
 
 if [[ -d $PA_L0 ]]; then
   log "data root $PA_DATA_ROOT is seeded"

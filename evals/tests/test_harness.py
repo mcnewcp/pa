@@ -2,11 +2,12 @@ import contextlib
 import shutil
 import stat
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from pa_core.status import Status, read_status
 from pa_evals.agent import (
     AgentAnswer,
     AgentRequest,
@@ -21,7 +22,7 @@ from pa_evals.eval_wiki import load_eval_wiki
 from pa_evals.harness import CorpusCopyError, run_eval
 from pa_evals.injection import InjectionCheckError
 from pa_evals.judge import ScriptedJudge, Verdict
-from pa_evals.results import RunResults
+from pa_evals.results import IngestCounts, RunResults
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CORPUS = FIXTURES / "corpus"
@@ -208,7 +209,64 @@ def test_the_agent_is_asked_from_the_as_of_time_against_the_ingested_corpus(eval
     all_episodes = sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
     assert seen["hotel-block-deadline"] == (eval_set.as_of, "Argus McNevans", all_episodes)
     assert seen["day-of-week"][0] == datetime.fromisoformat("2026-10-10T09:00:00-05:00")
-    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+    assert results.ingest == IngestCounts(ingested=4, unchanged=0, quarantined=0)
+
+
+class StatusReadingAgent:
+    """Reads the status file it's given, and the modes of it and its directory."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, tuple[Status, list[int]]] = {}
+
+    def answer(self, request: AgentRequest) -> AgentAnswer:
+        assert request.status is not None
+        modes = [path.stat().st_mode for path in (request.status, request.status.parent)]
+        self.seen[request.question_id] = (read_status(request.status), modes)
+        return AgentAnswer("Oct 9.")
+
+
+def test_a_frozen_corpus_run_gives_the_agent_a_status_with_every_watermark_at_the_as_of_time(
+    eval_set,
+):
+    agent = StatusReadingAgent()
+
+    run_eval(CORPUS, eval_set.only("hotel-block-deadline"), agent, ScriptedJudge({}))
+
+    status, modes = agent.seen["hotel-block-deadline"]
+    assert set(status.sources) == {"gmail", "icloud_calendar", "obsidian"}
+    for source in status.sources.values():
+        assert source.watermark == eval_set.as_of
+        assert source.cadence == timedelta(minutes=15)
+        assert source.last_failure is None
+    assert status.updated_at == eval_set.as_of
+    # Files alone: no wiki, so nothing is current through anything.
+    assert status.wiki.current_through is None
+    writable = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    assert [mode & writable for mode in modes] == [0, 0]
+
+
+def test_a_question_with_its_own_as_of_time_gets_a_status_at_that_time(eval_set):
+    agent = StatusReadingAgent()
+
+    run_eval(CORPUS, eval_set.only("hotel-block-deadline", "day-of-week"), agent, ScriptedJudge({}))
+
+    own = datetime.fromisoformat("2026-10-10T09:00:00-05:00")
+    watermarks = {
+        question: {source.watermark for source in status.sources.values()}
+        for question, (status, _) in agent.seen.items()
+    }
+    assert watermarks == {"hotel-block-deadline": {eval_set.as_of}, "day-of-week": {own}}
+
+
+def test_with_a_wiki_the_status_says_the_wiki_is_current_through_the_corpuss_capture(eval_set):
+    agent = StatusReadingAgent()
+
+    run_with_the_eval_wiki(eval_set, agent)
+
+    status, _ = agent.seen["hotel-block-deadline"]
+    # Every episode of a frozen corpus is captured at the set's as-of time, and the eval wiki
+    # was replayed over all of them.
+    assert status.wiki.current_through == eval_set.as_of
 
 
 def split_corpus(tmp_path: Path) -> tuple[Path, Path]:
@@ -234,7 +292,7 @@ def test_a_corpus_in_several_directories_is_ingested_as_their_union(eval_set, tm
     results = run_eval(corpus, eval_set, LookingAgent(), ScriptedJudge(verdicts))
 
     assert seen == sorted([DEADLINE_EMAIL, FIRST_EMAIL, SWIM_EVENT, SWIM_NOTE])
-    assert results.ingest.model_dump() == {"ingested": 4, "unchanged": 0, "quarantined": 0}
+    assert results.ingest == IngestCounts(ingested=4, unchanged=0, quarantined=0)
 
 
 def test_a_payload_in_two_of_a_corpuss_directories_is_refused(eval_set, tmp_path):
@@ -387,6 +445,25 @@ def test_a_citation_counts_as_opened_only_when_the_session_read_its_file(eval_se
     [result] = results.questions
     assert result.cited_opened == [DEADLINE_EMAIL]
     assert results.overall.cited_opened == 0.25
+
+
+def test_each_answer_records_which_of_its_evidence_reached_the_session_cited_or_not(eval_set):
+    """So a verdict can tell evidence never found from evidence found and left uncited (#100)."""
+    eval_set = eval_set.only("swim-lessons-plan", "who-asked-about-hotel")
+    answers = {
+        # Opened the note without citing it, and never opened the calendar event.
+        "swim-lessons-plan": AgentAnswer(
+            f"Saturdays [ep:{DEADLINE_EMAIL}].", tool_calls=(read(SWIM_NOTE), read(DEADLINE_EMAIL))
+        ),
+        # Its tool calls weren't recorded, so what reached it is unknown.
+        "who-asked-about-hotel": f"You [ep:{FIRST_EMAIL}].",
+    }
+    verdicts = {q.id: correct() for q in eval_set.questions}
+
+    swim, hotel = run(eval_set, answers, verdicts).questions
+
+    assert swim.evidence_opened == [SWIM_NOTE]
+    assert hotel.evidence_opened is None
 
 
 def test_the_share_of_cited_episodes_opened_pools_the_citations_of_answers_with_tool_calls(

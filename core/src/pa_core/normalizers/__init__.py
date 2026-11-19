@@ -31,6 +31,23 @@ _FORMATS: dict[Source, tuple[str, Callable[[Owner], Normalizer]]] = {
 """Each source's one payload format: its native extension, and its normalizer for an owner."""
 
 
+_ID_PINS_CONTENT: dict[Source, Callable[[bytes], bool]] = {
+    Source.ICLOUD_CALENDAR: calendar.id_pins_content,
+}
+
+
+def id_pins_content(source: Source, raw: bytes) -> bool:
+    """Whether the episode id `raw` normalizes to already pins everything its envelope says.
+
+    Then a payload landed under an id L0 already holds is the same version, even if its
+    envelope differs in what's derived from when it was captured, such as a calendar series'
+    occurrence list (ADR-0008). Elsewhere a difference means the source changed an item without
+    changing its version, and the payload is a conflict.
+    """
+    pins = _ID_PINS_CONTENT.get(source)
+    return pins is not None and pins(raw)
+
+
 def payload_extension(source: Source) -> str:
     """The native extension of the one payload format `source` produces."""
     extension, _ = _FORMATS[source]

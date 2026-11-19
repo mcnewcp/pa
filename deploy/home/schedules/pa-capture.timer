@@ -1,0 +1,13 @@
+# Starts the capture cycle (pa-capture.service) every 15 minutes, on the quarter hour. After the
+# devbox was off it starts one at boot for the cycles it missed (Persistent=), and never a
+# second while one runs. install-schedules.sh installs it; --enable enables it.
+[Unit]
+Description=PA: the capture cycle, every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+Unit=pa-capture.service
+
+[Install]
+WantedBy=timers.target

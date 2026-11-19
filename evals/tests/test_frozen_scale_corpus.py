@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pa_core.envelope import Envelope
+from pa_core.envelope import Envelope, Source
 from pa_core.librarian.identity import identity_table
 from pa_evals import frozen, injection
 from pa_evals.agent import AgentAnswer, AgentRequest
@@ -29,6 +29,10 @@ ARGUS_PAYLOADS_SHA256 = "49a4ab1a6894854b3fcd1171033570b45431ae1f00f2e62170ca64f
 
 V0_12_QUESTIONS_SHA256 = "7c80704961bf819c7eb9da039513ed121c14e22ad73d3a13d154051ba6ad12d6"
 """The digest of the scale eval set's 40 questions as v0.12 asked them, evidence ids included."""
+
+CALENDAR_EPISODES_SHA256 = "d563035ca33b2802989026745983e9196096d74a85f5a49ced2c79f4cea6c9b0"
+"""The digest of every calendar episode's id, content hash, raw ref and body, taken before
+calendar payloads gained capture headers (ADR-0008): payloads without one are untouched."""
 
 V0_12_1_QUESTIONS = [
     "overdue-sweep",
@@ -63,6 +67,7 @@ def scale_l0(eval_set: EvalSet) -> tuple[IngestCounts, list[Envelope]]:
 
     one_question = eval_set.only(eval_set.questions[0].id)
     results = run_eval(SCALE.payloads, one_question, ListingAgent(), ScriptedJudge({}))
+    assert results.ingest is not None
     return results.ingest, envelopes
 
 
@@ -99,6 +104,20 @@ def test_ingesting_the_scale_corpus_lands_every_payload_and_quarantines_nothing(
     assert counts.quarantined == 0
     assert counts.ingested == payloads == len(episodes)
     assert 1150 <= payloads <= 1300
+
+
+def test_the_calendar_episodes_keep_their_ids_bodies_and_hashes(scale_l0):
+    _, envelopes = scale_l0
+    calendar = sorted(
+        (e for e in envelopes if e.source == Source.ICLOUD_CALENDAR), key=lambda e: e.episode_id
+    )
+    digest = hashlib.sha256()
+    for envelope in calendar:
+        fields = (envelope.episode_id, envelope.content_hash, envelope.raw_ref, envelope.body)
+        digest.update("\0".join(fields).encode() + b"\n")
+
+    assert len(calendar) == 130
+    assert digest.hexdigest() == CALENDAR_EPISODES_SHA256
 
 
 def test_every_evidence_id_in_the_scale_eval_set_exists_in_l0(ingested, eval_set: EvalSet):

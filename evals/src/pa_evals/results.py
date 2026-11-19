@@ -58,6 +58,10 @@ class QuestionResult(BaseModel):
     cited_opened: list[str] | None = None
     """Cited ids whose contents reached the session (see `pa_evals.citations.opened`); None
     where tool calls weren't recorded."""
+    evidence_opened: list[str] | None = None
+    """Evidence ids whose contents reached the session, cited or not, so evidence never found
+    can be told from evidence found and left uncited; None where tool calls weren't recorded,
+    and in results written before it was."""
 
 
 class Scores(BaseModel):
@@ -110,6 +114,17 @@ class IngestCounts(BaseModel):
     quarantined: int
 
 
+class CutResult(BaseModel):
+    """The cut a run over a cut asked against, in place of an ingested corpus."""
+
+    name: str
+    as_of: datetime
+    """When the cut was taken: it holds every episode captured by then."""
+    episodes: int
+    wiki_commit: str | None
+    """The live wiki's commit the cut holds; None when it holds no wiki."""
+
+
 class WikiResult(BaseModel):
     """The eval wiki a files-plus-wiki run gave the assistant."""
 
@@ -141,7 +156,10 @@ class RunResults(BaseModel):
     claims-graph runs recorded their checks in this same shape."""
     as_of: datetime
     """The eval set's default as-of time."""
-    ingest: IngestCounts
+    ingest: IngestCounts | None = None
+    """What ingesting the corpus did; None in a run over a cut, which ingests nothing."""
+    cut: CutResult | None = None
+    """The cut the run asked against; None in a run over a corpus."""
     overall: Scores
     categories: dict[Category, Scores]
     """Scores per category, in the order categories first appear in the eval set."""
