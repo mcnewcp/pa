@@ -8,7 +8,7 @@ which problems are offered, in what order, or what each is called.
 A candidate is one of two things:
 
 - **A lint warning**: an orphan page, a loop past due or open too long, a duplicate candidate,
-  a slug that reached the page threshold without a page, or a "needs lookup" marker.
+  an engaged slug that reached the page threshold without a page, or a "needs lookup" marker.
 - **A problem lint has no warning for**, since only dreaming acts on it. These are found
   here, against lint's thresholds:
   - a stale page, which observations have linked on enough days since it was last updated;
@@ -40,7 +40,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import DAYS, Page, linked_days, pages
+from pa_core.librarian.wiki import ACTIVE, DAYS, Page, linked_days, pages
 from pa_core.owner import Owner
 
 
@@ -191,15 +191,11 @@ def _stale(
             )
 
 
-_ACTIVE = "active"
-"""The status of a page whose matter is live. Every other status says it is over, for good or
-for now: `settled`, `dormant`, `inactive`."""
-
-
 def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
     """A page that isn't active while a loop of its is open: a loop on the page itself, or a
-    loop on another page that names it as a party. Either the status is wrong or the loop is
-    no longer owed; L0 says which."""
+    loop on another page that names it as a party. Every status but `active` says the matter
+    is over, for good or for now (`settled`, `dormant`, `inactive`), so either the status is
+    wrong or the loop is no longer owed; L0 says which."""
     holding: dict[str, list[str]] = defaultdict(list)
     """For each slug, the page holding each open loop of its, once per loop."""
     for page in pages:
@@ -210,7 +206,7 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
     for page in pages:
         status = page.fields.get("status")
         held = holding.get(page.slug)
-        if not held or status == _ACTIVE or status not in page.page_type.statuses:
+        if not held or status == ACTIVE or status not in page.page_type.statuses:
             continue
         where = tuple(dict.fromkeys(held))
         yield Candidate(
@@ -230,7 +226,7 @@ def _quiet(
     page no observation has linked yet has nothing to measure from, and isn't one."""
     for page in pages:
         days = linked.get(page.slug)
-        if page.fields.get("status") != _ACTIVE or not days:
+        if page.fields.get("status") != ACTIVE or not days:
             continue
         quiet = (thresholds.today - days[-1]).days
         if quiet >= thresholds.quiet_days:

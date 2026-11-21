@@ -71,6 +71,9 @@ Write only day logs. Pages are consolidation's.
      lists it, or else its group's suggested slug. For someone with no address in the table
      (a nickname in a body, a child, a doctor named in a note), look for an existing page or
      alias under `people/`, `orgs/`, and `topics/` before you coin a slug.
+   - When the sender's group is marked `automated`, link its organization, or else the topic
+     it writes about, in place of the mailbox's own slug: what a no-reply address sends is
+     its organization's doing.
    - Keep topics coarse: the matter the owner would ask about by name ("the pergola build",
      not "the lumber order"). Reuse an existing topic slug whenever the episode belongs to it.
 4. For a daily note that `supersedes` earlier versions, find the observations citing those
@@ -88,19 +91,33 @@ Write only pages, in `people/`, `orgs/`, and `topics/`. The day logs stay exactl
 and `index.md` is the host's.
 
 The prompt gives this run's new observations, the reference counts (how many distinct days
-each slug is linked on, and its page if it has one), and the identity table, and may give lint
-warnings.
+each slug is linked on, whether the owner has engaged with it, and its page if it has one),
+and the identity table, and may give lint warnings.
 
 1. Read `wiki-schema.md`, then each new observation, opening its episode wherever the
    observation alone doesn't settle what changed.
 2. **Fold** each observation into the pages it bears on: their current state, decisions, open
    loops, aliases, and addresses. Most observations change no page: a page holds where things
    stand and what changed, never a transcript.
-3. **Create pages** for slugs with `reaches_threshold` and no page, and for any slug a
-   decision or loop line of yours names. Before creating one, check that it isn't already a
-   page under another name: search the pages' `aliases`, the addresses in `emails` and
-   `domains`, and slugs that differ only slightly (`jr` and `jordan-reyes`, `pcd` and
-   `pinecrest-dental`). If it is, add the new name to that page's aliases instead.
+3. **Create pages.** A slug with no page gets one in two cases:
+   - It has `reaches_threshold`. A person also needs `engaged`: someone who only ever writes
+     to the owner stays in the day logs, however often they write, until the owner writes
+     back, notes them, or meets them. An organization or a topic needs only the threshold.
+     The identity table's `people` and `organizations` say which a slug is; read the episodes
+     for a slug in neither.
+   - A slug a decision or loop line of yours names gets a page at once, engaged or not.
+
+   A group marked `automated` never gets a person page: it is a mailbox, and what it sends
+   goes on its organization's page, or else its topic's. When lint reports a person page
+   whose only addresses are automated, merge it into that page (creating the page if there
+   is none) as Corrections describes a merge: move its loops and notes there, add its slug to
+   that page's aliases, leave its address off, and write the person page with no content so
+   the host removes it.
+
+   Before creating a page, check that it isn't already a page under another name: search the
+   pages' `aliases`, the addresses in `emails` and `domains`, and slugs that differ only
+   slightly (`jr` and `jordan-reyes`, `pcd` and `pinecrest-dental`). If it is, add the new
+   name to that page's aliases instead.
    - Copy the type's template, replace every `<placeholder>`, and delete the example lines
      of sections you have nothing for. Lint rejects a page with a placeholder left in it.
    - Copy `emails` and `domains` exactly from the identity table, never from an episode's
@@ -112,6 +129,11 @@ warnings.
      [[pinecrest-dental]].`, cited).
 4. **Loops.** Record every request and commitment still open as a loop, on its one page (the
    topic's page, or else the other party's), never on two.
+   - A cold request opens no loop. A request is cold when its sender is someone the owner has
+     never engaged with (the sender's slug has `engaged` false) and it is about nothing the
+     owner started: a pitch, a recruiter's note, a stranger's ask. It stays an observation in
+     the day log, and no page is made for it. A request about something the owner started (an
+     order, an application, a booking) is a loop like any other, whoever sends it.
    - Record implied waits as loops too, owed by whoever will deliver, with `(implied)` at the
      end of `<what>`: a permit office's "applications are reviewed within 10 business days" is
      a loop it promised, due on the tenth business day, and the owner's note "the vet will
@@ -247,9 +269,10 @@ an applied outcome, and no day log changed.
 - **`orphan`**: a page that no page or day log links to. When L0 shows where it belongs (the
   topic it is part of, the organization a person works at), add a cited line that links it
   to that page, and name the page you changed. Otherwise dismiss it.
-- **`slug-without-page`**: a `slug` linked on enough days to have a page, with none. Create
-  its page as consolidation's step 3 does, checking first that it isn't already a page under
-  another name, and name the page you created or changed.
+- **`slug-without-page`**: a `slug` linked on enough days to have a page, with none. The host
+  offers one only when the owner has engaged with it, so a person's passes step 3's test.
+  Create its page as consolidation's step 3 does, checking first that it isn't already a
+  page under another name, and name the page you created or changed.
 - **`needs-lookup`**: a `[needs lookup: ...]` marker for outside information. When an episode
   now answers the question, replace the marker with the cited answer. Otherwise dismiss it:
   the answer is not in L0, and you never write from your own knowledge.
