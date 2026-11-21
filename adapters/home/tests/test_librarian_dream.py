@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from pa_core.librarian.candidates import CandidateKind
-from pa_core.librarian.dreaming import Applied, Dismissed, Outcomes
+from pa_core.librarian.dreaming import OUTCOMES, Applied, Dismissed, Outcomes, Proposed
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.cut import take_cut
@@ -403,7 +403,7 @@ def test_the_commit_message_counts_the_candidates_and_outcomes_and_lists_each_on
     assert dream() == 0
 
     summary, listed, last = commit_messages(data_root)[0].split("\n\n")
-    assert summary == "dreaming run: 2 candidates, 1 applied, 1 dismissed"
+    assert summary == "dreaming run: 2 candidates, 1 applied, 0 proposed, 1 dismissed"
     assert listed.splitlines() == [
         "Candidates:",
         "- c01 · orphan · topics/kitchen.md · dismissed",
@@ -423,7 +423,7 @@ def test_the_commit_message_counts_the_candidates_and_outcomes_and_lists_each_on
     # The kitchen is still an orphan.
     assert recorded["Lint-Warnings"] == "1"
     out = capsys.readouterr().out
-    assert "judged 2 candidates (1 applied, 1 dismissed)" in out
+    assert "judged 2 candidates (1 applied, 0 proposed, 1 dismissed)" in out
     assert "1 lint warnings" in out
 
 
@@ -567,7 +567,7 @@ def test_every_lint_warning_is_offered_as_a_candidate_with_its_kind_and_pages(
     [session] = sessions(data_root, "dreaming")
     assert session["candidates"] == [{"id": "c01", **candidate}]
     summary = commit_messages(data_root)[0].splitlines()[0]
-    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+    assert summary == "dreaming run: 1 candidates, 0 applied, 0 proposed, 1 dismissed"
 
 
 def test_a_slug_at_the_threshold_is_a_candidate_only_once_the_owner_has_engaged_with_it(
@@ -623,10 +623,10 @@ DISMISSED = {"candidate": "c01", "outcome": "dismissed"}
 INVALID_OUTCOMES = {
     "no outcomes at all": ([], "holds no outcomes"),
     "outcomes that aren't JSON": ([{"final": "```json\n{outcomes: c01\n```"}], "aren't JSON"),
-    "an outcome that is neither applied nor dismissed": (
+    "an outcome that is none of applied, proposed, and dismissed": (
         [reporting({"candidate": "c01", "outcome": "fixed"})],
         "outcomes.0: Input tag 'fixed' found using 'outcome' does not match any of the "
-        "expected tags: 'applied', 'dismissed'",
+        "expected tags: 'applied', 'proposed', 'dismissed'",
     ),
     "a field no outcome has": (
         [reporting({**DISMISSED, "because": "it is fine"})],
@@ -668,7 +668,7 @@ def test_missing_or_invalid_outcomes_resume_the_session_to_report_them(
     assert resumed["prompt"].startswith("Phase: dreaming\n")
     assert told in resumed["prompt"]
     summary, _, last = commit_messages(data_root)[0].split("\n\n")
-    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+    assert summary == "dreaming run: 1 candidates, 0 applied, 0 proposed, 1 dismissed"
     recorded = fields(last)
     # A resumed session's cost and turns add up over its attempts.
     assert recorded["Dreaming-Resumes"] == "1"
@@ -703,7 +703,7 @@ def test_the_outcomes_are_the_last_json_block_of_the_sessions_final_message(data
 
     assert len(sessions(data_root, "dreaming")) == 1
     summary = commit_messages(data_root)[0].splitlines()[0]
-    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+    assert summary == "dreaming run: 1 candidates, 0 applied, 0 proposed, 1 dismissed"
 
 
 def test_outcomes_still_invalid_after_two_resumes_fail_the_run_and_leave_the_wiki(
@@ -896,7 +896,7 @@ def test_the_host_removes_a_merged_page_rewrites_its_links_and_regenerates_the_i
     assert "dave" not in files["index.md"].replace("david-kim", "")
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
     summary, listed, _ = commit_messages(data_root)[0].split("\n\n")
-    assert summary == "dreaming run: 1 candidates, 1 applied, 0 dismissed"
+    assert summary == "dreaming run: 1 candidates, 1 applied, 0 proposed, 0 dismissed"
     assert listed.splitlines()[1] == (
         f"- c01 · duplicate · {PERSON}, people/dave.md · applied: people/dave.md, {PERSON}"
     )
@@ -1231,7 +1231,7 @@ def test_a_stale_page_a_status_that_disagrees_with_its_loops_and_a_quiet_page_ar
     [session] = sessions(data_root, "dreaming")
     assert session["candidates"] == [{"id": "c01", **candidate}]
     summary = commit_messages(data_root)[0].splitlines()[0]
-    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+    assert summary == "dreaming run: 1 candidates, 0 applied, 0 proposed, 1 dismissed"
 
 
 def test_candidates_are_offered_in_a_fixed_order_of_kinds(data_root: Path):
@@ -1283,7 +1283,7 @@ def test_a_stale_page_brought_up_to_date_is_committed_and_claimed_by_its_outcome
     assert wiki_files(data_root)[TOPIC] == current
     assert git(data_root, "show", "--format=", "--name-only", "HEAD").split() == [TOPIC]
     summary, listed, _ = commit_messages(data_root)[0].split("\n\n")
-    assert summary == "dreaming run: 1 candidates, 1 applied, 0 dismissed"
+    assert summary == "dreaming run: 1 candidates, 1 applied, 0 proposed, 0 dismissed"
     assert listed.splitlines() == ["Candidates:", f"- c01 · stale · {TOPIC} · applied: {TOPIC}"]
     assert commit_messages(data_root)[1:] == history
     # Updated after everything that links it, the page is no longer a candidate.
@@ -1332,7 +1332,7 @@ def test_the_instructions_name_the_dreaming_phase_and_how_to_judge_every_kind_of
     assert "`Phase: dreaming`" in claude_md.split("\n## ")[0]
     for kind in CandidateKind:
         assert f"`{kind}`" in instructions, f"nothing says how to judge a {kind} candidate"
-    for outcome in ("applied", "dismissed"):
+    for outcome in OUTCOMES:
         assert f"**{outcome}**" in instructions
 
 
@@ -1341,4 +1341,4 @@ def test_the_instructions_example_outcomes_are_in_the_shape_the_host_accepts():
 
     outcomes = Outcomes.model_validate_json(example).outcomes
 
-    assert {type(outcome) for outcome in outcomes} == {Applied, Dismissed}
+    assert {type(outcome) for outcome in outcomes} == {Applied, Proposed, Dismissed}

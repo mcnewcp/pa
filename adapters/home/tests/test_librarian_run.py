@@ -166,7 +166,7 @@ def wiki_files(data_root: Path) -> dict[str, str]:
     }
 
 
-NO_PAGES_INDEX = "# Index\n\nNo pages yet.\n"
+NO_PAGES_INDEX = "# Index\n\nOpen proposals: 0\n\nNo pages yet.\n"
 """The index the host generates for a wiki without pages."""
 
 
@@ -831,6 +831,8 @@ def test_consolidation_creates_and_edits_pages_and_the_host_regenerates_the_inde
         """\
         # Index
 
+        Open proposals: 0
+
         ## People
 
         - [[david-kim]]: Old friend, getting married on Oct 24.
@@ -868,6 +870,8 @@ def test_consolidation_creates_and_edits_pages_and_the_host_regenerates_the_inde
     assert wiki_files(data_root)["index.md"] == textwrap.dedent(
         """\
         # Index
+
+        Open proposals: 0
 
         ## People
 
@@ -2842,6 +2846,8 @@ def test_the_index_lists_active_pages_newest_first_then_the_rest_by_slug(data_ro
     assert wiki_files(data_root)["index.md"] == textwrap.dedent(
         """\
         # Index
+
+        Open proposals: 0
 
         ## People
 

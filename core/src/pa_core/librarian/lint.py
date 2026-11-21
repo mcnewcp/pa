@@ -2,9 +2,10 @@
 
 An error fails the run. The rules so far:
 
-- **Layout.** Nothing but `index.md` and Markdown files directly in `days/`, `people/`,
-  `orgs/`, and `topics/`: no dotfiles, symbolic links, subdirectories, other files, or any
-  `CLAUDE.md`, so nothing in the wiki can be loaded as instructions or run as code (ADR-0007).
+- **Layout.** Nothing but `index.md`, the root files (`proposals.md`), and Markdown files
+  directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic links,
+  subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded as
+  instructions or run as code (ADR-0007).
   A day log is named for its day (`YYYY-MM-DD.md`), a page for its slug (`<slug>.md`).
 - **Day logs** hold only observation lines (and blank lines).
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields
@@ -12,6 +13,10 @@ An error fails the run. The rules so far:
   well-formed decision and loop lines in Decisions and Open loops; a citation on every other
   line; and no template `<placeholder>` left in its summary, aliases, or title.
 - **Citations** name episodes that are in L0.
+- **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
+  nothing in them but well-formed proposal lines, open ones under Open and answered ones under
+  Answered. No two share an id; a proposal's text is short and holds no URL; and every link of
+  an open proposal goes to a page.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
   lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
@@ -34,6 +39,7 @@ and listing it in `_RULES` (rules about the layout itself live in `_layout`).
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -44,7 +50,9 @@ from pathlib import Path
 from pa_core.envelope import Envelope
 from pa_core.librarian.engagement import engaged_days, engagers
 from pa_core.librarian.identity import is_automated_mailbox
+from pa_core.librarian.links import alias_targets
 from pa_core.librarian.wiki import (
+    ANSWERED,
     DAYS,
     DECISION_FORMAT,
     DECISIONS,
@@ -52,11 +60,16 @@ from pa_core.librarian.wiki import (
     INDEX,
     LOOP_FORMAT,
     NEEDS_LOOKUP,
+    OPEN,
     OPEN_LOOPS,
     ORGANIZATION,
     PAGE_TYPES,
     PERSON,
     PLACEHOLDER,
+    PROPOSAL_FORMAT,
+    PROPOSAL_TEXT_LIMIT,
+    PROPOSALS,
+    ROOT_FILES,
     FieldValue,
     Page,
     PageFormatError,
@@ -70,6 +83,7 @@ from pa_core.librarian.wiki import (
     parse_decision,
     parse_loop,
     parse_observation,
+    parse_proposal,
     read_page,
     slugify,
 )
@@ -208,6 +222,7 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
     for file in files:
         for rule in _RULES:
             errors.extend(rule(file, l0))
+    errors.extend(_proposals(files, tree))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
     engaged = engaged_days(tree, l0, owner)
@@ -222,16 +237,16 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
 
 
 _NOT_IN_LAYOUT = (
-    "isn't part of the wiki's layout: only index.md and Markdown in days/, people/, orgs/, "
-    "and topics/"
+    f"isn't part of the wiki's layout: only {', '.join((INDEX, *ROOT_FILES))}, and Markdown in "
+    "days/, people/, orgs/, and topics/"
 )
 
 
 def _layout(tree: Path, files: list[WikiFile]) -> Iterator[Finding]:
     """Findings about anything outside the layout; the files inside it go into `files`."""
     for entry in sorted(tree.iterdir()):
-        if entry.name == INDEX and entry.is_file() and not entry.is_symlink():
-            yield from _read(entry, INDEX, files)
+        if entry.name in (INDEX, *ROOT_FILES) and entry.is_file() and not entry.is_symlink():
+            yield from _read(entry, entry.name, files)
         elif entry.name in FOLDERS and entry.is_dir() and not entry.is_symlink():
             yield from _folder(entry, files)
         else:
@@ -447,14 +462,116 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterato
             )
 
 
+_URL = re.compile(
+    r"[a-z][a-z0-9+.-]*://\S*"  # anything with a scheme
+    r"|\bwww\.\S+"
+    r"|\bmailto:\S+"
+    r"|\]\(\S*"  # a Markdown link's target
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/\S+",  # a host and a path
+    re.IGNORECASE,
+)
+"""A web address, or anything a reader's app would turn into one."""
+
+
+def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
+    """`proposals.md` follows its schema: the two sections, in order, with only a `# <title>`
+    before them, and in them only proposal lines, each in its section, with its own id, short
+    plain text, and, while it's open, links that go to pages.
+
+    A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
+    paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
+    the host is about to rewrite to its page's (`links.py`). An answered proposal is history:
+    its links stay as written, whatever became of the pages.
+    """
+    file = next((file for file in files if file.path == PROPOSALS), None)
+    if file is None:
+        return
+    resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
+    expected = (OPEN, ANSWERED)
+    headings: list[tuple[int, str]] = []
+    titled = False
+    first: dict[str, int] = {}
+    """The line of the first proposal with each id."""
+    for number, line in enumerate(file.lines, start=1):
+        if not line.strip():
+            continue
+        if line.startswith("## "):
+            headings.append((number, line.removeprefix("## ").strip()))
+            continue
+        if not headings:
+            if titled or not line.startswith("# "):
+                yield Finding(
+                    PROPOSALS,
+                    "text before its first section: only a `# <title>` line may come before "
+                    f"the sections, got {line!r}",
+                    number,
+                )
+            titled = True
+            continue
+        proposal = parse_proposal(line)
+        if proposal is None:
+            yield Finding(
+                PROPOSALS, f"malformed proposal: expected `{PROPOSAL_FORMAT}`, got {line!r}", number
+            )
+            continue
+        name = proposal.id
+        section = headings[-1][1]
+        if section in expected and proposal.is_open != (section == OPEN):
+            state, belongs = ("open", OPEN) if proposal.is_open else ("answered", ANSWERED)
+            yield Finding(
+                PROPOSALS,
+                f"{name} is {state}, under `## {section}`: {state} proposals are listed under "
+                f"`## {belongs}`",
+                number,
+            )
+        if name in first:
+            yield Finding(
+                PROPOSALS,
+                f"{name} is already the id of the proposal on line {first[name]}: every "
+                "proposal has an id of its own, and an id is never reused",
+                number,
+            )
+        first.setdefault(name, number)
+        if len(proposal.text) > PROPOSAL_TEXT_LIMIT:
+            yield Finding(
+                PROPOSALS,
+                f"{name}'s text is {len(proposal.text)} characters, more than the "
+                f"{PROPOSAL_TEXT_LIMIT} a proposal may have: ask one short question",
+                number,
+            )
+        if url := _URL.search(proposal.text):
+            yield Finding(
+                PROPOSALS,
+                f"{name}'s text holds a URL ({url[0]}): a proposal is plain text, linking only "
+                "pages, as [[slug]]",
+                number,
+            )
+        for slug in dict.fromkeys(proposal.links if proposal.is_open else ()):
+            if slug not in resolvable:
+                yield Finding(
+                    PROPOSALS,
+                    f"{name} links [[{slug}]], which has no page: an open proposal links only "
+                    "the pages it is about",
+                    number,
+                )
+    if tuple(name for _, name in headings) != expected:
+        yield Finding(
+            PROPOSALS,
+            f"wrong sections: expected {', '.join(f'`## {name}`' for name in expected)}, in "
+            f"that order; got {', '.join(f'`## {name}`' for _, name in headings) or 'none'}",
+            headings[0][0] if headings else None,
+        )
+
+
 # Warnings
 
 
 def _orphans(files: Sequence[WikiFile], pages: Sequence[Page]) -> Iterator[Finding]:
-    """A page nothing else in the wiki links to (the index aside)."""
+    """A page no other page and no day log links to. The files at the wiki's top level don't
+    count: the index lists every page, and a proposal about a page doesn't place it."""
     linked_from: dict[str, set[str]] = defaultdict(set)
     for file in files:
-        if file.path != INDEX:
+        if "/" in file.path:
             for line in file.lines:
                 for slug in links(line):
                     linked_from[slug].add(file.path)
@@ -590,9 +707,9 @@ def _slugs_without_pages(
 
 
 def _needs_lookup(files: Sequence[WikiFile]) -> Iterator[Finding]:
-    """Outside information still marked as needing a lookup."""
+    """Outside information still marked as needing a lookup, in a page or a day log."""
     for file in files:
-        if file.path == INDEX:
+        if "/" not in file.path:
             continue
         for number, line in enumerate(file.lines, start=1):
             for match in NEEDS_LOOKUP.finditer(line):

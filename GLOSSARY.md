@@ -166,6 +166,10 @@ _Avoid_: Consolidation, cleanup
 Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem.
 _Avoid_: Issue, defect, finding, warning
 
+**Proposal**:
+Something the librarian asks the owner because L0 can't settle it: a proposed change the owner accepts or declines, or a question only the owner can answer. Dreaming adds each as one line of `proposals.md` at the wiki's root, with an id, links to the pages it is about, and the episodes behind it. The owner answers in chat, and the answer is what settles it; a proposal is never evidence.
+_Avoid_: Request, task, ticket, to-do
+
 **Correction**:
 An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
 _Avoid_: Fix, override

@@ -2,7 +2,8 @@
 
 After a merge, the merged-away name lives on as an alias of the page it was merged into, and
 the day logs and pages still link it. Once a run's sessions pass, the host rewrites every
-`[[<alias>]]` to `[[<slug>|<alias>]]`, day logs included, so no link is left stale (spec #56).
+`[[<alias>]]` to `[[<slug>|<alias>]]`, day logs and proposals included, so no link is left
+stale (spec #56).
 The rewritten link goes to the page but still shows the name it was written with, so a line
 such as the merge's own observation, "[[okie]] is [[ben-okafor]]", keeps saying what it said:
 "[[ben-okafor|okie]] is [[ben-okafor]]". A piped link keeps the text it shows.
@@ -17,7 +18,15 @@ import re
 from functools import partial
 from pathlib import Path
 
-from pa_core.librarian.wiki import FOLDERS, LINK, OWNER, folder_files, pages, slugify
+from pa_core.librarian.wiki import (
+    FOLDERS,
+    LINK,
+    OWNER,
+    ROOT_FILES,
+    folder_files,
+    pages,
+    slugify,
+)
 
 
 def alias_targets(tree: Path) -> dict[str, str]:
@@ -43,18 +52,27 @@ def _rewritten(targets: dict[str, str], link: re.Match[str]) -> str:
 
 def rewrite_alias_links(tree: Path) -> list[str]:
     """Rewrites links to an alias to its page's slug in every Markdown file of the wiki at
-    `tree`, and returns the files it changed, relative to the wiki."""
+    `tree` that links by slug (day logs, pages, and the root files, such as the proposals), and
+    returns the files it changed, relative to the wiki."""
     targets = alias_targets(tree)
     if not targets:
         return []
+    files = [
+        (f"{folder}/{entry.name}", entry)
+        for folder in FOLDERS
+        for entry in folder_files(tree, folder)
+        if entry.suffix == ".md"
+    ]
+    files += [
+        (name, tree / name)
+        for name in ROOT_FILES
+        if (tree / name).is_file() and not (tree / name).is_symlink()
+    ]
     changed: list[str] = []
-    for folder in FOLDERS:
-        for entry in folder_files(tree, folder):
-            if entry.suffix != ".md":
-                continue
-            text = entry.read_text(encoding="utf-8")
-            rewritten = LINK.sub(partial(_rewritten, targets), text)
-            if rewritten != text:
-                entry.write_text(rewritten, encoding="utf-8")
-                changed.append(f"{folder}/{entry.name}")
+    for path, entry in files:
+        text = entry.read_text(encoding="utf-8")
+        rewritten = LINK.sub(partial(_rewritten, targets), text)
+        if rewritten != text:
+            entry.write_text(rewritten, encoding="utf-8")
+            changed.append(path)
     return changed

@@ -13,7 +13,13 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import PAGE_TYPES, parse_decision, parse_loop, parse_observation
+from pa_core.librarian.wiki import (
+    PAGE_TYPES,
+    parse_decision,
+    parse_loop,
+    parse_observation,
+    parse_proposal,
+)
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
 from pa_home.cli import main
@@ -150,8 +156,32 @@ def test_the_wiki_schemas_example_lines_are_well_formed():
 
     assert len(examples) >= 4
     for line in examples:
-        parsed = parse_observation(line) or parse_decision(line) or parse_loop(line)
+        parsed = (
+            parse_observation(line)
+            or parse_decision(line)
+            or parse_loop(line)
+            or parse_proposal(line)
+        )
         assert parsed is not None, line
+
+
+def test_the_wiki_schema_gives_the_proposals_file_and_its_line_format():
+    schema = WIKI_SCHEMA.read_text()
+    layout = re.search(r"^## Layout\n\n```\n(.*?)^```$", schema, re.MULTILINE | re.DOTALL)
+    assert layout is not None
+    examples = [parse_proposal(line) for line in schema.splitlines()]
+    shown = [proposal for proposal in examples if proposal is not None]
+
+    # The file is in the layout, with an example of an open proposal and of an answered one.
+    assert re.search(r"^proposals\.md ", layout[1], re.MULTILINE)
+    assert [(p.id, p.kind, p.is_open) for p in shown] == [
+        ("P12", "change", True),
+        ("P9", "question", False),
+    ]
+    # An answered proposal cites the owner's answer last.
+    assert shown[1].citations[-1].startswith("assistant_chat_")
+    # And a reader can find the open ones with one grep.
+    assert "| `^- \\[ \\] P[0-9]+ · ` | `proposals.md` |" in schema
 
 
 def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):
