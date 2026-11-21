@@ -59,7 +59,8 @@ def update_retired(tree: Path, *, today: date, retiring: Collection[str] = ()) -
     a retirement, so a file someone edited badly is put right by a person, never rewritten.
     """
     file = tree / RETIRED
-    if file.is_symlink():
+    if file.is_symlink() or (file.exists() and not file.is_file()):
+        # Not a file of the wiki's layout, which lint fails.
         return
     was = file.read_text(encoding="utf-8", errors="replace") if file.is_file() else None
     returned = {page.slug for page in pages(tree)} | alias_targets(tree).keys()

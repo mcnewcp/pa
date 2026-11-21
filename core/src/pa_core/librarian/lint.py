@@ -31,7 +31,8 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
 - **Duplicate candidates**: pages sharing an alias, a page with an alias that's another page's
   slug or name, or pages with near-identical slugs.
 - **Slugs without pages**: linked on enough days to reach the page threshold, and engaged
-  (`engagement.py`), but with no page.
+  (`engagement.py`), but with no page. A retired slug isn't one until the owner engages with
+  it again (`retirement.py`).
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
 Each rule is a function over the wiki's files that yields findings; add a rule by writing one
@@ -52,6 +53,7 @@ from pa_core.envelope import Envelope
 from pa_core.librarian.engagement import engaged_days, engagers
 from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.links import alias_targets
+from pa_core.librarian.retirement import standing
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -89,6 +91,7 @@ from pa_core.librarian.wiki import (
     parse_proposal,
     parse_retirement,
     read_page,
+    read_retired,
     slugify,
 )
 from pa_core.owner import Owner
@@ -235,7 +238,9 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         *_orphans(files, found),
         *_aging_loops(found, thresholds),
         *_duplicate_candidates(found),
-        *_slugs_without_pages(tree, found, thresholds, engaged),
+        *_slugs_without_pages(
+            tree, found, thresholds, engaged, standing(read_retired(tree), engaged)
+        ),
         *_needs_lookup(files),
     ]
     return LintReport(errors=tuple(errors), warnings=tuple(warnings), engaged_days=engaged)
@@ -485,13 +490,17 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
 
     A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
     paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
-    the host is about to rewrite to its page's (`links.py`). An answered proposal is history:
+    the host is about to rewrite to its page's (`links.py`), or a retired slug (`retired.md`
+    lists it): the page a proposal is about may be retired while it waits for its answer. An
+    answered proposal is history:
     its links stay as written, whatever became of the pages.
     """
     file = next((file for file in files if file.path == PROPOSALS), None)
     if file is None:
         return
     resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
+    # A retired slug's link stays good: the proposal may be what brings its page back.
+    resolvable |= read_retired(tree).keys()
     expected = (OPEN, ANSWERED)
     headings: list[tuple[int, str]] = []
     titled = False
@@ -721,17 +730,22 @@ def _nearly(first: str, second: str) -> bool:
 
 
 def _slugs_without_pages(
-    tree: Path, pages: Sequence[Page], thresholds: Thresholds, engaged: Collection[str]
+    tree: Path,
+    pages: Sequence[Page],
+    thresholds: Thresholds,
+    engaged: Collection[str],
+    retired: Collection[str],
 ) -> Iterator[Finding]:
     """A slug the owner has engaged with, linked on enough days to need a page, that has none.
 
     An unengaged slug is left alone: a person the owner never engaged with gets no page at
     the threshold, and before a slug has a page nothing here tells a person's from an
-    organization's.
+    organization's. So is one of the `retired`, the slugs whose retirement stands
+    (`retirement.py`): dreaming cleared its page, and the owner hasn't engaged with it since.
     """
     with_pages = {page.slug for page in pages}
     for slug, days in sorted(linked_days(tree).items()):
-        if slug not in engaged:
+        if slug not in engaged or slug in retired:
             continue
         if len(days) >= thresholds.page_threshold and slug not in with_pages:
             yield Finding(

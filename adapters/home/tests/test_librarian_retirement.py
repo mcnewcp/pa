@@ -501,8 +501,13 @@ def test_a_page_whose_open_loop_moved_to_another_page_may_be_retired(data_root: 
 
 
 def gift() -> dict[str, bytes]:
-    """One more email from David Kim, for the next nightly run to take."""
-    return {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")}
+    """One more email from David Kim, sent yesterday, for the next nightly run to take."""
+    sent_yesterday = mailed(1, "08:00")
+    return {
+        "gmail/gift.eml": email(
+            message_id="wedding-0003@example.net", date=sent_yesterday, subject="Gift"
+        )
+    }
 
 
 LISTED = {"write": RETIRED, "text": retired_file(f"- nina-park · retired {TODAY}")}
@@ -606,3 +611,181 @@ def test_a_wiki_carries_its_retired_slugs_through_the_runs_that_follow(data_root
     assert dream() == 0
 
     assert wiki_files(data_root)[RETIRED] == f"{SHIPPING}\n- nina-park · retired {TODAY}\n"
+
+
+def reference_counts(session: dict) -> dict[str, dict]:
+    """The reference counts a consolidation session was given, by slug: its prompt's second
+    JSON block."""
+    return {count["slug"]: count for count in session["inputs"][1]}
+
+
+def test_the_next_nightly_run_is_told_a_retired_slug_is_retired_and_not_at_the_threshold(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_LIBRARIAN_PAGE_THRESHOLD", "2")
+    # Nina wrote twice, so she and her agency are linked on two days: at the threshold, where
+    # an organization gets a page whether or not the owner has engaged with it.
+    ingest(data_root, {"gmail/listing-2.eml": listing(9, "listing-0002@lakeview.example")})
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    [first] = sessions(data_root, "consolidation")
+    assert reference_counts(first)["lakeview-realty"] == {
+        "slug": "lakeview-realty",
+        "days": 2,
+        "reaches_threshold": True,
+        "engaged": False,
+    }
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": LAKEVIEW, "text": ""},
+            reporting(retiring(), retiring("lakeview-realty", pages=[LAKEVIEW], candidate="c02")),
+        ],
+    )
+    assert dream() == 0
+    listed = retired_file(f"- lakeview-realty · retired {TODAY}", f"- nina-park · retired {TODAY}")
+    assert wiki_files(data_root)[RETIRED] == listed
+    ingest(data_root, gift())
+    script(data_root)
+
+    assert run_librarian() == 0
+
+    session = sessions(data_root, "consolidation")[-1]
+    counts = reference_counts(session)
+    for slug in ("lakeview-realty", "nina-park"):
+        assert counts[slug] == {
+            "slug": slug,
+            "days": 2,
+            "reaches_threshold": False,
+            "engaged": False,
+            "retired": True,
+        }
+    # No other slug carries the flag.
+    assert "retired" not in counts["david-kim"]
+    assert "`retired`" in session["prompt"]
+    # The run made no page for either, and left the list as it was.
+    files = wiki_files(data_root)
+    assert NINA not in files and LAKEVIEW not in files
+    assert files[RETIRED] == listed
+
+
+def test_lint_gives_no_slug_without_page_warning_for_a_retired_slug(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_LIBRARIAN_PAGE_THRESHOLD", "2")
+    run_with_pages(data_root)
+    # The owner has written to David Kim, and he is linked on two days: without a page he
+    # would be a warning. Whatever the candidate, the host retires what its outcome names.
+    script(
+        data_root,
+        dreaming=[{"write": DAVID, "text": ""}, reporting(retiring("david-kim", pages=[DAVID]))],
+    )
+
+    assert dream() == 0
+
+    assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
+    # Another email from him doesn't bring the warning back: he wrote, the owner didn't.
+    ingest(data_root, gift())
+    script(data_root, observation=[{"observe": True, "links": {"Gift": ["david-kim"]}}])
+    assert run_librarian() == 0
+    session = sessions(data_root, "consolidation")[-1]
+    assert session["warnings"] == []
+    assert reference_counts(session)["david-kim"] == {
+        "slug": "david-kim",
+        "days": 3,
+        "reaches_threshold": False,
+        "engaged": True,
+        "retired": True,
+    }
+    assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
+    # And the next dreaming run is offered Nina's page alone, not his slug.
+    script(data_root, dreaming=[reporting(dismissed())])
+    assert dream() == 0
+    offered = sessions(data_root, "dreaming")[-1]["candidates"]
+    assert [(c["kind"], c["pages"]) for c in offered] == [("unengaged", [NINA])]
+
+
+PROPOSALS = "proposals.md"
+ASKED = (
+    "- [ ] P1 · question · Does [[nina-park]] still speak for [[lakeview-realty]]? · "
+    f"proposed {TODAY} [ep:{HOTEL}]"
+)
+"""An open proposal that links Nina's slug."""
+
+
+def proposals_file(*opened: str) -> str:
+    return "\n".join(["# Proposals", "", "## Open", *opened, "", "## Answered", ""])
+
+
+def test_a_link_to_a_retired_slug_lints_clean(data_root: Path):
+    # Her agency's page links her, as the day logs do.
+    agency = page(
+        "organization", "Lakeview Realty", notes=[f"[[nina-park]] is an agent here [ep:{HOTEL}]."]
+    )
+    run_with_pages(data_root, {**pages(), LAKEVIEW: agency})
+    # One run retires her page and asks the owner about her agency, linking her.
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": PROPOSALS, "text": proposals_file(ASKED)},
+            reporting(retiring(), {"candidate": "c02", "outcome": "proposed", "proposal": "P1"}),
+        ],
+    )
+
+    assert dream() == 0
+
+    # The proposal's link was good as the session left it: nothing was resumed.
+    assert len(sessions(data_root, "dreaming")) == 1
+    files = wiki_files(data_root)
+    assert files[PROPOSALS] == proposals_file(ASKED)
+    assert files[LAKEVIEW] == agency
+    assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+    assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
+    # The next nightly run lints the same wiki, and commits.
+    ingest(data_root, gift())
+    script(data_root)
+    assert run_librarian() == 0
+    assert wiki_files(data_root)[PROPOSALS] == proposals_file(ASKED)
+    assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
+
+
+def test_an_open_proposal_already_linking_a_page_doesnt_stop_its_retirement(data_root: Path):
+    run_with_pages(data_root)
+    # An earlier run asked about her, and the owner hasn't answered.
+    asked = (
+        "- [ ] P1 · question · Is [[nina-park]] selling the house next door? · "
+        f"proposed {days_ago(8)} [ep:{HOTEL}]"
+    )
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(asked)})
+    script(data_root, dreaming=[EMPTIED, reporting(retiring())])
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    files = wiki_files(data_root)
+    assert NINA not in files
+    assert files[PROPOSALS] == proposals_file(asked)
+
+
+def test_a_retirement_a_resumed_session_no_longer_reports_leaves_its_emptied_page_to_fail(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    before = tree_state(data_root / "wiki")
+    # First her page is retired, with no outcome for the agency's. Resumed, the session
+    # reports hers as changed and nothing more.
+    claimed = {"candidate": "c01", "outcome": "applied", "pages": [NINA]}
+    script(
+        data_root,
+        dreaming=[EMPTIED, reporting(retiring())],
+        dreaming_resume=[reporting(claimed, dismissed("c02"))],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    error = capsys.readouterr().err
+    assert f"{NINA}:1: bad frontmatter" in error
+    assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert tree_state(data_root / "wiki") == before

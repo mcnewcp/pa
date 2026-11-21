@@ -30,7 +30,7 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal
@@ -80,6 +80,7 @@ from pa_core.librarian.wiki import (
     OPEN_LOOPS,
     PAGE_FOLDERS,
     PROPOSALS,
+    RETIRED,
     Page,
     Proposal,
     citations,
@@ -244,8 +245,6 @@ def run_dreaming(
             offered, tree, runner, now, linter, committed, proposal_caps
         )
         sessions.append((Phase.DREAMING, result))
-        retiring = [slug for o in outcomes if isinstance(o, Applied) for slug in o.retired]
-        update_retired(tree, today=thresholds.today, retiring=retiring)
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
@@ -286,15 +285,19 @@ def _dream(
 ) -> tuple[SessionResult, tuple[Outcome, ...], Proposed | None]:
     """Runs the dreaming session over `offered`, and returns its result, its outcomes, in the
     candidates' order, and its template suggestion, if it made one."""
-    before, was = _tree_state(tree), pages(tree)
+    before = _tree_state(tree)
     standing = read_proposals(tree)
+    retirements = _Retirements(tree, before, now.date())
 
     def require_bounds() -> None:
+        after = _tree_state(tree)
         outside = [
             path
-            for path in _changed(before, _tree_state(tree))
-            if path.partition("/")[0] not in PAGE_FOLDERS and path != PROPOSALS
+            for path in _changed(before, after)
+            if path.partition("/")[0] not in PAGE_FOLDERS and path not in (PROPOSALS, RETIRED)
         ]
+        if retirements.changed_by_session(after):
+            outside = sorted([*outside, RETIRED])
         if outside:
             raise LibrarianRunError(
                 f"the dreaming session changed {', '.join(outside)}, outside the pages; "
@@ -305,13 +308,14 @@ def _dream(
     judged: dict[str | None, Outcome] = {}
 
     def report_problems(attempt: SessionResult) -> Sequence[str]:
+        retirements.undo()
         asked = read_proposals(tree)
         problems = _proposal_problems(standing, asked, caps)
         try:
             reported = _reported(attempt.final_message)
         except InvalidOutcomesError as error:
             return (*error.problems, *problems)
-        problems += _retire(reported, was, before, tree)
+        problems += retirements.carry_out(reported)
         # The bounds held, so everything changed in a folder is a page; a page merged away or
         # retired is gone by now, and gone is changed.
         changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
@@ -365,58 +369,109 @@ def _dream(
     )
 
 
-def _retire(
-    reported: Sequence[Outcome], was: Sequence[Page], before: Collection[str], tree: Path
-) -> list[str]:
-    """Removes the pages a dreaming session retired, and returns what's wrong with the
-    retirements its `reported` outcomes claim that the host can't carry out.
+class _Retirements:
+    """The host's side of the retirements a dreaming session reports
+    (`pa_core.librarian.retirement`): removing each retired page, and keeping `retired.md`.
 
     The session's file tools can't remove a file, so it retires a page as it merges one away,
     by writing it with nothing in it, and an applied outcome names its slug as retired. Only
     an emptied page whose slug an outcome names goes; any other emptied file stays for lint
     to fail, as after a merge.
 
-    `was` is the wiki's pages and `before` its paths, as last committed. A retirement can't
-    be carried out when its slug had no page then, when the page still has content, and when
-    the page held an open loop that no page holds now, open or closed: a loop is never
-    dropped with its page, though it may move to the page it belongs on. The page of such a
-    retirement stays as the session left it.
+    The host does this after each of the session's attempts, before lint, so that lint sees
+    the wiki as it would be committed: a link to a slug the run retires is good at once. Each
+    attempt first undoes what was done for the one before, so what is committed follows from
+    the wiki as the session left it and the outcomes of its last message, and from nothing an
+    earlier message said.
     """
-    problems: list[str] = []
-    carried = [set(loop.citations) for page in pages(tree) for loop in page.loops]
-    for outcome in reported:
-        for slug in outcome.retired if isinstance(outcome, Applied) else ():
-            name = outcome.candidate
-            paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in before]
-            emptied = [path for path in paths if not _has_content(tree / path)]
-            if not paths:
-                problems.append(
-                    f"{name} retires `{slug}`, which had no page when this run started: "
-                    "`retired` lists the slug of each page you emptied to retire it"
-                )
-            elif not emptied:
-                problems.append(
-                    f"{name} retires `{slug}`, but {paths[0]} still has content: retire a page "
-                    "by writing it with no content at all, and the host removes it"
-                )
-            dropped = [
-                (page.path, line)
-                for page in was
-                if page.path in emptied
-                for line in _open_loop_lines(page)
-                if not any(set(citations(line)) <= held for held in carried)
-            ]
-            for path, line in dropped:
-                problems.append(
-                    f"{name} retires `{slug}`, but {path} held an open loop that is now on no "
-                    f"page: `{line}`. A page with an open loop is never retired: write the page "
-                    "back as it was and propose or dismiss the candidate, or move the loop to "
-                    "the page it belongs on"
-                )
-            if not dropped:
-                for path in emptied:
-                    (tree / path).unlink(missing_ok=True)
-    return problems
+
+    def __init__(self, tree: Path, before: Mapping[str, object], today: date) -> None:
+        """Over the wiki at `tree`, whose state as last committed is `before` (`_tree_state`),
+        for a run told the day is `today`."""
+        self._tree, self._before, self._today = tree, before, today
+        self._was = pages(tree)
+        """The pages as last committed."""
+        self._listed = (tree / RETIRED).read_bytes() if RETIRED in before else None
+        """`retired.md` as last committed."""
+        self._left = before.get(RETIRED)
+        """`retired.md`'s state as the host last left it."""
+        self._removed: list[Path] = []
+        """The emptied pages the host removed for the last attempt."""
+
+    def changed_by_session(self, after: Mapping[str, object]) -> bool:
+        """Whether `retired.md` in `after`, the wiki's state as an attempt left it, isn't as the
+        host left it: the file is the host's, and no session may write it."""
+        return after.get(RETIRED) != self._left
+
+    def undo(self) -> None:
+        """Puts the wiki back as the session left it: each page removed for the last attempt
+        is an emptied file again, unless the session has written it back, and `retired.md`
+        is as last committed."""
+        for file in self._removed:
+            if not file.exists():
+                file.write_bytes(b"")
+        self._removed.clear()
+        if self._listed is not None:
+            (self._tree / RETIRED).write_bytes(self._listed)
+        elif RETIRED not in self._before:
+            (self._tree / RETIRED).unlink(missing_ok=True)
+        self._left = self._before.get(RETIRED)
+
+    def carry_out(self, reported: Sequence[Outcome]) -> list[str]:
+        """Removes the pages the `reported` outcomes retire, brings `retired.md` up to date
+        with them, and returns what's wrong with the retirements the host can't carry out.
+
+        A retirement can't be carried out when its slug had no page as last committed, when
+        the page still has content, and when the page held an open loop that no page holds
+        now, open or closed: a loop is never dropped with its page, though it may move to the
+        page it belongs on. The page of such a retirement stays as the session left it.
+        """
+        tree = self._tree
+        problems: list[str] = []
+        retiring: list[str] = []
+        carried = [set(loop.citations) for page in pages(tree) for loop in page.loops]
+        for outcome in reported:
+            for slug in outcome.retired if isinstance(outcome, Applied) else ():
+                name = outcome.candidate
+                paths = [
+                    path
+                    for folder in PAGE_FOLDERS
+                    if (path := f"{folder}/{slug}.md") in self._before
+                ]
+                emptied = [path for path in paths if not _has_content(tree / path)]
+                if not paths:
+                    problems.append(
+                        f"{name} retires `{slug}`, which had no page when this run started: "
+                        "`retired` lists the slug of each page you emptied to retire it"
+                    )
+                elif not emptied:
+                    problems.append(
+                        f"{name} retires `{slug}`, but {paths[0]} still has content: retire a "
+                        "page by writing it with no content at all, and the host removes it"
+                    )
+                dropped = [
+                    (page.path, line)
+                    for page in self._was
+                    if page.path in emptied
+                    for line in _open_loop_lines(page)
+                    if not any(set(citations(line)) <= held for held in carried)
+                ]
+                for path, line in dropped:
+                    problems.append(
+                        f"{name} retires `{slug}`, but {path} held an open loop that is now on "
+                        f"no page: `{line}`. A page with an open loop is never retired: write "
+                        "the page back as it was and propose or dismiss the candidate, or move "
+                        "the loop to the page it belongs on"
+                    )
+                if emptied and not dropped:
+                    retiring.append(slug)
+                    for path in emptied:
+                        if (tree / path).is_file():
+                            (tree / path).unlink()
+                            self._removed.append(tree / path)
+        update_retired(tree, today=self._today, retiring=retiring)
+        self._left = _tree_state(tree).get(RETIRED)
+        return problems
 
 
 def _has_content(file: Path) -> bool:
