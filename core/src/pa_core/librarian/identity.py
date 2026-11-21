@@ -17,6 +17,8 @@ from source metadata (spec #56, principle 3):
   never theirs, even under the owner's name; it's a group of its own, marked as using the name.
 - **Forged mail** is email sent from one of the owner's addresses without the Sent label: no one
   can write as the owner from outside the owner's mailbox.
+- **Automated mailboxes** are told by an address's local part (`no-reply`, `notifications`, and
+  the like). A group whose every address is one is marked: a machine, never a person.
 
 Slugs are suggested from names (an organization with none goes by its domain, an address with
 no name by its local part). They share one namespace, with `me` kept for the owner, and are
@@ -30,6 +32,7 @@ Nicknames that appear only in bodies ("Okie") are left to the librarian, which r
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -78,6 +81,12 @@ PERSONAL_MAIL_DOMAINS = frozenset(
 """Domains of personal mail: an address at one says nothing about an organization."""
 
 _SENT_LABEL = "sent"
+_AUTOMATED = re.compile(
+    r"(?:^|-)(?:no-?reply|do-?not-?reply|mailer-?daemon|postmaster|bounces?|notify|"
+    r"notifications?|alerts?|automated)\d*(?:-|$)"
+)
+"""An automated mailbox's local part, as a slug: one of these words on its own, never inside a
+name (`nino.reply` and `notary` are people)."""
 _SECOND_LEVEL = frozenset({"ac", "co", "com", "edu", "gov", "net", "org"})
 """Labels under a country's domain (`co.uk`): the label before them names the organization."""
 
@@ -108,6 +117,8 @@ class PersonIdentity:
     """Other display names its addresses were seen under."""
     uses_owner_name: bool = False
     """Its name is one of the owner's, but none of its addresses is: it is not the owner."""
+    automated: bool = False
+    """Every one of its addresses is an automated mailbox: a machine, never a person."""
 
 
 @dataclass(frozen=True)
@@ -187,6 +198,8 @@ def _person_json(person: PersonIdentity) -> dict[str, object]:
         listed["aliases"] = list(person.aliases)
     if person.uses_owner_name:
         listed["uses_owner_name"] = True
+    if person.automated:
+        listed["automated"] = True
     return listed
 
 
@@ -285,6 +298,7 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
                 organizations=_organizations_of(addresses, org_slugs),
                 aliases=tuple(sorted({n for n in spellings[key] if _key(n) != key})),
                 uses_owner_name=name is not None and key in owner_names,
+                automated=all(is_automated_mailbox(address) for address in addresses),
             )
         )
         for address in addresses:
@@ -312,6 +326,13 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
         forged=tuple(forged),
         addresses=frozenset(names),
     )
+
+
+def is_automated_mailbox(address: str) -> bool:
+    """Whether `address` is a mailbox no person writes from or reads, going by its local part:
+    `no-reply`, `notifications`, `mailer-daemon`, and the like."""
+    local = address.rpartition("@")[0] or address
+    return _AUTOMATED.search(slugify(local)) is not None
 
 
 class _Slugs:

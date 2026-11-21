@@ -14,7 +14,8 @@ An error fails the run. The rules so far:
 - **Citations** name episodes that are in L0.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
-  lists one of the owner's configured addresses (the owner is `me`).
+  lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
+  aren't all automated mailboxes (`identity.py`): a machine never gets a person page.
 
 A warning doesn't fail the run; it's recorded with it, and handed to the next consolidation:
 
@@ -41,6 +42,7 @@ from pathlib import Path
 
 from pa_core.envelope import Envelope
 from pa_core.librarian.engagement import engaged_days, engagers
+from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.wiki import (
     DAYS,
     DECISION_FORMAT,
@@ -360,8 +362,8 @@ def _section_lines(page: Page) -> Iterator[Finding]:
 
 
 def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterator[Finding]:
-    """A page's addresses and domains are in L0's metadata, none is on two pages, and none of
-    its addresses is the owner's."""
+    """A page's addresses and domains are in L0's metadata, none is on two pages, none of
+    its addresses is the owner's, and a person's aren't all automated mailboxes."""
     known = {PERSON: l0.addresses, ORGANIZATION: l0.domains}
     owners = {address.strip().lower() for address in owner.email_addresses}
     listed: dict[tuple[str, str], str] = {}
@@ -393,6 +395,18 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterato
                     "belongs on one page",
                     1,
                 )
+        if (
+            page_type is PERSON
+            and page.identifiers
+            and all(is_automated_mailbox(value) for value in page.identifiers)
+        ):
+            yield Finding(
+                page.path,
+                f"`{key}` lists only automated mailboxes ({', '.join(page.identifiers)}): an "
+                "automated mailbox never gets a person page; what it sends belongs on its "
+                "organization's page or its topic's",
+                1,
+            )
 
 
 # Warnings

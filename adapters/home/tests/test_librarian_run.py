@@ -2565,6 +2565,10 @@ def test_engagement_goes_by_any_episode_an_observation_cites_and_reaches_every_s
         "wedding": True,
         "north-shore-lodge": False,
     }
+    # The session is told what the flag means for a slug without a page.
+    prompt = " ".join(sessions(data_root, "consolidation")[-1]["prompt"].split())
+    assert "`engaged` says whether the owner has engaged with the slug" in prompt
+    assert "A person gets a page at the threshold only when `engaged`" in prompt
 
     # A later observation of the lodge cites the hotel mail and the owner's RSVP together.
     ids = observed_ids(data_root)
@@ -2612,6 +2616,182 @@ def test_only_an_engaged_slug_at_the_threshold_is_warned_about_for_having_no_pag
         "Lint warnings:\n"
         "- days/2026-10-05.md: `wedding` is linked on 3 days, reaching the page threshold of 3, "
         "but has no page"
+    )
+
+
+AUTOMATED_MAILBOXES = (
+    "noreply@birchwood.example",
+    "no-reply@parcelpost.example",
+    "No_Reply@lakeside.example",
+    "donotreply@cityutilities.example",
+    "do-not-reply@greatplains.example",
+    "billing-noreply@summitroofing.example",
+    "noreply+orders@cedarbooks.example",
+    "noreply2@riverbank.example",
+    "notifications@forum.example",
+    "notification@harborgym.example",
+    "notify@pinecrest.example",
+    "alerts@firstprairie.example",
+    "mailer-daemon@example.net",
+    "postmaster@example.org",
+    "bounces@lists.example",
+)
+# Mailboxes people read, and a name that only looks like one.
+OTHER_MAILBOXES = (
+    "hannah.lee@birchwood.example",
+    "info@harrow.example",
+    "billing@summitroofing.example",
+    "reply@cedarbooks.example",
+    "nino.reply@example.net",
+    "notary@lakeside.example",
+)
+
+
+def test_the_identity_table_marks_automated_mailboxes_by_their_local_part(data_root: Path):
+    ingest(
+        data_root,
+        {
+            f"gmail/{number}.eml": email(
+                message_id=f"{number}@example.net", sender=address, subject=f"Mail {number}"
+            )
+            for number, address in enumerate((*AUTOMATED_MAILBOXES, *OTHER_MAILBOXES))
+        },
+    )
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    people = consolidation["identity"]["people"]
+    automated = [p["addresses"] for p in people if p.get("automated")]
+    assert sorted(automated) == sorted([address.lower()] for address in AUTOMATED_MAILBOXES)
+    # The mark is given only when it says something, and the session is told what it means.
+    assert {p.get("automated") for p in people} == {True, None}
+    assert "`automated`" in consolidation["prompt"]
+
+
+def test_a_group_is_automated_only_when_every_one_of_its_addresses_is(data_root: Path):
+    ingest(
+        data_root,
+        {
+            "gmail/own.eml": email(sender="Hannah Lee <hannah.lee@birchwood.example>"),
+            "gmail/forum.eml": email(
+                message_id="forum@forum.example",
+                sender="Hannah Lee <notifications@forum.example>",
+                subject="Hannah Lee replied to your post",
+            ),
+            "gmail/one.eml": email(
+                message_id="one@parcelpost.example",
+                sender="Parcel Tracking <no-reply@parcelpost.example>",
+                subject="Out for delivery",
+            ),
+            "gmail/two.eml": email(
+                message_id="two@parcelpost.example",
+                sender="Parcel Tracking <notifications@parcelpost.example>",
+                subject="Delivered",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    people = {person["slug"]: person for person in identity(data_root)["people"]}
+    assert people["hannah-lee"]["addresses"] == [
+        "hannah.lee@birchwood.example",
+        "notifications@forum.example",
+    ]
+    assert "automated" not in people["hannah-lee"]
+    assert people["parcel-tracking"]["automated"] is True
+
+
+# A person page's `emails`, and whether lint fails the page for them.
+PERSON_PAGE_EMAILS = {
+    "one automated mailbox": ("noreply@birchwood.example", True),
+    "only automated mailboxes": ("NoReply@birchwood.example, notifications@forum.example", True),
+    "a person's address beside an automated one": (
+        "dkim@example.net, notifications@forum.example",
+        False,
+    ),
+    "no address at all": ("", False),
+}
+
+
+@pytest.mark.parametrize("emails", PERSON_PAGE_EMAILS, ids=list(PERSON_PAGE_EMAILS))
+def test_a_person_page_whose_only_addresses_are_automated_mailboxes_fails_the_run(
+    data_root: Path, capsys, emails: str
+):
+    listed, fails = PERSON_PAGE_EMAILS[emails]
+    ingest(
+        data_root,
+        {
+            "gmail/hotel.eml": email(),
+            "gmail/survey.eml": email(
+                message_id="survey@birchwood.example",
+                sender="noreply@birchwood.example",
+                subject="How did we do?",
+            ),
+            "gmail/forum.eml": email(
+                message_id="forum@forum.example",
+                sender="David Kim <notifications@forum.example>",
+                subject="David Kim replied to your post",
+            ),
+        },
+    )
+    page = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON]
+    page = page.replace("emails: [dkim@example.net]", f"emails: [{listed}]")
+    script(data_root, consolidation=[{"write": PERSON, "text": page}])
+
+    code = run_librarian()
+
+    if fails:
+        assert code != 0
+        error = capsys.readouterr().err
+        assert f"{PERSON}:1: `emails` lists only automated mailboxes ({listed})" in error
+        assert "never gets a person page" in error
+        assert wiki_files(data_root) == {}
+    else:
+        assert code == 0
+        assert wiki_files(data_root)[PERSON] == page
+
+
+def test_the_index_lists_active_pages_newest_first_then_the_rest_by_slug(data_root: Path):
+    def topic(status: str, updated: str) -> str:
+        page = KITCHEN.replace("status: active", f"status: {status}")
+        return page.replace("updated: 2026-10-02", f"updated: {updated}")
+
+    person = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON]
+    former = person.replace("status: active", "status: inactive")
+    pages = {
+        "topics/attic.md": topic("dormant", "2026-10-07"),
+        "topics/basement.md": topic("settled", "2026-10-06"),
+        "topics/garden.md": topic("active", "2026-10-02"),
+        "topics/kitchen.md": topic("active", "2026-10-05"),
+        "topics/wedding.md": topic("active", "2026-10-02"),
+        "people/amy-park.md": former.replace("updated: 2026-10-02", "updated: 2026-10-09"),
+        PERSON: person,
+    }
+    pages["people/amy-park.md"] = pages["people/amy-park.md"].replace("[dkim@example.net]", "[]")
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    script(data_root, consolidation=[{"write": p, "text": text} for p, text in pages.items()])
+
+    assert run_librarian() == 0
+
+    assert wiki_files(data_root)["index.md"] == textwrap.dedent(
+        """\
+        # Index
+
+        ## People
+
+        - [[david-kim]]: Old friend, getting married on Oct 24.
+        - [[amy-park]]: Old friend, getting married on Oct 24.
+
+        ## Topics
+
+        - [[kitchen]]: The kitchen remodel.
+        - [[garden]]: The kitchen remodel.
+        - [[wedding]]: The kitchen remodel.
+        - [[attic]]: The kitchen remodel.
+        - [[basement]]: The kitchen remodel.
+        """
     )
 
 
