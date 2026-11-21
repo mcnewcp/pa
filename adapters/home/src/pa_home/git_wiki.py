@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from pa_core.errors import PaError
+from pa_core.librarian.run import Commit
 
 IDENTITY = ("-c", "user.name=PA librarian", "-c", "user.email=librarian@pa.invalid")
 """Who the wiki's commits are by: the host, on the librarian's behalf."""
@@ -53,6 +54,19 @@ class GitWikiRepository:
 
     def last_commit_message(self) -> str | None:
         return self._git("log", "-1", "--format=%B")
+
+    def commits(self) -> tuple[Commit, ...]:
+        # Git ends each commit with a NUL, which no message can hold.
+        logged = self._git("log", "-z", "--format=%H%n%B")
+        return tuple(
+            Commit(id=commit_id, message=message)
+            for commit_id, _, message in (entry.partition("\n") for entry in logged.split("\0"))
+            if commit_id
+        )
+
+    def changed_since(self, commit: str) -> frozenset[str]:
+        changed = self._git("diff", "--name-only", "--no-renames", "-z", commit, "HEAD")
+        return frozenset(path for path in changed.split("\0") if path)
 
     def commit(self, message: str) -> str:
         self._git("add", "--all")

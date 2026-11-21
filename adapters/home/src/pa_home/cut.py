@@ -31,10 +31,10 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, ValidationError
 
 from pa_core.errors import PaError
 from pa_core.l0 import episode_ref
-from pa_core.librarian.run import CURSOR_FIELD, VERSION_FIELD, commit_fields
+from pa_core.librarian.run import CURSOR_FIELD, VERSION_FIELD, last_run_fields
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
-from pa_home.git_wiki import git_environ
+from pa_home.git_wiki import GitWikiRepository, git_environ
 
 CUTS = "cuts"
 """The directory of cuts in a data root."""
@@ -183,7 +183,8 @@ def _export_wiki(data_root: DataRoot, target: Path) -> CutWiki | None:
         return None
     git = _git(data_root.wiki_git)
     commit = git("rev-parse", "HEAD").decode().strip()
-    fields = commit_fields(git("log", "-1", "--format=%B", commit).decode())
+    # What the last run that still stands recorded: the last commit itself may be a revert.
+    fields = last_run_fields(GitWikiRepository(data_root.wiki, data_root.wiki_git))
     archive = git("archive", "--format=tar", commit)
     target.mkdir(parents=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
