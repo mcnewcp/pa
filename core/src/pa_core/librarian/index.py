@@ -22,7 +22,7 @@ from pa_core.librarian.wiki import (
 )
 
 
-def render_index(listed: Iterable[Page], open_proposals: int = 0) -> str:
+def render_index(listed: Iterable[Page], open_proposals: int) -> str:
     """The index of `listed`: the count of `open_proposals`, with a link to them when there
     are any, then a section per page type that has pages, in `index_order`."""
     by_folder: dict[str, list[Page]] = {}

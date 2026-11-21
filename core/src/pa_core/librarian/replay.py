@@ -229,6 +229,17 @@ class RunHistory:
         committed = [entry for entry in self.dreams if entry.status == "committed"]
         return committed[-1].dreaming_version if committed else None
 
+    def dreamed_otherwise(
+        self, *, as_of: datetime, librarian_version: str | None
+    ) -> DreamingLogEntry | None:
+        """The first dreaming run that isn't of the wiki told `as_of` as now and built by
+        `librarian_version`, or None when every one is. One wiki is dreamed as of one time,
+        so a log with such a run is another wiki's."""
+        for entry in self.dreams:
+            if entry.as_of != as_of or entry.librarian_version != librarian_version:
+                return entry
+        return None
+
 
 def run_history(path: Path) -> RunHistory:
     """The runs in the run log at `path`. Raises RunLogError for any mix but a finished

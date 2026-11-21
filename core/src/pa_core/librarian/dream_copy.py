@@ -87,7 +87,7 @@ def replayed_source(run_log: Path) -> CopySource:
         )
     last = history.replays[-1]
     source = CopySource(as_of=last.occurred_to, librarian_version=last.librarian_version)
-    _require_dreamed_as_of(history, source, run_log)
+    _require_dreamed_as(history, source, run_log)
     return source
 
 
@@ -110,20 +110,28 @@ def cut_source(
                 f"{run_log} has a replay's runs: it is the run log of a copy of a replay "
                 "target, not of a cut's wiki"
             )
-        _require_dreamed_as_of(history, source, run_log)
+        _require_dreamed_as(history, source, run_log)
     return source
 
 
-def _require_dreamed_as_of(history: RunHistory, source: CopySource, run_log: Path) -> None:
-    """Refuses a copy whose earlier dreaming runs were told another time than `source`'s
-    as-of time: one wiki is dreamed as of one time."""
-    for entry in history.dreams:
-        if entry.as_of != source.as_of:
-            raise DreamCopyError(
-                f"{run_log} has a dreaming run as of {utc(entry.as_of)}, "
-                f"and this one would be as of {utc(source.as_of)}: the "
-                "copy is of another wiki than the one it's being dreamed as"
-            )
+def _require_dreamed_as(history: RunHistory, source: CopySource, run_log: Path) -> None:
+    """Refuses a copy whose earlier dreaming runs weren't of `source`'s wiki
+    (`RunHistory.dreamed_otherwise`): one wiki is dreamed as of one time."""
+    other = history.dreamed_otherwise(
+        as_of=source.as_of, librarian_version=source.librarian_version
+    )
+    if other is None:
+        return
+    not_this = "the copy is of another wiki than the one it's being dreamed as"
+    if other.as_of != source.as_of:
+        raise DreamCopyError(
+            f"{run_log} has a dreaming run as of {utc(other.as_of)}, "
+            f"and this one would be as of {utc(source.as_of)}: {not_this}"
+        )
+    raise DreamCopyError(
+        f"{run_log} has a dreaming run of a wiki built by librarian version "
+        f"{other.librarian_version}, not {source.librarian_version}: {not_this}"
+    )
 
 
 COPY_AS_OF_FIELD = "Copy-As-Of"

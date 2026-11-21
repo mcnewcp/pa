@@ -270,7 +270,7 @@ def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
     )
 
 
-def fix_prompt(phase: Phase, errors: Sequence[Finding], problems: Sequence[str] = ()) -> str:
+def fix_prompt(phase: Phase, errors: Sequence[Finding], problems: Sequence[str]) -> str:
     """What a session is told when it's resumed: the `problems` with what its final message
     reported, if any, then the lint `errors` it left, if any."""
     parts = [f"Phase: {phase}\n"]

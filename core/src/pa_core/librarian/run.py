@@ -638,7 +638,7 @@ def consolidation_prompt(
     page_paths: Mapping[str, str],
     paths: SessionPaths,
     *,
-    retired: Mapping[str, date] | None = None,
+    retired: Mapping[str, date],
 ) -> str:
     """What the consolidation session is asked: the run's new observations, then the
     reference counts (with each slug's page, if it has one, and whether the owner has engaged
@@ -650,7 +650,6 @@ def consolidation_prompt(
     """
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
     folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
-    retired = retired or {}
     kept = still_retired(retired, engaged_days)
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):

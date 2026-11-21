@@ -40,8 +40,10 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
   it again (`retirement.py`).
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
-Each rule is a function over the wiki's files that yields findings; add a rule by writing one
-and listing it in `_RULES` (rules about the layout itself live in `_layout`).
+Each rule is a function over one of the wiki's files that yields findings; add a rule by
+writing one and listing it in `_RULES` (rules about the layout itself live in `_layout`). The
+proposals' rule and the identifiers' are called on their own, since each needs more than its
+file: the pages, the retired slugs, and the owner.
 """
 
 from __future__ import annotations
@@ -192,7 +194,6 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         for rule in _RULES:
             errors.extend(rule(file, l0))
     errors.extend(_proposals(files, tree, l0, owner))
-    errors.extend(_retired(files))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
     engaged = engaged_days(tree, l0, owner)
@@ -574,15 +575,16 @@ def _proposals(
         )
 
 
-def _retired(files: Sequence[WikiFile]) -> Iterator[Finding]:
+def _retired(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     """`retired.md` holds only retirement lines, each slug once, after an optional
     `# <title>` line. The host writes it (`retirement.py`), so this fails only a file someone
     else changed."""
-    file = next((file for file in files if file.path == RETIRED), None)
+    if file.path != RETIRED:
+        return
     first: dict[str, int] = {}
     """The line each slug is first listed on."""
     titled = False
-    for number, line in enumerate(file.lines if file else (), start=1):
+    for number, line in enumerate(file.lines, start=1):
         if not line.strip():
             continue
         if line.startswith("# ") and not titled and not first:
@@ -778,4 +780,4 @@ def _is_date(text: str) -> bool:
     return len(text) == 10
 
 
-_RULES: tuple[Rule, ...] = (_observations, _pages, _cited_episodes_exist)
+_RULES: tuple[Rule, ...] = (_observations, _pages, _cited_episodes_exist, _retired)
