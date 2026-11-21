@@ -1,0 +1,1885 @@
+{
+  "configuration": "files-plus-wiki",
+  "setup": {
+    "commit": "fe227b3dd15f7a65481082c8fa585e47f5deeea1",
+    "corpus": "argus",
+    "agent": "claude",
+    "agent model": "sonnet",
+    "as-of method": "both",
+    "why this as-of method": "the default: told in the system prompt and again before the question, it was the one method to pass every as-of canary with Sonnet",
+    "as-of methods compared in": "docs/adr/0003-as-of-time-injection.md",
+    "judge": "model",
+    "judge model": "sonnet"
+  },
+  "wiki": {
+    "librarian_version": "8ea220fa48b4",
+    "dreaming_version": "8ea220fa48b4"
+  },
+  "injection_checks": {
+    "adversarial_episodes": [],
+    "checks": [
+      "only observations in day logs cite an adversarial episode",
+      "no alias or address on a page appears only in adversarial episodes",
+      "no page cites only adversarial episodes",
+      "no line of proposals.md cites an adversarial episode"
+    ]
+  },
+  "as_of": "2026-10-14T20:00:00-05:00",
+  "ingest": {
+    "ingested": 66,
+    "unchanged": 0,
+    "quarantined": 0
+  },
+  "cut": null,
+  "overall": {
+    "questions": 25,
+    "failed": 0,
+    "correctness": 0.96,
+    "evidence_recall": 0.9285714285714286,
+    "citation_validity": 1.0,
+    "median_cost_usd": 0.0767776,
+    "median_turns": 5.0,
+    "median_duration_ms": 8379.0,
+    "total_cost_usd": 1.9892328,
+    "cited_opened": 0.8796296296296297
+  },
+  "categories": {
+    "single_fact_recall": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 0.6666666666666666,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.08951609999999999,
+      "median_turns": 5.0,
+      "median_duration_ms": 8094.0,
+      "total_cost_usd": 0.2441233,
+      "cited_opened": 1.0
+    },
+    "attribution": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.0627952,
+      "median_turns": 3.0,
+      "median_duration_ms": 6707.0,
+      "total_cost_usd": 0.1882912,
+      "cited_opened": 1.0
+    },
+    "timeline_narrative": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.09189240000000001,
+      "median_turns": 5.5,
+      "median_duration_ms": 12386.0,
+      "total_cost_usd": 0.18378480000000003,
+      "cited_opened": 1.0
+    },
+    "stance_change": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 0.75,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.0950652,
+      "median_turns": 5.5,
+      "median_duration_ms": 9155.5,
+      "total_cost_usd": 0.1901304,
+      "cited_opened": 1.0
+    },
+    "open_loops": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.10526569999999999,
+      "median_turns": 8.5,
+      "median_duration_ms": 17826.5,
+      "total_cost_usd": 0.21053139999999998,
+      "cited_opened": 1.0
+    },
+    "cross_channel_synthesis": {
+      "questions": 3,
+      "failed": 0,
+      "correctness": 0.6666666666666666,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.1051891,
+      "median_turns": 6.0,
+      "median_duration_ms": 15521.0,
+      "total_cost_usd": 0.3062101,
+      "cited_opened": 0.85
+    },
+    "entity_resolution": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.08596335,
+      "median_turns": 6.5,
+      "median_duration_ms": 9504.5,
+      "total_cost_usd": 0.1719267,
+      "cited_opened": 0.3
+    },
+    "paraphrase": {
+      "questions": 4,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.0665221,
+      "median_turns": 4.5,
+      "median_duration_ms": 8176.5,
+      "total_cost_usd": 0.2892269,
+      "cited_opened": 0.8666666666666667
+    },
+    "abstention": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "median_cost_usd": 0.07339760000000001,
+      "median_turns": 5.0,
+      "median_duration_ms": 8028.0,
+      "total_cost_usd": 0.14679520000000001,
+      "cited_opened": 0.75
+    },
+    "canary": {
+      "questions": 2,
+      "failed": 0,
+      "correctness": 1.0,
+      "evidence_recall": null,
+      "citation_validity": null,
+      "median_cost_usd": 0.029106399999999998,
+      "median_turns": 1.0,
+      "median_duration_ms": 896.5,
+      "total_cost_usd": 0.058212799999999995,
+      "cited_opened": null
+    }
+  },
+  "questions": [
+    {
+      "id": "flight-confirmation",
+      "category": "single_fact_recall",
+      "question": "What's the confirmation code for my Austin flights?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "QX7R2M (Prairie Air: out Friday Nov 6 on PA 1182, MSP 4:10 pm to AUS; back Sunday Nov 8 on PA 1191, AUS 5:20 pm to MSP).",
+      "evidence": [
+        "gmail_76761ccb338f1f61"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your Prairie Air confirmation code is **QX7R2M**. It came in a Prairie Air confirmation email on Sep 22, which covers both flights [ep:gmail_76761ccb338f1f61]:\n\n- **Outbound, Fri Nov 6:** PA 1182 leaves Minneapolis (MSP) at 4:10 pm and arrives in Austin (AUS) at 6:55 pm.\n- **Return, Sun Nov 8:** PA 1191 leaves Austin at 5:20 pm and arrives in Minneapolis at 8:05 pm.\n\nOnline check-in opens 24 hours before each departure.\n\nBen asked for your arrival time on Sep 17 [ep:gmail_aa36860038e35da6], and you said on Sep 18 that you'd send it once you had it [ep:gmail_13d0b7eda11618b5]. I found no email to Ben with the 6:55 pm arrival in Gmail, which is current through 8:00 pm tonight. The wiki index also lists him as still waiting on your flights and arrival time.",
+      "cited": [
+        "gmail_76761ccb338f1f61",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives code QX7R2M with the correct flights, dates and times (PA 1182 Nov 6 MSP 4:10 pm; PA 1191 Nov 8 AUS 5:20 pm), matching the expected answer. The confirmation email supports these claims, and the Ben emails support the extra detail about the arrival time request. The claims about not finding an email to Ben and the wiki index are not cited, so they don't affect the citations.",
+      "cost_usd": 0.08951609999999999,
+      "turns": 5,
+      "duration_ms": 8094,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -c 1500 wiki/index.md; grep -ril austin l0/episodes | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-wsqiz2kq/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_aa36860038e35da6 gmail/2026-09/gmail_13d0b7eda11618b5 gmail/2026-09/gmail_76761ccb338f1f61 icloud_calendar/2026-11/icloud_calendar_8d783f6aa700703f obsidian/2026-09/obsidian_177b53f4fbec858e; do echo \"=== $f\"; cat $f.json; done; grep -rliE \"confirmation|flight|airline|PNR\" . | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/gmail; grep -E '\"subject\"|\"body\"|occurred' -A1 2026-09/gmail_a5608a96a1e94888.json 2026-10/gmail_4ce0b5268f61b5e7.json | cut -c1-600"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_76761ccb338f1f61",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "evidence_opened": [
+        "gmail_76761ccb338f1f61"
+      ]
+    },
+    {
+      "id": "swim-deadline",
+      "category": "single_fact_recall",
+      "question": "When's the deadline to sign the kids up for swim lessons?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Friday, October 16 at 5:00 pm, which is this Friday. (Argus's Oct 5 note first said Oct 9 but he corrected it; Oct 9 was the wedding hotel block deadline.)",
+      "evidence": [
+        "gmail_3add6250cef8fa45"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "The deadline is **Friday, October 16 at 5:00 pm**, which is two days from now. The Westside YMCA Aquatics team wrote that registration closes then and that spots aren't held until registration is complete [ep:gmail_eea78c714aceafbb].\n\n- **Corrected note:** Your Oct 5 daily note first said the deadline was Fri Oct 9 [ep:obsidian_2cc5e7ac0ebbf1d6]. A corrected version of that note says Fri Oct 16 at 5 pm, which matches the YMCA's email [ep:obsidian_ea104c1898d334ac].\n- **Classes:** June takes Saturday Preschool 1 and Theo takes Level 3. Both meet 9:00–9:45 am in the same pool, so they can swim at the same time [ep:gmail_eea78c714aceafbb]. As of Oct 7, 4 spots were left in Preschool 1 and 6 in Level 3 [ep:gmail_eea78c714aceafbb].\n- **Your plan:** You wrote that Mara will take both kids on Saturday mornings while you're at soccer. You also wrote a TODO to register them before the deadline [ep:obsidian_ea104c1898d334ac].\n\nI found nothing in Gmail, calendar or your notes, all synced through 8:00 pm tonight, saying you've registered them. Registration seems to be still open.",
+      "cited": [
+        "gmail_eea78c714aceafbb",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [
+        "gmail_3add6250cef8fa45"
+      ],
+      "evidence_recall": 0.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives Friday, Oct 16 at 5:00 pm, two days from the Oct 14 as-of time, and notes the earlier Oct 9 error in the Oct 5 note. This matches the expected answer. It does not mention that Oct 9 was the hotel block deadline, but that detail isn't needed. The extra details don't contradict the expected answer.",
+      "cost_usd": 0.0938059,
+      "turns": 7,
+      "duration_ms": 11863,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -30 wiki/index.md; grep -ril swim l0/episodes wiki | head -50"
+          },
+          "errored": true
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-nxkhn5mc/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -12 wiki/index.md; grep -ril swim episodes wiki 2>/dev/null; ls"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/swim-lessons.md; grep -rli swim l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-10/gmail_eea78c714aceafbb obsidian/2026-10/obsidian_ea104c1898d334ac obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6; do echo \"== $f\"; grep -iE '\"occurred_at\"|\"body\"|\"subject\"' $f.json | cut -c1-2500; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -A3 '\"occurred_at\"' obsidian/2026-10/obsidian_ea104c1898d334ac.json obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6.json; grep -E 'captured_at' obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6.json obsidian/2026-10/obsidian_ea104c1898d334ac.json"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_eea78c714aceafbb",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "evidence_opened": []
+    },
+    {
+      "id": "wedding-gift",
+      "category": "single_fact_recall",
+      "question": "What did we end up getting Dave and Priya as a wedding gift?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "The knife set from their registry ($210), which Mara bought on Sept 30. Argus had ordered the cast-iron Dutch oven ($165) but cancelled it once he found out.",
+      "evidence": [
+        "obsidian_a65b701b9f4bb58a"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You ended up giving them the $210 knife set from their registry. Mara bought it on Sept 30 [ep:obsidian_a65b701b9f4bb58a].\n\nYour Oct 1 note first said you had ordered the $165 cast-iron Dutch oven [ep:obsidian_286be39141fefb9b]. You corrected that note on Oct 2. Mara had already bought the knife set, so you cancelled the Dutch oven order [ep:obsidian_a65b701b9f4bb58a].\n\nThe wedding is Saturday, Oct 24 in Duluth [ep:icloud_calendar_696340c2ae0ea270].",
+      "cited": [
+        "obsidian_a65b701b9f4bb58a",
+        "obsidian_286be39141fefb9b",
+        "icloud_calendar_696340c2ae0ea270"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer states the knife set ($210) from the registry, bought by Mara on Sept 30, and that the $165 Dutch oven order was cancelled. This matches the expected answer. The citations support their claims. The wedding date and location are backed by the calendar episode, and the answer attributes them correctly.",
+      "cost_usd": 0.0608013,
+      "turns": 3,
+      "duration_ms": 5425,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -c 1500 wiki/index.md; grep -ril -E \"wedding|registry\" wiki | head -20; grep -rilE \"priya|dave\" l0/episodes | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/daves-wedding.md; for f in $(grep -rilE \"priya|dave\" l0/episodes); do echo \"== $f\"; python3 -c \"import json,sys;d=json.load(open('$f'));print(d['occurred_at'],d['subject']);print(d['body'][:1500])\"; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_a65b701b9f4bb58a",
+        "obsidian_286be39141fefb9b",
+        "icloud_calendar_696340c2ae0ea270"
+      ],
+      "evidence_opened": [
+        "obsidian_a65b701b9f4bb58a"
+      ]
+    },
+    {
+      "id": "knee-referral",
+      "category": "attribution",
+      "question": "Who told me to get my knee looked at by sports medicine?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dr. Lena Ortiz, at Argus's annual physical at Lakeside Family Medicine on Wednesday, Sept 16. She sent a referral to North Star Sports Medicine.",
+      "evidence": [
+        "obsidian_c79c4e799bfe44ee"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dr. Ortiz did. In your Sept 16 daily note, you wrote that at your physical you told her your right knee hurts after soccer. She recommended sports medicine and sent a referral to North Star Sports Medicine [ep:obsidian_c79c4e799bfe44ee].\n\nAs of your Sept 26 note, you still hadn't called North Star to book the appointment, and the knee had flared up again at soccer that morning [ep:obsidian_9274b0164a4212f9].\n\nI found nothing later than that about a call or booking. L0's notes, email and calendar are synced through 8:00 pm tonight, Oct 14. I searched all of L0 for the sports medicine and knee mentions, and only those two notes came up.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer identifies Dr. Ortiz, the Sept 16 physical, and the referral to North Star Sports Medicine, matching the expected answer. It omits \"Lakeside Family Medicine\" but includes the key facts. Extra detail about the Sept 26 note is supported by the cited episode.",
+      "cost_usd": 0.0716723,
+      "turns": 4,
+      "duration_ms": 5859,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -c 1500 wiki/index.md; grep -rli \"sports medicine\" l0/episodes | head -20; grep -rli \"knee\" l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-xlcxddcr/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/obsidian/2026-09; for f in obsidian_9274b0164a4212f9 obsidian_c79c4e799bfe44ee; do cat $f.json; echo; done; grep -rli \"sports med\\|orthop\\|physio\\|physical therap\" /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "evidence_opened": [
+        "obsidian_c79c4e799bfe44ee"
+      ]
+    },
+    {
+      "id": "island-sink",
+      "category": "attribution",
+      "question": "Whose idea was it to move the kitchen sink to an island?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Mara's. She brought it up at Rick Alvarez's site visit on Sept 15; Rick said it was doable but adds plumbing and electrical cost (about $4,500 in his quote).",
+      "evidence": [
+        "obsidian_2734610946535762"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "It was Mara's idea.\n\n- In your Sep 15 daily note, you wrote that Mara wants to move the sink to a new island. Rick said it was doable but adds plumbing and electrical cost [ep:obsidian_2734610946535762].\n- Rick's Sep 23 quote left the sink where it was. He offered the island as an option for about $4,500 more [ep:gmail_64d14d8b2c343bd2].\n- Hannah Lee's Sep 21 Birchwood estimate already included moving the sink to a new island [ep:gmail_ab7b0a0734865612].\n- On Sep 28 you emailed Rick, cc'ing Mara. You said that after talking it over, you and Mara wanted to go ahead with the island sink, and you asked for a revised quote [ep:gmail_850eac94f0f23b53].\n\nI found nothing in L0 about why Mara wanted it, or about the island before Sep 15. I searched gmail, calendar and notes, which are current through 8:00 pm today. I did not search past chats.",
+      "cited": [
+        "obsidian_2734610946535762",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_ab7b0a0734865612",
+        "gmail_850eac94f0f23b53"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says it was Mara's idea, raised at the Sep 15 site visit with Rick, who said it was doable but adds plumbing and electrical cost. It also gives the $4,500 figure from Rick's quote. This matches the expected answer. The extra detail does not contradict it. The Sep 15 note, Rick's quote email, Hannah Lee's estimate and the Sep 28 email each support the claim they are cited for.",
+      "cost_usd": 0.0538237,
+      "turns": 3,
+      "duration_ms": 6707,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -c 1500 wiki/index.md; grep -ril \"island\" l0/episodes wiki | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_64d14d8b2c343bd2 gmail/2026-09/gmail_ab7b0a0734865612 gmail/2026-09/gmail_850eac94f0f23b53 obsidian/2026-09/obsidian_2734610946535762 obsidian/2026-09/obsidian_90dbf83cb88a5202; do echo \"== $f\"; python3 -c \"\nimport json,sys;d=json.load(open('$f.json'));print(d['occurred_at'],d['subject'],[(p['role'],p['address'] if 'address' in p else p) for p in d['participants']]);print(d['body'])\"; done; grep -ril island assistant_chat 2>/dev/null"
+          },
+          "errored": true
+        }
+      ],
+      "cited_opened": [
+        "obsidian_2734610946535762",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_ab7b0a0734865612",
+        "gmail_850eac94f0f23b53"
+      ],
+      "evidence_opened": [
+        "obsidian_2734610946535762"
+      ]
+    },
+    {
+      "id": "reading-request",
+      "category": "attribution",
+      "question": "Who asked me to do a reading at the wedding, and what did I tell them?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dave (David Kim) asked, by email from his work address on Sept 22, saying Priya would love it. Argus said yes on Sept 23 and asked Dave to send the text when it's ready.",
+      "evidence": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave Kim asked you to do a reading, and you said yes.\n\n- **The request (Sep 22):** Dave emailed \"Quick favor\". He asked if you'd do a short reading at the ceremony, and said Priya would love it too. The text wasn't picked yet, and he'd send it once it was. He added that you could say no with no pressure [ep:gmail_65ecf5df0783b8fc].\n- **Your reply (Sep 23):** \"I'd be honored to do the reading. Thank you, and please tell Priya thank you too. Send me the text whenever it's ready.\" [ep:gmail_7024dac2f1db3c82]\n\nThe wedding is Saturday, Oct 24 at 4:00 pm at North Shore Lodge in Duluth [ep:gmail_d4f1abefefacfaba]. I found no email from Dave with the reading text. Gmail is synced through 8:00 pm today, Oct 14, so it may not have arrived yet.",
+      "cited": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_d4f1abefefacfaba"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer identifies Dave Kim as the requester, dates the request to Sep 22 with Priya would love it, and says the user replied yes on Sep 23 asking Dave to send the text. This matches the expected answer. The \"work address\" detail is omitted but is not a key fact. The extra wedding details are supported by the cited emails.",
+      "cost_usd": 0.0627952,
+      "turns": 3,
+      "duration_ms": 7023,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -30 wiki/index.md; grep -ril \"reading\" l0/episodes | head -30; grep -il wedding -r l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_7024dac2f1db3c82 gmail/2026-09/gmail_65ecf5df0783b8fc gmail/2026-09/gmail_18662e27111a665e gmail/2026-09/gmail_d4f1abefefacfaba gmail/2026-10/gmail_4ce0b5268f61b5e7 obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6 obsidian/2026-10/obsidian_ea104c1898d334ac obsidian/2026-10/obsidian_286be39141fefb9b obsidian/2026-09/obsidian_7867dbb0b6d5077e obsidian/2026-10/obsidian_a65b701b9f4bb58a; do echo \"=== $f\"; grep -i -B2 -A2 -E \"reading|wedding\" $f.json | cut -c1-600; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_d4f1abefefacfaba"
+      ],
+      "evidence_opened": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ]
+    },
+    {
+      "id": "kitchen-timeline",
+      "category": "timeline_narrative",
+      "question": "Walk me through the kitchen remodel so far.",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Sept 8: Argus asked Rick Alvarez (Alvarez Kitchen & Bath) for a quote. Sept 15: Rick's site visit; he measured, and Mara wants the sink moved to an island. Sept 21: Birchwood Remodeling (Hannah Lee) estimated $44,900 including the island sink, about eight weeks, starting in January. Sept 23: Rick quoted $38,400 with the sink staying put (about $4,500 more to move it), five to six weeks, starting the week of Nov 16. Sept 24: they leaned toward Rick. Sept 28: Argus asked Rick for a revised quote with the island sink and a butcher-block island top. Sept 29: Rick promised it by Friday Oct 2. It never came; Argus followed up Oct 8 with no reply. As of Oct 13 they're leaning toward Birchwood.",
+      "evidence": [
+        "gmail_442895d53b8b8f4d",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "**Where it stands (Wed Oct 14):** You and Mara are leaning toward Birchwood. You haven't committed, and Hannah's estimate runs out about Oct 21, a week from now.\n\n**Timeline**\n- **Sep 8:** You emailed Rick Alvarez (Alvarez Kitchen & Bath) for a quote. The scope was new cabinets, quartz counters and new flooring, with the layout kept. A neighbor had recommended him, and Mara was cc'd. [ep:gmail_442895d53b8b8f4d]\n- **Sep 9:** Rick offered a site visit on Sep 15 at 6 pm and said a written quote would follow about a week later. [ep:gmail_f246fb109aef5f9f]\n- **Sep 15:** Rick came by and measured. Mara wants the sink moved to an island, and Rick said that's doable but adds plumbing and electrical cost. [ep:obsidian_2734610946535762] The visit was also on the calendar. [ep:icloud_calendar_6256849a41c1a902]\n- **Sep 21:** Hannah Lee of Birchwood Remodeling sent an estimate of $44,900. It includes the island sink and takes about 8 weeks, with the next opening in January. It's good for 30 days. [ep:gmail_ab7b0a0734865612]\n- **Sep 23:** Rick quoted $38,400 with the sink staying put. Moving it to an island would add about $4,500. The job would take 5–6 weeks, and he could start the week of Nov 16. [ep:gmail_64d14d8b2c343bd2]\n- **Sep 24:** Your note says you compared the two quotes with Mara and were leaning toward Rick, because he's cheaper and can start sooner. You planned to ask him for a revised number with a butcher-block island top. [ep:obsidian_90dbf83cb88a5202]\n- **Sep 28:** You emailed Rick that you want the sink on the island, with a butcher-block island top and quartz kept on the perimeter. You asked for a revised quote. [ep:gmail_850eac94f0f23b53]\n- **Sep 29:** Rick promised the revised quote by Friday, Oct 2. [ep:gmail_485a11c462c79a3e]\n- **Oct 8:** With nothing received, you followed up with Rick. [ep:gmail_86fe03525fb36d4c]\n- **Oct 13:** Your note says there was still no revised quote and no reply to your follow-up. You and Mara are now leaning toward Birchwood despite the higher cost, because you'd rather have a contractor who responds. [ep:obsidian_2bb585fc98d39664]\n\n**Decided so far:** the sink goes on the island, with butcher-block on the island and quartz on the perimeter.\n\n**Open:**\n- Rick's revised quote is still outstanding.\n- Nothing in L0 shows you accepting Birchwood or replying to Hannah.\n- Birchwood's January opening matters for timing. Rick could have started Nov 16.\n\nThe $44,900 Birchwood figure includes the island sink. Your Sep 24 note put Rick at about $42,900 with the island, based on his quote. His revised price with butcher-block is unknown.\n\nGmail, calendar and notes were all synced through 8:00 pm tonight, and I found nothing newer on this topic.",
+      "cited": [
+        "gmail_442895d53b8b8f4d",
+        "gmail_f246fb109aef5f9f",
+        "obsidian_2734610946535762",
+        "icloud_calendar_6256849a41c1a902",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "obsidian_90dbf83cb88a5202",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers every point in the expected timeline: Sep 8 request, Sep 15 visit with the island sink wish, Birchwood's $44,900 on Sep 21 with eight weeks and a January start, Rick's $38,400 with $4,500 to move the sink and a Nov 16 start on Sep 23, leaning toward Rick on Sep 24, the revised quote request on Sep 28, the Oct 2 promise on Sep 29, the Oct 8 follow-up with no reply, and leaning toward Birchwood as of Oct 13. Its extra details are supported by the cited episodes and don't contradict the expected answer. The \"Decided so far\" line is a mild stretch but doesn't contradict anything.",
+      "cost_usd": 0.11306540000000001,
+      "turns": 6,
+      "duration_ms": 14620,
+      "tool_calls": [
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-oenow_42/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki; cat topics/kitchen-remodel.md people/rick-alvarez.md people/hannah-lee.md; ls /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/*/* | head -0; grep -rliE \"kitchen|remodel|birchwood|alvarez\" /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_442895d53b8b8f4d gmail/2026-09/gmail_f246fb109aef5f9f gmail/2026-09/gmail_ab7b0a0734865612 gmail/2026-09/gmail_64d14d8b2c343bd2 gmail/2026-09/gmail_850eac94f0f23b53 gmail/2026-09/gmail_485a11c462c79a3e gmail/2026-10/gmail_86fe03525fb36d4c icloud_calendar/2026-09/icloud_calendar_6256849a41c1a902 obsidian/2026-09/obsidian_2734610946535762 obsidian/2026-09/obsidian_90dbf83cb88a5202 obsidian/2026-10/obsidian_2bb585fc98d39664; do echo \"=== $f\"; python3 -c \"\nimport json,sys\nd=json.load(open('$f.json'))\nprint(d['occurred_at'],d['subject'],[(p['role'],p.get('address') or p.get('name')) for p in d['participants']])\nprint(d['body'])\"; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_442895d53b8b8f4d",
+        "gmail_f246fb109aef5f9f",
+        "obsidian_2734610946535762",
+        "icloud_calendar_6256849a41c1a902",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "obsidian_90dbf83cb88a5202",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "evidence_opened": [
+        "gmail_442895d53b8b8f4d",
+        "gmail_ab7b0a0734865612",
+        "gmail_64d14d8b2c343bd2",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ]
+    },
+    {
+      "id": "blood-work-timeline",
+      "category": "timeline_narrative",
+      "question": "What's happened with my blood work?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Dr. Ortiz ordered fasting blood work at the Sept 16 physical, and Argus booked the draw for Thursday Oct 8 at 7:30 am. On Oct 2 the clinic moved it to Tuesday Oct 13 at 7:30 am because the lab was closing Oct 8 for an equipment upgrade. Argus did the draw on Oct 13; results are due in the patient portal in 3 to 5 days and haven't come in yet.",
+      "evidence": [
+        "icloud_calendar_0e2bea581cd8059f",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your fasting blood draw is done, and the results haven't shown up in L0 yet.\n\n- **Sep 16:** After your physical, you noted that Dr. Ortiz wanted fasting blood work because your cholesterol was borderline last year. You booked the draw for Thu Oct 8 at 7:30 am [ep:obsidian_c79c4e799bfe44ee].\n- **Oct 2:** Lakeside Family Medicine emailed that the lab would be closed Oct 8 for an equipment upgrade. They moved your draw to Tue Oct 13 at 7:30 am [ep:gmail_dc98e94cb3fb6a7e]. Your calendar has the Oct 13 fasting blood draw [ep:icloud_calendar_471f4bc89cf300d3]. The Oct 8 event is also still on your calendar [ep:icloud_calendar_0e2bea581cd8059f].\n- **Oct 13:** Your daily note says the draw was done at 7:30 that morning. You wrote that results should be in the patient portal in 3–5 days [ep:obsidian_2bb585fc98d39664]. That puts them at about Oct 16–18.\n\nGmail, your calendar and your notes were all synced as of 8:00 pm tonight, Oct 14. In those sources I found no email or note with results, and nothing saying they're ready. Results are not due yet, so this doesn't mean anything is wrong. They would arrive through the portal, and L0 doesn't capture the portal itself, so I can't see them there.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "icloud_calendar_0e2bea581cd8059f",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers all key facts: Sept 16 fasting order by Dr. Ortiz, the Oct 8 booking, the Oct 2 move to Oct 13 due to the lab's equipment upgrade, the draw done Oct 13, and results due in 3–5 days and not yet in. Citations support their claims.",
+      "cost_usd": 0.0707194,
+      "turns": 5,
+      "duration_ms": 10152,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -50 wiki/index.md; grep -ril -E \"blood|lab|cholesterol\" wiki | head -30; grep -ril -E \"blood ?work|blood test|lipid|cholesterol|lab results\" l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-agent-uc5svxux/project; head -60 wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/orgs/lakeside-family-medicine.md; grep -ril -E \"lakeside|ortiz|portal|fasting\" l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_3add6250cef8fa45 gmail/2026-10/gmail_dc98e94cb3fb6a7e icloud_calendar/2026-10/icloud_calendar_471f4bc89cf300d3 icloud_calendar/2026-10/icloud_calendar_0e2bea581cd8059f obsidian/2026-10/obsidian_2bb585fc98d39664 obsidian/2026-09/obsidian_c79c4e799bfe44ee; do echo \"== $f\"; python3 -c \"\nimport json,sys;d=json.load(open('$f.json'));print(d['occurred_at'],d['subject'],d.get('calendar_name'));print(d['body'][:1500])\"; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_c79c4e799bfe44ee",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "icloud_calendar_0e2bea581cd8059f",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "evidence_opened": [
+        "icloud_calendar_0e2bea581cd8059f",
+        "gmail_dc98e94cb3fb6a7e",
+        "icloud_calendar_471f4bc89cf300d3",
+        "obsidian_2bb585fc98d39664"
+      ]
+    },
+    {
+      "id": "mara-swim-preference",
+      "category": "stance_change",
+      "question": "Which swim lesson time does Mara want for the kids?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday at 9 am; she'll take both kids while Argus is at soccer. She first preferred the Tuesday/Thursday 5:30 pm class (Sept 15), when her late shifts were Mon/Wed/Fri, but switched to Saturdays (Oct 5) because her late shifts move to Tuesday and Thursday from the week of Oct 19.",
+      "evidence": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Mara wants the **Saturday 9:00–9:45 am class** for both kids. This is her current preference. It replaces her earlier pick of Tue/Thu 5:30 pm.\n\n- **Sep 15:** My note says Mara preferred the Tue/Thu 5:30 pm class, because her late shifts were Mon/Wed/Fri. I was leaning Tue/Thu [ep:obsidian_2734610946535762].\n- **Oct 5:** My note says her late shifts move to Tue/Thu starting the week of Oct 19, so she can't do Tue/Thu anymore. She wants the Saturday 9 am class instead and will take both kids while I'm at soccer [ep:obsidian_ea104c1898d334ac]. An earlier capture of that note gave the registration deadline as Oct 9. The corrected version says Fri Oct 16 at 5 pm [ep:obsidian_2cc5e7ac0ebbf1d6].\n- **Oct 7:** The YMCA confirmed that Theo (Level 3) and June (Preschool 1) both meet Saturdays 9:00–9:45 am in the same pool. At that point there were 6 spots left in Level 3 and 4 in Preschool 1 [ep:gmail_eea78c714aceafbb].\n- **Cost and dates:** The Saturday class runs Oct 24 to Dec 12 at $90 per child [ep:gmail_3add6250cef8fa45].\n\nL0 doesn't show the kids as registered yet. Registration closes **Friday, Oct 16 at 5:00 pm**, which is two days from now. The YMCA says spots aren't held until registration is complete [ep:gmail_eea78c714aceafbb]. Gmail, calendar and notes are all synced through 8:00 pm tonight.",
+      "cited": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "gmail_eea78c714aceafbb",
+        "gmail_3add6250cef8fa45"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer states Saturday 9 am for both kids while Argus is at soccer. It also gives the earlier Tue/Thu 5:30 pm preference (Sep 15) with the Mon/Wed/Fri late shifts. It explains the Oct 5 switch because late shifts move to Tue/Thu from the week of Oct 19. This matches the expected answer. The extra details are accurately sourced. The deadline is Oct 16, and the Oct 9 deadline in the earlier capture is flagged as superseded.",
+      "cost_usd": 0.0948619,
+      "turns": 4,
+      "duration_ms": 7976,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -30 wiki/index.md; grep -ril swim l0/episodes | head -30; grep -il swim wiki -r"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-p28av1au/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/swim-lessons.md; for f in gmail/2026-09/gmail_3add6250cef8fa45 gmail/2026-10/gmail_8358e47660c17ef9 gmail/2026-10/gmail_eea78c714aceafbb obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6 obsidian/2026-10/obsidian_ea104c1898d334ac obsidian/2026-09/obsidian_2734610946535762; do echo \"=== $f\"; cat l0/episodes/$f.json; done; ls l0/episodes/assistant_chat 2>/dev/null"
+          },
+          "errored": true
+        }
+      ],
+      "cited_opened": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac",
+        "obsidian_2cc5e7ac0ebbf1d6",
+        "gmail_eea78c714aceafbb",
+        "gmail_3add6250cef8fa45"
+      ],
+      "evidence_opened": [
+        "obsidian_2734610946535762",
+        "obsidian_ea104c1898d334ac"
+      ]
+    },
+    {
+      "id": "contractor-leaning",
+      "category": "stance_change",
+      "question": "Which contractor are we leaning toward for the kitchen?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Birchwood Remodeling (Hannah Lee), as of Oct 13, even though it costs more ($44,900), because Rick never sent the revised quote he promised by Oct 2 and didn't answer the Oct 8 follow-up. On Sept 24 they had been leaning toward Rick ($38,400, about $42,900 with the island sink, and an earlier start).",
+      "evidence": [
+        "obsidian_90dbf83cb88a5202",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You and Mara are leaning toward **Birchwood Remodeling** (Hannah Lee). It isn't a final decision yet.\n\n- **Your Oct 13 note:** you wrote that you and Mara are leaning Birchwood \"even though it costs more. We'd rather have a contractor who actually responds.\" [ep:obsidian_2bb585fc98d39664]\n- **Birchwood:** Hannah's Sept 21 estimate is $44,900 for new cabinets, quartz countertops, new flooring and moving the sink to an island. The work would take about eight weeks, with the next opening in January. The estimate is good for 30 days, which your note puts at about Oct 21. [ep:gmail_ab7b0a0734865612] [ep:obsidian_2bb585fc98d39664]\n- **Rick Alvarez:** On Sept 29, Rick wrote he'd send a revised quote by Friday, Oct 2. [ep:gmail_485a11c462c79a3e] You followed up on Oct 8 because it hadn't arrived. [ep:gmail_86fe03525fb36d4c] As of your Oct 13 note there was still no quote and no reply. [ep:obsidian_2bb585fc98d39664]\n- **Rick's price and timing:** his original quote was $38,400, as the wiki records it. I didn't open that email, so I haven't verified the figure.\n\nBirchwood's estimate runs out in about a week, around Oct 21.\n\nGmail, calendar and notes were all synced as of 8:00 tonight, so nothing newer from Rick is likely to be missing.",
+      "cited": [
+        "obsidian_2bb585fc98d39664",
+        "gmail_ab7b0a0734865612",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [
+        "obsidian_90dbf83cb88a5202"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer states they're leaning Birchwood (Hannah Lee) as of Oct 13, despite higher cost ($44,900), because Rick didn't send the revised quote promised by Oct 2 and didn't answer the Oct 8 follow-up. It mentions Rick's $38,400 without full verification but doesn't contradict anything. It omits the Sept 24 earlier lean toward Rick, which is minor context. Core facts match.",
+      "cost_usd": 0.0952685,
+      "turns": 7,
+      "duration_ms": 10335,
+      "tool_calls": [
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-9mtptv74/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/topics/kitchen-remodel.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; cat obsidian/*/obsidian_2bb585fc98d39664.json; echo; grep -l -i -E \"alvarez|birchwood\" */*/*.json | tail -20"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/gmail; grep -h -E '\"(occurred_at|start|subject|body)\"' 2026-10/gmail_86fe03525fb36d4c.json 2026-09/gmail_ab7b0a0734865612.json 2026-09/gmail_485a11c462c79a3e.json"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_2bb585fc98d39664",
+        "gmail_ab7b0a0734865612",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c"
+      ],
+      "evidence_opened": [
+        "obsidian_2bb585fc98d39664"
+      ]
+    },
+    {
+      "id": "my-commitments",
+      "category": "open_loops",
+      "question": "What have I said I'd do that I still haven't done?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Register Theo and June for the Saturday 9 am YMCA swim class before registration closes this Friday, Oct 16 at 5 pm (committed Oct 5; nothing shows it's done). Call North Star Sports Medicine to book the knee appointment (said he would the week of Sept 16; still hadn't by Sept 26). Also good but not required: sending Ben his Austin arrival time (promised Sept 18; nothing shows he sent it) and the upcoming reading at Dave's wedding.",
+      "evidence": [
+        "obsidian_ea104c1898d334ac",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Five things you've said you'd do are still open as of Wed Oct 14. I searched Gmail, calendar and your daily notes, all synced through 8:00 tonight. I found no sign you've done any of the five, but I can only see what was captured.\n\n1. **Register Theo (Level 3) and June (Preschool 1) for Saturday 9 am swim.** You wrote the TODO in your Oct 5 note [ep:obsidian_ea104c1898d334ac]. Registration closes **Fri Oct 16 at 5 pm**, which is two days away, and spots aren't held until you register. On Oct 7 the YMCA said 4 spots were left for June and 6 for Theo [ep:gmail_eea78c714aceafbb]. I found no registration confirmation.\n\n2. **Do the short reading at Dave's wedding on Oct 24.** You told Dave on Sep 23 that you'd be honored to do it [ep:gmail_7024dac2f1db3c82]. You also asked him to send the text, and I found nothing from him yet, so you can't prepare it.\n\n3. **Send Ben your arrival time for Austin (Nov 6–8).** Ben asked for it on Sep 17 [ep:gmail_aa36860038e35da6]. You promised on Sep 18 to send it once you had it [ep:gmail_13d0b7eda11618b5]. Your Prairie Air confirmation on Sep 22 shows you land in Austin at 6:55 pm on Fri Nov 6 [ep:gmail_76761ccb338f1f61]. I found no email to Ben with that time.\n\n4. **Call North Star Sports Medicine to book the knee appointment.** This has been on your list since Sep 16 [ep:obsidian_c79c4e799bfe44ee]. On Sep 26 you wrote that you still hadn't called, after the knee flared up again [ep:obsidian_9274b0164a4212f9]. I found nothing since.\n\n5. **Rick Alvarez's revised quote.** This one is his to send, not yours. On Oct 13 you wrote that there was still no revised quote and no reply to your Oct 8 follow-up, and that you and Mara are leaning toward Birchwood [ep:obsidian_2bb585fc98d39664]. Hannah Lee's $44,900 estimate is good until about Oct 21 [ep:gmail_ab7b0a0734865612].\n\nThree things you'd said you'd do are already done. You booked the Austin flights, RSVP'd for Theo to Olivia's party, and booked Harborview Inn. The wiki shows the gift and RSVP as done too.",
+      "cited": [
+        "obsidian_ea104c1898d334ac",
+        "gmail_eea78c714aceafbb",
+        "gmail_7024dac2f1db3c82",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5",
+        "gmail_76761ccb338f1f61",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "obsidian_2bb585fc98d39664",
+        "gmail_ab7b0a0734865612"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer includes both required items (YMCA swim registration by Fri Oct 16 5 pm; calling North Star Sports Medicine, still not done as of Sep 26) and both optional ones (Ben's arrival time, Dave's wedding reading). The extra Rick item is a mild addition but doesn't contradict the expected answer. Citations support their claims.",
+      "cost_usd": 0.105862,
+      "turns": 8,
+      "duration_ms": 20890,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -c 3000 wiki/index.md; cat wiki/proposals.md | head -30; grep -n -i \"loop\" /srv/pa/eval/tmp/pa-agent-p69pupag/project/wiki-schema.md | head"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki; sed -n 125,160p /srv/pa/eval/tmp/pa-agent-p69pupag/project/wiki-schema.md; grep -rn -i \"owner owes\\|I owe\\|\\[open\\]\\|- \\[ \\]\" people orgs topics | grep -v -i \"closed\" | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rn \"me →\" ../../wiki --include=*.md | grep -v \"\\[ \\]\" | head -30; for i in obsidian_c79c4e799bfe44ee obsidian_9274b0164a4212f9 gmail_7024dac2f1db3c82 gmail_aa36860038e35da6 gmail_13d0b7eda11618b5 obsidian_ea104c1898d334ac; do f=$(find . -name \"$i.json\"); echo \"== $f\"; python3 -c \"import json,sys;d=json.load(open('$f'));print(d['occurred_at'],d['subject']);print(d['body'][:1800])\"; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rli \"north star\\|arrival\\|swim\\|register\\|Birchwood\\|flight\" . | sort | xargs ls -1 | tail -40; for f in $(ls obsidian/2026-10/*.json | tail -6); do echo \"== $f\"; python3 -c \"import json;d=json.load(open('$f'));print(d['occurred_at']['start']);print(d['body'])\"; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-10/gmail_8358e47660c17ef9 gmail/2026-10/gmail_eea78c714aceafbb gmail/2026-09/gmail_76761ccb338f1f61 gmail/2026-09/gmail_3add6250cef8fa45 gmail/2026-09/gmail_ab7b0a0734865612; do echo \"== $f\"; python3 -c \"import json;d=json.load(open('$f.json'));print(d['occurred_at']['start'],d['subject']);print(d['body'][:700])\"; done; ls assistant_chat 2>/dev/null"
+          },
+          "errored": true
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rli \"ben\" gmail obsidian | xargs grep -li \"okafor\\|austin\" ; grep -rl \"assistant_chat\" -l . | head -3; ls"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; python3 -c \"import json;d=json.load(open('obsidian/2026-09/obsidian_177b53f4fbec858e.json'));print(d['occurred_at']['start']);print(d['body'])\""
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_ea104c1898d334ac",
+        "gmail_eea78c714aceafbb",
+        "gmail_7024dac2f1db3c82",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5",
+        "gmail_76761ccb338f1f61",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "obsidian_2bb585fc98d39664",
+        "gmail_ab7b0a0734865612"
+      ],
+      "evidence_opened": [
+        "obsidian_ea104c1898d334ac",
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ]
+    },
+    {
+      "id": "waiting-on",
+      "category": "open_loops",
+      "question": "What am I waiting on from other people?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Rick Alvarez's revised kitchen quote (promised by Friday Oct 2; Argus followed up Oct 8 with no reply). The text of the wedding reading from Dave (he said he'd send it once they picked it). The blood work results (due in the patient portal 3 to 5 days after the Oct 13 draw).",
+      "evidence": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "gmail_65ecf5df0783b8fc",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You're waiting on three things from other people. Gmail, calendar and notes were all synced through 8:00 pm tonight, and I found nothing newer that settles any of them.\n\n1. **Rick Alvarez, revised kitchen quote (overdue).**\n   - On Sep 28 you asked him for a quote with the island sink, a butcher-block island top and quartz on the perimeter [ep:gmail_850eac94f0f23b53].\n   - On Sep 29 he promised it by Fri Oct 2 [ep:gmail_485a11c462c79a3e].\n   - You followed up on Oct 8 [ep:gmail_86fe03525fb36d4c].\n   - Your Oct 13 note says there's still no quote and no reply to the follow-up [ep:obsidian_2bb585fc98d39664].\n   - You and Mara are now leaning toward Birchwood, whose estimate is good until about Oct 21 [ep:obsidian_2bb585fc98d39664].\n\n2. **Dave Kim, the text for your wedding reading.**\n   - On Sep 22 he asked you to do a reading and said he'd send the text once they'd picked it [ep:gmail_65ecf5df0783b8fc].\n   - You said yes on Sep 23 [ep:gmail_7024dac2f1db3c82].\n   - I found no later email with the text. There's no due date, and the wedding is Oct 24.\n\n3. **Lakeside Family Medicine, blood work results.**\n   - Your Oct 13 note says the results should be in the patient portal in 3 to 5 days, so by about Oct 18 [ep:obsidian_2bb585fc98d39664].\n   - That isn't overdue yet.\n\nThe librarian has no open proposals.",
+      "cited": [
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers all three expected items: Rick's overdue revised quote (promised Oct 2, followed up Oct 8, no reply), Dave's wedding reading text (to be sent once picked), and the blood work results (portal, 3-5 days after the Oct 13 draw). The extra detail (Birchwood, Oct 21 estimate) is supported by the cited note. The claim \"Dave Kim\" matches David Kim/Dave. Citations support their claims.",
+      "cost_usd": 0.1046694,
+      "turns": 9,
+      "duration_ms": 14763,
+      "tool_calls": [
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-mym0ys90/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki; grep -rE '^- \\[ \\] .* → me: ' people orgs topics"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for id in gmail_850eac94f0f23b53 gmail_485a11c462c79a3e obsidian_2bb585fc98d39664 gmail_65ecf5df0783b8fc gmail_7024dac2f1db3c82; do f=$(find . -name $id.json); echo \"== $f\"; python3 -c \"import json,sys;d=json.load(open('$f'));print(d['occurred_at'],d['subject'],[(p['role'],p.get('email')) for p in d['participants']]);print(d['body'][:1500])\"; done; cat ../../wiki/topics/kitchen-remodel.md ../../wiki/people/ben-okafor.md ../../wiki/topics/austin-trip.md | grep -E '^- \\[|^## '; ls obsidian/2026-10 | tail -3"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -liE 'reading|revised quote|Rick|portal' gmail/2026-10/*.json obsidian/2026-10/*.json assistant_chat/*/*.json 2>/dev/null | while read f; do python3 -c \"import json;d=json.load(open('$f'));print('$f',d['occurred_at']['start'],d['subject'])\"; done"
+          },
+          "errored": true
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in $(grep -liE 'reading|revised quote|Rick|portal' gmail/2026-10/*.json obsidian/2026-10/*.json); do python3 -c \"import json;d=json.load(open('$f'));print('$f',d['occurred_at']['start'],d['subject'])\"; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; python3 -c \"import json;d=json.load(open('gmail/2026-10/gmail_86fe03525fb36d4c.json'));print(d['body'])\""
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "evidence_opened": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "gmail_65ecf5df0783b8fc",
+        "obsidian_2bb585fc98d39664"
+      ]
+    },
+    {
+      "id": "this-saturday",
+      "category": "cross_channel_synthesis",
+      "question": "What's going on this Saturday?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday Oct 17: Argus's soccer game, 8:30-10:00 am at Riverside Park, Field 3, then Olivia's 7th birthday party for Theo, 10:00 am to noon at Jump Zone (grip socks).",
+      "evidence": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "This Saturday is Oct 17, and two events are on your calendar:\n\n- **8:30–10:00 am:** your Riverside FC soccer game at Riverside Park, Field 3 (Personal calendar) [ep:icloud_calendar_dccb77a3b9e1f8f3].\n- **10:00 am–12:00 pm:** Olivia's birthday party for Theo at Jump Zone (Family calendar). You're the organizer and Mara is an attendee. The event says \"Grip socks!\" [ep:icloud_calendar_1e253085560f6c58]\n\nThe soccer game ends at 10:00, when the party starts. The two events don't give a location or travel time between them.\n\nThe YMCA swim lessons don't start this Saturday. The Fall II class runs Oct 24 to Dec 12 [ep:gmail_3add6250cef8fa45]. Registration closes Friday, Oct 16 at 5 pm, and your Oct 5 note says you haven't registered Theo and June yet [ep:obsidian_ea104c1898d334ac].\n\nI checked the calendar, email and notes, and all three were synced as of 8:00 pm tonight.",
+      "cited": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58",
+        "gmail_3add6250cef8fa45",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer lists both events with the correct times and locations, plus the grip socks note. The soccer game is 8:30–10:00 at Riverside Park, Field 3. The party is 10:00–12:00 at Jump Zone. The extra swim-lesson detail is supported by the cited episodes and doesn't contradict the expected answer. Minor point: the answer says \"your Riverside FC soccer game\", while the expected answer says Argus's. The calendar shows Argus as organizer, and the user is presumably Argus, so this is consistent.",
+      "cost_usd": 0.0767776,
+      "turns": 6,
+      "duration_ms": 9415,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cat /srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json; head -30 /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md; cat /srv/pa/eval/tmp/pa-agent-agtjyl9m/project/wiki-schema.md | head -60"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rlE \"2026-10-1[0-9]|2026-10-2[0-9]\" icloud_calendar | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rl \"2026-10-17\" . | while read f; do echo \"== $f\"; head -c 900 $f; echo; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki; cat days/2026-10-1[0-4].md | grep -iE \"saturday|oct 17|sat \" ; cat orgs/riverside-fc.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki; cat orgs/westside-ymca-aquatics.md topics/*swim* 2>/dev/null | head -40; grep -rliE \"swim\" ../l0/episodes | head"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58"
+      ],
+      "evidence_opened": [
+        "icloud_calendar_dccb77a3b9e1f8f3",
+        "icloud_calendar_1e253085560f6c58"
+      ]
+    },
+    {
+      "id": "duluth-friday",
+      "category": "cross_channel_synthesis",
+      "question": "Can Mara and I drive up to Duluth on Friday the 23rd for Dave's wedding?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Yes. Mara's Friday Oct 23 late shift was moved to Thursday Oct 22, so she's off that Friday. They're booked at the Harborview Inn from Friday Oct 23 to Sunday Oct 25 (confirmation HV-48213, $169 a night). The wedding is Saturday Oct 24 at 4 pm at North Shore Lodge.",
+      "evidence": [
+        "icloud_calendar_b8d03afb132d9844",
+        "gmail_4ce0b5268f61b5e7"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "**Yes, it looks like you and Mara can drive up on Friday, Oct 23.** Nothing in L0 conflicts with it.\n\n- **Plan:** Your Oct 5 note says you'll drive up to Duluth on Fri Oct 23 and back on Sunday [ep:obsidian_ea104c1898d334ac].\n- **Mara's work:** The same note says her Friday Oct 23 shift was moved to Thursday, so she's off that Friday [ep:obsidian_ea104c1898d334ac].\n  - Her work calendar shows a \"Late shift\" at St. Luke's on Fri Oct 23, 3:00–11:30 pm [ep:icloud_calendar_1224d84fd44e8a7b].\n  - It also shows one on Thu Oct 22 with the same event ID [ep:icloud_calendar_b8d03afb132d9844]. I read that as the moved shift, but the Friday entry is still in L0. It's worth checking that it's gone from her calendar.\n- **Hotel:** Harborview Inn confirmed one king room, Oct 23–25, at the $169/night wedding block rate, confirmation HV-48213. Check-in starts at 3:00 pm [ep:gmail_4ce0b5268f61b5e7].\n- **Wedding:** It's on Sat Oct 24, with the ceremony at 4 pm at North Shore Lodge in Duluth and a cocktail dress code [ep:icloud_calendar_696340c2ae0ea270].\n- **Kids:** Mara's parents are keeping them that weekend [ep:obsidian_7867dbb0b6d5077e].\n\nYour Riverside FC game is also on your calendar for Sat Oct 24 at 8:30 am in Riverside Park [ep:icloud_calendar_8cf440f462a30a05]. That clashes with being in Duluth, so you'd need to skip it.\n\nI haven't read anything about the drive itself, such as the route or timing.\n\nGmail, calendar and notes were all synced through 8:00 pm tonight.",
+      "cited": [
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_1224d84fd44e8a7b",
+        "icloud_calendar_b8d03afb132d9844",
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270",
+        "obsidian_7867dbb0b6d5077e",
+        "icloud_calendar_8cf440f462a30a05"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says yes, Mara's Friday shift was moved to Thursday so she's off, hotel Harborview Inn Oct 23–25 with HV-48213 at $169/night, and the wedding is Sat Oct 24 at 4 pm at North Shore Lodge. All key facts are present. Extra caveats (a leftover Friday calendar entry, the soccer clash) don't contradict the expected answer. Every citation supports the claim it is attached to.",
+      "cost_usd": 0.1242434,
+      "turns": 9,
+      "duration_ms": 15521,
+      "tool_calls": [
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-m1m_3vfe/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/topics/daves-wedding.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rliE \"duluth|wedding|harborview\" . | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in obsidian/2026-10/obsidian_ea104c1898d334ac.json obsidian/2026-10/obsidian_286be39141fefb9b.json obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6.json gmail/2026-10/gmail_4ce0b5268f61b5e7.json icloud_calendar/2026-10/icloud_calendar_696340c2ae0ea270.json; do echo \"== $f\"; cat $f; echo; done; grep -rliE \"mara.*(shift|work)|shift\" . | head"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/icloud_calendar/2026-10; grep -lE '\"start\": \"2026-10-2[2-5]' *.json | while read f; do echo \"== $f\"; grep -E '\"(start|subject|calendar_name|body)\"' $f; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/icloud_calendar/2026-10; cat icloud_calendar_1224d84fd44e8a7b.json icloud_calendar_b8d03afb132d9844.json | grep -vE 'hash|envelope|raw_ref'; grep -l \"wedding-day\\|Late shift\" *.json | head -20"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_1224d84fd44e8a7b",
+        "icloud_calendar_b8d03afb132d9844",
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_8cf440f462a30a05"
+      ],
+      "evidence_opened": [
+        "icloud_calendar_b8d03afb132d9844",
+        "gmail_4ce0b5268f61b5e7"
+      ]
+    },
+    {
+      "id": "saturday-swim-conflicts",
+      "category": "cross_channel_synthesis",
+      "question": "If the kids do Saturday swim, which Saturdays are going to be a problem?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday classes run Oct 24 to Dec 12, 9:00-9:45 am. Oct 24, the first class, is Dave's wedding in Duluth, when Argus and Mara are away and Mara's parents have the kids. Nov 14, Nora's 4th birthday party starts at 9:30 am and overlaps June's class. (Argus is in Austin Nov 6-8 and has soccer most Saturday mornings, but Mara is the one taking them.)",
+      "evidence": [
+        "gmail_3add6250cef8fa45",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_7e93d9235998eab6"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "**Only Oct 24 is a clear problem.** Nov 14 is tight, and Nov 7 depends on one assumption.\n\nThe Saturday class is 9:00–9:45 am, and Fall II Saturday classes run Oct 24 to Dec 12 [ep:gmail_3add6250cef8fa45]. That is eight Saturdays: Oct 24 and 31, Nov 7, 14, 21 and 28, and Dec 5 and 12. The plan is that Mara takes both kids while you're at soccer [ep:obsidian_ea104c1898d334ac].\n\n- **Oct 24 (problem):** Dave and Priya's wedding is in Duluth, with the ceremony at 4 pm [ep:icloud_calendar_696340c2ae0ea270]. Your note says you drive up Fri Oct 23 and back Sunday [ep:obsidian_ea104c1898d334ac]. Nobody would be home for a 9 am class. Your soccer game that morning is also on the calendar [ep:icloud_calendar_8cf440f462a30a05]. I found nothing on who watches the kids at the wedding.\n- **Nov 7 (probably fine):** You're in Austin with Ben from Nov 6 to 8 [ep:icloud_calendar_8d783f6aa700703f], and a soccer game is listed that morning [ep:icloud_calendar_ae5c5f0a089e4192]. Mara still takes the kids to swim, so this only matters if she can't do it alone. I found no Saturday shifts for her.\n- **Nov 14 (tight):** June has Nora's 4th birthday party at 9:30 am, which is 15 minutes before swim ends at 9:45 [ep:icloud_calendar_7e93d9235998eab6].\n- **Oct 31:** You have a soccer game, which is the normal arrangement [ep:icloud_calendar_aeb9b8775ecc8fc4]. I found no other conflict.\n- **Nov 21 to Dec 12:** Nothing is on the calendar. It only runs through Nov 14 in what has been captured, and I'm treating it as current through 8:00 pm tonight.\n\nRegistration closes Fri Oct 16 at 5 pm. As of Oct 7, there were 4 spots left in Preschool 1 and 6 in Level 3, and spots aren't held until you finish registering [ep:gmail_eea78c714aceafbb]. I haven't found a confirmation that you've registered.",
+      "cited": [
+        "gmail_3add6250cef8fa45",
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_8cf440f462a30a05",
+        "icloud_calendar_8d783f6aa700703f",
+        "icloud_calendar_ae5c5f0a089e4192",
+        "icloud_calendar_7e93d9235998eab6",
+        "icloud_calendar_aeb9b8775ecc8fc4",
+        "gmail_eea78c714aceafbb"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": false,
+      "judge_reasoning": "The expected answer names two problem Saturdays: Oct 24 (wedding, Mara's parents have the kids) and Nov 14 (birthday party at 9:30 overlaps June's class). The answer says \"Only Oct 24 is a clear problem\" and calls Nov 14 merely \"tight\". It does note that the party starts at 9:30 and the class ends at 9:45, but it doesn't call this a conflict. It also says nothing was found on who watches the kids on Oct 24, which misses the fact that Mara's parents have them. It also wrongly says Mara would be away with the kids on Oct 24, which is acceptable, but the Nov 14 framing understates the conflict.",
+      "cost_usd": 0.1051891,
+      "turns": 5,
+      "duration_ms": 17746,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-agent-f9pip23j/project; cat wiki-schema.md | head -60; cat /srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json; head -c 3000 /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md; ls /srv/pa/eval/tmp/pa-eval-pihmag5s/wiki"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0; grep -ril swim episodes | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0; for f in gmail/2026-10/gmail_8358e47660c17ef9 gmail/2026-09/gmail_3add6250cef8fa45 gmail/2026-10/gmail_eea78c714aceafbb obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6 obsidian/2026-09/obsidian_2734610946535762 obsidian/2026-10/obsidian_ea104c1898d334ac; do echo \"== $f\"; cat episodes/$f.json; done; ls episodes/icloud_calendar/*"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/icloud_calendar; for f in */*.json; do python3 -I -c \"\nimport json,sys\nd=json.load(open('$f'))\nprint(d['episode_id'],d['occurred_at']['start'],d['occurred_at']['end'],d['calendar_name'],'|',d['subject'],'|',(d['body'] or '')[:150].replace('\\n',' '))\n\"; done | sort -k2"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_3add6250cef8fa45",
+        "obsidian_ea104c1898d334ac",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_8cf440f462a30a05",
+        "icloud_calendar_8d783f6aa700703f",
+        "icloud_calendar_ae5c5f0a089e4192",
+        "icloud_calendar_7e93d9235998eab6",
+        "icloud_calendar_aeb9b8775ecc8fc4",
+        "gmail_eea78c714aceafbb"
+      ],
+      "evidence_opened": [
+        "gmail_3add6250cef8fa45",
+        "icloud_calendar_696340c2ae0ea270",
+        "icloud_calendar_7e93d9235998eab6"
+      ]
+    },
+    {
+      "id": "dave-asks",
+      "category": "entity_resolution",
+      "question": "What has Dave asked us to do for his wedding?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "RSVP on the wedding website by Oct 1 (done: yes for both, Sept 20), book the Harborview Inn hotel block before it closes Oct 9 (booked Oct 6), and, in an email from his work address on Sept 22, do a reading at the ceremony (Argus said yes).",
+      "evidence": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave has asked two things of you, and one is still waiting on him.\n\n- **Do a short reading at the ceremony.** On Sep 22 Dave wrote \"Quick favor\" asking if you'd read at the ceremony. He said Priya would love it and that it's \"nothing long\" [ep:gmail_65ecf5df0783b8fc]. You said yes on Sep 23 [ep:gmail_7024dac2f1db3c82]. The wedding is Sat Oct 24, so the reading is due then.\n- **RSVP and book the hotel.** On Sep 8 Dave sent the wedding details and asked you to RSVP on the wedding website by Oct 1. He also said the Harborview Inn block closes Oct 9, and you book it by mentioning the Kim-Shah wedding [ep:gmail_d4f1abefefacfaba]. The wiki says you RSVP'd on Sep 20 [ep:gmail_18662e27111a665e] and booked the room on Oct 6 [ep:gmail_4ce0b5268f61b5e7]. I didn't open those two emails, so check them if you want to be sure.\n\n**Still waiting on Dave:** the text of the reading. He said on Sep 22 that he'd send it once he and Priya pick it [ep:gmail_65ecf5df0783b8fc]. I found nothing from him with the text in Gmail, which is current through 8:00 pm tonight.\n\nThe wedding is Oct 24 at 4:00 pm at North Shore Lodge in Duluth [ep:gmail_d4f1abefefacfaba]. The calendar says the dress code is cocktail [ep:icloud_calendar_696340c2ae0ea270].",
+      "cited": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_d4f1abefefacfaba",
+        "gmail_18662e27111a665e",
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer covers all three asks: the reading (asked Sep 22, accepted), the RSVP by Oct 1 (done Sep 20, yes for both), and the Harborview Inn block before Oct 9 (booked Oct 6). It doesn't mention that the Sep 22 email came from Dave's work address, but that is a minor detail. The extra claim that the reading text is still pending is supported by the Sep 22 email. The answer's hedge that it didn't open two emails doesn't change the facts, and the cited episodes support them.",
+      "cost_usd": 0.10974409999999998,
+      "turns": 9,
+      "duration_ms": 12091,
+      "tool_calls": [
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-rbkkasmk/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/index.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/statuses/20261015T010000Z/status.json"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/topics/daves-wedding.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-eval-pihmag5s/wiki/people/david-kim.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rliE \"david.kim@|dkim@|Dave\" . | sort; for i in gmail_d4f1abefefacfaba gmail_65ecf5df0783b8fc gmail_7024dac2f1db3c82; do echo \"== $i\"; cat gmail/*/$i.json; done"
+          },
+          "errored": true
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -rliE \"david.kim@|dkim@|Dave\" . | sort; for i in gmail_d4f1abefefacfaba gmail_65ecf5df0783b8fc gmail_7024dac2f1db3c82; do echo \"== $i\"; cat gmail/*/$i.json; done"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/obsidian; for i in 2026-10/obsidian_286be39141fefb9b 2026-10/obsidian_2cc5e7ac0ebbf1d6; do echo \"== $i\"; grep -E '\"start\"|\"body\"' $i.json | cut -c1-2500; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82",
+        "gmail_d4f1abefefacfaba"
+      ],
+      "evidence_opened": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_65ecf5df0783b8fc"
+      ]
+    },
+    {
+      "id": "dave-addresses",
+      "category": "entity_resolution",
+      "question": "Which email addresses has Dave written to me from?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Two, both as David Kim: dkim@example.net (the Sept 8 wedding details) and david.kim@kimlaw.example, his work address (the Sept 22 reading request).",
+      "evidence": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_65ecf5df0783b8fc"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Dave (David Kim) has written to you from two addresses:\n\n- **dkim@example.net**: \"Wedding details!\", Sep 8, sent to you and Mara [ep:gmail_d4f1abefefacfaba]. You replied to this address on Sep 20 [ep:gmail_18662e27111a665e].\n- **david.kim@kimlaw.example**: \"Quick favor\", Sep 22, asking you to do a reading [ep:gmail_65ecf5df0783b8fc]. You replied to this address on Sep 23 [ep:gmail_7024dac2f1db3c82].\n\nBoth are labeled \"David Kim\" in the emails. I only searched gmail for these two addresses and found no others. Gmail is synced through 8:00 PM tonight.",
+      "cited": [
+        "gmail_d4f1abefefacfaba",
+        "gmail_18662e27111a665e",
+        "gmail_65ecf5df0783b8fc",
+        "gmail_7024dac2f1db3c82"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer lists both addresses, as David Kim, with the correct contexts: dkim@example.net for the Sept 8 wedding details, and david.kim@kimlaw.example for the Sept 22 reading request. This matches the expected answer. The cited episodes support each claim. The answer doesn't call the second address a work address, but the expected facts are all there.",
+      "cost_usd": 0.062182600000000005,
+      "turns": 4,
+      "duration_ms": 6918,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -50 wiki/index.md; grep -ril dave wiki | head -20; cat /srv/pa/eval/tmp/pa-agent-9rsrlbtj/project/wiki-schema.md | head -60"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/people/david-kim.md; grep -rli \"dave\\|david\" l0/episodes/gmail | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes/gmail; for f in 2026-09/gmail_18662e27111a665e 2026-09/gmail_d4f1abefefacfaba 2026-09/gmail_65ecf5df0783b8fc 2026-09/gmail_7024dac2f1db3c82; do echo $f; python3 -c \"\nimport json,sys;d=json.load(open('$f.json'));print(d['occurred_at'],d['subject'],d['participants'])\"; done; grep -rl \"kimlaw\\|dkim@\\|example.net\" . "
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [],
+      "evidence_opened": []
+    },
+    {
+      "id": "texas-flight-times",
+      "category": "paraphrase",
+      "question": "When does my plane land in Texas, and when do I get home?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Out Friday Nov 6 on Prairie Air PA 1182, leaving Minneapolis (MSP) at 4:10 pm and landing in Austin (AUS) at 6:55 pm. Back Sunday Nov 8 on PA 1191, leaving Austin at 5:20 pm and getting into Minneapolis at 8:05 pm. (Confirmation QX7R2M.)",
+      "evidence": [
+        "gmail_76761ccb338f1f61"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Your plane lands in Austin (AUS) at **6:55 pm on Friday, Nov 6**. You get home to Minneapolis (MSP) at **8:05 pm on Sunday, Nov 8**. Both times come from your Prairie Air confirmation, code QX7R2M, emailed Sep 22 [ep:gmail_76761ccb338f1f61]:\n\n- **Outbound:** PA 1182 leaves MSP at 4:10 pm on Nov 6.\n- **Return:** PA 1191 leaves AUS at 5:20 pm on Nov 8.\n\nThe airline email doesn't state time zones, so I'm reading these as local times at each airport.\n\nYour calendar has an \"Austin trip with Ben\" event from Nov 6 to Nov 8 [ep:icloud_calendar_8d783f6aa700703f]. Ben's Sep 17 email asked you to send him your arrival time [ep:gmail_aa36860038e35da6]. You told him on Sep 18 that you would [ep:gmail_13d0b7eda11618b5]. I found no sent email giving him the time. I searched Gmail, which is current as of 8:00 pm today.",
+      "cited": [
+        "gmail_76761ccb338f1f61",
+        "icloud_calendar_8d783f6aa700703f",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer gives the correct landing time in Austin (6:55 pm Fri Nov 6) and home arrival (8:05 pm Sun Nov 8), with flight numbers, departure times, and confirmation code all matching. Extra details about the calendar and Ben's emails are supported by the cited episodes.",
+      "cost_usd": 0.0655356,
+      "turns": 4,
+      "duration_ms": 7478,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -40 wiki/index.md; grep -ril -E \"flight|texas|airlines\" l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/austin-trip.md; for f in gmail/2026-09/gmail_aa36860038e35da6 gmail/2026-09/gmail_76761ccb338f1f61 gmail/2026-09/gmail_13d0b7eda11618b5; do echo ==$f; cat l0/episodes/$f.json; done; grep -ril -E \"austin|AUS \" l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat l0/episodes/icloud_calendar/2026-11/icloud_calendar_8d783f6aa700703f.json"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_76761ccb338f1f61",
+        "icloud_calendar_8d783f6aa700703f",
+        "gmail_aa36860038e35da6",
+        "gmail_13d0b7eda11618b5"
+      ],
+      "evidence_opened": [
+        "gmail_76761ccb338f1f61"
+      ]
+    },
+    {
+      "id": "cabinet-guy-update",
+      "category": "paraphrase",
+      "question": "Did the cabinet guy ever send me his updated price?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "No. Rick Alvarez (Alvarez Kitchen & Bath) said on Sept 29 he'd send the revised quote (the sink moved to the island, with a butcher-block island top) by Friday Oct 2. It never came: Argus followed up on Oct 8, and as of his Oct 13 note there was still no quote and no reply, so they're now leaning toward Birchwood.",
+      "evidence": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "No. I found no updated price from Rick Alvarez, the kitchen contractor, in L0.\n\n- On Sep 23 he quoted $38,400 [ep:gmail_64d14d8b2c343bd2].\n- On Sep 28 you asked him for a revised quote, with the island sink and a butcher-block island top [ep:gmail_850eac94f0f23b53].\n- On Sep 29 he replied that he'd send it by Friday, Oct 2 [ep:gmail_485a11c462c79a3e].\n- On Oct 8 you followed up because it hadn't come [ep:gmail_86fe03525fb36d4c].\n- Your Oct 13 daily note says there was still no revised quote and no reply to that follow-up. It also says you and Mara are now leaning toward Birchwood, even though it costs more [ep:obsidian_2bb585fc98d39664].\n\nNothing from Rick in email after Sep 29, and Gmail is synced through tonight at 8:00 PM, so a reply since your Oct 13 note would show up.",
+      "cited": [
+        "gmail_64d14d8b2c343bd2",
+        "gmail_850eac94f0f23b53",
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says no, and it matches the expected facts. Rick promised the revised quote by Oct 2. Argus followed up on Oct 8. As of the Oct 13 note there was still no quote or reply, and they are leaning toward Birchwood. Each claim is backed by its cited episode. The one slip is that it says \"L0\" and mentions Gmail sync, which doesn't contradict anything.",
+      "cost_usd": 0.0593574,
+      "turns": 4,
+      "duration_ms": 8379,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -30 wiki/index.md; grep -il cabinet -r wiki | head -20; grep -ril cabinet l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/people/rick-alvarez.md; grep -rli -e alvarez -e \"revised quote\" -e \"updated quote\" -e \"updated price\" l0/episodes | sort"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-09/gmail_485a11c462c79a3e gmail/2026-10/gmail_86fe03525fb36d4c obsidian/2026-10/obsidian_2bb585fc98d39664; do python3 -c \"import json,sys;d=json.load(open('$f.json'));print(d['occurred_at'],d['subject'],[(p['role'],p['address'] if 'address' in p else p) for p in d['participants']]);print(d['body'][:1500])\"; echo ----; done; grep -l rick@alvarezkb gmail/2026-10/* "
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ],
+      "evidence_opened": [
+        "gmail_485a11c462c79a3e",
+        "gmail_86fe03525fb36d4c",
+        "obsidian_2bb585fc98d39664"
+      ]
+    },
+    {
+      "id": "leg-specialist",
+      "category": "paraphrase",
+      "question": "Did I ever get my bad leg looked at by that specialist the doc wanted me to see?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Not as far as anything captured shows. At the Sept 16 physical Dr. Lena Ortiz recommended sports medicine for Argus's right knee (it hurts after soccer) and sent a referral to North Star Sports Medicine; he meant to call North Star that week to book. On Sept 26, after the knee flared up again at soccer, he still hadn't called, and nothing since shows he booked.",
+      "evidence": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "Not as far as L0 shows. I found no sign that you've booked or been seen by the specialist.\n\n- **The referral:** At your Sept 16 physical, Dr. Ortiz recommended sports medicine for your right knee and sent a referral to North Star Sports Medicine. You noted a to-do to call North Star that week to book [ep:obsidian_c79c4e799bfe44ee].\n- **Sept 26:** Your daily note says the knee flared up again at soccer and that you still hadn't called North Star [ep:obsidian_9274b0164a4212f9].\n- **Since then:** I found no later note, email or calendar event mentioning North Star or the knee. The only October medical item is your fasting blood draw, which was moved to Tue Oct 13 [ep:gmail_dc98e94cb3fb6a7e].\n\nI assumed \"bad leg\" means the right knee. That search covered Gmail, calendar and your daily notes, all synced through 8:00 pm tonight (Oct 14). A phone call or a visit you never wrote down wouldn't appear in L0. Going by what was captured, the call to book is still open.",
+      "cited": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "gmail_dc98e94cb3fb6a7e"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says nothing captured shows he booked or was seen. It gives the Sept 16 referral to North Star and the plan to call that week, and the Sept 26 flare-up with the call still not made. It also says nothing since shows a booking. This matches the expected answer. The extra detail about the blood draw is accurate.",
+      "cost_usd": 0.0675086,
+      "turns": 5,
+      "duration_ms": 10602,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -50 wiki/index.md; cat /srv/pa/eval/tmp/pa-agent-30hlk73q/project/wiki-schema.md | head -60; grep -rilE \"specialist|referral|orthop|podiatr|leg\" l0/episodes | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/orgs/north-star-sports-medicine.md; grep -rilE \"north star|sports medicine|knee\" l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -h '\"body\"' obsidian/2026-09/obsidian_c79c4e799bfe44ee.json obsidian/2026-09/obsidian_9274b0164a4212f9.json | cut -c1-1500; grep -rliE \"north ?star|ortho|physical therap|appointment\" . | head; ls obsidian/2026-10 | wc -l; grep -rliE \"knee\" ../raw | head"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -E '\"(subject|occurred_at|body)\"' gmail/2026-09/gmail_a5608a96a1e94888.json gmail/2026-10/gmail_dc98e94cb3fb6a7e.json | cut -c1-600; grep -il \"knee\\|sports\\|leg\" obsidian/2026-10/*"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9",
+        "gmail_dc98e94cb3fb6a7e"
+      ],
+      "evidence_opened": [
+        "obsidian_c79c4e799bfe44ee",
+        "obsidian_9274b0164a4212f9"
+      ]
+    },
+    {
+      "id": "hitched-lodging",
+      "category": "paraphrase",
+      "question": "Where are we crashing up north when my buddy gets hitched?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "The Harborview Inn in Duluth, for Dave and Priya's wedding: one king room, checking in Friday Oct 23 (from 3 pm) and out Sunday Oct 25, 2 nights at the Kim-Shah wedding block rate of $169 a night. Confirmation HV-48213.",
+      "evidence": [
+        "gmail_4ce0b5268f61b5e7"
+      ],
+      "status": "scored",
+      "error": null,
+      "answer": "You're staying at the **Harborview Inn** in Duluth, MN. The reservation is confirmed under confirmation number HV-48213 [ep:gmail_4ce0b5268f61b5e7].\n\n- **Room:** one king room.\n- **Dates:** check-in Friday, Oct 23 (from 3:00 pm) and check-out Sunday, Oct 25, which is 2 nights.\n- **Rate:** $169 per night, the Kim-Shah wedding block rate.\n- **Source:** the hotel's confirmation email of Oct 6 [ep:gmail_4ce0b5268f61b5e7].\n\nThe wedding is Saturday, Oct 24, with the ceremony at 4 pm at North Shore Lodge in Duluth and the reception after. The dress code is cocktail [ep:icloud_calendar_696340c2ae0ea270].\n\nYour Oct 5 note says you and Mara plan to drive up Friday, Oct 23 and back Sunday. Mara's Friday shift was moved to Thursday, so she's off that day [ep:obsidian_ea104c1898d334ac].\n\nI looked in Gmail, iCloud Calendar and your Obsidian notes, all synced through 8:00 pm tonight. I found nothing in them about the Duluth address of the hotel.",
+      "cited": [
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer states all key facts: Harborview Inn in Duluth, one king room, check-in Fri Oct 23 from 3 pm, check-out Sun Oct 25, 2 nights, $169/night Kim-Shah block rate, confirmation HV-48213. The extra details are supported by the cited episodes and don't contradict the expected answer.",
+      "cost_usd": 0.0968253,
+      "turns": 5,
+      "duration_ms": 7974,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -30 wiki/index.md; grep -ril -E \"wedding|hitched|bachelor\" l0/episodes | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-lwqfk_os/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/daves-wedding.md wiki/orgs/harborview-inn.md; grep -il -E \"harborview|duluth\" -r l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; for f in gmail/2026-10/gmail_4ce0b5268f61b5e7 obsidian/2026-10/obsidian_2cc5e7ac0ebbf1d6 obsidian/2026-10/obsidian_ea104c1898d334ac icloud_calendar/2026-10/icloud_calendar_696340c2ae0ea270; do echo \"== $f\"; cat $f.json; done"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_4ce0b5268f61b5e7",
+        "icloud_calendar_696340c2ae0ea270",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "evidence_opened": [
+        "gmail_4ce0b5268f61b5e7"
+      ]
+    },
+    {
+      "id": "swim-instructor",
+      "category": "abstention",
+      "question": "What's the name of the kids' swim instructor?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Unknown: nothing captured names a swim instructor (and the kids aren't registered yet).",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "I don't know the instructor's name, because L0 doesn't name one.\n\nI searched Gmail, the Obsidian notes and the calendar for \"instructor\", \"teacher\", \"coach\" and \"taught by\". Nothing turned up. The swim emails and notes don't name anyone either. Gmail, calendar and Obsidian were all synced through 8:00 pm tonight (Oct 14), so a new message could still be missing.\n\nHere is what L0 does say about the lessons:\n- **Class:** Theo (Level 3) and June (Preschool 1) are in the Westside YMCA's Saturday 9:00–9:45 am Fall II classes, in the same pool [ep:gmail_eea78c714aceafbb].\n- **Who replied:** The only YMCA contact is the aquatics team, at aquatics@westsideymca.example [ep:gmail_eea78c714aceafbb].\n- **Registration:** You decided on the Saturday class on Oct 5 [ep:obsidian_ea104c1898d334ac]. You still need to register them by Fri Oct 16 at 5 pm [ep:gmail_eea78c714aceafbb].\n\nThe aquatics team may be able to tell you who teaches the classes. The instructor may only be assigned once you register.",
+      "cited": [
+        "gmail_eea78c714aceafbb",
+        "obsidian_ea104c1898d334ac"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says it doesn't know the instructor's name and notes that registration is still pending, matching the expected answer. The cited claims are supported by the episodes: the class details and the Oct 16 5 pm deadline come from the YMCA email, and the Saturday-class decision comes from the Obsidian note. One small issue is that the note is dated Oct 5, which fits \"decided on Oct 5\".",
+      "cost_usd": 0.0672881,
+      "turns": 5,
+      "duration_ms": 9107,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -50 wiki/index.md; grep -ril swim l0/episodes wiki | head -50"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cat /srv/pa/eval/tmp/pa-agent-sq6bqvnl/project/wiki-schema.md | head -60"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/topics/swim-lessons.md wiki/people/westside-ymca-aquatics.md; grep -il instructor l0/episodes/*/*/* ; grep -rih -o \".\\{80\\}instructor.\\{80\\}\" l0/episodes | head"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -ilE \"teacher|coach|taught by|lifeguard|instruct\" */*/* | head; grep -ihE \"teacher|coach|taught by|instruct\" gmail/2026-0*/gmail_3add6250cef8fa45.json gmail/2026-10/gmail_eea78c714aceafbb.json gmail/2026-10/gmail_8358e47660c17ef9.json obsidian/2026-10/obsidian_ea104c1898d334ac.json | head"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "gmail_eea78c714aceafbb"
+      ],
+      "evidence_opened": []
+    },
+    {
+      "id": "cholesterol",
+      "category": "abstention",
+      "question": "What were my cholesterol numbers from the blood work?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Unknown: the results haven't come in. The draw was Oct 13 and results were due in the portal in 3 to 5 days; the only thing captured is that cholesterol was borderline last year.",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "I don't have your cholesterol numbers. They aren't in L0 yet.\n\n- Your fasting blood draw was done Tuesday, Oct 13 at 7:30 am. Your daily note says the results should reach the patient portal in 3–5 days [ep:obsidian_2bb585fc98d39664]. That is roughly Oct 16–18.\n- The blood work was booked because your cholesterol was borderline last year [ep:obsidian_c79c4e799bfe44ee].\n- I searched Gmail, iCloud Calendar and Obsidian for lab results, cholesterol, LDL, HDL and lipid figures. None of them has a results email or a note with the numbers. All three sources were synced through 8:00 pm tonight.\n\nThe results are most likely still in the portal, which L0 doesn't capture. If you write them in a daily note, I can read them back to you.",
+      "cited": [
+        "obsidian_2bb585fc98d39664",
+        "obsidian_c79c4e799bfe44ee"
+      ],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": 1.0,
+      "correct": true,
+      "judge_reasoning": "The answer says the numbers aren't known, notes the Oct 13 draw and the 3-5 day portal timeline, and mentions borderline cholesterol last year. This matches the expected answer. Both citations support their claims. One slight inaccuracy: the cited note says the draw was booked for Oct 8, but the claim cited to it (borderline cholesterol) is supported.",
+      "cost_usd": 0.07950710000000001,
+      "turns": 5,
+      "duration_ms": 6949,
+      "tool_calls": [
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat statuses/20261015T010000Z/status.json; head -50 wiki/index.md; grep -ril -E \"cholesterol|LDL|HDL|lipid\" l0/episodes wiki | head -30"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Read",
+          "input": {
+            "file_path": "/srv/pa/eval/tmp/pa-agent-_st5wfi7/project/wiki-schema.md"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s; cat wiki/orgs/lakeside-family-medicine.md; grep -i -E \"cholesterol|LDL|HDL|lipid\" wiki/days/2026-09-16.md; grep -ril -E \"lakeside|blood|portal|fasting\" l0/episodes"
+          },
+          "errored": false
+        },
+        {
+          "tool": "Bash",
+          "input": {
+            "command": "cd /srv/pa/eval/tmp/pa-eval-pihmag5s/l0/episodes; grep -h '\"body\"' obsidian/2026-10/obsidian_2bb585fc98d39664.json; grep -l -i -E \"result|panel\" gmail/2026-10/*.json | head"
+          },
+          "errored": false
+        }
+      ],
+      "cited_opened": [
+        "obsidian_2bb585fc98d39664",
+        "obsidian_c79c4e799bfe44ee"
+      ],
+      "evidence_opened": []
+    },
+    {
+      "id": "day-of-week",
+      "category": "canary",
+      "question": "What day of the week is it today?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Wednesday (October 14, 2026).",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "Today is Wednesday, October 14, 2026.",
+      "cited": [],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": null,
+      "correct": true,
+      "judge_reasoning": "The answer states Wednesday, October 14, 2026, which matches the expected answer. October 14, 2026 is indeed a Wednesday. No citations were given.",
+      "cost_usd": 0.0289424,
+      "turns": 1,
+      "duration_ms": 832,
+      "tool_calls": [],
+      "cited_opened": [],
+      "evidence_opened": []
+    },
+    {
+      "id": "saturday-date",
+      "category": "canary",
+      "question": "What's the date this coming Saturday?",
+      "as_of": "2026-10-14T20:00:00-05:00",
+      "expected_answer": "Saturday, October 17, 2026.",
+      "evidence": [],
+      "status": "scored",
+      "error": null,
+      "answer": "Saturday, October 17, 2026.\n\nToday is Wednesday, October 14, so Saturday is 3 days away.",
+      "cited": [],
+      "unknown_citations": [],
+      "irrelevant_citations": [],
+      "evidence_recall": null,
+      "citation_validity": null,
+      "correct": true,
+      "judge_reasoning": "The answer gives Saturday, October 17, 2026, matching the expected answer. October 14, 2026 is a Wednesday, so the supporting detail is also correct. It cites no episodes.",
+      "cost_usd": 0.0292704,
+      "turns": 1,
+      "duration_ms": 961,
+      "tool_calls": [],
+      "cited_opened": [],
+      "evidence_opened": []
+    }
+  ]
+}
