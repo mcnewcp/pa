@@ -182,4 +182,5 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 | every line resting on an episode | `\[ep:<episode_id>\]` | everywhere |
 | missing outside information | `\[needs lookup: ` | everywhere |
 
-Start from `index.md` to see every page and its summary.
+Start from `index.md` to see every page and its summary: under each type, the active pages
+come first, the most recently updated at the top, then the rest by slug.

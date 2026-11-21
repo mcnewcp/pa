@@ -97,6 +97,35 @@ def test_the_instructions_point_at_the_wiki_schema_and_every_template():
         assert f"`templates/{template.name}`" in claude_md
 
 
+def _section(name: str) -> str:
+    """A section of the instructions, by its `## ` heading, with its whitespace collapsed."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    found = re.search(rf"^## {name}\n(.*?)(?=^## |\Z)", claude_md, re.MULTILINE | re.DOTALL)
+    assert found is not None, name
+    return " ".join(found[1].split())
+
+
+def test_consolidations_instructions_hold_the_page_creation_rules_and_the_cold_request_rule():
+    consolidation = _section("Consolidation")
+
+    for rule in (
+        # A person needs engagement at the threshold; a loop or decision still makes a page.
+        "A person also needs `engaged`",
+        "a decision or loop line of yours names gets a page at once",
+        # An automated mailbox is never a person.
+        "marked `automated` never gets a person page",
+        "its organization's page, or else its topic's",
+        # A cold request is an observation, unless the owner started the matter.
+        "A cold request opens no loop",
+        "an order, an application, a booking",
+    ):
+        assert rule in consolidation, rule
+
+
+def test_observations_instructions_link_an_automated_mailbox_by_its_organization():
+    assert "marked `automated`, link its organization" in _section("Observation")
+
+
 def test_the_wiki_schema_is_written_for_any_reader_and_names_no_instance_path():
     """The assistant reads the same schema (#67), and sees the wiki at another path, so the
     schema gives paths relative to the wiki and holds no placeholders."""
