@@ -937,6 +937,21 @@ def test_pa_librarian_dream_skips_while_another_job_holds_the_lock(data_root: Pa
 # Stale pages, statuses that disagree with their loops, and quiet pages (#145): what dreaming
 # sees that lint doesn't.
 
+
+def _each(*edits):
+    def edit(pages: dict[str, str]) -> None:
+        for one in edits:
+            one(pages)
+
+    return edit
+
+
+OPEN = ROOM_LIST.replace(f"asked {days_ago(40)}", f"asked {days_ago(1)}")
+"""The wedding's loop as the settled pages have it: open since yesterday, owed by Dave."""
+RSVP = f"- [ ] me → [[david-kim]]: an RSVP · promised {days_ago(1)} [ep:{HOTEL}]"
+"""A loop for Dave's own page."""
+MISMATCH = "a status that disagrees with its loops: "
+
 # Each wiki with such a problem: what puts it in the settled pages, what the day logs also
 # hold, the candidate the session is given for it (after its id, `c01`), and the environment
 # that brings it out.
@@ -972,6 +987,53 @@ FLAGGED = {
             "day_logs": [f"days/{days_ago(8)}.md"],
         },
         {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+    "a settled topic with an open loop": (
+        _edit(TOPIC, "status: active", "status: settled"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"{MISMATCH}it is settled, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "a dormant topic with an open loop": (
+        _edit(TOPIC, "status: active", "status: dormant"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"{MISMATCH}it is dormant, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "an inactive person who owes an open loop on a topic's page": (
+        _edit(PERSON, "status: active", "status: inactive"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [PERSON, TOPIC],
+            "path": PERSON,
+            "message": f"{MISMATCH}it is inactive, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "an inactive person with open loops on their own page and a topic's": (
+        _each(
+            _edit(PERSON, "status: active", "status: inactive"),
+            _edit(PERSON, "## Open loops\n", f"## Open loops\n{RSVP}\n"),
+        ),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [PERSON, TOPIC],
+            "path": PERSON,
+            "message": f"{MISMATCH}it is inactive, with 2 open loops on {PERSON}, {TOPIC}",
+        },
+        {},
     ),
 }
 
@@ -1016,6 +1078,23 @@ NOT_FLAGGED = {
         _updated(days_ago(3)),
         [linked(days_ago(8), *BOTH), linked(days_ago(3), *BOTH), linked(days_ago(-1), *BOTH)],
         {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+    "a settled topic and an inactive person whose loops are closed": (
+        _each(
+            _edit(TOPIC, "status: active", "status: settled"),
+            _edit(PERSON, "status: active", "status: inactive"),
+            _edit(PERSON, "## Open loops\n", f"## Open loops\n{RSVP}\n"),
+            *(
+                _edit(
+                    page,
+                    loop,
+                    loop.replace("- [ ]", "- [x]") + f" · closed {days_ago(0)} [ep:{HOTEL}]",
+                )
+                for page, loop in ((TOPIC, OPEN), (PERSON, RSVP))
+            ),
+        ),
+        [],
+        {},
     ),
 }
 

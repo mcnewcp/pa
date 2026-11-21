@@ -9,9 +9,11 @@ A candidate is one of two things:
 
 - **A lint warning**: an orphan page, a loop past due or open too long, a duplicate candidate,
   a slug that reached the page threshold without a page, or a "needs lookup" marker.
-- **A problem lint has no warning for**, since only dreaming acts on it: a stale page, which
-  observations have linked on enough days since it was last updated. These are found here,
-  against lint's thresholds.
+- **A problem lint has no warning for**, since only dreaming acts on it. These are found
+  here, against lint's thresholds:
+  - a stale page, which observations have linked on enough days since it was last updated;
+  - a status that disagrees with its loops: a page that says its matter is over (a settled
+    or dormant topic, an inactive person or organization) while one of its loops is open.
 
 Days after the run's own date never count. Day logs exist for them wherever a calendar event
 is booked ahead, and what hasn't happened yet has left no page behind.
@@ -19,6 +21,7 @@ is booked ahead, and what hasn't happened yet has left no page behind.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
@@ -36,6 +39,8 @@ class CandidateKind(StrEnum):
 
     STALE = "stale"
     """A page that observations have linked on enough days since it was last updated."""
+    STATUS_MISMATCH = "status-mismatch"
+    """A page whose status says its matter is over while one of its loops is open."""
     ORPHAN = "orphan"
     """A page nothing in the wiki links to."""
     LOOP_PAST_DUE = "loop-past-due"
@@ -55,8 +60,9 @@ class Candidate:
     """What the run's outcomes call it: `c01`, `c02`, and so on, in the order offered."""
     kind: CandidateKind
     pages: tuple[str, ...]
-    """The pages it's about, relative to the wiki: both pages of a duplicate, and none for a
-    slug without a page."""
+    """The pages it's about, relative to the wiki: both pages of a duplicate, a page whose
+    status disagrees with its loops and then every other page holding one of them, and none
+    for a slug without a page."""
     path: str
     """The file the problem is in, relative to the wiki: one of `pages`, or a day log."""
     message: str
@@ -105,8 +111,8 @@ def candidates(
     tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds
 ) -> tuple[Candidate, ...]:
     """The candidates to offer a dreaming run over the wiki at `tree`, in order: the stale
-    pages, then every lint warning, measured against `l0`'s metadata and `thresholds` for
-    `owner`.
+    pages, the statuses that disagree with their loops, then every lint warning, measured
+    against `l0`'s metadata and `thresholds` for `owner`.
 
     The ids follow from the wiki alone, so the same wiki on the same day offers the same
     candidates under the same ids.
@@ -116,6 +122,7 @@ def candidates(
     linked = _linked_days(tree, thresholds.today)
     offered = [
         *_stale(found, linked, thresholds),
+        *_status_mismatches(found),
         *(_of_warning(warning) for warning in warnings),
     ]
     return tuple(
@@ -167,6 +174,38 @@ def _stale(
                 f"[[{page.slug}]] on {_count(len(later), 'later day')}",
                 day_logs=tuple(f"{DAYS}/{day.isoformat()}.md" for day in later),
             )
+
+
+_ACTIVE = "active"
+"""The status of a page whose matter is live. Every other status says it is over, for good or
+for now: `settled`, `dormant`, `inactive`."""
+
+
+def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
+    """A page that isn't active while a loop of its is open: a loop on the page itself, or a
+    loop on another page that names it as a party. Either the status is wrong or the loop is
+    no longer owed; L0 says which."""
+    holding: dict[str, list[str]] = defaultdict(list)
+    """For each slug, the page holding each open loop of its, once per loop."""
+    for page in pages:
+        for loop in page.loops:
+            if loop.is_open:
+                for slug in {page.slug, loop.owed_by, loop.owed_to}:
+                    holding[slug].append(page.path)
+    for page in pages:
+        status = page.fields.get("status")
+        held = holding.get(page.slug)
+        if not held or status == _ACTIVE or status not in page.page_type.statuses:
+            continue
+        where = tuple(dict.fromkeys(held))
+        yield Candidate(
+            id=_UNNUMBERED,
+            kind=CandidateKind.STATUS_MISMATCH,
+            pages=(page.path, *(path for path in where if path != page.path)),
+            path=page.path,
+            message=f"a status that disagrees with its loops: it is {status}, with "
+            f"{_count(len(held), 'open loop')} on {', '.join(where)}",
+        )
 
 
 def _updated(page: Page) -> date | None:

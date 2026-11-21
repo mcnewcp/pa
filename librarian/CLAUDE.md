@@ -204,6 +204,17 @@ an applied outcome, and no day log changed.
     its decisions, the loops those episodes open or close, and its aliases, each line citing
     the episode that shows it. Set `updated` to today's date.
   - When the page already says everything those observations show, dismiss it.
+- **`status-mismatch`**: a page whose `status` says its matter is over (`settled`, `dormant`,
+  or `inactive`) while a loop of its is still open: a loop on the page itself, or one on
+  another page that names it as a party. Its `pages` are that page, then any other page
+  holding such a loop. Either the status or the loop is wrong. Read the episodes since each
+  loop opened, and correct whichever one they show is wrong.
+  - When an episode shows the thing was done, delivered, answered, or called off, close the
+    loop as for `loop-past-due`, and leave the status.
+  - When the episodes show the matter is live (the thing is still owed and someone is still
+    acting on it), set the page's `status` to `active`, and bring its Current state and
+    `summary` in line.
+  - When L0 shows neither, dismiss it.
 - **`duplicate`**: two pages that may be one person, organization, or topic.
   - When L0 shows they are one (the same address, or an episode that uses both names for
     one), merge them as a correction's merge does: one page keeps both names as aliases and
