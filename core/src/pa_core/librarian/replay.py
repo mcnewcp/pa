@@ -78,13 +78,15 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
-    LibrarianRunError,
-    Phase,
     RunOutcome,
-    SessionRunner,
     WikiRepository,
     last_run_fields,
     run_librarian,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+    Phase,
+    SessionRunner,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
 from pa_core.owner import Owner

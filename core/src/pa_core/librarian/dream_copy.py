@@ -48,10 +48,12 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
-    LibrarianRunError,
-    SessionRunner,
     WikiRepository,
     last_run_fields,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+    SessionRunner,
 )
 from pa_core.owner import Owner
 

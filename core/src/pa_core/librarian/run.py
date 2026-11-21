@@ -30,25 +30,22 @@ librarian run under one takes the cursor back all the same.
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
 
-A dreaming run (`pa_core.librarian.dreaming`) sits beside this one, over the same two ports,
-and reuses its parts: the session and its resume loop (`_session`), the tree states its bounds
-are checked with, the removal of merged pages, and the commit message's fields.
+A dreaming run (`pa_core.librarian.dreaming`) sits beside this one, over the same two ports.
+The parts both are made of are in `pa_core.librarian.session`: the session and its resume
+loop, the tree states its bounds are checked with, the removal of merged pages, and the commit
+message's fields.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 import re
 import shutil
 from collections import Counter
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, tzinfo
-from enum import StrEnum
+from datetime import date, datetime, tzinfo
 from functools import partial
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Protocol
 
 from pa_core.errors import PaError
@@ -66,6 +63,26 @@ from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, LintReport, Thresholds, lint
 from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.retirement import standing, update_retired
+from pa_core.librarian.session import (
+    Committed,
+    LibrarianRunError,
+    Linter,
+    Phase,
+    SessionPaths,
+    SessionResult,
+    SessionRunner,
+    as_json,
+    changed_paths,
+    commit_fields,
+    figure,
+    finding_key,
+    findings_text,
+    in_pages,
+    remove_merged_pages,
+    run_session,
+    tree_state,
+    utc,
+)
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -74,72 +91,13 @@ from pa_core.librarian.wiki import (
     PROPOSALS,
     Proposal,
     day_logs,
-    folder_files,
-    is_page_name,
     pages,
     parse_proposal,
     read_proposals,
     read_retired,
     reference_counts,
-    slugify,
 )
 from pa_core.owner import Owner
-
-
-class Phase(StrEnum):
-    """A run's sessions, in the order they run."""
-
-    OBSERVATION = "observation"
-    """Writes one observation per relevant episode into the day log for its day."""
-    CONSOLIDATION = "consolidation"
-    """Folds the run's new observations into pages, creating those that have come up enough."""
-    DREAMING = "dreaming"
-    """A dreaming run's one session (`pa_core.librarian.dreaming`): judges the candidates the
-    host flagged over the whole wiki."""
-
-
-@dataclass(frozen=True)
-class SessionPaths:
-    """Where a session sees L0 and the wiki, which may differ from the host's paths."""
-
-    l0: PurePosixPath
-    wiki: PurePosixPath
-
-
-@dataclass(frozen=True)
-class SessionResult:
-    """How a session ended, and what it cost, as the session reports it."""
-
-    ok: bool
-    """Whether it finished without an error or a timeout."""
-    session_id: str | None = None
-    """The id to resume it by, if it reported one."""
-    cost_usd: float | None = None
-    turns: int | None = None
-    error: str | None = None
-    """What went wrong, when it didn't finish."""
-    resumes: int = 0
-    """How many times the run resumed it to fix what it left."""
-    final_message: str | None = None
-    """The last thing it said, which is where a dreaming session reports its outcomes. Over a
-    session's attempts, its last attempt's."""
-
-
-class SessionRunner(Protocol):
-    """Runs the librarian's sessions in the librarian project, with only the file tools."""
-
-    @property
-    def paths(self) -> SessionPaths:
-        """Where the sessions see L0 and the wiki."""
-        ...
-
-    def start(self, phase: Phase, prompt: str, *, now: datetime) -> SessionResult:
-        """Runs a new session for `phase` on `prompt`, telling it `now` is the current time."""
-        ...
-
-    def resume(self, session_id: str, prompt: str, *, now: datetime) -> SessionResult:
-        """Continues session `session_id` with the follow-up `prompt`."""
-        ...
 
 
 @dataclass(frozen=True)
@@ -183,18 +141,6 @@ class Librarian:
     version: str
     model: str
     effort: str
-
-
-class LibrarianRunError(PaError):
-    """A run that failed; the wiki was left as last committed."""
-
-    def __init__(
-        self, message: str, *, sessions: Sequence[tuple[Phase, SessionResult]] = ()
-    ) -> None:
-        super().__init__(message)
-        self.sessions = tuple(sessions)
-        """The sessions the run ran before it failed, in order, the one that failed included
-        (with what it reported up to then)."""
 
 
 @dataclass(frozen=True)
@@ -260,8 +206,8 @@ def run_librarian(
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
         # Errors the last commit already has (a rule tightened since, or a seeded wiki): a
         # session is judged only on errors it can fix, and consolidation is handed the pages'.
-        committed = _Committed(linter(tree).errors)
-        page_errors = [e for e in committed.errors if _in_pages(e)]
+        committed = Committed(linter(tree).errors)
+        page_errors = [e for e in committed.errors if in_pages(e)]
         observations: list[NewObservation] = []
         if batch.episodes or page_errors:
             identities = identity_table(store.envelopes(), owner)
@@ -294,7 +240,7 @@ def run_librarian(
         if report.errors:
             raise LibrarianRunError(
                 f"the wiki has {len(report.errors)} lint errors"
-                f"{committed.blame(report.errors)}:\n" + _findings(report.errors)
+                f"{committed.blame(report.errors)}:\n" + findings_text(report.errors)
             )
         commit = repository.commit(commit_message(batch, librarian, sessions, report.warnings))
     except LibrarianRunError as error:
@@ -348,7 +294,7 @@ def seed_wiki(
         report = lint(tree, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds)
         if report.errors:
             raise WikiSeedError(
-                f"the seed has {len(report.errors)} lint errors:\n" + _findings(report.errors)
+                f"the seed has {len(report.errors)} lint errors:\n" + findings_text(report.errors)
             )
         return repository.commit(f"Seed the wiki from {source}\n\n{CURSOR_FIELD}: {cursor}\n")
     except BaseException:
@@ -411,35 +357,8 @@ def last_cursor(repository: WikiRepository) -> Cursor | None:
     return Cursor.parse(value) if value else None
 
 
-@dataclass(frozen=True)
-class _Committed:
-    """The lint errors the wiki had as last committed, before this run changed anything."""
-
-    errors: Sequence[Finding]
-
-    def blame(self, errors: Sequence[Finding]) -> str:
-        """What a failure over `errors` adds: that the last commit already had them all, when
-        it did."""
-        already = {_key(e) for e in self.errors}
-        if errors and all(_key(e) in already for e in errors):
-            return (
-                ", all of them already in the wiki's last commit (this run didn't cause them; "
-                "a rule may have been tightened since, or the wiki was seeded with them)"
-            )
-        return ""
-
-
-def _key(finding: Finding) -> tuple[str, str]:
-    # Not the line: a finding is the same one when lines above it were added.
-    return finding.path, finding.message
-
-
 def _in_days(finding: Finding) -> bool:
     return finding.path.partition("/")[0] == DAYS
-
-
-def _in_pages(finding: Finding) -> bool:
-    return finding.path.partition("/")[0] in PAGE_FOLDERS
 
 
 def _observe(
@@ -449,15 +368,15 @@ def _observe(
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
-    committed: _Committed,
+    committed: Committed,
 ) -> tuple[Phase, SessionResult]:
-    before = _tree_state(tree)
+    before = tree_state(tree)
     prompt = observation_prompt(batch, runner.paths) + "\n" + identity_prompt(identities)
 
     def require_bounds() -> None:
         outside = [
             path
-            for path in _changed(before, _tree_state(tree))
+            for path in changed_paths(before, tree_state(tree))
             if path != DAYS and not path.startswith(f"{DAYS}/")
         ]
         if outside:
@@ -467,7 +386,7 @@ def _observe(
             )
 
     # Observation may change only day logs, so it's judged only on the errors in days/.
-    result = _session(
+    result = run_session(
         Phase.OBSERVATION, prompt, require_bounds, _in_days, tree, runner, now, linter, committed
     )
     return Phase.OBSERVATION, result
@@ -506,7 +425,7 @@ def _consolidate(
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
-    committed: _Committed,
+    committed: Committed,
 ) -> tuple[Phase, SessionResult]:
     """Runs the consolidation session. `earlier_exchanges` are the owner's exchanges that
     aren't in this run's batch: a proposal the session resolves cites none of them as its
@@ -531,17 +450,17 @@ def _consolidate(
         + ("\n" + open_proposals_prompt(asked, runner.paths) if asked else "")
         + ("\n" + errors_prompt(page_errors) if page_errors else "")
     )
-    before, logged = _tree_state(tree), day_logs(tree)
+    before, logged = tree_state(tree), day_logs(tree)
     # Consolidation may not change day-log lines, nor a proposal but to resolve it, so it can't
     # fix the errors already in them: only those its own work leaves there.
-    unfixable = {_key(e) for e in report.errors if not _in_pages(e)}
+    unfixable = {finding_key(e) for e in report.errors if not in_pages(e)}
 
     def fixable(finding: Finding) -> bool:
         mine = _in_days(finding) or finding.path == PROPOSALS
-        return _in_pages(finding) or (mine and _key(finding) not in unfixable)
+        return in_pages(finding) or (mine and finding_key(finding) not in unfixable)
 
     def require_bounds() -> None:
-        changed = _changed(before, _tree_state(tree))
+        changed = changed_paths(before, tree_state(tree))
         outside = [
             path
             for path in changed
@@ -583,7 +502,7 @@ def _consolidate(
         stale = _stale_answers(standing, tree, earlier_exchanges)
         return replace(found, errors=(*found.errors, *stale))
 
-    result = _session(
+    result = run_session(
         Phase.CONSOLIDATION,
         prompt,
         require_bounds,
@@ -593,7 +512,7 @@ def _consolidate(
         now,
         lint_resolving,
         committed,
-        tidy=partial(_remove_merged_pages, tree),
+        tidy=partial(remove_merged_pages, tree),
     )
     return Phase.CONSOLIDATION, result
 
@@ -691,164 +610,9 @@ def _resolves(was: Proposal, now: Proposal) -> bool:
     )
 
 
-def _remove_merged_pages(tree: Path) -> None:
-    """Removes the pages a consolidation session merged away. Its file tools can't remove a
-    file, so it deletes a page merged into another by writing it with nothing in it, and the
-    page it was merged into takes its name as an alias.
-
-    Only an emptied page whose slug is now an alias of a page that's still there goes; any
-    other emptied file stays for lint to fail (an empty page no merge explains, a dotfile, a
-    `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
-    """
-    merged = {slugify(alias) for page in pages(tree) for alias in page.aliases}
-    for folder in PAGE_FOLDERS:
-        for entry in folder_files(tree, folder):
-            if is_page_name(entry.name) and entry.stem in merged and not entry.read_bytes().strip():
-                entry.unlink()
-
-
-type Linter = Callable[[Path], LintReport]
-"""Lints the wiki at a path, for this run."""
-
-MAX_RESUMES = 2
-"""How many times a session that leaves lint errors is resumed to fix them."""
-
-
-def _session(
-    phase: Phase,
-    prompt: str,
-    require_bounds: Callable[[], None],
-    judged: Callable[[Finding], bool],
-    tree: Path,
-    runner: SessionRunner,
-    now: datetime,
-    linter: Linter,
-    committed: _Committed,
-    *,
-    tidy: Callable[[], None] = lambda: None,
-    report_problems: Callable[[SessionResult], Sequence[str]] = lambda _: (),
-    reminder: str = "",
-) -> SessionResult:
-    """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
-    it. A session
-    that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
-    MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
-    the session's result, its cost and turns added up over its attempts.
-
-    A phase whose session must report something in its final message (dreaming's outcomes)
-    gives `report_problems`, which says what's wrong with an attempt's report, or raises when
-    the attempt can't be put right. Those problems resume the session too, within the same
-    limit. Every resume's prompt ends with `reminder`.
-    """
-    attempts = [runner.start(phase, prompt, now=now)]
-    try:
-        while True:
-            result = attempts[-1]
-            if not result.ok:
-                raise LibrarianRunError(f"the {phase} session failed: {result.error}")
-            tidy()
-            require_bounds()
-            problems = report_problems(result)
-            errors = [e for e in linter(tree).errors if judged(e)]
-            if not problems and not errors:
-                return _combined(attempts)
-            if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
-                resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
-                left = []
-                if problems:
-                    left.append(
-                        f"the {phase} session's final message can't be accepted{resumed}:\n"
-                        + "\n".join(f"  {problem}" for problem in problems)
-                    )
-                if errors:
-                    left.append(
-                        f"the {phase} session left {len(errors)} lint errors{resumed}"
-                        f"{committed.blame(errors)}:\n" + _findings(errors)
-                    )
-                raise LibrarianRunError("\n".join(left))
-            attempts.append(
-                runner.resume(
-                    attempts[0].session_id,
-                    fix_prompt(phase, errors, problems) + reminder,
-                    now=now,
-                )
-            )
-    except LibrarianRunError as error:
-        # The run log records a failed session too, with what it reported.
-        raise LibrarianRunError(str(error), sessions=[(phase, _combined(attempts))]) from error
-
-
-def _findings(findings: Sequence[Finding]) -> str:
-    return "\n".join(f"  {finding}" for finding in findings)
-
-
-def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
-    """One session's result over its attempts: what it cost and the turns it took, in all."""
-    costs = [a.cost_usd for a in attempts if a.cost_usd is not None]
-    turns = [a.turns for a in attempts if a.turns is not None]
-    return replace(
-        attempts[0],
-        cost_usd=sum(costs) if costs else None,
-        turns=sum(turns) if turns else None,
-        resumes=len(attempts) - 1,
-        final_message=attempts[-1].final_message,
-    )
-
-
-def fix_prompt(phase: Phase, errors: Sequence[Finding], problems: Sequence[str] = ()) -> str:
-    """What a session is told when it's resumed: the `problems` with what its final message
-    reported, if any, then the lint `errors` it left, if any."""
-    parts = [f"Phase: {phase}\n"]
-    if problems:
-        listed = "\n".join(f"- {problem}" for problem in problems)
-        parts.append(
-            "The host can't accept what your final message reported, and the run can't be "
-            "committed until it can. Put each of these right, following CLAUDE.md and staying "
-            f"within this phase's bounds:\n\n{listed}\n"
-        )
-    if errors:
-        findings = "\n".join(f"- {finding}" for finding in errors)
-        parts.append(
-            f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
-            "committed until they are fixed. Fix each one, following CLAUDE.md and staying "
-            "within this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
-            "<problem>`, with paths relative to the wiki.\n\n"
-            f"{findings}\n"
-        )
-    return "\n".join(parts)
-
-
-type _TreeState = dict[str, tuple[str, ...]]
-
-
-def _tree_state(tree: Path) -> _TreeState:
-    """Every file, link, and directory under `tree`, without following links."""
-    state: _TreeState = {}
-    for parent, directories, files in os.walk(tree):
-        for name in directories + files:
-            path = Path(parent) / name
-            key = path.relative_to(tree).as_posix()
-            if path.is_symlink():
-                state[key] = ("link", str(path.readlink()))
-            elif path.is_dir():
-                state[key] = ("directory",)
-            elif path.is_file():
-                state[key] = ("file", hashlib.sha256(path.read_bytes()).hexdigest())
-            else:
-                state[key] = ("other",)
-    return state
-
-
-def _changed(before: _TreeState, after: _TreeState) -> list[str]:
-    """The paths added, removed, or changed between two states of a tree."""
-    return sorted(
-        path for path in before.keys() | after.keys() if before.get(path) != after.get(path)
-    )
-
-
 def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
     """What the observation session is asked, with the batch listed as JSON."""
-    listing = _json([_listed(e, paths) for e in batch.episodes])
+    listing = as_json([_listed(e, paths) for e in batch.episodes])
     return (
         f"Phase: {Phase.OBSERVATION}\n\n"
         "Observe this run's batch of new episodes into the wiki's day logs, following "
@@ -905,7 +669,7 @@ def consolidation_prompt(
         f"only pages, in {', '.join(folders[:-1])}, and {folders[-1]}. Never add or remove a "
         f"day-log line, and never write `{INDEX}`: the host generates it.\n\n"
         "These are the observations this run wrote, each with the day log it's in:\n\n"
-        f"```json\n{_json(new)}\n```\n\n"
+        f"```json\n{as_json(new)}\n```\n\n"
         "These are the reference counts: for each slug linked in the day logs, the number of "
         "distinct days it's linked on, over all day logs, and its `page` (relative to the wiki) "
         "if it has one. `engaged` says whether the owner has engaged with the slug: whether an "
@@ -916,7 +680,7 @@ def consolidation_prompt(
         "organization or a topic gets one either way. A slug marked `retired` had a page that "
         "dreaming retired: it doesn't reach the threshold again until the owner engages with "
         "it, whatever its days.\n\n"
-        f"```json\n{_json(references)}\n```\n"
+        f"```json\n{as_json(references)}\n```\n"
     )
 
 
@@ -933,7 +697,7 @@ def errors_prompt(errors: Sequence[Finding]) -> str:
         "been tightened since they were written). The run can't be committed until they are "
         "fixed: fix each one, following CLAUDE.md, even on a page this run's observations don't "
         "touch, and change nothing else for it.\n\n"
-        f"```json\n{_json(_listed_findings(errors))}\n```\n"
+        f"```json\n{as_json(_listed_findings(errors))}\n```\n"
     )
 
 
@@ -944,10 +708,6 @@ def _listed_findings(findings: Sequence[Finding]) -> list[dict[str, object]]:
     ]
 
 
-def _json(value: object) -> str:
-    return json.dumps(value, indent=2, ensure_ascii=False)
-
-
 IDENTITY_HEADING = "## Identity table"
 
 
@@ -956,7 +716,7 @@ def identity_prompt(identities: IdentityTable) -> str:
 
     Any phase appends it to its own prompt; the table is JSON, after the instructions for it.
     """
-    table = _json(identities.to_json())
+    table = as_json(identities.to_json())
     return (
         f"{IDENTITY_HEADING}\n\n"
         "Who's who by address, built by the host from L0's metadata; nothing in it comes from "
@@ -988,7 +748,7 @@ def warnings_prompt(warnings: Sequence[Finding]) -> str:
         "threshold without a page, and outside information that needs a lookup. Act only on "
         "the warnings about pages you touch in this run, where the evidence settles them; "
         "leave the rest.\n\n"
-        f"```json\n{_json(listed)}\n```\n"
+        f"```json\n{as_json(listed)}\n```\n"
     )
 
 
@@ -1010,7 +770,7 @@ def open_proposals_prompt(asked: Sequence[Proposal], paths: SessionPaths) -> str
         f"you may make to that file: move its line under `## {ANSWERED}`, checked, saying how "
         "and when it was answered, with the chat cited last and the rest of the line as it "
         "was. Never add a proposal, and never change or remove any other line.\n\n"
-        f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
+        f"```json\n{as_json([proposal.to_json() for proposal in asked])}\n```\n"
     )
 
 
@@ -1044,8 +804,8 @@ def commit_message(
     """The run's commit message: a summary line, lint's warnings (if any) as a list, then one
     `Field: value` line per fact, in the last paragraph."""
     fields: list[tuple[str, object]] = [
-        ("Batch-Captured-From", _utc(batch.first_captured)),
-        ("Batch-Captured-To", _utc(batch.last_captured)),
+        ("Batch-Captured-From", utc(batch.first_captured)),
+        ("Batch-Captured-To", utc(batch.last_captured)),
         ("Batch-Episodes", len(batch.episodes)),
         ("Batch-Skipped", batch.captured - len(batch.episodes)),
         (CURSOR_FIELD, batch.cursor),
@@ -1057,14 +817,14 @@ def commit_message(
         # A replay's batch is its window of occurrence; its end is what the sessions were told
         # is now.
         fields[:0] = [
-            ("Batch-Occurred-From", _utc(batch.window.start)),
-            (OCCURRED_TO_FIELD, _utc(batch.window.end)),
+            ("Batch-Occurred-From", utc(batch.window.start)),
+            (OCCURRED_TO_FIELD, utc(batch.window.end)),
         ]
     for phase, result in sessions:
         name = phase.value.capitalize()
         fields += [
-            (f"{name}-Cost-USD", _figure(result.cost_usd)),
-            (f"{name}-Turns", _figure(result.turns)),
+            (f"{name}-Cost-USD", figure(result.cost_usd)),
+            (f"{name}-Turns", figure(result.turns)),
             (f"{name}-Session", result.session_id or "unknown"),
             (f"{name}-Resumes", result.resumes),
         ]
@@ -1074,21 +834,3 @@ def commit_message(
         paragraphs.append("Lint warnings:\n" + "\n".join(f"- {w}" for w in warnings))
     paragraphs.append("\n".join(f"{key}: {value}" for key, value in fields))
     return "\n\n".join(paragraphs) + "\n"
-
-
-def commit_fields(message: str) -> dict[str, str]:
-    """The `Field: value` lines of a commit message's last paragraph."""
-    fields: dict[str, str] = {}
-    for line in message.strip().split("\n\n")[-1].splitlines():
-        key, separator, value = line.partition(": ")
-        if separator and key and " " not in key:
-            fields[key] = value.strip()
-    return fields
-
-
-def _utc(moment: datetime) -> str:
-    return moment.astimezone(UTC).isoformat()
-
-
-def _figure(value: float | None) -> str:
-    return "unknown" if value is None else f"{value:g}"

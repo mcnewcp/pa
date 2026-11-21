@@ -55,15 +55,17 @@ from pa_core.librarian.dreaming import (
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
-    LibrarianRunError,
-    Phase,
     RunOutcome,
-    SessionPaths,
-    SessionResult,
     WikiSeedError,
     last_cursor,
     run_librarian,
     seed_wiki,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+    Phase,
+    SessionPaths,
+    SessionResult,
 )
 from pa_core.librarian.version import librarian_version
 from pa_core.librarian.wiki import open_proposals

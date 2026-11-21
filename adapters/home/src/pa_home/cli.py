@@ -15,7 +15,12 @@ from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
 from pa_core.librarian.dreaming import DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
-from pa_core.librarian.run import LibrarianRunError, RunOutcome
+from pa_core.librarian.run import (
+    RunOutcome,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+)
 from pa_core.renormalize import renormalize
 from pa_core.status import DreamingRun, Failure, read_status
 from pa_home import librarian

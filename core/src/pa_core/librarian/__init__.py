@@ -10,6 +10,8 @@
 - `lint`: what may be committed to the wiki.
 - `index`: `index.md`, generated from the pages.
 - `links`: links to an alias rewritten to its page.
+- `session`: what a librarian run and a dreaming run share: the session port, the session and
+  its resume loop, tree states, and the commit message's fields.
 - `run`: one librarian run, over the two ports an adapter provides (a session runner and the
   wiki repository).
 - `candidates`: what the host flags in the wiki for dreaming to judge.

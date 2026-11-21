@@ -73,7 +73,13 @@ from pa_core.librarian.dreaming import Applied, DreamingOutcome, Outcome, Propos
 from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.lint import STALE_LATER_DAYS, Thresholds, lint
 from pa_core.librarian.metadata import L0Metadata
-from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD, LibrarianRunError
+from pa_core.librarian.run import (
+    LOOP_AGE_DAYS,
+    PAGE_THRESHOLD,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+)
 from pa_core.librarian.version import librarian_version
 from pa_core.librarian.wiki import (
     NOTES,

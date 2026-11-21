@@ -74,25 +74,27 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
+    WikiRepository,
+    last_run_fields,
+    standing_runs,
+)
+from pa_core.librarian.session import (
+    Committed,
     LibrarianRunError,
     Linter,
     Phase,
     SessionPaths,
     SessionResult,
     SessionRunner,
-    WikiRepository,
-    _changed,
-    _Committed,
-    _figure,
-    _findings,
-    _in_pages,
-    _json,
-    _remove_merged_pages,
-    _session,
-    _tree_state,
+    as_json,
+    changed_paths,
     commit_fields,
-    last_run_fields,
-    standing_runs,
+    figure,
+    findings_text,
+    in_pages,
+    remove_merged_pages,
+    run_session,
+    tree_state,
 )
 from pa_core.librarian.wiki import (
     INDEX,
@@ -281,7 +283,7 @@ def run_dreaming(
         if not offered:
             return DreamingOutcome(held_back=waiting)
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
-        committed = _Committed(linter(tree).errors)
+        committed = Committed(linter(tree).errors)
         result, outcomes, suggestion = _dream(
             offered, tree, runner, now, linter, committed, proposal_caps
         )
@@ -292,7 +294,7 @@ def run_dreaming(
         if report.errors:
             raise LibrarianRunError(
                 f"the wiki has {len(report.errors)} lint errors"
-                f"{committed.blame(report.errors)}:\n" + _findings(report.errors)
+                f"{committed.blame(report.errors)}:\n" + findings_text(report.errors)
             )
         carried = last_run_fields(repository)
         judged = DreamingOutcome(
@@ -386,20 +388,20 @@ def _dream(
     runner: SessionRunner,
     now: datetime,
     linter: Linter,
-    committed: _Committed,
+    committed: Committed,
     caps: ProposalCaps,
 ) -> tuple[SessionResult, tuple[Outcome, ...], Proposed | None]:
     """Runs the dreaming session over `offered`, and returns its result, its outcomes, in the
     candidates' order, and its template suggestion, if it made one."""
-    before = _tree_state(tree)
+    before = tree_state(tree)
     standing = read_proposals(tree)
     retirements = _Retirements(tree, before, now.date())
 
     def require_bounds() -> None:
-        after = _tree_state(tree)
+        after = tree_state(tree)
         outside = [
             path
-            for path in _changed(before, after)
+            for path in changed_paths(before, after)
             if path.partition("/")[0] not in PAGE_FOLDERS and path not in (PROPOSALS, RETIRED)
         ]
         if retirements.changed_by_session(after):
@@ -424,7 +426,7 @@ def _dream(
         problems += retirements.carry_out(reported)
         # The bounds held, so everything changed in a folder is a page; a page merged away or
         # retired is gone by now, and gone is changed.
-        changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
+        changed = [path for path in changed_paths(before, tree_state(tree)) if "/" in path]
         try:
             outcomes = read_outcomes(
                 attempt.final_message,
@@ -455,7 +457,7 @@ def _dream(
 
     # Dreaming may change only pages and the proposals, so it's judged only on the errors in
     # them.
-    result = _session(
+    result = run_session(
         Phase.DREAMING,
         dreaming_prompt(offered, runner.paths)
         + "\n"
@@ -463,13 +465,13 @@ def _dream(
         + "\n"
         + retired_prompt(read_retired(tree), runner.paths),
         require_bounds,
-        lambda finding: _in_pages(finding) or finding.path == PROPOSALS,
+        lambda finding: in_pages(finding) or finding.path == PROPOSALS,
         tree,
         runner,
         now,
         linter,
         committed,
-        tidy=partial(_remove_merged_pages, tree),
+        tidy=partial(remove_merged_pages, tree),
         report_problems=report_problems,
         reminder=OUTCOMES_REMINDER,
     )
@@ -498,7 +500,7 @@ class _Retirements:
     """
 
     def __init__(self, tree: Path, before: Mapping[str, tuple[str, ...]], today: date) -> None:
-        """Over the wiki at `tree`, whose state as last committed is `before` (`_tree_state`),
+        """Over the wiki at `tree`, whose state as last committed is `before` (`tree_state`),
         for a run told the day is `today`."""
         self._tree, self._before, self._today = tree, before, today
         self._was = pages(tree)
@@ -560,7 +562,7 @@ class _Retirements:
                             "for it, a retired one included"
                         )
         update_retired(self._tree, today=self._today, retiring=retiring)
-        self._left = _tree_state(self._tree).get(RETIRED)
+        self._left = tree_state(self._tree).get(RETIRED)
         return problems
 
     def _retire(self, slug: str, carried: Sequence[set[str]]) -> list[str] | str:
@@ -839,7 +841,7 @@ def dreaming_prompt(offered: Sequence[Candidate], paths: SessionPaths) -> str:
         "paths relative to the wiki. A loop's candidate lists the `episodes` its line cites, "
         "since its line number moves as the page is edited; a slug without a page gives the "
         "`slug`.\n\n"
-        f"```json\n{_json([candidate.to_json() for candidate in offered])}\n```\n"
+        f"```json\n{as_json([candidate.to_json() for candidate in offered])}\n```\n"
     )
 
 
@@ -877,7 +879,7 @@ def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: Se
         f"propose, add a line under `## {OPEN}`, creating the file as `wiki-schema.md` "
         f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
         "already in the file.\n\n"
-        f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
+        f"```json\n{as_json([proposal.to_json() for proposal in asked])}\n```\n"
     )
 
 
@@ -895,7 +897,7 @@ def retired_prompt(retired: Mapping[str, date], paths: SessionPaths) -> str:
         "page on purpose: don't create one unless a candidate is about its slug. To retire a "
         "page in this run, follow CLAUDE.md: empty the page, and name its slug in your "
         f"outcome. Never write `{RETIRED}` yourself: the host keeps it.\n\n"
-        f"```json\n{_json(listed)}\n```\n"
+        f"```json\n{as_json(listed)}\n```\n"
     )
 
 
@@ -920,8 +922,8 @@ def dreaming_commit_message(
     for phase, result in outcome.sessions:
         name = phase.value.capitalize()
         fields += [
-            (f"{name}-Cost-USD", _figure(result.cost_usd)),
-            (f"{name}-Turns", _figure(result.turns)),
+            (f"{name}-Cost-USD", figure(result.cost_usd)),
+            (f"{name}-Turns", figure(result.turns)),
             (f"{name}-Session", result.session_id or "unknown"),
             (f"{name}-Resumes", result.resumes),
         ]
