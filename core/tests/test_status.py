@@ -32,6 +32,25 @@ def test_sources_are_keyed_by_source_and_saved_by_name(tmp_path: Path):
     assert key is Source.GMAIL
 
 
+def test_a_dreaming_record_written_before_left_over_was_kept_still_loads(tmp_path: Path):
+    path = tmp_path / "status.json"
+    recorded = {
+        "at": "2026-10-20T13:15:00Z",
+        "succeeded": True,
+        "reason": None,
+        "cost_usd": 2.5,
+        "candidates": 3,
+        "outcomes": {"applied": 1, "proposed": 1, "dismissed": 1},
+        "held_back": 2,
+    }
+    path.write_text(json.dumps({"version": 1, "wiki": {"last_dreaming": recorded}}))
+
+    run = read_status(path).wiki.last_dreaming
+
+    assert run is not None
+    assert (run.candidates, run.held_back, run.left_over) == (3, 2, None)
+
+
 def test_the_last_dreaming_run_is_saved_under_the_names_the_assistant_reads(tmp_path: Path):
     path = tmp_path / "status.json"
     run = DreamingRun(
