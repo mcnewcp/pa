@@ -43,7 +43,7 @@ One pass of every collector, then ingest, then publishing each watermark whose p
 _Avoid_: Sync, poll, run
 
 **Nightly job**:
-The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends and steps the assistant's VM clock to the devbox's if it has drifted, then runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends and steps the assistant's VM clock to the devbox's if it has drifted, then runs a capture cycle with reconciliation, the librarian, dreaming on the nights it is due, and the backup, in that order, recording each in the status.
 _Avoid_: Cron, batch, nightly run
 
 **Raw payload**:
@@ -223,7 +223,7 @@ What the assistant is given besides L0's files in an eval run: nothing (files al
 _Avoid_: Mode, variant, arm
 
 **Eval wiki**:
-The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, or of a cut's wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it and the one that dreamed it.
 _Avoid_: Test wiki, fixture wiki
 
 **Cut**:

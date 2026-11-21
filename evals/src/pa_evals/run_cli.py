@@ -33,10 +33,9 @@ from pa_evals.configurations import (
     CONFIGURATIONS,
     DEFAULT_CONFIGURATION,
     Configuration,
-    WikiChoiceError,
 )
 from pa_evals.eval_set import EvalSet, load_eval_set
-from pa_evals.eval_wiki import EvalWiki, cut_wiki, load_eval_wiki
+from pa_evals.eval_wiki import EvalWiki, cut_wiki, dreamed_cut_wiki, load_eval_wiki
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.real_data import require_private
@@ -240,8 +239,9 @@ def add_run_command(commands: Any) -> None:
         type=Path,
         metavar="DIR",
         help="Ask a cut of the store (`pa cut`) instead of a corpus, with no ingest, and with "
-        "--eval-set; files-plus-wiki asks with the cut's own wiki. The cut, the eval set, and "
-        "--runs-dir are refused inside the repository.",
+        "--eval-set; files-plus-wiki asks with the cut's own wiki, or with a dreamed copy of "
+        "it in --wiki. The cut, the eval set, --runs-dir, and that copy are refused inside "
+        "the repository.",
     )
     run.add_argument(
         "--eval-set",
@@ -279,7 +279,9 @@ def add_run_command(commands: Any) -> None:
         type=Path,
         metavar="DIR",
         help="For --configuration files-plus-wiki: the eval wiki, a replay's wiki/ and "
-        "run-log.jsonl (kept in evals/wikis/<corpus>/<librarian version>/).",
+        "run-log.jsonl (kept in evals/wikis/<corpus>/<librarian version>/), or a dreamed copy "
+        "of one (pa librarian dream DIR --corpus …). With --cut: a dreamed copy of the cut's "
+        "wiki (pa librarian dream DIR --cut …), kept under the data root.",
     )
     run.add_argument(
         "--runs",
@@ -300,7 +302,7 @@ def _run(args: argparse.Namespace) -> int:
     corpus: tuple[Path, ...] | Cut
     if args.cut is not None:
         corpus, eval_set = _over_cut(args)
-        wiki = cut_wiki(corpus) if configuration.wiki else None
+        wiki = _cut_wiki(configuration, corpus, args.wiki)
     else:
         corpus, eval_set_path = _corpus(args.corpus or frozen.DEFAULT_CORPUS, args.eval_set)
         eval_set = load_eval_set(eval_set_path)
@@ -350,13 +352,25 @@ def _over_cut(args: argparse.Namespace) -> tuple[Cut, EvalSet]:
         raise CorpusChoiceError("give --cut and --corpus one at a time: a run asks one or other")
     if args.eval_set is None:
         raise CorpusChoiceError("--cut DIR needs --eval-set FILE")
-    if args.wiki is not None:
-        raise WikiChoiceError("a run over a cut asks with the cut's own wiki: drop --wiki")
     cut_dir = require_private(args.cut, "--cut")
     eval_set_path = require_private(args.eval_set, "--eval-set")
     require_private(args.runs_dir, "--runs-dir")
+    if args.wiki is not None:
+        # A dreamed copy of the cut's wiki is the owner's data, as the cut is.
+        require_private(args.wiki, "--wiki")
     cut = load_cut(cut_dir)
     return cut, load_eval_set(eval_set_path, cut=cut)
+
+
+def _cut_wiki(configuration: Configuration, cut: Cut, directory: Path | None) -> EvalWiki | None:
+    """The wiki a run of `configuration` over `cut` asks with: the cut's own, or the dreamed
+    copy of it in `--wiki DIR`, which no configuration without a wiki takes."""
+    if not configuration.wiki:
+        configuration.require_wiki_choice(wiki_given=directory is not None)
+        return None
+    if directory is None:
+        return cut_wiki(cut)
+    return dreamed_cut_wiki(cut, directory.expanduser().resolve())
 
 
 def _corpus(corpus: str, eval_set: Path | None) -> tuple[tuple[Path, ...], Path]:

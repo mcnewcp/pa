@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from pa_home.config import load_librarian_config
+
 DEPLOY = Path(__file__).resolve().parents[1]
 LIB = DEPLOY / "lib.sh"
 UNITS = ("pa-capture.service", "pa-capture.timer", "pa-nightly.service", "pa-nightly.timer")
@@ -379,6 +381,21 @@ def test_the_nightly_job_runs_with_its_own_sandbox_and_backup_repository(
     for name in ("PA_LIBRARIAN_COMMAND", "RESTIC_PASSWORD", "RESTIC_PASSWORD_COMMAND"):
         assert name not in env
     assert "RESTIC_REPOSITORY_FILE" not in env
+
+
+@pytest.mark.parametrize("environment", [{}, {"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": "7"}])
+def test_the_nightly_job_doesnt_dream_until_the_home_deployment_turns_dreaming_on(
+    home: Path, instance: dict[str, str], environment: dict[str, str]
+):
+    """The home deployment's interval is lib.sh's PA_DREAMING_INTERVAL_DAYS, 0 until dreaming
+    goes live (#153), whatever the environment says. Without it the job would run on the
+    configuration's default, which is weekly."""
+    call = run_job("nightly.sh", home, {**instance, **environment})
+
+    assert value("PA_DREAMING_INTERVAL_DAYS", home) == "0"
+    # As the nightly job reads it: an interval of 0 is the step turned off.
+    assert load_librarian_config(call["env"]).dreaming_interval_days == 0
+    assert load_librarian_config({}).dreaming_interval_days > 0
 
 
 def test_the_nightly_job_finds_restic_installed_in_the_owners_bin_directory(

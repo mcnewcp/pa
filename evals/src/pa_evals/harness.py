@@ -76,7 +76,8 @@ def run_eval(
     throwaway L0 with nothing in it writable, and its path goes to the agent with every question.
     Before any question is asked, the copy must pass the injection checks over the eval set's
     adversarial episodes (`pa_evals.injection`), or the run stops with InjectionCheckError. The
-    results record the librarian version that built it and the checks it passed. `setup`
+    results record the librarian version that built it, the one that dreamed it if one did,
+    and the checks it passed. `setup`
     describes the run (for example which agent runner and judge) and is carried into the
     results as it is.
     """
@@ -128,7 +129,11 @@ def run_eval(
     return RunResults(
         configuration=configuration.name,
         setup=dict(setup or {}),
-        wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
+        wiki=None
+        if wiki is None
+        else WikiResult(
+            librarian_version=wiki.librarian_version, dreaming_version=wiki.dreaming_version
+        ),
         injection_checks=checks,
         as_of=eval_set.as_of,
         ingest=counts,

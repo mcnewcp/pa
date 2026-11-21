@@ -3,17 +3,21 @@
 1. a capture cycle with reconciliation, so the night's run sees what was captured up to it,
    deletions a sync report missed included;
 2. the librarian run, over everything captured since its cursor;
-3. the backup, which then holds the night's wiki.
+3. a dreaming run, the librarian's review of the whole wiki, on the nights it is due
+   (`pa_home.librarian.dreaming_due`): weekly unless configured otherwise;
+4. the backup, which then holds the night's wiki.
 
 It records first when the assistant's own Claude login ends, as nightly.sh found it in the
 assistant's VM, so the owner hears in time to log in again. The status says the job is
 running, from its start until it ends, so neither `pa status` nor
 the assistant calls a source stale while the job holds the capture cycles back. Each step
 records its outcome in the status, and a step that fails doesn't stop the next: the
-backup runs whatever the librarian did. The one exception closes the gap the lock is for: when
-the cycle's ingest failed, its payloads wait in the inbox with their capture times, and a run
-now would move its cursor past them, so the run is held back (and recorded as failed) until a
-cycle has landed them.
+backup runs whatever the librarian did. There are two exceptions. One closes the gap the lock
+is for: when the cycle's ingest failed, its payloads wait in the inbox with their capture
+times, and a run now would move its cursor past them, so the run is held back (and recorded
+as failed) until a cycle has landed them. The other is dreaming, which reviews the wiki the
+night's run left: it runs only on a night whose librarian run succeeded, and one that fails is
+tried again the next night.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from pa_core.envelope import Source
+from pa_core.librarian.dreaming import DreamingOutcome
 from pa_core.librarian.run import RunOutcome
 from pa_core.owner import Owner
 from pa_core.status import AssistantLogin, NightlyStatus, read_status, write_status
@@ -57,6 +62,10 @@ class NightlyOutcome:
     """Why the capture cycle stopped part way, if it did (its own failures are in `capture`)."""
     librarian: RunOutcome | None = None
     librarian_failure: str | None = None
+    dreaming: DreamingOutcome | None = None
+    """What the night's dreaming run did. None on a night that had none: dreaming is off, or
+    isn't due yet, or the librarian run didn't succeed."""
+    dreaming_failure: str | None = None
     snapshot: str | None = None
     """The backup's snapshot id."""
     backup_failure: str | None = None
@@ -67,6 +76,7 @@ class NightlyOutcome:
             (self.capture is not None and self.capture.failed)
             or self.capture_failure is not None
             or self.librarian_failure is not None
+            or self.dreaming_failure is not None
             or self.backup_failure is not None
         )
 
@@ -81,9 +91,9 @@ def nightly_job(
     environ: Mapping[str, str] = os.environ,
     now: Callable[[], datetime] = wall_clock,
 ) -> NightlyOutcome:
-    """Run the night's capture cycle, librarian run, and backup under the data root's lock, or
-    skip them all if another job holds it. The librarian and the backup are configured from
-    `environ`."""
+    """Run the night's capture cycle, librarian run, dreaming run (when it is due), and backup
+    under the data root's lock, or skip them all if another job holds it. The librarian, with
+    how often it dreams, and the backup are configured from `environ`."""
     try:
         with data_root_lock(data_root):
             _mark_running(data_root, now(), now)
@@ -130,6 +140,7 @@ def _night(
     except Exception as error:
         outcome.capture_failure = failure_reason(error)
 
+    config = None
     try:
         if outcome.capture is None or outcome.capture.ingest_failure is not None:
             _not_run(outcome, data_root, HELD_BACK, now)
@@ -145,6 +156,19 @@ def _night(
     except Exception as error:
         # librarian.run recorded it; a reason given already stands.
         outcome.librarian_failure = outcome.librarian_failure or librarian.run_failure_reason(error)
+
+    # Dreaming reviews the wiki the night's run left, so it waits for a night whose run
+    # succeeded: one that failed or was held back left a wiki that is behind.
+    if config is not None and outcome.librarian is not None:
+        try:
+            if librarian.dreaming_due(data_root, time_zone=time_zone, config=config, now=now):
+                outcome.dreaming = librarian.dream(
+                    data_root, owner=owner, time_zone=time_zone, config=config, now=now
+                )
+        except Exception as error:
+            # librarian.dream recorded it. Nothing counts a failed run toward the interval, so
+            # the next night tries again.
+            outcome.dreaming_failure = librarian.run_failure_reason(error)
 
     try:
         outcome.snapshot = back_up(data_root, environ=environ, now=now)

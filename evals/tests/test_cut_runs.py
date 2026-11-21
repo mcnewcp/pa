@@ -14,12 +14,13 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.envelope import Source
 from pa_core.ingest import ingest
+from pa_core.librarian.replay import DreamingLogEntry, append_to_run_log
 from pa_core.status import SourceStatus, Status, write_status
 from pa_evals.agent import AgentAnswer, AgentRequest, ScriptedAgent
 from pa_evals.cli import main
 from pa_evals.configurations import FILES_PLUS_WIKI
 from pa_evals.eval_set import EvalSet, EvalSetError, load_eval_set
-from pa_evals.eval_wiki import EvalWikiError, cut_wiki
+from pa_evals.eval_wiki import EvalWikiError, cut_wiki, dreamed_cut_wiki
 from pa_evals.harness import run_eval
 from pa_evals.judge import ScriptedJudge
 from pa_evals.results import RunResults
@@ -168,6 +169,145 @@ def test_a_cut_without_a_wiki_has_no_wiki_to_give(tmp_path, eval_set):
         cut_wiki(cut)
 
 
+# A dreamed copy of the cut's wiki (#150)
+
+DREAMING_VERSION = "ba9876543210"
+DREAMED_PAGE = "topics/daves-wedding.md"
+
+
+def dreaming_run(cut: Cut, **changes) -> DreamingLogEntry:
+    """A run log entry as `pa librarian dream DIR --cut CUT` appends one for a committed run
+    over a copy of the cut's wiki."""
+    assert cut.manifest.wiki is not None
+    run = DreamingLogEntry(
+        run="dreaming",
+        status="committed",
+        commit="c3" * 20,
+        as_of=cut.as_of,
+        librarian_version=cut.manifest.wiki.librarian_version,
+        dreaming_version=DREAMING_VERSION,
+        model="opus",
+        effort="high",
+        sessions=(),
+        cost_usd=0.9,
+        candidates=1,
+        outcomes={"applied": 1, "proposed": 0, "dismissed": 0},
+        lint_warnings=0,
+        error=None,
+    )
+    return run.model_copy(update=changes)
+
+
+def dreamed_copy(cut: Cut, directory: Path, *runs: DreamingLogEntry) -> Path:
+    """A copy of the cut's wiki in `directory`, as a dreaming run left it: a page changed,
+    and the run (`runs`, if given instead) in its run log."""
+    assert cut.wiki is not None
+    shutil.copytree(cut.wiki, directory / "wiki")
+    page = directory / "wiki" / DREAMED_PAGE
+    page.write_text(page.read_text() + "- Dave booked the block on Oct 5\n")
+    for run in runs or [dreaming_run(cut)]:
+        append_to_run_log(directory / "run-log.jsonl", run)
+    return directory
+
+
+def test_files_plus_wiki_over_a_cut_uses_a_dreamed_copy_of_its_wiki_when_given_one(
+    tmp_path, eval_set, cut
+):
+    copy = dreamed_copy(cut, tmp_path / "pa-data" / "replays" / "dreamed")
+    undreamed = files_under(cut.path)
+    wikis: list[dict[str, bytes]] = []
+
+    class LookingAgent:
+        def answer(self, request: AgentRequest) -> AgentAnswer:
+            assert request.wiki is not None
+            wikis.append(files_under(request.wiki))
+            return AgentAnswer("Oct 9.")
+
+    results = run_eval(
+        cut,
+        eval_set.only("hotel-block-deadline"),
+        LookingAgent(),
+        ScriptedJudge({}),
+        configuration=FILES_PLUS_WIKI,
+        wiki=dreamed_cut_wiki(cut, copy),
+    )
+
+    # The agent read the copy, which isn't the cut's own wiki, over the cut's L0.
+    assert cut.wiki is not None
+    assert wikis == [files_under(copy / "wiki")]
+    assert wikis != [files_under(cut.wiki)]
+    assert results.cut is not None and results.cut.name == cut.name
+    # The results name the version that built the wiki, and the one that dreamed the copy.
+    assert results.wiki is not None
+    assert results.wiki.librarian_version == LIBRARIAN_VERSION
+    assert results.wiki.dreaming_version == DREAMING_VERSION
+    assert results.injection_checks is not None
+    assert files_under(cut.path) == undreamed
+
+
+def _replayed(cut: Cut, directory: Path) -> Path:
+    shutil.copytree(EVAL_WIKI, directory)
+    return directory
+
+
+def _never_dreamed(cut: Cut, directory: Path) -> Path:
+    assert cut.wiki is not None
+    shutil.copytree(cut.wiki, directory / "wiki")
+    return directory
+
+
+def _only_failed(cut: Cut, directory: Path) -> Path:
+    failed = dreaming_run(cut, status="failed", commit=None, candidates=None, outcomes=None)
+    return dreamed_copy(cut, directory, failed)
+
+
+def _of_another_cut(cut: Cut, directory: Path) -> Path:
+    return dreamed_copy(cut, directory, dreaming_run(cut, as_of=cut.as_of - timedelta(days=7)))
+
+
+def _built_by_another_librarian(cut: Cut, directory: Path) -> Path:
+    return dreamed_copy(cut, directory, dreaming_run(cut, librarian_version="0123456789ab"))
+
+
+def _without_a_tree(cut: Cut, directory: Path) -> Path:
+    append_to_run_log(directory / "run-log.jsonl", dreaming_run(cut))
+    return directory
+
+
+NOT_DREAMED_COPIES = {
+    "an eval wiki replayed from a corpus": (_replayed, "has a replay's runs"),
+    "a copy that was never dreamed": (_never_dreamed, r"has no run-log\.jsonl"),
+    "a copy whose dreaming runs all failed": (_only_failed, "has no committed dreaming run"),
+    "a copy dreamed as of another time": (_of_another_cut, "not the cut's as-of time"),
+    "a copy of a wiki another librarian built": (
+        _built_by_another_librarian,
+        f"built by librarian version 0123456789ab, not {LIBRARIAN_VERSION}",
+    ),
+    "a directory without a wiki": (_without_a_tree, "has no wiki/"),
+}
+"""What isn't a dreamed copy of the cut's wiki: how to make one, and why it's refused."""
+
+
+@pytest.mark.parametrize(
+    ("make", "reason"), NOT_DREAMED_COPIES.values(), ids=list(NOT_DREAMED_COPIES)
+)
+def test_a_run_over_a_cut_refuses_a_wiki_that_isnt_a_dreamed_copy_of_the_cuts(
+    tmp_path, cut, make, reason
+):
+    directory = make(cut, tmp_path / "pa-data" / "replays" / "dreamed")
+
+    with pytest.raises(EvalWikiError, match=reason):
+        dreamed_cut_wiki(cut, directory)
+
+
+def test_a_cut_without_a_wiki_has_no_dreamed_copy(tmp_path, eval_set, cut):
+    copy = dreamed_copy(cut, tmp_path / "dreamed")
+    bare = make_cut(DataRoot(tmp_path / "bare"), eval_set, wiki=False)
+
+    with pytest.raises(EvalWikiError, match="holds no wiki"):
+        dreamed_cut_wiki(bare, copy)
+
+
 # The set over a cut: every evidence id must be in it.
 
 
@@ -290,13 +430,49 @@ def test_pa_eval_run_files_plus_wiki_over_a_cut_asks_with_the_cuts_wiki(cut, scr
     assert results.wiki.librarian_version == LIBRARIAN_VERSION
 
 
-def test_pa_eval_run_over_a_cut_refuses_another_wiki(cut, scripts, private, capsys):
+def test_pa_eval_run_over_a_cut_asks_with_a_dreamed_copy_of_its_wiki_when_given_one(
+    cut, scripts, private
+):
     runs = private / "runs"
-    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(EVAL_WIKI)]
+    copy = dreamed_copy(cut, private / "dreamed")
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(copy)]
+
+    assert pa_eval_run_over(cut, private / "set.json", runs, scripts, *wiki) == 0
+
+    [run_dir] = runs.iterdir()
+    results = RunResults.model_validate_json((run_dir / "results.json").read_text())
+    assert results.cut is not None and results.cut.name == cut.name
+    assert results.wiki is not None
+    assert results.wiki.librarian_version == LIBRARIAN_VERSION
+    assert results.wiki.dreaming_version == DREAMING_VERSION
+    report = (run_dir / "report.md").read_text()
+    assert (
+        f"- Wiki: librarian version {LIBRARIAN_VERSION}, dreamed by librarian version "
+        f"{DREAMING_VERSION}\n"
+    ) in report
+
+
+def test_pa_eval_run_over_a_cut_refuses_a_wiki_that_isnt_a_copy_of_the_cuts(
+    cut, scripts, private, capsys
+):
+    runs = private / "runs"
+    replayed = _replayed(cut, private / "eval-wiki")
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(replayed)]
 
     assert pa_eval_run_over(cut, private / "set.json", runs, scripts, *wiki) == 1
 
-    assert "a run over a cut asks with the cut's own wiki: drop --wiki" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "has a replay's runs" in error and "isn't a dreamed copy of the cut's wiki" in error
+    assert not runs.exists()
+
+
+def test_pa_eval_run_files_alone_over_a_cut_refuses_a_wiki(cut, scripts, private, capsys):
+    runs = private / "runs"
+    copy = dreamed_copy(cut, private / "dreamed")
+
+    assert pa_eval_run_over(cut, private / "set.json", runs, scripts, "--wiki", str(copy)) == 1
+
+    assert "files-alone gives the assistant no wiki: drop --wiki" in capsys.readouterr().err
     assert not runs.exists()
 
 
@@ -347,14 +523,21 @@ def test_pa_eval_run_over_a_cut_refuses_a_set_asked_at_another_time(cut, scripts
 INSIDE = WORKSPACE / "evals" / "runs" / "private-test-never-written"
 
 
-@pytest.mark.parametrize("option", ["--cut", "--eval-set", "--runs-dir"])
+@pytest.mark.parametrize("option", ["--cut", "--eval-set", "--runs-dir", "--wiki"])
 def test_pa_eval_run_over_a_cut_refuses_paths_inside_the_repository(
     cut, scripts, private, capsys, option
 ):
     runs = private / "runs"
-    paths = {"--cut": cut.path, "--eval-set": private / "set.json", "--runs-dir": runs}
+    paths = {
+        "--cut": cut.path,
+        "--eval-set": private / "set.json",
+        "--runs-dir": runs,
+        # A dreamed copy of the cut's wiki is the owner's data, as the cut is.
+        "--wiki": dreamed_copy(cut, private / "dreamed"),
+    }
     paths[option] = INSIDE
     args = ["run", *(part for name, path in paths.items() for part in (name, str(path)))]
+    args += ["--configuration", "files-plus-wiki"]
 
     assert main([*args, *scripts]) == 1
 

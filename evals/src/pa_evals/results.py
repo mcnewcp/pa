@@ -130,6 +130,17 @@ class WikiResult(BaseModel):
 
     librarian_version: str
     """The librarian version that built it, from its run log."""
+    dreaming_version: str | None = None
+    """The librarian version that dreamed it, from its run log; None for a wiki no dreaming
+    run has changed, and in results written before dreamed eval wikis."""
+
+    @property
+    def versions(self) -> str:
+        """Both versions, as a report names the wiki."""
+        built = f"librarian version {self.librarian_version}"
+        if self.dreaming_version is None:
+            return built
+        return f"{built}, dreamed by librarian version {self.dreaming_version}"
 
 
 class InjectionChecks(BaseModel):
