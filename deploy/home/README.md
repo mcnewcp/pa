@@ -59,7 +59,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
 | `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
 | `capture.sh [--backfill W \| --reconcile]` | Runs a capture cycle on the devbox with the instance's configuration, as `pa-capture.service` does every 15 minutes ([The live schedule](#the-live-schedule)) |
-| `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, the backup, as `pa-nightly.service` does overnight |
+| `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, a dreaming run when one is due, the backup, as `pa-nightly.service` does overnight |
 | `install-schedules.sh [--enable]` | Installs the schedules' units and timers (`schedules/`, needs sudo); `--enable` starts both timers once the wiki is seeded |
 | `check-schedules.sh` | Checks the schedules: each timer enabled, its last and next start, each job's last result, then `pa status` |
 
@@ -224,14 +224,14 @@ Once the go-live backfill is replayed and the wiki seeded, the PA runs on its ow
 | Timer | When | Runs |
 |---|---|---|
 | `pa-capture.timer` | Every 15 minutes, on the quarter hour | `pa-capture.service` → `capture.sh` → `pa capture`: each configured source collected into the inbox, ingest, and each watermark published once its payloads have landed |
-| `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then the backup |
+| `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then a dreaming run on the nights one is due ([Dreaming and proposals](#dreaming-and-proposals)), then the backup |
 
 - **One lock.** Every job that writes the store takes the data root's lock (`pa.lock`): the capture cycle from its first collector through ingest and publication, the nightly job throughout, and `pa ingest`, `pa librarian run` and `pa backup` by hand. A job that finds it held skips and exits 0 (`… skipped: another job holds the data root's lock`); `pa cut`, `pa renormalize`, `pa catalog rebuild` and `pa librarian seed` refuse instead. So the librarian never runs between a collection and its ingest, and every note or calendar resource collected before a run (stamped with when it was read) is offered by that run.
-- **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. The one exception: when the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. The 15-minute cycles skip while the job runs.
-- **Staleness.** A source is stale once its watermark is more than twice its cadence behind (30 minutes for a 15-minute cadence). The nightly job records in the status when it started (`nightly.running_since`), and while it runs neither `pa status` nor the assistant calls a source stale, since the job holds the cycles back. A nightly job running past 3 hours has stopped holding staleness off.
+- **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. Two exceptions. When the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. And dreaming runs only on a night whose librarian run succeeded, since it reviews the wiki that run left. The 15-minute cycles skip while the job runs.
+- **Staleness.** A source is stale once its watermark is more than twice its cadence behind (30 minutes for a 15-minute cadence). The nightly job records in the status when it started (`nightly.running_since`), and while it runs neither `pa status` nor the assistant calls a source stale, since the job holds the cycles back. A nightly job running past 4 hours has stopped holding staleness off: that is an hour for each of the night's three sessions at the librarian's default timeout, and an hour for the rest. A night that has to resume sessions that long can outlast it, and its sources are then called stale while it still runs.
 - **Catching up.** Both timers are `Persistent=`: after the devbox was off, each starts its job once at boot for what it missed, the nightly job after the capture cycle starting then. A timer never starts a second job while its last one runs (the services are oneshot), and neither the nightly job nor a cycle piles up behind the other: whichever finds the lock held skips. A capture cycle that hangs is stopped after 30 minutes.
 - **Confinement.** `pa-capture.service` can write only the inbox, L0, the catalog, collector state (`state/`), the status, and the lock; it reads the credentials in `~/.config/pa`, the vault copy and the code without being able to write them (`ProtectSystem=strict`, `ProtectHome=read-only`), with a private `/tmp` and no privileges. `pa-nightly.service` can write those too, and the wiki and its git directory, the backup repository on the drive and restic's cache, and `/tmp`, which stays the host's: the librarian run renders its project there and Incus shares it into the librarian's VM. It wants the backup drive's mount but runs without it, and the status records the backup that found no repository.
-- **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox and the drive's repository, whatever the environment says.
+- **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox, the drive's repository, and the deployment's dreaming interval (`PA_DREAMING_INTERVAL_DAYS` in `lib.sh`), whatever the environment says.
 
 To check them, with times, counts and reasons only, never content:
 
@@ -353,6 +353,48 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 - `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run: its pages and what it recorded, so after the last night's commit is reverted the next run takes that night's episodes again. Keep git's `This reverts commit …` line in the message; it is how the host knows. It's the owner's to read: a development session never prints it.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
 - `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another job holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
+
+### Dreaming and proposals
+
+Dreaming is the librarian's review of the whole wiki, where a nightly run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages, pages the owner never engaged with), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
+
+- **Proposals** are what the librarian asks the owner: lines in `proposals.md` at the wiki's root, open ones first, each with an id (`P12`), the pages it is about, and the episodes behind it. `index.md` opens with how many are open. The owner reads them in Obsidian, or asks the assistant what the PA is waiting on, and answers in chat. The answer is a correction like any other: the next librarian run applies it and moves the proposal under `## Answered`. A run adds at most 5 proposals, and none while 15 are open.
+- **Retirement.** Dreaming may retire the page of a person or organization the owner never engaged with, once a re-read of L0 shows nothing owed either way: the page goes, anything worth keeping is folded into the page it belongs to, and the host lists the slug with the date in `retired.md` at the wiki's root. One with an open loop is proposed, never retired. A retired slug gets no page again until the owner engages with it, a loop or decision names it, or the owner says "keep a page for X" in chat; any run that gives it a page takes it off the list.
+- **Memory.** Each dreaming commit's message lists its candidates with their outcomes, and the next run reads them back. A dismissed candidate isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits while its proposal is open. A run is offered at most 30 candidates, in a fixed order of kinds; the rest wait for the next run.
+- **In the nightly job.** Dreaming is a step between the librarian run and the backup, under the same lock, on the nights it is due: when the wiki's last review is at least `PA_DREAMING_INTERVAL_DAYS` days old (`lib.sh`), counted in days of the owner's calendar. **It is 0 here, which turns the step off: the home deployment doesn't dream on its own until dreaming goes live (#153), which sets it to 7.** It runs only on a night whose librarian run succeeded. A dreaming run that fails leaves the wiki as it was, doesn't stop the backup, and is tried again the next night.
+- **By hand**, whatever the interval says:
+
+  ```sh
+  deploy/home/librarian.sh dream
+  ```
+
+  It takes the data root's lock (and skips, exiting 0, while another job holds it), runs its session in the librarian's VM, and prints counts only: `librarian dream: judged 7 candidates (3 applied, 1 proposed, 3 dismissed); committed 1a2b3c4d; 12 lint warnings`. A run by hand counts as the wiki's last review, so the nightly job waits the interval from it.
+- **Nothing to judge.** A wiki with no candidates, or with every candidate held back, gets no session and no commit: `librarian dream: no candidates in the wiki`, or `nothing to judge; every candidate is held back (4)`. The status records it as a run that judged 0 candidates, and it counts as that week's review, so the job doesn't weigh the same candidates again every night.
+- **The status** holds the last dreaming run, by the job or by hand, in counts: when it ran, whether it succeeded, a failure's reason (which names only the session it failed in), its cost, the candidates judged, a count per outcome, how many were held back, and how many proposals are open. `pa status` prints it as two lines, `dreaming: last run …` and `proposals: 3 open`, and the assistant reports it when asked. It never holds a page's name, a proposal's text, or what a candidate was about; those are in the wiki and its history, which are the owner's to read.
+- **Configuration.** The nightly job's interval is `PA_DREAMING_INTERVAL_DAYS` in `lib.sh`. The rest is `pa`'s own, and the deployment sets none of it, so home runs on the defaults: `PA_LIBRARIAN_CANDIDATE_CAP` (30), `PA_LIBRARIAN_NEW_PROPOSALS` (5), `PA_LIBRARIAN_OPEN_PROPOSALS` (15). Dreaming uses the librarian's model, effort, turn limit and timeout. Outside the deployment, `pa nightly` reads the interval from `PA_LIBRARIAN_DREAMING_INTERVAL_DAYS`, and dreams weekly when it's unset.
+
+#### Reverting a dreaming run
+
+A dreaming run is one commit, so one `git revert` undoes one review and leaves the nights around it alone. Whether to revert is the owner's call, from reading the wiki in Obsidian. The commit to revert is the one the run reported (`committed 1a2b3c4d`, in the terminal for a run by hand, or in the nightly job's journal, which holds counts only). Not while the nightly job is running:
+
+```sh
+wiki() { git --git-dir ~/.local/share/pa-home/wiki.git --work-tree ~/.local/share/pa-home/wiki "$@"; }
+wiki revert --no-edit 1a2b3c4d > /dev/null
+```
+
+- **What it undoes**: the pages the run changed, the proposals it added (their ids are free again), and what it remembered, so its candidates are offered again. The cursor and the librarian version stay those of the last nightly run, so the next nightly run offers only what's new.
+- **How the host knows**: by the line git itself writes in the revert's message, `This reverts commit <the full id>.` Keep it (`--no-edit` does). A revert whose message lost that line isn't recognised, and the run it undid is still remembered.
+- **A run that changed no file**, such as one that dismissed every candidate, can't be reverted in one step: git stops with "nothing to commit", so the command above exits 1 and prints nothing. Conclude it with git's own message, and the run is forgotten the same way:
+
+  ```sh
+  wiki commit --allow-empty --no-edit > /dev/null
+  ```
+
+- **A conflict**, when later runs changed the same pages, is the other way it exits 1, and git says so on stderr. Take it back with `wiki revert --abort`, and correct the pages in chat instead.
+
+- **Afterwards** the reverted run no longer counts as a review, so the nightly job dreams again the next night, and judges those candidates again. To hold it off, set `PA_DREAMING_INTERVAL_DAYS=0` first. The status keeps showing the reverted run as the last one until the next.
+- **Reverting the revert** makes the run stand again: its pages, its proposals, and its decisions at their original age.
+- The commands above print nothing, on purpose: git's own output names the pages it touched. The log, a diff and the pages are the owner's to read; a development session never prints them.
 
 ### The Obsidian view
 

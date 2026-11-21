@@ -443,8 +443,10 @@ def test_a_copy_with_more_candidates_than_the_cap_is_dreamed_run_by_run_until_no
     assert dream(target, "--corpus", corpus) == 0
 
     # The second run found the first's commit: the orphan it dismissed is held back, at the
-    # copy's one as-of time, so the loop the cap left over is offered. The third has nothing.
-    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+    # copy's one as-of time, so the loop the cap left over is offered. The third has nothing
+    # but the orphan, still held back.
+    said = "librarian dream: nothing to judge; every candidate is held back (1)"
+    assert said in capsys.readouterr().out
     offered = [
         [candidate["kind"] for candidate in session["candidates"]]
         for session in sessions(data_root)[undreamed:]
@@ -531,10 +533,12 @@ def test_dreaming_a_copy_retires_a_page_as_dreaming_the_live_wiki_does(
     )
     assert "[[nina-park]]" in (target / "wiki" / "days" / "2026-10-12.md").read_text()
     assert tree_state(original) == before
-    # She stays retired: a second run of the copy has nothing left to judge.
+    # She stays retired: a second run of the copy has nothing left to judge, only the candidate
+    # the first one dismissed.
     capsys.readouterr()
     assert dream(target, "--corpus", corpus) == 0
-    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+    said = "librarian dream: nothing to judge; every candidate is held back (1)"
+    assert said in capsys.readouterr().out
     assert len(sessions(data_root, "dreaming")) == 1
 
 

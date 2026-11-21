@@ -44,7 +44,12 @@ from pa_core.librarian.dream_copy import (
     replayed_source,
     run_copy_dreaming,
 )
-from pa_core.librarian.dreaming import DreamingOutcome, run_dreaming
+from pa_core.librarian.dreaming import (
+    OUTCOMES,
+    DreamingOutcome,
+    last_dreaming_at,
+    run_dreaming,
+)
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
@@ -59,8 +64,9 @@ from pa_core.librarian.run import (
     seed_wiki,
 )
 from pa_core.librarian.version import librarian_version
+from pa_core.librarian.wiki import open_proposals
 from pa_core.owner import Owner
-from pa_core.status import LibrarianRun, WikiStatus, read_status, write_status
+from pa_core.status import DreamingRun, LibrarianRun, read_status, write_status
 from pa_home.agent import wall_clock
 from pa_home.capture import failure_reason
 from pa_home.claude_session import ClaudeSessionRunner
@@ -145,26 +151,82 @@ def dream(
     librarian project's source, run as committed (`project_files`), in the sandbox a nightly
     run's sessions run in, with the same model, effort, turn limit, and timeout.
 
-    The caller holds the data root's lock, as for `run`.
+    Whatever happens, the run is recorded in the status as the last dreaming run, in counts
+    and a failure's reason without content, beside the nightly run's own record. A run that
+    found nothing to judge is recorded too: the review happened. The caller holds the data
+    root's lock, as for `run`.
     """
     started = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    files = project_files(project)
-    with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
-        return run_dreaming(
-            store=FilesystemL0(data_root.l0),
-            owner=owner,
-            repository=repository,
-            runner=runner,
-            librarian=_librarian(config, files),
-            now=started.astimezone(time_zone),
-            page_threshold=config.page_threshold,
-            loop_age_days=config.loop_age_days,
-            stale_later_days=config.stale_later_days,
-            quiet_days=config.quiet_days,
-            candidate_cap=config.candidate_cap,
-            proposal_caps=config.proposal_caps,
+    try:
+        files = project_files(project)
+        with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
+            outcome = run_dreaming(
+                store=FilesystemL0(data_root.l0),
+                owner=owner,
+                repository=repository,
+                runner=runner,
+                librarian=_librarian(config, files),
+                now=started.astimezone(time_zone),
+                page_threshold=config.page_threshold,
+                loop_age_days=config.loop_age_days,
+                stale_later_days=config.stale_later_days,
+                quiet_days=config.quiet_days,
+                candidate_cap=config.candidate_cap,
+                proposal_caps=config.proposal_caps,
+            )
+    except Exception as error:
+        sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
+        failed = DreamingRun(
+            at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
+        _record(data_root, repository, now, last_dreaming=failed)
+        raise
+    succeeded = DreamingRun(
+        at=started,
+        succeeded=True,
+        cost_usd=_cost(outcome.sessions),
+        candidates=len(outcome.candidates),
+        outcomes={name: outcome.count(name) for name in OUTCOMES},
+        held_back=outcome.held_back,
+    )
+    _record(data_root, repository, now, last_dreaming=succeeded)
+    return outcome
+
+
+def dreaming_due(
+    data_root: DataRoot,
+    *,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> bool:
+    """Whether the nightly job should dream at `now`: dreaming is on (an interval of 0 turns
+    it off), and the wiki's last review is at least `config.dreaming_interval_days` old, or it
+    has had none.
+
+    The last review is the last dreaming run whose commit still stands (`last_dreaming_at`),
+    by hand or by the job. A run that found nothing to judge commits nothing, so it is known
+    by the status's record of it alone, and counts too: the candidates it weighed are the same
+    ones the next night, and a review that judged nothing is still that week's review. A failed
+    run counts for nothing, so the next night tries again, and neither does a reverted one, so
+    its candidates are judged again the next night.
+
+    The interval is in days of `time_zone`'s calendar, the owner's, so a night that starts a
+    few minutes earlier than last week's is still a week later.
+    """
+    if config.dreaming_interval_days == 0:
+        return False
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    reviews = [last_dreaming_at(repository)]
+    recorded = read_status(data_root.status).wiki.last_dreaming
+    if recorded is not None and recorded.succeeded and recorded.candidates == 0:
+        reviews.append(recorded.at)
+    last = max((review for review in reviews if review is not None), default=None)
+    if last is None:
+        return True
+    today = now().astimezone(time_zone).date()
+    return (today - last.astimezone(time_zone).date()).days >= config.dreaming_interval_days
 
 
 def dream_copy(
@@ -253,11 +315,29 @@ def _record_run(
     run: LibrarianRun,
     now: Callable[[], datetime],
 ) -> None:
-    """Writes `run` into the status as the wiki's last run, with the time the wiki is current
-    through as last committed."""
+    """Writes `run` into the status as the wiki's last run."""
+    _record(data_root, repository, now, last_run=run)
+
+
+def _record(
+    data_root: DataRoot,
+    repository: GitWikiRepository,
+    now: Callable[[], datetime],
+    **ran: LibrarianRun | DreamingRun,
+) -> None:
+    """Writes into the status's part for the wiki the run that just ended (as `last_run` or
+    `last_dreaming`), with what the wiki as last committed says: the time it is current through
+    and how many proposals are open. Everything else there stands, so a nightly run keeps the
+    last dreaming run's record, and a dreaming run the nightly run's."""
     cursor = last_cursor(repository)
-    wiki = WikiStatus(current_through=None if cursor is None else cursor.captured_at, last_run=run)
     status = read_status(data_root.status)
+    wiki = status.wiki.model_copy(
+        update={
+            "current_through": None if cursor is None else cursor.captured_at,
+            "open_proposals": len(open_proposals(repository.tree)),
+            **ran,
+        }
+    )
     write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=now())
 
 

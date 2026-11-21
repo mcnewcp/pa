@@ -6,12 +6,16 @@ differs.
 """
 
 import json
+import re
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+from pa_core.librarian.dreaming import OUTCOMES
 from pa_core.owner import Owner
+from pa_core.status import NIGHTLY_BOUND, DreamingRun, WikiStatus
 from pa_home.agent_project import (
     AGENT_PROJECT,
     SECTIONS,
@@ -205,8 +209,10 @@ def test_with_a_status_the_rendered_claude_md_says_to_read_it_and_scope_claims_b
     ):
         assert value in claude_md, value
     # Say when a source is stale: more than twice its cadence behind, unless the nightly job
-    # started within 3 hours.
-    for value in ("more than twice its cadence behind now", "`nightly.running_since`", "3 hours"):
+    # started within the time `pa status` gives it too.
+    bound = f"within the last {NIGHTLY_BOUND // timedelta(hours=1)} hours"
+    assert bound == "within the last 4 hours"
+    for value in ("more than twice its cadence behind now", "`nightly.running_since`", bound):
         assert value in claude_md, value
     # A missing status file or watermark means currency is unknown, never fresh.
     assert "can't tell how current" in claude_md
@@ -229,6 +235,59 @@ def test_with_a_status_and_a_wiki_l0_is_searched_directly_past_the_wikis_current
 
     assert "`wiki.current_through`" in claude_md
     assert "search L0 directly" in claude_md
+
+
+def _wiki_status_section(tmp_path: Path, instance) -> str:
+    """What the rendered CLAUDE.md says the status says of the wiki, whitespace collapsed."""
+    target = _render(instance, wiki=tmp_path / "data" / "wiki", status=_status(tmp_path))
+    claude_md = " ".join((target / "CLAUDE.md").read_text().split())
+    return claude_md[claude_md.index("`wiki.current_through`") :]
+
+
+def test_with_a_status_and_a_wiki_the_assistant_reports_the_last_dreaming_run(
+    tmp_path: Path, instance
+):
+    section = _wiki_status_section(tmp_path, instance)
+
+    # Where the last dreaming run and the open proposals are, and what to say of them.
+    for value in ("`wiki.last_dreaming`", "`wiki.open_proposals`"):
+        assert value in section, value
+    for value in ("when it ran", "whether it succeeded", "what it cost", "in the owner's local"):
+        assert value in section, value
+    # A run that hasn't happened, one that failed, and one with nothing to judge.
+    for value in ("no dreaming run has been recorded", "its `reason`", "nothing to judge"):
+        assert value in section, value
+    # The status holds counts: what the proposals ask is in the wiki.
+    assert "`proposals.md`" in section
+
+
+def test_every_field_the_assistant_is_told_to_read_of_a_dreaming_run_is_in_the_status(
+    tmp_path: Path, instance
+):
+    section = _wiki_status_section(tmp_path, instance)
+    named = set(re.findall(r"`([a-z_.]+)`", section))
+
+    wiki = {f"wiki.{field}" for field in WikiStatus.model_fields}
+    run = set(DreamingRun.model_fields)
+    outcomes = set(OUTCOMES)
+    assert {"wiki.last_dreaming", "wiki.open_proposals"} <= named
+    assert run | outcomes <= named, "a field of the record isn't described"
+    assert named <= wiki | run | outcomes | {"captured_at", "proposals.md"}, named
+
+
+def test_without_both_a_status_and_a_wiki_the_project_says_nothing_of_dreaming_runs(
+    tmp_path: Path, instance
+):
+    for wiki, status in (
+        (None, _status(tmp_path)),
+        (tmp_path / "data" / "wiki", None),
+        (None, None),
+    ):
+        claude_md = (_render(instance, wiki=wiki, status=status) / "CLAUDE.md").read_text()
+        shutil.rmtree(instance["target"])
+
+        for value in ("last_dreaming", "open_proposals", "dreaming run"):
+            assert value not in claude_md, (wiki, status, value)
 
 
 def test_with_a_wiki_but_no_status_the_project_says_nothing_of_one(tmp_path: Path, instance):

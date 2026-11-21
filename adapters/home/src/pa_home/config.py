@@ -42,6 +42,8 @@ LIBRARIAN_CANDIDATE_CAP_VAR = "PA_LIBRARIAN_CANDIDATE_CAP"
 # Dreaming's proposals: the most a run may add, and the most that may be open at once.
 LIBRARIAN_NEW_PROPOSALS_VAR = "PA_LIBRARIAN_NEW_PROPOSALS"
 LIBRARIAN_OPEN_PROPOSALS_VAR = "PA_LIBRARIAN_OPEN_PROPOSALS"
+# Dreaming in the nightly job: how many days apart its runs are, and 0 for never.
+LIBRARIAN_DREAMING_INTERVAL_VAR = "PA_LIBRARIAN_DREAMING_INTERVAL_DAYS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -160,6 +162,9 @@ class LibrarianConfig:
     """The most candidates a dreaming run is offered; the rest wait for the next run."""
     proposal_caps: ProposalCaps = PROPOSAL_CAPS
     """The most proposals a dreaming run may add, and the most that may be open at once."""
+    dreaming_interval_days: int = 7
+    """How many days apart the nightly job's dreaming runs are; 0 turns the step off. A run by
+    hand (`pa librarian dream`) doesn't ask."""
 
 
 @dataclass(frozen=True)
@@ -341,6 +346,9 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
                 environ, LIBRARIAN_OPEN_PROPOSALS_VAR, default.proposal_caps.open
             ),
         ),
+        dreaming_interval_days=_whole_number(
+            environ, LIBRARIAN_DREAMING_INTERVAL_VAR, default.dreaming_interval_days
+        ),
     )
 
 
@@ -441,6 +449,16 @@ def _positive_integer(environ: Mapping[str, str], var: str, default: int) -> int
         return default
     if not value.isdigit() or int(value) < 1:
         raise ConfigError(f"{var} must be a whole number of at least 1 (got {value!r}).")
+    return int(value)
+
+
+def _whole_number(environ: Mapping[str, str], var: str, default: int) -> int:
+    """As `_positive_integer`, for a setting whose 0 means off."""
+    value = environ.get(var, "").strip()
+    if not value:
+        return default
+    if not value.isdigit():
+        raise ConfigError(f"{var} must be a whole number, 0 or more (got {value!r}).")
     return int(value)
 
 

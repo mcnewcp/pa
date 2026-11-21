@@ -9,7 +9,15 @@ from pathlib import Path
 import pytest
 
 from pa_core.envelope import Source
-from pa_core.status import AssistantLogin, NightlyStatus, SourceStatus, Status, write_status
+from pa_core.status import (
+    AssistantLogin,
+    DreamingRun,
+    NightlyStatus,
+    SourceStatus,
+    Status,
+    WikiStatus,
+    write_status,
+)
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.lock import data_root_lock
@@ -155,7 +163,8 @@ def obsidian_line(capsys: pytest.CaptureFixture[str]) -> str:
         (timedelta(minutes=25), None, False),
         (timedelta(minutes=35), None, True),
         (timedelta(hours=2), timedelta(hours=1), False),
-        (timedelta(hours=5), timedelta(hours=4), True),
+        (timedelta(hours=4), timedelta(hours=3, minutes=30), False),
+        (timedelta(hours=6), timedelta(hours=5), True),
     ],
 )
 def test_pa_status_marks_a_source_stale_past_twice_its_cadence_unless_the_nightly_job_runs(
@@ -229,3 +238,81 @@ def test_pa_status_before_the_login_is_checked_says_so(
     assert main(["status"]) == 0
 
     assert "assistant login: not checked yet" in capsys.readouterr().out.splitlines()
+
+
+def wiki_lines(
+    data_root: Path, capsys: pytest.CaptureFixture[str], wiki: WikiStatus
+) -> dict[str, str]:
+    """`pa status`'s lines about dreaming and the proposals, by what each is about, for a
+    status whose wiki part is `wiki`."""
+    write_status(DataRoot(data_root).status, Status(wiki=wiki), at=datetime.now(UTC))
+    assert main(["status"]) == 0
+    lines = (line.partition(": ") for line in capsys.readouterr().out.splitlines())
+    return {name: said for name, _, said in lines if name in ("dreaming", "proposals")}
+
+
+WHEN = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+"
+"""A time as `pa status` prints it."""
+
+
+def test_pa_status_shows_the_last_dreaming_run_and_the_open_proposals_in_counts(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    run = DreamingRun(
+        at=datetime.now(UTC) - timedelta(days=2),
+        succeeded=True,
+        cost_usd=2.134,
+        candidates=5,
+        outcomes={"applied": 2, "proposed": 1, "dismissed": 2},
+        held_back=3,
+    )
+
+    lines = wiki_lines(data_root, capsys, WikiStatus(last_dreaming=run, open_proposals=4))
+
+    assert re.fullmatch(
+        rf"last run {WHEN} succeeded, cost \$2\.13, judged 5 candidates "
+        r"\(2 applied, 1 proposed, 2 dismissed\), 3 held back",
+        lines["dreaming"],
+    )
+    assert lines["proposals"] == "4 open"
+
+
+def test_pa_status_shows_a_dreaming_run_that_had_nothing_to_judge(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    run = DreamingRun(
+        at=datetime.now(UTC) - timedelta(hours=5),
+        succeeded=True,
+        cost_usd=0,
+        candidates=0,
+        outcomes={"applied": 0, "proposed": 0, "dismissed": 0},
+        held_back=2,
+    )
+
+    lines = wiki_lines(data_root, capsys, WikiStatus(last_dreaming=run, open_proposals=0))
+
+    assert re.fullmatch(
+        rf"last run {WHEN} succeeded, nothing to judge, 2 held back", lines["dreaming"]
+    )
+    assert lines["proposals"] == "0 open"
+
+
+def test_pa_status_shows_why_a_dreaming_run_failed(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    reason = "the run failed in its dreaming session and was discarded"
+    run = DreamingRun(
+        at=datetime.now(UTC) - timedelta(hours=5), succeeded=False, reason=reason, cost_usd=0.5
+    )
+
+    lines = wiki_lines(data_root, capsys, WikiStatus(last_dreaming=run, open_proposals=1))
+
+    assert re.fullmatch(rf"last run {WHEN} failed \({reason}\), cost \$0\.50", lines["dreaming"])
+
+
+def test_pa_status_before_any_dreaming_run_says_so(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    lines = wiki_lines(data_root, capsys, WikiStatus())
+
+    assert lines == {"dreaming": "last run never", "proposals": "not counted yet"}

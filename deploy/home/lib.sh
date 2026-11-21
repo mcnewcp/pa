@@ -179,6 +179,10 @@ PA_NIGHTLY_TIMER=pa-nightly.timer
 PA_SCHEDULE_UNITS=(pa-capture.service "$PA_CAPTURE_TIMER" pa-nightly.service "$PA_NIGHTLY_TIMER")
 PA_SCHEDULE_TIMERS=("$PA_CAPTURE_TIMER" "$PA_NIGHTLY_TIMER")
 PA_NIGHTLY_AT=03:00
+# Dreaming, the librarian's review of the whole wiki, as a step of the nightly job (#148): how
+# many days apart its runs are. 0 keeps the step off, which is where the home deployment stays
+# until dreaming goes live (#153 sets 7 here). `librarian.sh dream` runs one by hand either way.
+PA_DREAMING_INTERVAL_DAYS=0
 
 # Where the VM sees the store: L0, the wiki and the status read-only, and its own inbox directory,
 # its only way back.

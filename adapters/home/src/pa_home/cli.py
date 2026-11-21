@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -17,7 +17,7 @@ from pa_core.librarian.dreaming import OUTCOMES, DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
-from pa_core.status import Failure, read_status
+from pa_core.status import DreamingRun, Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
 from pa_home.backfill_estimate import estimate_backfill, estimate_lines
@@ -153,13 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser(
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
-        "reconciliation, then the librarian run, then the backup, each recorded in the status. "
-        "A step that fails doesn't stop the next. Skips if another job holds the lock.",
+        "reconciliation, then the librarian run, then a dreaming run when one is due "
+        "(every PA_LIBRARIAN_DREAMING_INTERVAL_DAYS days, 7 unless set; 0 for never), then the "
+        "backup, each recorded in the status. A step that fails doesn't stop the next. Skips "
+        "if another job holds the lock.",
     )
     commands.add_parser(
         "status",
         help="Print how current the PA is: each source's watermark, cadence, and failures, and "
-        "the last ingest, librarian run, and backup. Prints no content.",
+        "the last ingest, librarian run, dreaming run, and backup, with how many proposals "
+        "are open. Prints no content.",
     )
     commands.add_parser(
         "cut",
@@ -553,6 +556,10 @@ def _nightly(data_root: DataRoot) -> int:
         _report_run(outcome.librarian, "nightly: librarian")
     if outcome.librarian_failure is not None:
         print(f"pa: nightly: librarian: {outcome.librarian_failure}", file=sys.stderr)
+    if outcome.dreaming is not None:
+        _report_dreaming(outcome.dreaming, "nightly: dreaming")
+    if outcome.dreaming_failure is not None:
+        print(f"pa: nightly: dreaming: {outcome.dreaming_failure}", file=sys.stderr)
     if outcome.snapshot is not None:
         print(f"nightly: backup: took snapshot {outcome.snapshot[:8]}")
     if outcome.backup_failure is not None:
@@ -659,6 +666,10 @@ def _print_status(data_root: DataRoot) -> None:
         outcome = "succeeded" if run.succeeded else f"failed ({run.reason})"
         last_run = f"{moment(run.at)} {outcome}{cost}{warnings}"
     print(f"wiki: current through {moment(status.wiki.current_through)}; last run {last_run}")
+    dreamed = status.wiki.last_dreaming
+    print(f"dreaming: last run {'never' if dreamed is None else _dreamed(dreamed, moment)}")
+    asked = status.wiki.open_proposals
+    print(f"proposals: {'not counted yet' if asked is None else f'{asked} open'}")
     print(
         f"backup: last success {moment(status.backup.last_success)}; "
         f"last failure {failure(status.backup.last_failure)}"
@@ -673,6 +684,21 @@ def _print_status(data_root: DataRoot) -> None:
             f"assistant login: {ends} (checked {moment(login.checked_at)})"
             f"{again if status.login_ending(now=now) else ''}"
         )
+
+
+def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
+    """The status's last dreaming run, as `pa status` shows it: counts and a reason."""
+    cost = "" if run.cost_usd is None else f", cost ${run.cost_usd:.2f}"
+    if not run.succeeded:
+        return f"{moment(run.at)} failed ({run.reason}){cost}"
+    held_back = f", {run.held_back} held back" if run.held_back else ""
+    if not run.candidates:
+        return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
+    counts = ", ".join(f"{count} {outcome}" for outcome, count in run.outcomes.items())
+    return (
+        f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
+        f"{held_back}"
+    )
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
@@ -794,6 +820,9 @@ def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> No
 
 def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
     """Print what a dreaming run did, as `name`: counts, never content."""
+    if outcome.commit is None and outcome.held_back:
+        print(f"{name}: nothing to judge; every candidate is held back ({outcome.held_back})")
+        return
     if outcome.commit is None:
         print(f"{name}: no candidates in the wiki")
         return
