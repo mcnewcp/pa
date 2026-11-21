@@ -11,7 +11,7 @@ import json
 import stat
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -25,8 +25,9 @@ from pa_home.cli import main
 from pa_home.collectors import SourceInbox
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import DataRoot
+from pa_home.git_wiki import GitWikiRepository
 from pa_home.lock import data_root_lock
-from pa_home.nightly import HELD_BACK, nightly_job
+from pa_home.nightly import HELD_BACK, NightlyOutcome, nightly_job
 
 CHICAGO = ZoneInfo("America/Chicago")
 OWNER = Owner(name="Argus McNevans", email_addresses=("argus@example.com",))
@@ -54,6 +55,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
     monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(stand_in_claude))
     for var in (
         "PA_LIBRARIAN_SANDBOX",
+        "PA_LIBRARIAN_DREAMING_INTERVAL_DAYS",
         "PA_GMAIL_TOKEN",
         "PA_ICLOUD_CALENDARS",
         "PA_ASSISTANT_LOGIN_EXPIRES",
@@ -443,3 +445,281 @@ def test_a_night_that_cant_tell_when_the_login_ends_keeps_what_was_recorded(
     assert main(["nightly"]) == 0
 
     assert status(data_root).assistant_login == before
+
+
+# The dreaming step: between the librarian run and the backup, on a night whose librarian run
+# succeeded, once the last dreaming run is the interval old.
+
+INTERVAL = "PA_LIBRARIAN_DREAMING_INTERVAL_DAYS"
+DISMISSING = [{"outcomes": [{"candidate": "c01", "outcome": "dismissed"}]}]
+"""What a dreaming session does to dismiss its one candidate."""
+
+
+def kitchen_page(episode: str) -> str:
+    """A page about the kitchen that nothing links to: an orphan, so a candidate."""
+    updated = (datetime.now(CHICAGO).date() - timedelta(days=10)).isoformat()
+    return (
+        "---\ntype: topic\naliases: []\nstatus: active\nsummary: The kitchen remodel.\n"
+        f"updated: {updated}\n---\n# Kitchen\n\n## Current state\n"
+        f"Waiting on a quote [ep:{episode}].\n\n## Decisions\n\n## Open loops\n\n## Notes\n"
+    )
+
+
+def all_sessions(tmp_path: Path) -> list[dict]:
+    log = tmp_path / "sessions.jsonl"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def script(tmp_path: Path, **phases: list[dict]) -> None:
+    (tmp_path / "script.json").write_text(json.dumps(phases))
+
+
+@pytest.fixture
+def orphan(data_root: Path, vault: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """A wiki a first night built, with dreaming off, to which a page that is a candidate has
+    been added since. The dreaming interval is then the default. Returns the id of the episode
+    the page cites."""
+    monkeypatch.setenv(INTERVAL, "0")
+    write_note(vault, "2020-01-01", "## Plans\nSwim on Saturdays.\n")
+    assert main(["nightly"]) == 0
+    [episode] = sessions(tmp_path)[0]["episodes"]
+    repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
+    (data_root / "wiki" / "topics").mkdir(exist_ok=True)
+    (data_root / "wiki" / "topics" / "kitchen.md").write_text(kitchen_page(episode["id"]))
+    repository.commit(repository.last_commit_message() or "")
+    monkeypatch.delenv(INTERVAL)
+    return episode["id"]
+
+
+def head_message(data_root: Path) -> str:
+    return subprocess.run(
+        ["git", f"--git-dir={data_root / 'wiki.git'}", "log", "-1", "--format=%B"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+def test_the_nightly_job_dreams_after_the_librarian_run_and_the_backup_holds_what_it_did(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None, capsys: pytest.CaptureFixture[str]
+):
+    script(tmp_path, dreaming=DISMISSING)
+    capsys.readouterr()
+
+    assert main(["nightly"]) == 0
+
+    [dreaming] = sessions(tmp_path, "dreaming")
+    assert [candidate["kind"] for candidate in dreaming["candidates"]] == ["orphan"]
+    # The backup came after the dreaming run: it holds its commit.
+    assert head_message(data_root).startswith("dreaming run: 1 candidates")
+    assert backups(tmp_path)[-1]["wiki_head"] == wiki_head(data_root)
+    wiki, backup = status(data_root).wiki, status(data_root).backup
+    assert wiki.last_run is not None and wiki.last_dreaming is not None
+    assert wiki.last_dreaming.succeeded and wiki.last_dreaming.candidates == 1
+    assert backup.last_success is not None
+    assert wiki.last_run.at <= wiki.last_dreaming.at <= backup.last_success
+    out = capsys.readouterr().out
+    assert "nightly: dreaming: judged 1 candidates (0 applied, 0 proposed, 1 dismissed)" in out
+
+
+FIRST_NIGHT = datetime.combine(
+    datetime.now(CHICAGO).date() + timedelta(days=1), time(3, 10), CHICAGO
+)
+"""When the first night with dreaming on starts: after everything the `orphan` fixture did."""
+
+
+def night(data_root: Path, vault: Path, at: datetime) -> NightlyOutcome:
+    """The nightly job, started at `at`."""
+    return nightly_job(
+        DataRoot(data_root),
+        collectors=[VaultCollector(vault, "Daily", CHICAGO)],
+        owner=OWNER,
+        cadences=CADENCES,
+        time_zone=CHICAGO,
+        now=lambda: at,
+    )
+
+
+def dreamed_at(data_root: Path) -> datetime | None:
+    """When the status says dreaming last ran."""
+    run = status(data_root).wiki.last_dreaming
+    return None if run is None else run.at
+
+
+def test_dreaming_is_due_once_the_last_dreaming_run_is_seven_days_old_by_the_calendar(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None
+):
+    write_note(vault, "2020-01-02", "## Errands\nPicked up the bikes.\n")
+    script(tmp_path, dreaming=DISMISSING)
+
+    # The wiki has never been dreamed, so the first night dreams, after the night's run.
+    night(data_root, vault, FIRST_NIGHT)
+    phases = [session["phase"] for session in all_sessions(tmp_path)]
+    assert phases[-3:] == ["observation", "consolidation", "dreaming"]
+    assert dreamed_at(data_root) == FIRST_NIGHT
+
+    # Six days on it isn't due, however late that night starts.
+    outcome = night(data_root, vault, FIRST_NIGHT + timedelta(days=6, hours=20))
+    assert outcome.dreaming is None and not outcome.failed
+    assert dreamed_at(data_root) == FIRST_NIGHT
+
+    # A week on it is, though the night starts a little earlier than the last one did.
+    a_week_on = FIRST_NIGHT + timedelta(days=7) - timedelta(minutes=20)
+    outcome = night(data_root, vault, a_week_on)
+    assert outcome.dreaming is not None
+    assert dreamed_at(data_root) == a_week_on
+
+
+def test_the_interval_is_configurable_and_zero_turns_the_step_off(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None, monkeypatch: pytest.MonkeyPatch
+):
+    script(tmp_path, dreaming=DISMISSING)
+    monkeypatch.setenv(INTERVAL, "0")
+
+    outcome = night(data_root, vault, FIRST_NIGHT)
+
+    assert outcome.dreaming is None and not outcome.failed
+    assert sessions(tmp_path, "dreaming") == [] and dreamed_at(data_root) is None
+
+    monkeypatch.setenv(INTERVAL, "2")
+    night(data_root, vault, FIRST_NIGHT + timedelta(days=1))
+    night(data_root, vault, FIRST_NIGHT + timedelta(days=2))
+    assert dreamed_at(data_root) == FIRST_NIGHT + timedelta(days=1)
+    night(data_root, vault, FIRST_NIGHT + timedelta(days=3))
+    assert dreamed_at(data_root) == FIRST_NIGHT + timedelta(days=3)
+
+
+def test_a_night_whose_librarian_run_failed_doesnt_dream(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None
+):
+    write_note(vault, "2020-01-02", "## Errands\nPicked up the bikes.\n")
+    script(tmp_path, observation=[{"fail": "API Error: overloaded"}], dreaming=DISMISSING)
+
+    outcome = night(data_root, vault, FIRST_NIGHT)
+
+    assert outcome.librarian_failure is not None and outcome.dreaming is None
+    assert outcome.dreaming_failure is None
+    assert sessions(tmp_path, "dreaming") == [] and dreamed_at(data_root) is None
+    assert outcome.snapshot is not None
+
+    # It was only that night: the next one, whose run succeeds, dreams.
+    script(tmp_path, dreaming=DISMISSING)
+    night(data_root, vault, FIRST_NIGHT + timedelta(days=1))
+    assert dreamed_at(data_root) == FIRST_NIGHT + timedelta(days=1)
+
+
+def test_a_night_whose_librarian_run_was_held_back_doesnt_dream(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None
+):
+    write_note(vault, "2020-01-02", "## Errands\nPicked up the bikes.\n")
+    script(tmp_path, dreaming=DISMISSING)
+    catalog = data_root / "catalog" / "catalog.sqlite"
+    catalog.unlink()
+    catalog.mkdir()  # so the catalog can't open, and the night's cycle fails to ingest
+
+    outcome = night(data_root, vault, FIRST_NIGHT)
+
+    assert outcome.librarian_failure == HELD_BACK and outcome.dreaming is None
+    assert sessions(tmp_path, "dreaming") == [] and dreamed_at(data_root) is None
+    assert outcome.snapshot is not None
+
+
+def test_a_failed_dreaming_run_is_recorded_and_the_backup_still_runs(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None, capsys: pytest.CaptureFixture[str]
+):
+    script(tmp_path, dreaming=[{"fail": "API Error: overloaded while reading [[kitchen]]"}])
+    committed = wiki_head(data_root)
+    capsys.readouterr()
+
+    assert main(["nightly"]) == 1
+
+    wiki = status(data_root).wiki
+    assert wiki.last_run is not None and wiki.last_run.succeeded
+    assert wiki.last_dreaming is not None and not wiki.last_dreaming.succeeded
+    reason = "the run failed in its dreaming session and was discarded"
+    assert wiki.last_dreaming.reason == reason
+    # The backup ran, over the wiki as the night's librarian run left it.
+    assert backups(tmp_path)[-1]["wiki_head"] == wiki_head(data_root) == committed
+    assert status(data_root).backup.last_success is not None
+    output = capsys.readouterr()
+    assert f"pa: nightly: dreaming: {reason}" in output.err
+    assert "nightly: backup: took snapshot 5d3f0a9b" in output.out
+    recorded = (data_root / "status/status.json").read_text()
+    for value in ("kitchen", "Kitchen", "overloaded", "Swim"):
+        assert value not in output.out + output.err + recorded, value
+
+
+def test_a_failed_dreaming_run_is_tried_again_the_next_night(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None
+):
+    script(tmp_path, dreaming=[{"fail": "API Error: overloaded"}])
+    outcome = night(data_root, vault, FIRST_NIGHT)
+    assert outcome.dreaming_failure is not None and outcome.snapshot is not None
+
+    script(tmp_path, dreaming=DISMISSING)
+    outcome = night(data_root, vault, FIRST_NIGHT + timedelta(days=1))
+
+    assert outcome.dreaming is not None and outcome.dreaming.commit is not None
+    assert len(sessions(tmp_path, "dreaming")) == 2
+    run = status(data_root).wiki.last_dreaming
+    assert run is not None and run.succeeded and run.at == FIRST_NIGHT + timedelta(days=1)
+
+
+def test_a_night_with_nothing_to_judge_is_recorded_and_counts_as_that_weeks_review(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: None
+):
+    script(tmp_path, dreaming=DISMISSING)
+    night(data_root, vault, FIRST_NIGHT)
+    dreaming_commit = wiki_head(data_root)
+
+    # A week on, the one candidate is held back: no session and no commit, but a review.
+    a_week_on = FIRST_NIGHT + timedelta(days=7)
+    outcome = night(data_root, vault, a_week_on)
+    assert outcome.dreaming is not None and outcome.dreaming.commit is None
+    run = status(data_root).wiki.last_dreaming
+    assert run is not None
+    assert (run.at, run.succeeded, run.candidates, run.held_back) == (a_week_on, True, 0, 1)
+    assert wiki_head(data_root) == dreaming_commit
+
+    # So the next night doesn't weigh the same candidates again, though the last dreaming
+    # commit is 8 days old; the night a week after the review does.
+    assert night(data_root, vault, a_week_on + timedelta(days=1)).dreaming is None
+    assert dreamed_at(data_root) == a_week_on
+    assert night(data_root, vault, a_week_on + timedelta(days=7)).dreaming is not None
+    assert len(sessions(tmp_path, "dreaming")) == 1
+
+
+def test_a_reverted_dreaming_run_is_due_again_the_next_night(
+    data_root: Path, vault: Path, tmp_path: Path, orphan: str
+):
+    on_hold = kitchen_page(orphan).replace("remodel.", "remodel, on hold.")
+    fixing = [
+        {"write": "topics/kitchen.md", "text": on_hold},
+        {"outcomes": [{"candidate": "c01", "outcome": "applied", "pages": ["topics/kitchen.md"]}]},
+    ]
+    script(tmp_path, dreaming=fixing)
+    night(data_root, vault, FIRST_NIGHT)
+    assert head_message(data_root).startswith("dreaming run: 1 candidates, 1 applied")
+    subprocess.run(
+        [
+            "git",
+            f"--git-dir={data_root / 'wiki.git'}",
+            f"--work-tree={data_root / 'wiki'}",
+            "-c",
+            "user.name=Argus McNevans",
+            "-c",
+            "user.email=argus@example.com",
+            "revert",
+            "--no-edit",
+            "HEAD",
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+    outcome = night(data_root, vault, FIRST_NIGHT + timedelta(days=1))
+
+    # The run no longer stands, so the wiki's last review is none: its candidate is judged
+    # again.
+    assert outcome.dreaming is not None and outcome.dreaming.commit is not None
+    assert len(sessions(tmp_path, "dreaming")) == 2

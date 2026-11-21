@@ -298,6 +298,27 @@ def test_a_dreaming_run_is_recorded_in_the_status_in_counts(data_root: Path):
     assert (wiki.last_run, wiki.current_through) == (nightly.last_run, nightly.current_through)
 
 
+def test_pa_status_shows_the_dreaming_run_and_the_open_proposals_without_content(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    run_with_pages(data_root, pages(loop()))
+    script(data_root, dreaming=JUDGING)
+    assert dream() == 0
+    capsys.readouterr()
+
+    assert main(["status"]) == 0
+
+    output = capsys.readouterr()
+    lines = dict(line.split(": ", 1) for line in output.out.splitlines())
+    assert lines["dreaming"].endswith(
+        " succeeded, cost $0.04, judged 2 candidates (0 applied, 1 proposed, 1 dismissed)"
+    )
+    assert lines["proposals"] == "1 open"
+    recorded = (data_root / "status" / "status.json").read_text()
+    for value in ("kitchen", "wedding", "david", "Hotel", "list?", HOTEL):
+        assert value not in output.out + output.err + recorded, value
+
+
 def test_a_nightly_run_keeps_the_dreaming_record(data_root: Path):
     run_with_pages(data_root, pages(loop()))
     script(data_root, dreaming=JUDGING)

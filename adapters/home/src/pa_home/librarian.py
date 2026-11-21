@@ -37,7 +37,12 @@ from zoneinfo import ZoneInfo
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
-from pa_core.librarian.dreaming import OUTCOMES, DreamingOutcome, run_dreaming
+from pa_core.librarian.dreaming import (
+    OUTCOMES,
+    DreamingOutcome,
+    last_dreaming_at,
+    run_dreaming,
+)
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
@@ -179,6 +184,41 @@ def dream(
     )
     _record(data_root, repository, now, last_dreaming=succeeded)
     return outcome
+
+
+def dreaming_due(
+    data_root: DataRoot,
+    *,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> bool:
+    """Whether the nightly job should dream at `now`: dreaming is on (an interval of 0 turns
+    it off), and the wiki's last review is at least `config.dreaming_interval_days` old, or it
+    has had none.
+
+    The last review is the last dreaming run whose commit still stands (`last_dreaming_at`),
+    by hand or by the job. A run that found nothing to judge commits nothing, so it is known
+    by the status's record of it alone, and counts too: the candidates it weighed are the same
+    ones the next night, and a review that judged nothing is still that week's review. A failed
+    run counts for nothing, so the next night tries again, and neither does a reverted one, so
+    its candidates are judged again the next night.
+
+    The interval is in days of `time_zone`'s calendar, the owner's, so a night that starts a
+    few minutes earlier than last week's is still a week later.
+    """
+    if config.dreaming_interval_days == 0:
+        return False
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    reviews = [last_dreaming_at(repository)]
+    recorded = read_status(data_root.status).wiki.last_dreaming
+    if recorded is not None and recorded.succeeded and recorded.candidates == 0:
+        reviews.append(recorded.at)
+    last = max((review for review in reviews if review is not None), default=None)
+    if last is None:
+        return True
+    today = now().astimezone(time_zone).date()
+    return (today - last.astimezone(time_zone).date()).days >= config.dreaming_interval_days
 
 
 def record_run_not_made(
