@@ -2,8 +2,9 @@
 
 Dreaming is the librarian's review of the whole wiki. The host flags the candidates
 (`pa_core.librarian.candidates`), and one session, the dreaming phase, judges each against L0
-and gives it one outcome: applied (L0 settles it, so the session fixed the pages) or dismissed.
-The session reports the outcomes as JSON in its final message.
+and gives it one outcome: applied (L0 settles it, so the session fixed the pages), proposed (it
+needs the owner's knowledge, so the session added a proposal to `proposals.md`, or one already
+asks), or dismissed. The session reports the outcomes as JSON in its final message.
 
 The run sits beside the nightly run (`pa_core.librarian.run`) and holds the wiki to the same
 bar, with the same parts: the session and its resume loop, lint after the session, the host's
@@ -11,8 +12,10 @@ deterministic steps (removing merged pages, rewriting links to aliases, regenera
 `index.md`), and one commit, or the wiki back at its last commit if anything fails. It differs
 in what it asks and what it records:
 
-- its prompt carries the candidates;
-- the session may change only pages;
+- its prompt carries the candidates and the open proposals;
+- the session may change only pages and `proposals.md`, and there only add proposals: each one
+  named by a proposed outcome, numbered above every id the file has held, and within the caps
+  on a run's new proposals and on how many are open at once;
 - its commit carries the librarian's cursor and version forward from the last commit, so the
   next nightly run and a cut still find them there, and records the candidates and outcomes.
 
@@ -25,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -63,7 +66,14 @@ from pa_core.librarian.run import (
     _tree_state,
     commit_fields,
 )
-from pa_core.librarian.wiki import INDEX, PAGE_FOLDERS
+from pa_core.librarian.wiki import (
+    INDEX,
+    OPEN,
+    PAGE_FOLDERS,
+    PROPOSALS,
+    Proposal,
+    read_proposals,
+)
 from pa_core.owner import Owner
 
 
@@ -83,13 +93,27 @@ class Applied(_Outcome):
     included."""
 
 
+class Proposed(_Outcome):
+    """L0 can't settle the candidate and the owner's knowledge would, so the session asks: it
+    names a proposal that is open in `proposals.md`.
+
+    With no candidate it is the run's template suggestion: an extra outcome, at most one a
+    run, naming a proposal the run added that no candidate's outcome names.
+    """
+
+    candidate: str | None = None
+    outcome: Literal["proposed"]
+    proposal: str
+    """The proposal's id, such as `P12`. Several candidates may be gathered into one."""
+
+
 class Dismissed(_Outcome):
-    """The candidate isn't a problem, or L0 can't settle it; nothing changed for it."""
+    """The candidate isn't a problem; nothing changed for it."""
 
     outcome: Literal["dismissed"]
 
 
-type Outcome = Annotated[Applied | Dismissed, Field(discriminator="outcome")]
+type Outcome = Annotated[Applied | Proposed | Dismissed, Field(discriminator="outcome")]
 """What a dreaming session did about one candidate."""
 
 
@@ -109,6 +133,8 @@ class DreamingOutcome:
     """The candidates the run offered its session."""
     outcomes: tuple[Outcome, ...] = ()
     """The session's outcome for each candidate, in the candidates' order."""
+    suggestion: Proposed | None = None
+    """The run's template suggestion, if it made one: the extra outcome with no candidate."""
     commit: str | None = None
     sessions: tuple[tuple[Phase, SessionResult], ...] = ()
     """The run's one session, as a nightly run lists its own."""
@@ -116,7 +142,7 @@ class DreamingOutcome:
     """Lint's warnings about the wiki as committed."""
 
     def count(self, outcome: str) -> int:
-        """How many candidates got `outcome` (`applied`, `dismissed`)."""
+        """How many candidates got `outcome` (one of `OUTCOMES`)."""
         return sum(o.outcome == outcome for o in self.outcomes)
 
 
@@ -128,11 +154,32 @@ DREAMING_VERSION_FIELD = "Dreaming-Version"
 """The dreaming commit's field holding the version of the librarian that dreamed, beside the
 carried `Librarian-Version`: the librarian whose runs built the wiki."""
 CANDIDATES_FIELD = "Dreaming-Candidates"
-OUTCOMES = ("applied", "dismissed")
+OUTCOMES = ("applied", "proposed", "dismissed")
 """Every outcome a candidate can get, in the order the commit message counts them (each as
 `Dreaming-<Outcome>`)."""
+SUGGESTION_FIELD = "Dreaming-Template-Suggestion"
+"""The dreaming commit's field holding the id of the proposal that is the run's template
+suggestion, when it made one."""
 CANDIDATES_HEADING = "Candidates:"
 """What opens the commit message's paragraph listing each candidate with its outcome."""
+
+
+@dataclass(frozen=True)
+class ProposalCaps:
+    """How much dreaming may ask of the owner, so that the list stays answerable."""
+
+    new: int = 5
+    """The most proposals one run may add."""
+    open: int = 15
+    """The most proposals that may be open at once: a run adds none past it."""
+
+    def room(self, open_now: int) -> int:
+        """How many proposals a run may add when `open_now` are open already."""
+        return max(0, min(self.new, self.open - open_now))
+
+
+PROPOSAL_CAPS = ProposalCaps()
+"""The caps on a run's proposals, unless configured otherwise: 5 new, and 15 open."""
 
 
 def run_dreaming(
@@ -145,13 +192,14 @@ def run_dreaming(
     now: datetime,
     page_threshold: int = PAGE_THRESHOLD,
     loop_age_days: int = LOOP_AGE_DAYS,
+    proposal_caps: ProposalCaps = PROPOSAL_CAPS,
 ) -> DreamingOutcome:
     """Runs dreaming once over the wiki as last committed, and commits what it changed.
 
     `now` is what the session is told the current time is, and what the candidates are
     measured against, with `page_threshold` and `loop_age_days` as a nightly run's lint has
-    them. With no candidates it does nothing. Raises LibrarianRunError when the run fails,
-    after restoring the wiki.
+    them. `proposal_caps` bounds the proposals the run may add. With no candidates it does
+    nothing. Raises LibrarianRunError when the run fails, after restoring the wiki.
     """
     tree = repository.tree
     sessions: list[tuple[Phase, SessionResult]] = []
@@ -165,7 +213,9 @@ def run_dreaming(
             return DreamingOutcome()
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
         committed = _Committed(linter(tree).errors)
-        result, outcomes = _dream(offered, tree, runner, now, linter, committed)
+        result, outcomes, suggestion = _dream(
+            offered, tree, runner, now, linter, committed, proposal_caps
+        )
         sessions.append((Phase.DREAMING, result))
         rewrite_alias_links(tree)
         write_index(tree)
@@ -179,6 +229,7 @@ def run_dreaming(
         judged = DreamingOutcome(
             candidates=offered,
             outcomes=outcomes,
+            suggestion=suggestion,
             sessions=tuple(sessions),
             warnings=report.warnings,
         )
@@ -202,33 +253,44 @@ def _dream(
     now: datetime,
     linter: Linter,
     committed: _Committed,
-) -> tuple[SessionResult, tuple[Outcome, ...]]:
-    """Runs the dreaming session over `offered`, and returns its result and its outcomes, in
-    the candidates' order."""
+    caps: ProposalCaps,
+) -> tuple[SessionResult, tuple[Outcome, ...], Proposed | None]:
+    """Runs the dreaming session over `offered`, and returns its result, its outcomes, in the
+    candidates' order, and its template suggestion, if it made one."""
     before = _tree_state(tree)
+    standing = read_proposals(tree)
 
     def require_bounds() -> None:
         outside = [
             path
             for path in _changed(before, _tree_state(tree))
-            if path.partition("/")[0] not in PAGE_FOLDERS
+            if path.partition("/")[0] not in PAGE_FOLDERS and path != PROPOSALS
         ]
         if outside:
             raise LibrarianRunError(
                 f"the dreaming session changed {', '.join(outside)}, outside the pages; "
-                f"dreaming may change only pages, in {', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
+                f"dreaming may change only pages, in {', '.join(f'{f}/' for f in PAGE_FOLDERS)}, "
+                f"and {PROPOSALS}"
             )
 
-    judged: dict[str, Outcome] = {}
+    judged: dict[str | None, Outcome] = {}
 
     def report_problems(attempt: SessionResult) -> Sequence[str]:
-        # The bounds held, so everything changed is in a page folder; a page merged away is
+        # The bounds held, so everything changed in a folder is a page; a page merged away is
         # gone by now, and gone is changed.
         changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
+        asked = read_proposals(tree)
+        problems = _proposal_problems(standing, asked, caps)
         try:
-            outcomes = read_outcomes(attempt.final_message, offered, changed)
+            outcomes = read_outcomes(
+                attempt.final_message,
+                offered,
+                changed,
+                asked=[proposal.id for proposal in asked if proposal.is_open],
+                added=[proposal.id for proposal in _added(standing, asked)],
+            )
         except InvalidOutcomesError as error:
-            return error.problems
+            return (*error.problems, *problems)
         claimed = {page for o in outcomes if isinstance(o, Applied) for page in o.pages}
         unclaimed = [path for path in changed if path not in claimed]
         if unclaimed:
@@ -237,15 +299,21 @@ def _dream(
                 "dreaming may change a page only to settle a candidate, and its applied "
                 "outcome names it"
             )
+        if problems:
+            return problems
+        judged.clear()
         judged.update({outcome.candidate: outcome for outcome in outcomes})
         return ()
 
-    # Dreaming may change only pages, so it's judged only on the errors in them.
+    # Dreaming may change only pages and the proposals, so it's judged only on the errors in
+    # them.
     result = _session(
         Phase.DREAMING,
-        dreaming_prompt(offered, runner.paths),
+        dreaming_prompt(offered, runner.paths)
+        + "\n"
+        + proposals_prompt(standing, caps, runner.paths),
         require_bounds,
-        _in_pages,
+        lambda finding: _in_pages(finding) or finding.path == PROPOSALS,
         tree,
         runner,
         now,
@@ -255,7 +323,61 @@ def _dream(
         report_problems=report_problems,
         reminder=OUTCOMES_REMINDER,
     )
-    return result, tuple(judged[candidate.id] for candidate in offered)
+    suggestion = judged.get(None)
+    return (
+        result,
+        tuple(judged[candidate.id] for candidate in offered),
+        suggestion if isinstance(suggestion, Proposed) else None,
+    )
+
+
+def _added(standing: Sequence[Proposal], asked: Sequence[Proposal]) -> list[Proposal]:
+    """The proposals in `asked`, the file as a session left it, that weren't in `standing`,
+    the file as last committed, by their ids."""
+    known = {proposal.id for proposal in standing}
+    return [proposal for proposal in asked if proposal.id not in known]
+
+
+def _proposal_problems(
+    standing: Sequence[Proposal], asked: Sequence[Proposal], caps: ProposalCaps
+) -> list[str]:
+    """What's wrong with how a dreaming session changed `proposals.md`, from `standing` (as
+    last committed) to `asked` (as it left it), whatever its outcomes say.
+
+    A dreaming run only adds proposals: every proposal that was there is there still, exactly
+    as it was. What it adds is numbered above every id the file held, so an id is never reused,
+    and stays within `caps`.
+    """
+    problems: list[str] = []
+    now = {proposal.id: proposal for proposal in reversed(asked)}
+    for was in standing:
+        if now.get(was.id) != was:
+            problems.append(
+                f"{was.id} was {'changed' if was.id in now else 'removed'}: a dreaming run only "
+                f"adds proposals. Put its line back as it was: `{was.line}`"
+            )
+    highest = max((proposal.number for proposal in standing), default=0)
+    added = _added(standing, asked)
+    for proposal in added:
+        if proposal.number <= highest:
+            problems.append(
+                f"{proposal.id} is new, but ids up to P{highest} have been given out: an id is "
+                f"never reused, so number new proposals from P{highest + 1}"
+            )
+    if len(added) > caps.new:
+        problems.append(
+            f"this run adds {len(added)} proposals, more than the {caps.new} a run may add: "
+            f"keep the {caps.new} most useful to the owner, and dismiss the other candidates"
+        )
+    still_open = sum(proposal.is_open for proposal in asked)
+    if added and still_open > caps.open:
+        were_open = sum(proposal.is_open for proposal in standing)
+        problems.append(
+            f"{still_open} proposals would be open, more than the {caps.open} that may be open "
+            f"at once: {were_open} were open already, so add at most "
+            f"{max(0, caps.open - were_open)}, and dismiss the other candidates"
+        )
+    return problems
 
 
 OUTCOMES_REMINDER = (
@@ -283,15 +405,24 @@ _NO_OUTCOMES = (
 
 
 def read_outcomes(
-    message: str | None, offered: Sequence[Candidate], changed: Sequence[str]
+    message: str | None,
+    offered: Sequence[Candidate],
+    changed: Sequence[str],
+    *,
+    asked: Collection[str] = (),
+    added: Collection[str] = (),
 ) -> tuple[Outcome, ...]:
     """The outcomes a dreaming session's final `message` carries, in its last fenced `json`
-    block (or as the whole message), checked against the candidates it was `offered` and the
-    paths it `changed`, relative to the wiki.
+    block (or as the whole message), checked against the candidates it was `offered`, the
+    paths it `changed`, relative to the wiki, and the proposals in `proposals.md` as the
+    session left it: the ids of those `asked` of the owner (the open ones), and of those the
+    session `added`.
 
-    Raises InvalidOutcomesError unless they are in the outcomes' shape, every candidate has
-    exactly one, none is for anything else, and each applied outcome names pages, all of which
-    changed.
+    Raises InvalidOutcomesError unless they are in the outcomes' shape; every candidate has
+    exactly one, and none is for anything else but one template suggestion (a proposed outcome
+    with no candidate); each applied outcome names pages, all of which changed; each proposed
+    outcome names an open proposal, the suggestion one of its own that the session added; and
+    every proposal the session added is named.
     """
     text = (message or "").strip()
     blocks = _FENCED_JSON.findall(text)
@@ -311,7 +442,7 @@ def read_outcomes(
             ]
         ) from error
     problems: list[str] = []
-    given = Counter(outcome.candidate for outcome in outcomes)
+    given = Counter(outcome.candidate for outcome in outcomes if outcome.candidate is not None)
     for candidate in offered:
         if given[candidate.id] == 0:
             problems.append(f"{candidate.id} has no outcome: every candidate gets exactly one")
@@ -322,7 +453,40 @@ def read_outcomes(
             )
     for name in sorted(given.keys() - {candidate.id for candidate in offered}):
         problems.append(f"{name} isn't one of this run's candidates")
+    suggestions = [outcome for outcome in outcomes if outcome.candidate is None]
+    if len(suggestions) > 1:
+        problems.append(
+            f"{len(suggestions)} outcomes have no candidate: a run makes at most one template "
+            "suggestion, and every other outcome names its candidate"
+        )
+    named = {o.proposal for o in outcomes if isinstance(o, Proposed)}
+    for name in added:
+        if name not in named:
+            problems.append(
+                f"{name} is new in {PROPOSALS}, but no outcome names it: a proposal is added "
+                "only for a proposed outcome, which names it"
+            )
+    for_candidates = {
+        o.proposal for o in outcomes if isinstance(o, Proposed) and o.candidate is not None
+    }
     for outcome in outcomes:
+        if isinstance(outcome, Proposed) and outcome.candidate is None:
+            if outcome.proposal not in added:
+                problems.append(
+                    f"the template suggestion names {outcome.proposal}, which isn't a proposal "
+                    f"this run added to {PROPOSALS}"
+                )
+            elif outcome.proposal in for_candidates:
+                problems.append(
+                    f"the template suggestion names {outcome.proposal}, which a candidate's "
+                    "outcome names too: a suggestion is a proposal of its own"
+                )
+        elif isinstance(outcome, Proposed) and outcome.proposal not in asked:
+            problems.append(
+                f"{outcome.candidate} names {outcome.proposal}, which isn't an open proposal in "
+                f"{PROPOSALS}: a proposed outcome names the proposal you added for it under "
+                f"`## {OPEN}`, by its id"
+            )
         if not isinstance(outcome, Applied):
             continue
         if not outcome.pages:
@@ -368,6 +532,40 @@ def dreaming_prompt(offered: Sequence[Candidate], paths: SessionPaths) -> str:
     )
 
 
+PROPOSALS_PROMPT_HEADING = "## Open proposals"
+
+
+def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: SessionPaths) -> str:
+    """The proposals as a section of the dreaming session's prompt, under
+    `PROPOSALS_PROMPT_HEADING`: the open ones among `standing` (the file as last committed) as
+    a JSON block, how many the run may add within `caps`, and the id the first one takes."""
+    asked = [proposal for proposal in standing if proposal.is_open]
+    room = caps.room(len(asked))
+    first = max((proposal.number for proposal in standing), default=0) + 1
+    if room:
+        may = (
+            f"You may add at most {room} in this run ({len(asked)} are open, and at most "
+            f"{caps.open} may be open at once): number them from P{first}, in the order you "
+            "add them, since an id is never reused."
+        )
+    else:
+        may = (
+            f"You may add none in this run: {len(asked)} are open already, and at most "
+            f"{caps.open} may be open at once. Dismiss a candidate you would have proposed."
+        )
+    return (
+        f"{PROPOSALS_PROMPT_HEADING}\n\n"
+        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
+        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
+        "cites. A candidate that one of them already asks about gets a proposed outcome naming "
+        "it; never ask the same thing twice. For any other candidate CLAUDE.md says to "
+        f"propose, add a line under `## {OPEN}`, creating the file as `wiki-schema.md` "
+        f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
+        "already in the file.\n\n"
+        f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
+    )
+
+
 def dreaming_commit_message(
     outcome: DreamingOutcome, carried: Mapping[str, str], librarian: Librarian, now: datetime
 ) -> str:
@@ -396,6 +594,8 @@ def dreaming_commit_message(
         ]
     fields.append((CANDIDATES_FIELD, len(outcome.candidates)))
     fields += [(f"Dreaming-{name.capitalize()}", count) for name, count in counts]
+    if outcome.suggestion is not None:
+        fields.append((SUGGESTION_FIELD, outcome.suggestion.proposal))
     fields.append(("Lint-Warnings", len(outcome.warnings)))
     summary = f"dreaming run: {len(outcome.candidates)} candidates, " + ", ".join(
         f"{count} {name}" for name, count in counts
@@ -418,4 +618,6 @@ def _listed(candidate: Candidate, outcome: Outcome) -> str:
     did = outcome.outcome
     if isinstance(outcome, Applied):
         did += ": " + ", ".join(outcome.pages)
+    elif isinstance(outcome, Proposed):
+        did += ": " + outcome.proposal
     return f"- {candidate.id} · {candidate.kind} · {candidate.subject} · {did}"

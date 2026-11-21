@@ -9,7 +9,8 @@ follows the script for its phase in `script.json` beside it, and prints what
 `claude -p --output-format json` prints. `adapters/home/tests/test_librarian_run.py` describes
 the record and the actions a nightly session uses. For dreaming it also:
 
-- records the candidates listed under the prompt's `## Candidates` heading, as `candidates`;
+- records the candidates listed under the prompt's `## Candidates` heading, as `candidates`,
+  and the open proposals listed under its `## Open proposals` heading, as `proposals`;
 - takes `{"outcomes": [<outcome>, ...]}`: end the session with those outcomes in its final
   message, as a fenced `json` block after a line of prose;
 - takes `{"final": <text>}`: end the session with exactly that final message.
@@ -59,6 +60,8 @@ def write_stand_in_claude(directory: Path) -> Path:
             errors = json.loads(found[1]) if found else None
             found = re.search(r"^## Candidates$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             candidates = json.loads(found[1]) if found else None
+            found = re.search(r"^## Open proposals$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            proposals = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -69,6 +72,7 @@ def write_stand_in_claude(directory: Path) -> Path:
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
                     "warnings": warnings, "errors": errors, "candidates": candidates,
+                    "proposals": proposals,
                     "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}

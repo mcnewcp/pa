@@ -152,6 +152,7 @@ def dream(
             now=started.astimezone(time_zone),
             page_threshold=config.page_threshold,
             loop_age_days=config.loop_age_days,
+            proposal_caps=config.proposal_caps,
         )
 
 
