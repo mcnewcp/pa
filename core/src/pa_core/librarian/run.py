@@ -526,8 +526,9 @@ def _session(
     the session's result, its cost and turns added up over its attempts.
 
     A phase whose session must report something in its final message (dreaming's outcomes)
-    gives `report_problems`, which says what's wrong with an attempt's report: those problems resume
-    the session too, within the same limit. Every resume's prompt ends with `reminder`.
+    gives `report_problems`, which says what's wrong with an attempt's report, or raises when
+    the attempt can't be put right. Those problems resume the session too, within the same
+    limit. Every resume's prompt ends with `reminder`.
     """
     attempts = [runner.start(phase, prompt, now=now)]
     try:

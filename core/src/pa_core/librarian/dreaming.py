@@ -275,7 +275,7 @@ class InvalidOutcomesError(Exception):
         """Each thing wrong with them, as the session is told when it's resumed."""
 
 
-_FENCED_JSON = re.compile(r"^```(?:json)?[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
+_FENCED_JSON = re.compile(r"^```json[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
 _NO_OUTCOMES = (
     "your final message holds no outcomes: end it with a fenced `json` block holding "
     '`{"outcomes": [...]}`, one outcome for each candidate'

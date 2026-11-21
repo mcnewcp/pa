@@ -610,6 +610,36 @@ def test_missing_or_invalid_outcomes_resume_the_session_to_report_them(
     assert recorded["Dreaming-Turns"] == "12"
 
 
+def test_the_outcomes_are_the_last_json_block_of_the_sessions_final_message(data_root: Path):
+    run_with_pages(data_root)
+    final = textwrap.dedent(
+        """\
+        I first meant to close it:
+
+        ```json
+        {"outcomes": [{"candidate": "c01", "outcome": "applied", "pages": ["topics/wedding.md"]}]}
+        ```
+
+        Nothing in L0 closes it, so:
+
+        ```json
+        {"outcomes": [{"candidate": "c01", "outcome": "dismissed"}]}
+        ```
+
+        ```
+        No page changed.
+        ```
+        """
+    )
+    script(data_root, dreaming=[{"final": final}])
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    summary = commit_messages(data_root)[0].splitlines()[0]
+    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+
+
 def test_outcomes_still_invalid_after_two_resumes_fail_the_run_and_leave_the_wiki(
     data_root: Path, capsys
 ):
@@ -844,6 +874,7 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
     # "now".
     assert session["settings"] == nightly["settings"]
     assert session["claude_md"] == nightly["claude_md"]
+    assert "\n## Dreaming\n" in session["claude_md"] and "Argus McNevans" in session["claude_md"]
     for name in ("--tools", "--permission-mode", "--model", "--effort", "--max-turns"):
         assert flag(argv, name) == flag(nightly["argv"], name)
     assert [a for a in argv if a.startswith("-")] == [
@@ -857,7 +888,10 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
     chicago = datetime.now(ZoneInfo("America/Chicago"))
     assert told.utcoffset() == chicago.utcoffset()
     assert abs(chicago - told) < timedelta(minutes=1)
+    # Its prompt names its phase, and says where it may read and write.
     assert session["prompt"].startswith("Phase: dreaming\n")
+    assert f"`{data_root / 'l0'}`" in session["prompt"]
+    assert f"`{data_root / 'wiki' / 'topics'}`" in session["prompt"]
 
 
 def test_pa_librarian_dream_skips_while_another_job_holds_the_lock(data_root: Path, capsys):
