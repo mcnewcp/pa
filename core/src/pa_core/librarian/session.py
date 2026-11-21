@@ -8,6 +8,7 @@
   session's bounds, lints, and resumes the session with what it left, at most `MAX_RESUMES`
   times. A run that can't go on raises `LibrarianRunError`.
 - **Tree states**: `tree_state` and `changed_paths`, which a phase's bounds are checked with.
+- **The run's date**: `misdated`, the pages a session dated another day than the run's.
 - **The host's tidying**: `remove_merged_pages`.
 - **The open proposals** as a section of a prompt: `open_proposals_section`, which each
   phase ends with what it may do about them.
@@ -22,7 +23,7 @@ import json
 import os
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -217,7 +218,11 @@ def run_reporting_session[Accepted](
     what's wrong, or raises when the attempt can't be put right. What is refused resumes the
     session, as lint errors do and within the same limit. Every resume's prompt ends with
     `reminder`.
+
+    A page the session dated another day than the run's (`misdated`) resumes it too, in any
+    phase.
     """
+    dated = updated_dates(tree)
     attempts = [runner.start(phase, prompt, now=now)]
     try:
         while True:
@@ -229,6 +234,7 @@ def run_reporting_session[Accepted](
             accepted = act_on_report(result)
             problems = accepted.problems if isinstance(accepted, Refused) else ()
             errors = [e for e in linter(tree).errors if judged(e)]
+            errors += misdated(tree, dated, now.date())
             if not isinstance(accepted, Refused) and not errors:
                 return _combined(attempts), accepted
             if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
@@ -255,6 +261,38 @@ def run_reporting_session[Accepted](
     except LibrarianRunError as error:
         # The run log records a failed session too, with what it reported.
         raise LibrarianRunError(str(error), sessions=[(phase, _combined(attempts))]) from error
+
+
+def updated_dates(tree: Path) -> dict[str, date | None]:
+    """The `updated` date of every page in the wiki at `tree`, by its path."""
+    return {page.path: page.updated for page in pages(tree)}
+
+
+def misdated(tree: Path, before: dict[str, date | None], today: date) -> list[Finding]:
+    """The pages in the wiki at `tree` that a session dated another day than `today`, the
+    date its run was told: each page whose `updated` isn't what `before` holds for it
+    (`updated_dates`, read before the session).
+
+    A session is told the run's date in its system prompt alone, beside the machine's own in
+    its environment, and now and then writes the machine's. That is the wrong day wherever a
+    run is told another: a replay, a copy's dreaming run, a fixture's. So a page the session
+    redated must say `today`. A page it made is held only to not being dated after `today`,
+    which is how the machine's date reads in a replay or a copy's run.
+    """
+    findings: list[Finding] = []
+    for page in pages(tree):
+        was, updated = before.get(page.path), page.updated
+        if updated is None or updated in (was, today):
+            continue
+        if page.path in before or updated > today:
+            findings.append(
+                Finding(
+                    page.path,
+                    f"`updated` was set to {updated.isoformat()}, and this run's date is "
+                    f"{today.isoformat()}: a page changed in this run is dated the run's date",
+                )
+            )
+    return findings
 
 
 def _combined(attempts: Sequence[SessionResult]) -> SessionResult:

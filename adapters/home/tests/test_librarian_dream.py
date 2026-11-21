@@ -843,6 +843,40 @@ def test_a_dreaming_session_that_leaves_lint_errors_is_resumed_with_the_findings
     assert (recorded["Dreaming-Resumes"], recorded["Dreaming-Applied"]) == ("1", "1")
 
 
+def test_a_dreaming_session_that_dates_a_page_another_day_is_resumed_to_date_it_today(
+    data_root: Path,
+):
+    """A session is told the run's date in its system prompt alone, and now and then writes the
+    machine's date instead: wrong in a replay, in a copy's run, and in a fixture's."""
+    room_list = run_with_pages(data_root)
+    yesterday = closed(room_list).replace(f"updated: {ROOM_LIST_DAY}", f"updated: {days_ago(1)}")
+    today = closed(room_list).replace(f"updated: {ROOM_LIST_DAY}", f"updated: {days_ago(0)}")
+    script(
+        data_root,
+        dreaming=[{"write": TOPIC, "text": yesterday}, reporting(APPLIED)],
+        dreaming_resume=[{"write": TOPIC, "text": today}, reporting(APPLIED)],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"{TOPIC}: `updated` was set to {days_ago(1)}, and this run's date is {days_ago(0)}"
+        in resumed["prompt"]
+    )
+    assert wiki_files(data_root)[TOPIC] == today
+
+
+def test_a_page_whose_date_a_dreaming_session_left_alone_keeps_it(data_root: Path):
+    room_list = run_with_pages(data_root)
+    script(data_root, dreaming=[{"write": TOPIC, "text": closed(room_list)}, reporting(APPLIED)])
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert f"updated: {ROOM_LIST_DAY}" in wiki_files(data_root)[TOPIC]
+
+
 DAVE = textwrap.dedent(
     f"""\
     ---

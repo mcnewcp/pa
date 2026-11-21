@@ -1402,6 +1402,32 @@ def test_a_session_that_leaves_lint_errors_is_resumed_with_the_findings_and_fixe
     assert fields[f"{name}-Turns"] == "12"
 
 
+def test_a_new_page_dated_after_the_run_resumes_the_session_to_date_it_the_runs_date(
+    data_root: Path,
+):
+    """How the machine's date reads in a replay, which is told an earlier one."""
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    today = datetime.now(ZoneInfo("America/Chicago")).date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    ahead = pages[TOPIC].replace("updated: 2026-10-02", f"updated: {tomorrow}")
+    script(
+        data_root,
+        observation=[{"observe": True}],
+        consolidation=[{"write": TOPIC, "text": ahead}],
+        consolidation_resume=[{"write": TOPIC, "text": pages[TOPIC]}],
+    )
+
+    assert run_librarian() == 0
+
+    _, resumed = sessions(data_root, "consolidation")
+    assert (
+        f"{TOPIC}: `updated` was set to {tomorrow}, and this run's date is {today.isoformat()}"
+        in resumed["prompt"]
+    )
+    assert wiki_files(data_root)[TOPIC] == pages[TOPIC]
+
+
 @pytest.mark.parametrize("phase", ["observation", "consolidation"])
 def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
     data_root: Path, capsys, phase: str
