@@ -8,7 +8,9 @@ it, and the host removes it after the session if the page it was merged into too
 alias. After each session the host checks
 it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
-most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+most twice. Consolidation is also given the open proposals (`proposals.md`, what dreaming has
+asked the owner), and may change that file in one way: by resolving a proposal the owner has
+answered. Then the host rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 

@@ -10,6 +10,7 @@ listed under the prompt's `## Open proposals` heading as `proposals`.
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 from datetime import datetime, time, timedelta
@@ -22,6 +23,7 @@ import pytest
 from pa_core.normalizers.assistant_chat import encode_exchange, exchange_episode_id
 from pa_home.cli import main
 from pa_home.git_wiki import GitWikiRepository
+from pa_home.librarian_project import LIBRARIAN_PROJECT
 
 CHICAGO = ZoneInfo("America/Chicago")
 """The owner's time zone."""
@@ -787,3 +789,71 @@ def test_an_accepted_proposal_to_close_lapsed_loops_closes_them_citing_the_owner
     assert f"· accepted {TODAY} [ep:{HOTEL}] [ep:{ANSWER}]" in files[PROPOSALS]
     # Closed, they are no longer lint's to warn about.
     assert "a loop open" not in commit_messages(data_root)[0]
+
+
+def instructions(section: str, subsection: str | None = None) -> str:
+    """One `## ` section of the librarian's instructions, as the checkout has them, or one
+    `### ` subsection of it, with its whitespace collapsed."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    found = re.search(rf"^## {section}\n(.*?)(?=^## |\Z)", claude_md, re.M | re.S)
+    assert found is not None, section
+    text = found[1]
+    if subsection is not None:
+        found = re.search(rf"^### {subsection}\n(.*?)(?=^###? |\Z)", text, re.M | re.S)
+        assert found is not None, subsection
+        text = found[1]
+    return " ".join(text.split())
+
+
+def test_the_corrections_instructions_say_how_to_resolve_a_proposal():
+    resolving_rules = instructions("Corrections", "Resolving a proposal")
+
+    for rule in (
+        # The owner's answer is a correction, and only an owner turn in a chat is one.
+        "The owner's answer to an open proposal is a correction",
+        "Only an owner turn in a chat resolves a proposal",
+        # It is applied to the pages, in each way a proposal can be answered.
+        "**Accepted**",
+        "**Declined**",
+        "**Answered**",
+        # A lapsed loop is a closed loop.
+        "close each of them as any loop closes",
+        "There is no lapsed state",
+        # Then the proposal is resolved, and nothing else in the file changes.
+        "move its line under `## Answered`",
+        "citing the chat last",
+        "stay exactly as they were",
+        "the only change you make to `proposals.md`",
+        "Never add a proposal",
+    ):
+        assert rule in resolving_rules, rule
+
+
+def test_consolidations_instructions_bound_it_to_resolving_proposals():
+    consolidation = instructions("Consolidation")
+
+    assert "In `proposals.md` you may do one thing: resolve an open proposal" in consolidation
+    assert "**Proposals.**" in consolidation
+    assert "every open proposal the owner answered in this batch is resolved" in consolidation
+
+
+def test_the_dreaming_instructions_never_ask_again_what_the_owner_answered():
+    proposing_rules = instructions("Dreaming", "When to propose")
+
+    assert "what `## Answered` already holds" in proposing_rules
+    assert "a declined proposal stays there so that it isn't proposed again" in proposing_rules
+
+
+def test_the_schema_says_only_the_owners_chat_answers_a_proposal():
+    schema = " ".join((LIBRARIAN_PROJECT / "wiki-schema.md").read_text().split())
+
+    assert "one of the owner's chat exchanges" in schema
+
+
+def test_the_glossary_counts_an_answer_to_a_proposal_as_a_correction():
+    glossary = (LIBRARIAN_PROJECT.parent / "GLOSSARY.md").read_text()
+    entry = re.search(r"^\*\*Correction\*\*:\n(.*?)\n_Avoid_: ", glossary, re.M | re.S)
+
+    assert entry is not None
+    for said in ("answer to a proposal", "resolves the proposal"):
+        assert said in entry[1], said
