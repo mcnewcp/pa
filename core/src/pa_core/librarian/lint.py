@@ -17,8 +17,9 @@ An error fails the run. The rules so far:
 - **Citations** name episodes that are in L0.
 - **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
   nothing in them but well-formed proposal lines, open ones under Open and answered ones under
-  Answered. No two share an id; a proposal's text is short and holds no URL; and every link of
-  an open proposal goes to a page, or to a retired slug.
+  Answered. No two share an id; a proposal's text is short and holds no URL; every link of
+  an open proposal goes to a page, or to a retired slug; and an answered proposal's last
+  citation is one of the owner's chat exchanges, so nothing but the owner's word closes one.
 - **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once, after an
   optional title.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
@@ -52,7 +53,7 @@ from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
-from pa_core.envelope import Envelope
+from pa_core.envelope import Envelope, Kind
 from pa_core.librarian.engagement import engaged_days, engagers
 from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.links import alias_targets
@@ -159,12 +160,15 @@ class L0Metadata:
     engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
     """For each episode that is someone's own doing, the addresses it's the doing of, in
     lowercase (`engagers` in `engagement.py`): what engagement is read from."""
+    chats: frozenset[str] = frozenset()
+    """The episodes that are chat exchanges with the assistant."""
 
     @classmethod
     def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
         ids: set[str] = set()
         addresses: set[str] = set()
         doers: dict[str, frozenset[str]] = {}
+        chats: set[str] = set()
         for envelope in envelopes:
             ids.add(envelope.episode_id)
             addresses.update(
@@ -172,7 +176,18 @@ class L0Metadata:
             )
             if who := engagers(envelope):
                 doers[envelope.episode_id] = who
-        return cls(frozenset(ids), frozenset(addresses), doers)
+            if envelope.kind is Kind.CHAT:
+                chats.add(envelope.episode_id)
+        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(chats))
+
+    def owner_chats(self, owner: Owner) -> frozenset[str]:
+        """The chat exchanges `owner` took part in: where the owner's own word is."""
+        mine = {address.strip().lower() for address in owner.email_addresses}
+        return frozenset(
+            episode
+            for episode in self.chats
+            if not self.engagers.get(episode, frozenset()).isdisjoint(mine)
+        )
 
     @property
     def domains(self) -> frozenset[str]:
@@ -232,7 +247,7 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
     for file in files:
         for rule in _RULES:
             errors.extend(rule(file, l0))
-    errors.extend(_proposals(files, tree))
+    errors.extend(_proposals(files, tree, l0, owner))
     errors.extend(_retired(files))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
@@ -493,10 +508,13 @@ _URL = re.compile(
 """A web address, or anything a reader's app would turn into one."""
 
 
-def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
+def _proposals(
+    files: Sequence[WikiFile], tree: Path, l0: L0Metadata, owner: Owner
+) -> Iterator[Finding]:
     """`proposals.md` follows its schema: the two sections, in order, with only a `# <title>`
     before them, and in them only proposal lines, each in its section, with its own id, short
-    plain text, and, while it's open, links that go to pages.
+    plain text, and, while it's open, links that go to pages. An answered one cites one of
+    `owner`'s chat exchanges last: only the owner's word closes a proposal.
 
     A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
     paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
@@ -511,6 +529,7 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
     resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
     # A retired slug's link stays good: the proposal may be what brings its page back.
     resolvable |= read_retired(tree).keys()
+    owners_word = l0.owner_chats(owner)
     expected = (OPEN, ANSWERED)
     headings: list[tuple[int, str]] = []
     titled = False
@@ -578,6 +597,16 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
                     "the pages it is about",
                     number,
                 )
+        # A citation that isn't in L0 at all is the citations rule's to report.
+        last = proposal.citations[-1]
+        if not proposal.is_open and last in l0.episode_ids and last not in owners_word:
+            yield Finding(
+                PROPOSALS,
+                f"{name} is answered, but its last citation, {last}, isn't one of the owner's "
+                "chat exchanges: only the owner's answer in chat resolves a proposal, cited "
+                "last",
+                number,
+            )
     if tuple(name for _, name in headings) != expected:
         yield Finding(
             PROPOSALS,

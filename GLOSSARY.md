@@ -175,7 +175,7 @@ A page dreaming cleared from the wiki because the owner has no use for it: a per
 _Avoid_: Deleted page, archived page, hidden page
 
 **Correction**:
-An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
+An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. The owner's answer to a proposal is a correction too. Like every episode it is never an edit; the librarian applies it on its next run, which also resolves the proposal it answers.
 _Avoid_: Fix, override
 
 ## Assistant
