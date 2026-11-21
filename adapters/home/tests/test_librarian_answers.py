@@ -142,6 +142,13 @@ def run_librarian() -> int:
     return main(["librarian", "run"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -566,7 +573,7 @@ def test_a_consolidation_that_changes_the_proposals_other_than_by_resolving_one_
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the consolidation session changed proposals.md" in error
     assert reason in error
     assert ONLY_BY_RESOLVING in error
@@ -654,7 +661,7 @@ def test_a_proposal_resolved_without_the_owners_chat_after_two_resumes_discards_
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the consolidation session left 1 lint errors after 2 resumes" in error
     assert "isn't one of the owner's chat exchanges" in error
     assert len(sessions(data_root, "consolidation")) == 4
@@ -696,7 +703,7 @@ def test_a_consolidation_cant_start_the_proposals_file(data_root: Path, capsys, 
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert reason in error
     assert ONLY_BY_RESOLVING in error
     assert PROPOSALS not in wiki_files(data_root)

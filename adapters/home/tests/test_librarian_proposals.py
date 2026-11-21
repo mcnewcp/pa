@@ -128,6 +128,13 @@ def dream() -> int:
     return main(["librarian", "dream"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -380,7 +387,7 @@ def test_a_proposed_outcome_naming_a_proposal_that_isnt_in_the_file_fails_the_ru
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
     told = "c01 names P1, which isn't an open proposal in proposals.md"
     assert told in attempts[1]["prompt"]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert told in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -561,7 +568,7 @@ def test_a_lint_error_left_in_the_proposals_after_two_resumes_discards_the_run(
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the dreaming session left 1 lint errors after 2 resumes" in error
     assert told in error
     assert len(sessions(data_root, "dreaming")) == 3

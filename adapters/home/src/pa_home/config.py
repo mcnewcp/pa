@@ -113,6 +113,13 @@ class DataRoot:
         return self.path / "evals"
 
     @property
+    def run_errors(self) -> Path:
+        """Where the whole error of the last failed librarian run, and of the last failed
+        dreaming run, is kept for the owner (`pa_home.librarian`): it quotes pages, so no
+        command prints it."""
+        return self.path / "run-errors"
+
+    @property
     def replays(self) -> Path:
         """Where replays build their wikis (`pa librarian replay`), each beside its run log."""
         return self.path / "replays"

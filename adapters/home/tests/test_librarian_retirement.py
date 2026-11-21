@@ -144,6 +144,13 @@ def dream() -> int:
     return main(["librarian", "dream"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -406,7 +413,7 @@ def test_an_emptied_page_that_no_outcome_names_as_retired_fails_the_run(data_roo
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -506,7 +513,7 @@ def test_a_page_with_an_open_loop_is_never_retired(data_root: Path, capsys):
     told = f"c01 retires `nina-park`, but {NINA} held an open loop that is now on no page: `{ASK}`"
     assert told in attempts[1]["prompt"]
     assert "A page with an open loop is never retired" in attempts[1]["prompt"]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert told in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -567,7 +574,7 @@ def test_retired_md_is_the_hosts_and_a_session_that_writes_it_fails_the_run(
 
     assert run() != 0
 
-    assert f"the {phase} session changed retired.md, outside the pages" in capsys.readouterr().err
+    assert f"the {phase} session changed retired.md, outside the pages" in run_error(data_root)
     # Out of bounds, the session isn't resumed.
     assert "--resume" not in sessions(data_root)[-1]["argv"]
     assert tree_state(data_root / "wiki") == before
@@ -627,7 +634,7 @@ def test_lint_checks_every_line_of_retired_md(data_root: Path, capsys, problem: 
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the wiki has 1 lint errors" in error
     assert finding in error
     # The host left the file for a person to put right.
@@ -815,7 +822,7 @@ def test_a_retirement_a_resumed_session_no_longer_reports_leaves_its_emptied_pag
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -833,7 +840,7 @@ def test_the_hosts_own_writes_to_retired_md_are_never_blamed_on_a_resumed_sessio
     assert dream() != 0
 
     assert len(sessions(data_root, "dreaming")) == 3
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "retired.md" not in error
 
@@ -956,7 +963,7 @@ def test_a_page_cant_take_the_name_of_a_file_at_the_wikis_top_level(
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert (
         f"topics/{name}.md: a page can't be named `{name}`: {name}.md is a file at the wiki's "
         f"top level, and [[{name}]] links it"

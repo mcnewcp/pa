@@ -128,6 +128,13 @@ def dream() -> int:
     return main(["librarian", "dream"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -719,7 +726,7 @@ def test_outcomes_still_invalid_after_two_resumes_fail_the_run_and_leave_the_wik
 
     attempts = sessions(data_root, "dreaming")
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "after 2 resumes" in error
     assert tree_state(data_root / "wiki") == before
@@ -790,9 +797,16 @@ def test_a_failed_dreaming_run_leaves_the_wiki_at_its_last_commit(
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    # The command says where the run failed, and nothing a page or the session said: the
+    # whole error is kept under the data root, for the owner.
+    kept = data_root / "run-errors" / "dreaming-run.txt"
+    assert capsys.readouterr().err == (
+        f"pa: the run failed in its dreaming session and was discarded; its error is in {kept}\n"
+    )
+    error = run_error(data_root)
     assert reason in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert kept.stat().st_mode & 0o777 == 0o600
     assert len(sessions(data_root, "dreaming")) == attempts
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
@@ -913,7 +927,7 @@ def test_an_emptied_page_no_merge_explains_fails_the_dreaming_run(data_root: Pat
 
     assert dream() != 0
 
-    assert f"{TOPIC}:1: bad frontmatter" in capsys.readouterr().err
+    assert f"{TOPIC}:1: bad frontmatter" in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
 
 

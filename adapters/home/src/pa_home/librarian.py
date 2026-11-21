@@ -35,6 +35,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
+from pa_core.atomic import write_atomically
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
@@ -128,6 +129,7 @@ def run(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
         _record_run(data_root, repository, failed, now)
+        _keep_error(data_root.run_errors / RUN_ERROR, error, started)
         raise
     warnings = None if outcome.batch is None else len(outcome.warnings)
     succeeded = LibrarianRun(
@@ -181,6 +183,7 @@ def dream(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
         _record(data_root, repository, now, last_dreaming=failed)
+        _keep_error(data_root.run_errors / DREAMING_ERROR, error, started)
         raise
     succeeded = DreamingRun(
         at=started,
@@ -347,6 +350,23 @@ def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
     if any(cost is None for cost in costs):
         return None
     return sum(cost for cost in costs if cost is not None)
+
+
+RUN_ERROR = "librarian-run.txt"
+"""The file, in the data root's `run_errors`, holding the last failed librarian run's error."""
+DREAMING_ERROR = "dreaming-run.txt"
+"""The same for the last failed dreaming run."""
+
+
+def _keep_error(file: Path, error: Exception, at: datetime) -> None:
+    """Keeps a failed run's whole `error` in `file`, readable by the owner alone, in place of
+    the last one kept there. A run's error quotes pages, lint findings, and what the session
+    said, so it is the owner's to read, under the data root: a command prints only where the
+    run failed (`run_failure_reason`). Any other error quotes none, and is printed whole."""
+    if not isinstance(error, LibrarianRunError):
+        return
+    file.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(file, f"{at.isoformat()}\n{error}\n".encode(), mode=0o600)
 
 
 def run_failure_reason(error: Exception) -> str:

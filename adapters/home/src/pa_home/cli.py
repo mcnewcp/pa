@@ -745,7 +745,16 @@ def _run_librarian(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian"))
         return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.RUN_ERROR) from None
     _report_run(outcome, "librarian")
+
+
+def _failed_run(error: LibrarianRunError, kept: Path) -> PaError:
+    """What a failed run over the data root prints: where it failed, and that its error is in
+    `kept`. The error quotes pages and lint findings, which no command prints (CLAUDE.md, Real
+    content): `pa_home.librarian` keeps it under the data root, for the owner."""
+    return PaError(f"{librarian.run_failure_reason(error)}; its error is in {kept}")
 
 
 def _report_run(outcome: RunOutcome, name: str) -> None:
@@ -768,6 +777,8 @@ def _dream(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian dream"))
         return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.DREAMING_ERROR) from None
     _report_dreaming(outcome, "librarian dream")
 
 
