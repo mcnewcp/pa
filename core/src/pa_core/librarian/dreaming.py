@@ -24,6 +24,9 @@ fails. It differs in what it asks and what it records:
 
 The commit message is the run's whole record (the wiki's git history is dreaming's memory):
 a summary line, then each candidate with its outcome under `Candidates:`, then the fields.
+The next run reads those lines back (`dreaming_history`) from the dreaming commits that still
+stand, so that what was dismissed or proposed isn't judged again every week, and reverting a
+dreaming commit also reverts what it remembered.
 """
 
 from __future__ import annotations
@@ -41,7 +44,14 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from pa_core.l0 import L0Store
-from pa_core.librarian.candidates import Candidate, candidates
+from pa_core.librarian.candidates import (
+    CANDIDATE_CAP,
+    Candidate,
+    Decision,
+    DreamingHistory,
+    PastRun,
+    candidates,
+)
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import (
@@ -76,6 +86,8 @@ from pa_core.librarian.run import (
     _session,
     _tree_state,
     commit_fields,
+    last_run_fields,
+    standing_runs,
 )
 from pa_core.librarian.wiki import (
     INDEX,
@@ -216,6 +228,7 @@ def run_dreaming(
     stale_later_days: int = STALE_LATER_DAYS,
     quiet_days: int = QUIET_DAYS,
     proposal_caps: ProposalCaps = PROPOSAL_CAPS,
+    candidate_cap: int = CANDIDATE_CAP,
 ) -> DreamingOutcome:
     """Runs dreaming once over the wiki as last committed, and commits what it changed.
 
@@ -225,7 +238,7 @@ def run_dreaming(
     after restoring the wiki.
 
     `stale_later_days` and `quiet_days` are as `Thresholds` describes them. `proposal_caps`
-    bounds the proposals the run may add.
+    bounds the proposals the run may add, and `candidate_cap` the candidates it is offered.
     """
     tree = repository.tree
     sessions: list[tuple[Phase, SessionResult]] = []
@@ -240,7 +253,14 @@ def run_dreaming(
             quiet_days=quiet_days,
         )
         l0 = L0Metadata.of(store.envelopes())
-        offered = candidates(tree, l0=l0, owner=owner, thresholds=thresholds)
+        offered = candidates(
+            tree,
+            l0=l0,
+            owner=owner,
+            thresholds=thresholds,
+            history=dreaming_history(repository, now),
+            cap=candidate_cap,
+        )
         if not offered:
             return DreamingOutcome()
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
@@ -257,7 +277,7 @@ def run_dreaming(
                 f"the wiki has {len(report.errors)} lint errors"
                 f"{committed.blame(report.errors)}:\n" + _findings(report.errors)
             )
-        carried = commit_fields(repository.last_commit_message() or "")
+        carried = last_run_fields(repository)
         judged = DreamingOutcome(
             candidates=offered,
             outcomes=outcomes,
@@ -824,3 +844,57 @@ def _listed(candidate: Candidate, outcome: Outcome) -> str:
     elif isinstance(outcome, Proposed):
         did += ": " + outcome.proposal
     return f"- {candidate.id} · {candidate.kind} · {candidate.subject} · {did}"
+
+
+_LISTED = re.compile(
+    r"^- c\d+ · (?P<kind>[^ ·]+) · (?P<subject>.+) · (?P<outcome>"
+    + "|".join(OUTCOMES)
+    + r")(?:: (?P<detail>.+))?$"
+)
+"""A candidate's line, as `_listed` writes it."""
+
+
+def last_dreaming_at(repository: WikiRepository) -> datetime | None:
+    """The time the last dreaming run that still stands was told was now (its `Dreaming-At`),
+    or None for a wiki no standing run has dreamed. A reverted run doesn't count, and neither
+    does a run that found no candidates, which commits nothing."""
+    for commit in standing_runs(repository):
+        at = commit_fields(commit.message).get(DREAMING_AT_FIELD)
+        if at is not None:
+            return datetime.fromisoformat(at)
+    return None
+
+
+def dreaming_history(repository: WikiRepository, now: datetime) -> DreamingHistory:
+    """What dreaming remembers of the wiki in `repository`, for a run told that `now` is the
+    time: each earlier dreaming run, newest first, with how long ago it ran, what it decided
+    about each of its candidates, and what has changed since, read back from the dreaming
+    commits' messages. A run's age is measured from the time it was told, never from its
+    commit's date.
+
+    Only runs that still stand are remembered (`standing_runs`): reverting a dreaming commit
+    forgets what it decided, and a wiki with no history has none.
+    """
+    runs: list[PastRun] = []
+    for commit in standing_runs(repository):
+        at = commit_fields(commit.message).get(DREAMING_AT_FIELD)
+        if at is None:
+            continue
+        listed = (_LISTED.match(line) for line in commit.message.splitlines())
+        runs.append(
+            PastRun(
+                age=now - datetime.fromisoformat(at),
+                decisions=tuple(
+                    Decision(
+                        kind=found["kind"],
+                        subject=found["subject"],
+                        outcome=found["outcome"],
+                        proposal=found["detail"] if found["outcome"] == "proposed" else None,
+                    )
+                    for found in listed
+                    if found
+                ),
+                changed=frozenset(repository.changed_since(commit.id)),
+            )
+        )
+    return DreamingHistory(tuple(runs))

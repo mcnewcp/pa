@@ -163,7 +163,7 @@ The librarian's weekly review of the whole wiki, a step of the nightly job and o
 _Avoid_: Consolidation, cleanup
 
 **Candidate**:
-Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem.
+Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem. It is the same candidate from run to run by its kind, its pages, and for a loop the episode its line cites: a dismissed one isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits for the owner's answer.
 _Avoid_: Issue, defect, finding, warning
 
 **Proposal**:
