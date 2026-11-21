@@ -93,6 +93,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
         "PA_LIBRARIAN_LOOP_AGE_DAYS",
         "PA_LIBRARIAN_STALE_LATER_DAYS",
         "PA_LIBRARIAN_QUIET_DAYS",
+        "PA_LIBRARIAN_CANDIDATE_CAP",
         "PA_LIBRARIAN_SANDBOX",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -227,14 +228,14 @@ def corpus(tmp_path: Path) -> Path:
     return directory
 
 
-def replayed(data_root: Path, corpus: Path) -> Path:
+def replayed(data_root: Path, corpus: Path, pages: dict[str, str] = PAGES) -> Path:
     """A replay target: the corpus replayed up to the as-of time, as one batch, whose
-    consolidation writes the wedding's pages."""
+    consolidation writes `pages` (the wedding's unless given)."""
     target = data_root.parent / "replayed"
     script(
         data_root,
         observation=[{"observe": True, "links": LINKS}],
-        consolidation=[{"write": path, "text": text} for path, text in PAGES.items()],
+        consolidation=[{"write": path, "text": text} for path, text in pages.items()],
     )
     replay = ["librarian", "replay", str(target), "--corpus", str(corpus), "--as-of", AS_OF]
     assert main(replay) == 0
@@ -394,6 +395,59 @@ def test_a_second_dreaming_run_of_a_copy_carries_on_from_the_first(data_root: Pa
     assert [(e.get("run", "replay"), e["commit"]) for e in run_log(target)[1:]] == [
         ("dreaming", first),
         ("dreaming", head),
+    ]
+
+
+KITCHEN = textwrap.dedent(
+    f"""\
+    ---
+    type: topic
+    aliases: []
+    status: active
+    summary: The kitchen remodel.
+    updated: 2026-10-13
+    ---
+    # Kitchen
+
+    ## Current state
+    Waiting on a quote [ep:{HOTEL}].
+
+    ## Decisions
+
+    ## Open loops
+
+    ## Notes
+    """
+)
+"""A topic page nothing links to."""
+
+
+def test_a_copy_with_more_candidates_than_the_cap_is_dreamed_run_by_run_until_none_is_left(
+    data_root: Path, corpus: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    monkeypatch.setenv("PA_LIBRARIAN_CANDIDATE_CAP", "1")
+    target = copy_of(replayed(data_root, corpus, {**PAGES, "topics/kitchen.md": KITCHEN}))
+    undreamed = len(sessions(data_root))
+    # Each run is offered one candidate: it dismisses the orphan, then closes the loop.
+    script(data_root, dreaming=[{"outcomes": [DISMISSED]}])
+    assert dream(target, "--corpus", corpus) == 0
+    script(data_root, dreaming=[{"write": TOPIC, "text": CLOSED}, {"outcomes": [APPLIED]}])
+    assert dream(target, "--corpus", corpus) == 0
+    capsys.readouterr()
+
+    assert dream(target, "--corpus", corpus) == 0
+
+    # The second run found the first's commit: the orphan it dismissed is held back, at the
+    # copy's one as-of time, so the loop the cap left over is offered. The third has nothing.
+    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+    offered = [
+        [candidate["kind"] for candidate in session["candidates"]]
+        for session in sessions(data_root)[undreamed:]
+    ]
+    assert offered == [["orphan"], ["loop-aging"]]
+    assert [(e["candidates"], e["outcomes"]["applied"]) for e in run_log(target)[1:]] == [
+        (1, 0),
+        (1, 1),
     ]
 
 
@@ -564,7 +618,8 @@ def test_dreaming_a_copy_of_a_cuts_wiki_runs_over_the_cuts_l0_at_the_cuts_as_of_
     cut = cut_of_a_live_wiki(data_root)
     assert cut.manifest.wiki is not None
     live = fields(commit_messages(data_root)[0])
-    before = tree_state(cut.path), tree_state(data_root / "wiki")
+    live_parts = ("wiki", "wiki.git", "status")
+    before = tree_state(cut.path), [tree_state(data_root / part) for part in live_parts]
     target = copy_of_the_cuts_wiki(cut, data_root)
     script(data_root, dreaming=[{"write": TOPIC, "text": CLOSED}, {"outcomes": [APPLIED]}])
 
@@ -597,8 +652,9 @@ def test_dreaming_a_copy_of_a_cuts_wiki_runs_over_the_cuts_l0_at_the_cuts_as_of_
     assert entry["commit"] == git(target, "rev-parse", "HEAD").strip()
     assert entry["librarian_version"] == live["Librarian-Version"]
     assert entry["outcomes"] == {"applied": 1, "proposed": 0, "dismissed": 0}
-    # The cut and the live wiki are untouched.
-    assert (tree_state(cut.path), tree_state(data_root / "wiki")) == before
+    # The cut is untouched, and so is the live wiki, with its history and its status.
+    after = tree_state(cut.path), [tree_state(data_root / part) for part in live_parts]
+    assert after == before
 
 
 INSIDE = Path(__file__).resolve().parents[3] / "evals" / "wikis" / "private-test-never-written"

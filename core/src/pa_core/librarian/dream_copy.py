@@ -25,6 +25,7 @@ from pathlib import Path
 
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
+from pa_core.librarian.candidates import CANDIDATE_CAP
 from pa_core.librarian.dreaming import (
     OUTCOMES,
     PROPOSAL_CAPS,
@@ -49,7 +50,7 @@ from pa_core.librarian.run import (
     LibrarianRunError,
     SessionRunner,
     WikiRepository,
-    commit_fields,
+    last_run_fields,
 )
 from pa_core.owner import Owner
 
@@ -142,12 +143,15 @@ def run_copy_dreaming(
     stale_later_days: int = STALE_LATER_DAYS,
     quiet_days: int = QUIET_DAYS,
     proposal_caps: ProposalCaps = PROPOSAL_CAPS,
+    candidate_cap: int = CANDIDATE_CAP,
 ) -> DreamingOutcome:
     """Runs dreaming once over the copy in `repository`, a copy of `source`, at its as-of
     time in `time_zone`, and appends the run to `run_log`.
 
     `store` is the L0 the copy's wiki was built over. The thresholds and caps are a dreaming
-    run's. With no candidates it logs nothing. Raises LibrarianRunError when the run fails,
+    run's, and so is its memory: the copy's own earlier dreaming runs, all as of the same
+    time, so what one dismissed is held back from the next, and what the cap left over is
+    offered. With no candidates it logs nothing. Raises LibrarianRunError when the run fails,
     after logging it; the copy is then as last committed.
     """
     _start(repository, source)
@@ -164,6 +168,7 @@ def run_copy_dreaming(
             stale_later_days=stale_later_days,
             quiet_days=quiet_days,
             proposal_caps=proposal_caps,
+            candidate_cap=candidate_cap,
         )
     except LibrarianRunError as error:
         append_to_run_log(run_log, _entry(source, librarian, error=error))
@@ -176,7 +181,7 @@ def run_copy_dreaming(
 def _start(repository: WikiRepository, source: CopySource) -> None:
     """Commits the copy's tree as it is, unless its history already says where it's from: a
     dreaming run starts by restoring the last commit, which must hold the copy."""
-    if commit_fields(repository.last_commit_message() or ""):
+    if last_run_fields(repository):
         return
     fields = [
         (CURSOR_FIELD, source.cursor),
