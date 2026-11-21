@@ -58,10 +58,10 @@ from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from enum import StrEnum
 from pathlib import Path
 
 from pa_core.librarian.engagement import engaged_days
+from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
 from pa_core.librarian.wiki import (
     ACTIVE,
@@ -75,29 +75,6 @@ from pa_core.librarian.wiki import (
     pages,
 )
 from pa_core.owner import Owner
-
-
-class CandidateKind(StrEnum):
-    """What a candidate is about. `ORDER` is the order `candidates` offers the kinds in, and
-    the librarian project's dreaming instructions say how to judge each."""
-
-    STALE = "stale"
-    """A page that observations have linked on enough days since it was last updated."""
-    STATUS_MISMATCH = "status-mismatch"
-    """A page whose status says its matter is over while one of its loops is open."""
-    ORPHAN = "orphan"
-    """A page nothing in the wiki links to."""
-    LOOP_PAST_DUE = "loop-past-due"
-    LOOP_AGING = "loop-aging"
-    """A loop open longer than the loop age, and not past due."""
-    DUPLICATE = "duplicate"
-    """Two pages that may be one."""
-    SLUG_WITHOUT_PAGE = "slug-without-page"
-    NEEDS_LOOKUP = "needs-lookup"
-    QUIET = "quiet"
-    """An active page no observation has linked for a long time."""
-    UNENGAGED = "unengaged"
-    """A person's or an organization's page the owner has never engaged with."""
 
 
 @dataclass(frozen=True)
@@ -371,7 +348,7 @@ def _of_warning(warning: Finding) -> Candidate:
         raise ValueError(f"a lint warning without a kind can't be a candidate: {warning}")
     return Candidate(
         id=_UNNUMBERED,
-        kind=CandidateKind(warning.kind.value),
+        kind=warning.kind,
         pages=warning.pages,
         path=warning.path,
         message=warning.message,

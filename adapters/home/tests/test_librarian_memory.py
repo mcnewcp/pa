@@ -17,8 +17,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pa_core.librarian.candidates import ORDER, CandidateKind
+from pa_core.librarian.candidates import ORDER
 from pa_core.librarian.dreaming import DreamingOutcome, last_dreaming_at
+from pa_core.librarian.kinds import CandidateKind
 from pa_home import librarian
 from pa_home.cli import main
 from pa_home.config import DataRoot, load_librarian_config, load_owner, load_time_zone

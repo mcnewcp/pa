@@ -4,6 +4,7 @@
 - `batch`: which episodes a run offers the librarian, each with its day.
 - `identity`: the identity table, who's who by address, from L0's metadata.
 - `engagement`: which slugs the owner has had a hand in, from L0's metadata.
+- `kinds`: the kinds of candidate, which lint's warnings and dreaming's candidates share.
 - `lint`: what may be committed to the wiki.
 - `index`: `index.md`, generated from the pages.
 - `links`: links to an alias rewritten to its page.

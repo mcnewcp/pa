@@ -20,8 +20,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pa_core.librarian.candidates import CandidateKind
 from pa_core.librarian.dreaming import OUTCOMES, Applied, Dismissed, Outcomes, Proposed
+from pa_core.librarian.kinds import CandidateKind
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.cut import take_cut
