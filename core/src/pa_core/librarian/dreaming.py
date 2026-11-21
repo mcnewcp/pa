@@ -146,6 +146,10 @@ class Dismissed(_Outcome):
     """The candidate isn't a problem; nothing changed for it."""
 
     outcome: Literal["dismissed"]
+    no_room: bool = False
+    """Whether it was set aside only because the run had no proposal left to give it: the
+    session would have proposed it. The host doesn't remember such a dismissal, so the next
+    run is offered the candidate again (`pa_core.librarian.candidates`)."""
 
 
 type Outcome = Annotated[Applied | Proposed | Dismissed, Field(discriminator="outcome")]
@@ -358,6 +362,7 @@ def _dream(
             )
         except InvalidOutcomesError as error:
             return (*error.problems, *problems)
+        problems += _room_problems(outcomes, standing, asked, caps)
         applied = [o for o in outcomes if isinstance(o, Applied)]
         claimed = {page for o in applied for page in o.pages}
         # A retired page left out of `pages` is a problem to resume for, above; it is claimed.
@@ -568,7 +573,8 @@ def _proposal_problems(
     if len(added) > caps.new:
         problems.append(
             f"this run adds {len(added)} proposals, more than the {caps.new} a run may add: "
-            f"keep the {caps.new} most useful to the owner, and dismiss the other candidates"
+            f"keep the {caps.new} most useful to the owner, and dismiss the other candidates, "
+            'each with `"no_room": true`'
         )
     still_open = sum(proposal.is_open for proposal in asked)
     if added and still_open > caps.open:
@@ -576,9 +582,31 @@ def _proposal_problems(
         problems.append(
             f"{still_open} proposals would be open, more than the {caps.open} that may be open "
             f"at once: {were_open} were open already, so add at most "
-            f"{max(0, caps.open - were_open)}, and dismiss the other candidates"
+            f"{max(0, caps.open - were_open)}, and dismiss the other candidates, each with "
+            '`"no_room": true`'
         )
     return problems
+
+
+def _room_problems(
+    outcomes: Sequence[Outcome],
+    standing: Sequence[Proposal],
+    asked: Sequence[Proposal],
+    caps: ProposalCaps,
+) -> list[str]:
+    """What's wrong with the candidates a session dismissed for lack of room (`no_room`),
+    given the proposals as last committed (`standing`) and as it left them (`asked`): there
+    is none while the run may still add a proposal within `caps`. Such a dismissal isn't
+    remembered, so it must be what it says."""
+    left = caps.room(sum(proposal.is_open for proposal in standing)) - len(_added(standing, asked))
+    if left <= 0:
+        return []
+    return [
+        f"{outcome.candidate} is dismissed for lack of room, but this run may still add {left} "
+        "proposals: propose it, or dismiss it without `no_room` if it isn't worth asking"
+        for outcome in outcomes
+        if isinstance(outcome, Dismissed) and outcome.no_room
+    ]
 
 
 OUTCOMES_REMINDER = (
@@ -743,6 +771,8 @@ def dreaming_prompt(offered: Sequence[Candidate], paths: SessionPaths) -> str:
 
 
 PROPOSALS_PROMPT_HEADING = "## Open proposals"
+NO_ROOM_SAID = 'with `"no_room": true` in its outcome, so that the next run is offered it again'
+"""How a prompt says to dismiss a candidate the run has no proposal left for."""
 
 
 def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: SessionPaths) -> str:
@@ -756,12 +786,14 @@ def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: Se
         may = (
             f"You may add at most {room} in this run ({len(asked)} are open, and at most "
             f"{caps.open} may be open at once): number them from P{first}, in the order you "
-            "add them, since an id is never reused."
+            "add them, since an id is never reused. Dismiss a candidate you would have proposed "
+            f"past that {NO_ROOM_SAID}."
         )
     else:
         may = (
             f"You may add none in this run: {len(asked)} are open already, and at most "
-            f"{caps.open} may be open at once. Dismiss a candidate you would have proposed."
+            f"{caps.open} may be open at once. Dismiss a candidate you would have proposed "
+            f"{NO_ROOM_SAID}."
         )
     return (
         f"{PROPOSALS_PROMPT_HEADING}\n\n"
@@ -842,12 +874,15 @@ def dreaming_commit_message(
 
 def _listed(candidate: Candidate, outcome: Outcome) -> str:
     """A candidate's line in the commit message: its id, kind, and subject, then its outcome,
-    an applied one with the pages it changed."""
+    an applied one with the pages it changed, a proposed one with its proposal, and one
+    dismissed for lack of room saying so."""
     did = outcome.outcome
     if isinstance(outcome, Applied):
         did += ": " + ", ".join(outcome.pages)
     elif isinstance(outcome, Proposed):
         did += ": " + outcome.proposal
+    elif outcome.no_room:
+        did += ": " + NO_ROOM
     return f"- {candidate.id} · {candidate.kind} · {candidate.subject} · {did}"
 
 
@@ -857,6 +892,8 @@ _LISTED = re.compile(
     + r")(?:: (?P<detail>.+))?$"
 )
 """A candidate's line, as `_listed` writes it."""
+NO_ROOM = "no room"
+"""What follows `dismissed` in the line of a candidate dismissed only for lack of room."""
 
 
 def last_dreaming_at(repository: WikiRepository) -> datetime | None:
@@ -895,6 +932,7 @@ def dreaming_history(repository: WikiRepository, now: datetime) -> DreamingHisto
                         subject=found["subject"],
                         outcome=found["outcome"],
                         proposal=found["detail"] if found["outcome"] == "proposed" else None,
+                        no_room=found["outcome"] == "dismissed" and found["detail"] == NO_ROOM,
                     )
                     for found in listed
                     if found

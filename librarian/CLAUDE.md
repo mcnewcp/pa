@@ -418,7 +418,8 @@ Add each proposal as a line under `## Open`, in the format `wiki-schema.md` give
   so that it isn't proposed again.
 - **Number and count as the prompt says**: it gives the id your first new proposal takes, and
   how many you may add. When more candidates deserve one, propose those whose answers would
-  settle the most and dismiss the rest; they are offered again in a later run.
+  settle the most and dismiss the rest with `"no_room": true`, so that the next run is
+  offered them again.
 - **Add lines only.** Every proposal already in the file stays exactly as it is: the owner's
   answers are applied by a nightly run, never by dreaming.
 - **Change no page for a proposed candidate.** Its pages wait for the owner's answer.
@@ -434,6 +435,7 @@ host reads only that block, from the last message of the session:
   {"candidate": "c02", "outcome": "proposed", "proposal": "P12"},
   {"candidate": "c03", "outcome": "dismissed"},
   {"candidate": "c04", "outcome": "applied", "pages": ["people/shipping-updates.md"], "retired": ["shipping-updates"]},
+  {"candidate": "c05", "outcome": "dismissed", "no_room": true},
   {"outcome": "proposed", "proposal": "P13"}
 ]}
 ```
@@ -450,7 +452,10 @@ host reads only that block, from the last message of the session:
   proposal each name it. Every proposal you added is named by an outcome.
 - A template suggestion is the one outcome with no `candidate`: `proposed`, naming a proposal
   you added for it alone.
-- A dismissed outcome has no other field.
+- A dismissed outcome has no other field, with one exception: `"no_room": true` marks a
+  candidate you would have proposed in a run that may add no more proposals. Use it for
+  nothing else: a candidate that isn't worth asking about is dismissed plainly, and the host
+  holds it back from the next runs.
 
 When the host resumes you, with lint findings or with problems in your outcomes, put them
 right and end that reply with the complete outcomes again.

@@ -940,6 +940,55 @@ def test_the_cap_on_new_proposals_follows_the_configuration(
     assert wiki_files(data_root)[PROPOSALS] == proposals_file(*questions(1))
 
 
+NO_ROOM = {"candidate": "c02", "outcome": "dismissed", "no_room": True}
+"""The outcome of a candidate the session would have proposed, in a run with no room left."""
+
+
+def test_a_candidate_set_aside_for_lack_of_room_is_offered_again_by_the_next_run(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_LIBRARIAN_NEW_PROPOSALS", "1")
+    # Two candidates the session would propose: the aging loop, then the duplicate.
+    run_with_pages(data_root, aging_loops(1))
+    script(data_root, dreaming=[proposing(*questions(1)), reporting(proposed(), NO_ROOM)])
+
+    assert dream() == 0
+
+    [started] = sessions(data_root, "dreaming")
+    assert 'with `"no_room": true`' in started["prompt"]
+    # It counts as dismissed, and its line says why.
+    message = commit_messages(data_root)[0]
+    assert fields(message)["Dreaming-Dismissed"] == "1"
+    [listed] = [line for line in message.splitlines() if line.startswith("- c02 ")]
+    assert listed.endswith(" · dismissed: no room")
+    # The next run is offered it again, and not the loop, whose proposal is still open.
+    script(data_root, dreaming=[reporting(DISMISSED)])
+    assert dream() == 0
+    [again] = sessions(data_root, "dreaming")[-1]["candidates"]
+    assert (again["id"], again["kind"]) == ("c01", "duplicate")
+    # Dismissed as not worth asking, it is held back like any dismissal.
+    assert dream() == 0
+    assert len(sessions(data_root, "dreaming")) == 2
+
+
+def test_a_dismissal_for_lack_of_room_is_refused_while_the_run_has_room(data_root: Path):
+    run_with_pages(data_root, aging_loops(1))
+    script(
+        data_root,
+        dreaming=[reporting(DISMISSED, NO_ROOM)],
+        dreaming_resume=[reporting(DISMISSED, {**NO_ROOM, "no_room": False})],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        "c02 is dismissed for lack of room, but this run may still add 5 proposals"
+        in resumed["prompt"]
+    )
+    assert "dismissed: no room" not in commit_messages(data_root)[0]
+
+
 ANSWERED_FIFTEENTH = ANSWERED_LINE.replace("P2 ·", "P15 ·")
 
 

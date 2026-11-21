@@ -39,7 +39,9 @@ dreaming runs' own commits (`DreamingHistory`, which `pa_core.librarian.dreaming
 from the wiki's history), and a candidate is the same one from run to run by its identity:
 its kind, its pages, and for a loop the episodes its line cites. Two things hold one back:
 
-- **It was dismissed**, until one of its pages changes or `DISMISSAL_DAYS` pass.
+- **It was dismissed**, until one of its pages changes or `DISMISSAL_DAYS` pass. Not when it
+  was dismissed only because the run had no proposal left to give it: it deserved a question,
+  so the next run is offered it again.
 - **It was proposed**, while that proposal is open.
 
 An applied candidate is never held back: if the problem is still there, it is offered again.
@@ -168,6 +170,9 @@ class Decision:
     """`applied`, `proposed`, or `dismissed`."""
     proposal: str | None = None
     """For a proposed candidate, the id of the proposal that asks about it."""
+    no_room: bool = False
+    """For a dismissed candidate, whether it was set aside only because the run had no
+    proposal left to give it."""
 
 
 @dataclass(frozen=True)
@@ -285,7 +290,8 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
     changes: until a page's content differs from what the run that dismissed it committed,
     whoever changed it (a nightly run, a later dreaming run, the host rewriting a link in it,
     the owner by hand). A candidate about no page (a slug without one, a marker in a day log)
-    waits out the days.
+    waits out the days. A candidate dismissed for lack of room (`no_room`) isn't held back
+    at all.
     """
     held: set[Identity] = set()
     judged: set[Identity] = set()
@@ -300,6 +306,7 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
             else:
                 waits = (
                     decision.outcome == "dismissed"
+                    and not decision.no_room
                     and run.age < timedelta(days=DISMISSAL_DAYS)
                     and not any(_is_page(path) for path in run.changed & identity[1])
                 )
