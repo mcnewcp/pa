@@ -51,7 +51,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
+| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a nightly run, a dreaming run, a replay, or a seed |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 | `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |

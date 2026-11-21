@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
+from pa_core.librarian.dreaming import DreamingOutcome, run_dreaming
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
@@ -120,6 +121,38 @@ def run(
     )
     _record_run(data_root, repository, succeeded, now)
     return outcome
+
+
+def dream(
+    data_root: DataRoot,
+    *,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    project: Path = LIBRARIAN_PROJECT,
+    now: Callable[[], datetime] = wall_clock,
+) -> DreamingOutcome:
+    """Runs dreaming once over the data root's wiki, telling its session `now`'s time as
+    "now": the librarian's review of the whole wiki, as one commit of its own. `project` is the
+    librarian project's source, run as committed (`project_files`), in the sandbox a nightly
+    run's sessions run in, with the same model, effort, turn limit, and timeout.
+
+    The caller holds the data root's lock, as for `run`.
+    """
+    started = now()
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    files = project_files(project)
+    with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
+        return run_dreaming(
+            store=FilesystemL0(data_root.l0),
+            owner=owner,
+            repository=repository,
+            runner=runner,
+            librarian=_librarian(config, files),
+            now=started.astimezone(time_zone),
+            page_threshold=config.page_threshold,
+            loop_age_days=config.loop_age_days,
+        )
 
 
 def record_run_not_made(

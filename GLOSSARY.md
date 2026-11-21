@@ -159,8 +159,12 @@ Rebuilding a wiki from scratch by running L0 through the librarian a week of occ
 _Avoid_: Rebuild run, backfill
 
 **Dreaming**:
-A separate, periodic librarian run over the whole wiki. It judges candidate problems (duplicate pages, contradictions, stale loops), fixes what a re-read of L0 settles, and turns the rest into proposals for the owner.
+The librarian's weekly review of the whole wiki, a step of the nightly job and one commit of its own. It judges each candidate against a re-read of L0 and gives it one outcome: applied (L0 settles it, so the wiki is fixed), proposed (it needs the owner's knowledge), or dismissed (it isn't a problem).
 _Avoid_: Consolidation, cleanup
+
+**Candidate**:
+Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem.
+_Avoid_: Issue, defect, finding, warning
 
 **Correction**:
 An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
