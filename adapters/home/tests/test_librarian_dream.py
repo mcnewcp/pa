@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import textwrap
+from collections.abc import Sequence
 from datetime import UTC, datetime, time, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -90,6 +91,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
         "PA_LIBRARIAN_TIMEOUT_SECONDS",
         "PA_LIBRARIAN_PAGE_THRESHOLD",
         "PA_LIBRARIAN_LOOP_AGE_DAYS",
+        "PA_LIBRARIAN_STALE_LATER_DAYS",
         "PA_LIBRARIAN_SANDBOX",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -226,10 +228,18 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "we
 """The slugs the stand-in's observations link, by the episode's subject."""
 
 
-def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
+def linked(day: str, *slugs: str) -> dict:
+    """The stand-in's action logging an observation on `day` that links `slugs`."""
+    links = " and ".join(f"[[{slug}]]" for slug in slugs)
+    return {"append": f"days/{day}.md", "text": f"- a note about {links} [ep:{HOTEL}]\n"}
+
+
+def run_with_pages(
+    data_root: Path, pages: dict[str, str] | None = None, logged: Sequence[dict] = ()
+) -> str:
     """One nightly run over the hotel email and a later one sending the room list, whose
-    consolidation writes `pages` (the wedding pages unless given). Returns the later email's
-    episode id."""
+    observation also logs `logged` (`linked` actions) and whose consolidation writes `pages`
+    (the wedding pages unless given). Returns the later email's episode id."""
     ingest(
         data_root,
         {
@@ -247,7 +257,7 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
     pages = wedding_pages() if pages is None else pages
     script(
         data_root,
-        observation=[{"observe": True, "links": LINKS}],
+        observation=[{"observe": True, "links": LINKS}, *logged],
         consolidation=[{"write": path, "text": text} for path, text in pages.items()],
     )
     assert run_librarian() == 0
@@ -922,6 +932,157 @@ def test_pa_librarian_dream_skips_while_another_job_holds_the_lock(data_root: Pa
     assert out == "librarian dream: skipped: another job holds the data root's lock\n"
     assert sessions(data_root, "dreaming") == []
     assert commit_messages(data_root) == history
+
+
+# Stale pages, statuses that disagree with their loops, and quiet pages (#145): what dreaming
+# sees that lint doesn't.
+
+# Each wiki with such a problem: what puts it in the settled pages, what the day logs also
+# hold, the candidate the session is given for it (after its id, `c01`), and the environment
+# that brings it out.
+FLAGGED = {
+    "a page linked on three days since its update": (
+        lambda pages: None,
+        # Dave is linked on two of them, and on a day yet to come: a dinner booked ahead.
+        [
+            linked(days_ago(8), "wedding", "david-kim"),
+            linked(days_ago(5), "wedding", "david-kim"),
+            linked(days_ago(3), "wedding"),
+            linked(days_ago(-4), "david-kim"),
+        ],
+        {
+            "kind": "stale",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"a stale page: updated {ROOM_LIST_DAY}, and observations link "
+            "[[wedding]] on 3 later days",
+            "day_logs": [f"days/{days_ago(days)}.md" for days in (8, 5, 3)],
+        },
+        {},
+    ),
+    "a page linked on one later day, at a threshold of one": (
+        lambda pages: None,
+        [linked(days_ago(8), "wedding")],
+        {
+            "kind": "stale",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"a stale page: updated {ROOM_LIST_DAY}, and observations link "
+            "[[wedding]] on 1 later day",
+            "day_logs": [f"days/{days_ago(8)}.md"],
+        },
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+}
+
+BOTH = ("wedding", "david-kim")
+
+
+def _updated(day: str):
+    """Every page last updated on `day`."""
+
+    def edit(pages: dict[str, str]) -> None:
+        for path in pages:
+            _edit(path, f"updated: {ROOM_LIST_DAY}", f"updated: {day}")(pages)
+
+    return edit
+
+
+# Wikis with no such problem: what changes the settled pages, what the day logs also hold, and
+# the environment.
+NOT_FLAGGED = {
+    "pages linked on two days since their update": (
+        lambda pages: None,
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH)],
+        {},
+    ),
+    "pages updated on their latest linking day": (
+        _updated(days_ago(3)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH), linked(days_ago(3), *BOTH)],
+        {},
+    ),
+    "pages updated after their latest linking day": (
+        _updated(days_ago(1)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH), linked(days_ago(3), *BOTH)],
+        {},
+    ),
+    # Day logs exist for days yet to come: calendar events booked ahead.
+    "pages linked on three days after today": (
+        lambda pages: None,
+        [linked(days_ago(-1), *BOTH), linked(days_ago(-2), *BOTH), linked(days_ago(-9), *BOTH)],
+        {},
+    ),
+    "pages updated on their latest linking day, at a threshold of one": (
+        _updated(days_ago(3)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(3), *BOTH), linked(days_ago(-1), *BOTH)],
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+}
+
+
+@pytest.mark.parametrize("wiki", NOT_FLAGGED, ids=list(NOT_FLAGGED))
+def test_a_wiki_with_no_stale_page_mismatched_status_or_quiet_page_offers_no_candidate(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys, wiki: str
+):
+    edit, logged, environment = NOT_FLAGGED[wiki]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    pages = settled_pages()
+    edit(pages)
+    run_with_pages(data_root, pages, logged)
+    capsys.readouterr()
+
+    assert dream() == 0
+
+    assert sessions(data_root, "dreaming") == []
+    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("problem", FLAGGED, ids=list(FLAGGED))
+def test_a_stale_page_a_status_that_disagrees_with_its_loops_and_a_quiet_page_are_candidates(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, problem: str
+):
+    edit, logged, candidate, environment = FLAGGED[problem]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    pages = settled_pages()
+    edit(pages)
+    run_with_pages(data_root, pages, logged)
+    script(data_root, dreaming=[reporting(DISMISSED)])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert session["candidates"] == [{"id": "c01", **candidate}]
+    summary = commit_messages(data_root)[0].splitlines()[0]
+    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+
+
+def test_a_stale_page_brought_up_to_date_is_committed_and_claimed_by_its_outcome(
+    data_root: Path,
+):
+    later = [linked(days_ago(days), "wedding") for days in (8, 5, 3)]
+    run_with_pages(data_root, settled_pages(), later)
+    history = commit_messages(data_root)
+    current = (
+        settled_pages()[TOPIC]
+        .replace(f"updated: {ROOM_LIST_DAY}", f"updated: {days_ago(0)}")
+        .replace("The hotel block closes on Oct 9", "The hotel block is full")
+    )
+    script(data_root, dreaming=[{"write": TOPIC, "text": current}, reporting(APPLIED)])
+
+    assert dream() == 0
+
+    assert wiki_files(data_root)[TOPIC] == current
+    assert git(data_root, "show", "--format=", "--name-only", "HEAD").split() == [TOPIC]
+    summary, listed, _ = commit_messages(data_root)[0].split("\n\n")
+    assert summary == "dreaming run: 1 candidates, 1 applied, 0 dismissed"
+    assert listed.splitlines() == ["Candidates:", f"- c01 · stale · {TOPIC} · applied: {TOPIC}"]
+    assert commit_messages(data_root)[1:] == history
+    # Updated after everything that links it, the page is no longer a candidate.
+    assert dream() == 0
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert len(commit_messages(data_root)) == len(history) + 1
 
 
 def dreaming_instructions() -> str:

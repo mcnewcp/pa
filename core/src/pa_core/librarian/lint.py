@@ -160,9 +160,14 @@ type Rule = Callable[[WikiFile, L0Metadata], Iterator[Finding]]
 """A check of one file, given L0's metadata."""
 
 
+STALE_LATER_DAYS = 3
+"""Unless configured otherwise, the days a page is linked on after its last update before
+dreaming is offered it as stale."""
+
+
 @dataclass(frozen=True)
 class Thresholds:
-    """What the warnings measure against."""
+    """What the warnings, and dreaming's other candidates, measure against."""
 
     today: date
     """The day the run is told it is, in the owner's time zone."""
@@ -170,6 +175,10 @@ class Thresholds:
     """The distinct days a slug is linked on before it should have a page."""
     loop_age_days: int
     """How long a loop may stay open before it's flagged."""
+    stale_later_days: int = STALE_LATER_DAYS
+    """The distinct days, after a page's `updated` date and up to `today`, that observations
+    link the page's slug on before the page is flagged as stale. Lint has no warning for it;
+    it is a candidate for dreaming (`pa_core.librarian.candidates`)."""
 
 
 def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) -> LintReport:

@@ -196,6 +196,14 @@ an applied outcome, and no day log changed.
 
 ### How to judge each kind
 
+- **`stale`**: a page whose slug the day logs link on days after its `updated` date, so what
+  it is about may have moved on without it. The candidate lists those `day_logs`.
+  - Read the lines of each listed day log that link the page's slug, and open the episodes
+    they cite wherever a line alone doesn't say what changed. Bring the page up to date from
+    them, as consolidation's steps 2 and 4 to 6 fold a new observation in: its current state,
+    its decisions, the loops those episodes open or close, and its aliases, each line citing
+    the episode that shows it. Set `updated` to today's date.
+  - When the page already says everything those observations show, dismiss it.
 - **`duplicate`**: two pages that may be one person, organization, or topic.
   - When L0 shows they are one (the same address, or an episode that uses both names for
     one), merge them as a correction's merge does: one page keeps both names as aliases and
