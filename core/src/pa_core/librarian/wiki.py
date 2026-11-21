@@ -1,7 +1,9 @@
 """The wiki model: the wiki's layout, slugs, citations, and line formats (spec #56).
 
-The wiki is `index.md` and four folders of Markdown: `days/` (day logs, `YYYY-MM-DD.md`) and
-`people/`, `orgs/` and `topics/` (pages, `<slug>.md`). Nothing else may exist in it.
+The wiki is `index.md`, four folders of Markdown, `days/` (day logs, `YYYY-MM-DD.md`) and
+`people/`, `orgs/` and `topics/` (pages, `<slug>.md`), and the root files: `proposals.md`, what
+the librarian asks the owner, and `retired.md`, the slugs whose pages dreaming cleared (spec
+#140). Nothing else may exist in it.
 """
 
 from __future__ import annotations
@@ -19,7 +21,14 @@ GIT_DIR = "wiki.git"
 """The wiki's git directory, beside its tree and never inside it."""
 
 INDEX = "index.md"
-"""The generated index, the only file at the wiki's top level."""
+"""The generated index, at the wiki's top level."""
+PROPOSALS = "proposals.md"
+"""The proposals: what the librarian asks the owner, open and answered."""
+RETIRED = "retired.md"
+"""The retired slugs: each slug whose page dreaming cleared, with the day it was retired. The
+host writes it; no session does."""
+ROOT_FILES = (PROPOSALS, RETIRED)
+"""The files at the wiki's top level beside the index, each with a line format of its own."""
 DAYS = "days"
 """The folder of day logs."""
 
@@ -27,6 +36,8 @@ CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES = "Current state", "Decisions", "Ope
 """The sections a page can have (`## <name>`). Current state and Notes are free-form."""
 FIELDS = ("type", "aliases", "status", "summary", "updated")
 """The frontmatter every page has."""
+ACTIVE = "active"
+"""The `status` of a page that's live, whatever its type."""
 
 
 @dataclass(frozen=True)
@@ -538,3 +549,164 @@ def pages(tree: Path) -> list[Page]:
             except PageFormatError:
                 continue
     return found
+
+
+# Proposals
+
+OPEN, ANSWERED = "Open", "Answered"
+"""The sections of `proposals.md` (`## <name>`), in order."""
+PROPOSAL_KINDS = {"change": ("accepted", "declined"), "question": ("answered",)}
+"""Each kind of proposal, and how one of that kind can be answered: a proposed change is
+accepted or declined, and a question is answered."""
+PROPOSAL_TEXT_LIMIT = 200
+"""The most characters a proposal's text may have: a proposal is a short question in the
+librarian's own words, never a paragraph of someone else's."""
+_PROPOSAL = re.compile(
+    rf"- \[(?P<mark>[ x])\] (?P<id>P[1-9][0-9]*) · (?P<kind>{'|'.join(PROPOSAL_KINDS)}) · "
+    rf"(?P<text>\S.*?) · proposed (?P<proposed>{_DATE})"
+    rf"(?: · (?P<how>accepted|declined|answered) (?P<answered>{_DATE}))? (?P<citations>{_CITES})"
+)
+PROPOSAL_FORMAT = (
+    "- [ ] P<number> · <change|question> · <text> · proposed YYYY-MM-DD [ep:<id>], answered as "
+    "- [x] P<number> · <change|question> · <text> · proposed YYYY-MM-DD · "
+    "<accepted|declined|answered> YYYY-MM-DD [ep:<id>] [ep:<the owner's answer>]"
+)
+
+
+@dataclass(frozen=True)
+class Answer:
+    """How the owner answered a proposal, and when."""
+
+    how: str
+    """accepted or declined (a proposed change), or answered (a question)."""
+    day: date
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """One line of `proposals.md`: something the librarian asks the owner, open or answered."""
+
+    id: str
+    """`P` and a number, such as `P12`: its own for good, never given to another proposal."""
+    kind: str
+    """change (a proposed change, answered yes or no) or question (one only the owner can
+    answer)."""
+    text: str
+    proposed: date
+    citations: tuple[str, ...]
+    """The episodes its line cites, in order: the episodes behind it and, once it's answered,
+    the owner's answer last."""
+    answer: Answer | None = None
+
+    @property
+    def number(self) -> int:
+        return int(self.id[1:])
+
+    @property
+    def is_open(self) -> bool:
+        return self.answer is None
+
+    @property
+    def links(self) -> tuple[str, ...]:
+        """The slugs its text links, in order."""
+        return tuple(links(self.text))
+
+    @property
+    def line(self) -> str:
+        """Its line in `proposals.md`, exactly as `parse_proposal` read it."""
+        answered = f" · {self.answer.how} {self.answer.day.isoformat()}" if self.answer else ""
+        return (
+            f"- [{'x' if self.answer else ' '}] {self.id} · {self.kind} · {self.text} · proposed "
+            f"{self.proposed.isoformat()}{answered} "
+            + " ".join(f"[ep:{episode}]" for episode in self.citations)
+        )
+
+    def to_json(self) -> dict[str, object]:
+        """The proposal as a session is given it."""
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "text": self.text,
+            "proposed": self.proposed.isoformat(),
+            "episodes": list(self.citations),
+        }
+
+
+def parse_proposal(line: str) -> Proposal | None:
+    """The proposal `line` holds, or None if it isn't one in the schema's format.
+
+    An answered proposal (`- [x]`) says how it was answered, in its kind's words, and when, and
+    cites the owner's answer after the episodes it already cited; an open one says neither.
+    The text holds no ` · `.
+    """
+    match = _PROPOSAL.fullmatch(line)
+    if match is None or (match["mark"] == "x") != (match["how"] is not None):
+        return None
+    cited = tuple(citations(match["citations"]))
+    proposed = _date(match["proposed"])
+    if proposed is None or " · " in match["text"]:
+        return None
+    answer = None
+    if match["how"] is not None:
+        day = _date(match["answered"])
+        if day is None or match["how"] not in PROPOSAL_KINDS[match["kind"]] or len(cited) < 2:
+            return None
+        answer = Answer(match["how"], day)
+    return Proposal(match["id"], match["kind"], match["text"], proposed, cited, answer)
+
+
+def read_proposals(tree: Path) -> tuple[Proposal, ...]:
+    """Every well-formed proposal in `proposals.md` of the wiki at `tree`, open and answered,
+    in the file's order; none when the wiki has no such file. Lint reports every other line."""
+    file = tree / PROPOSALS
+    if not file.is_file() or file.is_symlink():
+        return ()
+    text = file.read_text(encoding="utf-8", errors="replace")
+    return tuple(p for p in map(parse_proposal, text.splitlines()) if p is not None)
+
+
+def open_proposals(tree: Path) -> tuple[Proposal, ...]:
+    """The proposals the owner hasn't answered yet, in the wiki at `tree`, in the file's
+    order."""
+    return tuple(proposal for proposal in read_proposals(tree) if proposal.is_open)
+
+
+# Retired slugs
+
+_RETIREMENT = re.compile(rf"- (?P<slug>{SLUG.pattern}) · retired (?P<day>{_DATE})")
+RETIREMENT_FORMAT = "- <slug> · retired YYYY-MM-DD"
+
+
+@dataclass(frozen=True)
+class Retirement:
+    """One line of `retired.md`: a slug whose page dreaming cleared, and the day it did."""
+
+    slug: str
+    day: date
+    """The day of the dreaming run that retired it, as the run was told it."""
+
+    @property
+    def line(self) -> str:
+        """Its line in `retired.md`, exactly as `parse_retirement` reads it."""
+        return f"- {self.slug} · retired {self.day.isoformat()}"
+
+
+def parse_retirement(line: str) -> Retirement | None:
+    """The retirement `line` holds, or None if it isn't one in the schema's format."""
+    match = _RETIREMENT.fullmatch(line)
+    day = _date(match["day"]) if match else None
+    return Retirement(match["slug"], day) if match and day else None
+
+
+def read_retired(tree: Path) -> dict[str, date]:
+    """Each retired slug in `retired.md` of the wiki at `tree`, with the day it was retired, in
+    the file's order; none when the wiki has no such file. Lint reports every other line."""
+    file = tree / RETIRED
+    if not file.is_file() or file.is_symlink():
+        return {}
+    retired: dict[str, date] = {}
+    for line in file.read_text(encoding="utf-8", errors="replace").splitlines():
+        retirement = parse_retirement(line)
+        if retirement is not None:
+            retired.setdefault(retirement.slug, retirement.day)
+    return retired

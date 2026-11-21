@@ -8,7 +8,10 @@ it, and the host removes it after the session if the page it was merged into too
 alias. After each session the host checks
 it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
-most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+most twice. Consolidation is also given the open proposals (`proposals.md`, what dreaming has
+asked the owner), and may change that file in one way: by resolving a proposal the owner has
+answered. Then the host drops from `retired.md` each retired slug that has a page again,
+rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 
@@ -18,8 +21,16 @@ new to fold in; a run that fails only on errors its last commit already had says
 anything fails, the wiki goes back to its last commit, so the cursor (kept in the
 commit messages) doesn't move and the batch stays new for the next run.
 
+What a run records is read from the last run's commit that still stands (`standing_runs`),
+not from the last commit: a `git revert` of a run's commit takes back the run's cursor with
+what it wrote, so the next run is offered that run's episodes again.
+
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
+
+A dreaming run (`pa_core.librarian.dreaming`) sits beside this one, over the same two ports,
+and reuses its parts: the session and its resume loop (`_session`), the tree states its bounds
+are checked with, the removal of merged pages, and the commit message's fields.
 """
 
 from __future__ import annotations
@@ -27,9 +38,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
@@ -50,14 +62,20 @@ from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
+from pa_core.librarian.retirement import standing, update_retired
 from pa_core.librarian.wiki import (
+    ANSWERED,
     DAYS,
     INDEX,
     PAGE_FOLDERS,
+    PROPOSALS,
+    Proposal,
     day_logs,
     folder_files,
     is_page_name,
     pages,
+    read_proposals,
+    read_retired,
     reference_counts,
     slugify,
 )
@@ -71,6 +89,9 @@ class Phase(StrEnum):
     """Writes one observation per relevant episode into the day log for its day."""
     CONSOLIDATION = "consolidation"
     """Folds the run's new observations into pages, creating those that have come up enough."""
+    DREAMING = "dreaming"
+    """A dreaming run's one session (`pa_core.librarian.dreaming`): judges the candidates the
+    host flagged over the whole wiki."""
 
 
 @dataclass(frozen=True)
@@ -94,7 +115,10 @@ class SessionResult:
     error: str | None = None
     """What went wrong, when it didn't finish."""
     resumes: int = 0
-    """How many times the run resumed it to fix lint errors."""
+    """How many times the run resumed it to fix what it left."""
+    final_message: str | None = None
+    """The last thing it said, which is where a dreaming session reports its outcomes. Over a
+    session's attempts, its last attempt's."""
 
 
 class SessionRunner(Protocol):
@@ -114,6 +138,14 @@ class SessionRunner(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Commit:
+    """One commit of the wiki's history."""
+
+    id: str
+    message: str
+
+
 class WikiRepository(Protocol):
     """The wiki's working tree and its history: one commit per run."""
 
@@ -122,8 +154,13 @@ class WikiRepository(Protocol):
         """The wiki's working tree on the host."""
         ...
 
-    def last_commit_message(self) -> str | None:
-        """The last commit's message, or None before the first run."""
+    def commits(self) -> Sequence[Commit]:
+        """Every commit of the wiki's history, newest first; none when it has no history."""
+        ...
+
+    def changed_since(self, commit: str) -> Collection[str]:
+        """The files, relative to the wiki, whose content as last committed differs from what
+        `commit` held, the ones added or removed since included."""
         ...
 
     def commit(self, message: str) -> str:
@@ -239,6 +276,8 @@ def run_librarian(
                         committed,
                     )
                 )
+        # A retired slug that has a page again is retired no longer.
+        update_retired(tree, today=thresholds.today)
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
@@ -284,7 +323,7 @@ def seed_wiki(
     Refuses a wiki that has runs or files already, and a seed that fails lint against `store`
     for `owner` (the wiki is left as it was). `index.md` is regenerated.
     """
-    if commit_fields(repository.last_commit_message() or ""):
+    if last_run_fields(repository):
         raise WikiSeedError("the wiki already has runs; a seed starts a fresh wiki")
     tree = repository.tree
     if any(tree.iterdir()):
@@ -307,10 +346,47 @@ def seed_wiki(
         raise
 
 
+_REVERTS = re.compile(r"^This reverts commit ([0-9a-f]{40})\.$", re.M)
+"""The line `git revert` writes in its commit's message, naming the commit it undoes."""
+
+
+def standing_runs(repository: WikiRepository) -> tuple[Commit, ...]:
+    """The commits that record a run and still stand, newest first.
+
+    A run's commit is one whose message has fields. It stops standing when a later commit
+    reverts it: one that says so in git's own words, `This reverts commit <id>.`, on a line
+    of its message. A revert that is itself reverted undoes nothing, so its run stands again.
+    A commit that is neither (the first commit, an edit by hand) says nothing about the runs.
+
+    Reverting a run's commit therefore takes back what the run recorded with what it wrote:
+    its cursor and version, and a dreaming run's decisions. Reverting an older run takes only
+    that run out; the runs after it stand, and the newest of them still says where the wiki
+    is.
+    """
+    reverted: set[str] = set()
+    runs: list[Commit] = []
+    for commit in repository.commits():
+        if commit.id in reverted:
+            continue
+        undone = _REVERTS.search(commit.message)
+        if undone:
+            reverted.add(undone[1])
+        elif commit_fields(commit.message):
+            runs.append(commit)
+    return tuple(runs)
+
+
+def last_run_fields(repository: WikiRepository) -> dict[str, str]:
+    """The fields of the last run that still stands (`standing_runs`): where the wiki is, its
+    cursor and librarian version among them. Empty before the first run, or once every run is
+    reverted."""
+    runs = standing_runs(repository)
+    return commit_fields(runs[0].message) if runs else {}
+
+
 def last_cursor(repository: WikiRepository) -> Cursor | None:
-    """The cursor the last committed run recorded, or None before the first."""
-    message = repository.last_commit_message()
-    value = commit_fields(message or "").get(CURSOR_FIELD)
+    """The cursor the last run that still stands recorded, or None before the first."""
+    value = last_run_fields(repository).get(CURSOR_FIELD)
     return Cursor.parse(value) if value else None
 
 
@@ -411,39 +487,58 @@ def _consolidate(
     committed: _Committed,
 ) -> tuple[Phase, SessionResult]:
     report = linter(tree)
+    standing = read_proposals(tree)
+    asked = [proposal for proposal in standing if proposal.is_open]
     prompt = (
         consolidation_prompt(
             observations,
             reference_counts(tree),
+            report.engaged_days,
             page_threshold,
             {page.slug: page.path for page in pages(tree)},
             runner.paths,
+            retired=read_retired(tree),
         )
         + "\n"
         + identity_prompt(identities)
         + "\n"
         + warnings_prompt(report.warnings)
+        + ("\n" + open_proposals_prompt(asked, runner.paths) if asked else "")
         + ("\n" + errors_prompt(page_errors) if page_errors else "")
     )
     before, logged = _tree_state(tree), day_logs(tree)
-    # Consolidation may not change day-log lines, so it can't fix the errors already in them.
-    unfixable = {_key(e) for e in report.errors if _in_days(e)}
+    # Consolidation may not change day-log lines, nor a proposal but to resolve it, so it can't
+    # fix the errors already in them: only those its own work leaves there.
+    unfixable = {_key(e) for e in report.errors if not _in_pages(e)}
 
     def fixable(finding: Finding) -> bool:
-        return _in_pages(finding) or (_in_days(finding) and _key(finding) not in unfixable)
+        mine = _in_days(finding) or finding.path == PROPOSALS
+        return _in_pages(finding) or (mine and _key(finding) not in unfixable)
 
     def require_bounds() -> None:
+        changed = _changed(before, _tree_state(tree))
         outside = [
             path
-            for path in _changed(before, _tree_state(tree))
-            if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS)
+            for path in changed
+            if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS) and path != PROPOSALS
         ]
         if outside:
             raise LibrarianRunError(
                 f"the consolidation session changed {', '.join(outside)}, outside the pages; "
                 "consolidation may change only pages, in "
-                f"{', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
+                f"{', '.join(f'{f}/' for f in PAGE_FOLDERS)}, and resolve a proposal in "
+                f"{PROPOSALS}"
             )
+        if PROPOSALS in changed:
+            problems = _resolution_problems(standing, read_proposals(tree))
+            if problems:
+                raise LibrarianRunError(
+                    f"the consolidation session changed {PROPOSALS} other than by resolving a "
+                    "proposal:\n"
+                    + "\n".join(f"  {problem}" for problem in problems)
+                    + f"\nconsolidation may change {PROPOSALS} only by resolving an open "
+                    "proposal from the owner's answer"
+                )
         after = day_logs(tree)
         edited = [
             f"{DAYS}/{day.isoformat()}.md"
@@ -469,6 +564,61 @@ def _consolidate(
         tidy=partial(_remove_merged_pages, tree),
     )
     return Phase.CONSOLIDATION, result
+
+
+def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal]) -> list[str]:
+    """What's wrong with how a consolidation session changed `proposals.md`, from `standing`
+    (as last committed) to `left` (as the session left it).
+
+    Consolidation only resolves: an open proposal may become an answered one, keeping its id,
+    kind, text, proposed date, and citations, and citing the owner's answer after them. Every
+    other proposal is there still, exactly as it was, and none is added: proposals are
+    dreaming's to add. A session that changed the file and resolved nothing has a problem too.
+    Lint judges the lines themselves, whether a resolved one's last citation is the owner's
+    chat included.
+    """
+    problems: list[str] = []
+    now: dict[str, list[Proposal]] = {}
+    for proposal in left:
+        now.setdefault(proposal.id, []).append(proposal)
+    resolved = 0
+    for was in standing:
+        found = now.get(was.id, [])
+        # A line copied under Answered and left under Open too is lint's duplicate id.
+        answers = [proposal for proposal in found if proposal != was]
+        if not found:
+            problems.append(f"{was.id} was removed: put its line back as it was: `{was.line}`")
+        elif all(_resolves(was, proposal) for proposal in answers):
+            resolved += bool(answers)
+        elif was.is_open and not any(proposal.is_open for proposal in answers):
+            problems.append(
+                f"{was.id} was changed as it was resolved: a resolved proposal keeps its id, "
+                "kind, text, proposed date, and citations, and gains only how and when it was "
+                f"answered and the owner's chat, cited last. It was: `{was.line}`"
+            )
+        else:
+            problems.append(f"{was.id} was changed: put its line back as it was: `{was.line}`")
+    known = {proposal.id for proposal in standing}
+    problems += [
+        f"{name} was added: proposals are added by dreaming alone"
+        for name in now
+        if name not in known
+    ]
+    if not problems and not resolved:
+        problems.append("no proposal was resolved")
+    return problems
+
+
+def _resolves(was: Proposal, now: Proposal) -> bool:
+    """Whether `now` is the open proposal `was`, answered: the same but for its answer and the
+    citations after its own."""
+    kept = len(was.citations)
+    return (
+        was.is_open
+        and not now.is_open
+        and len(now.citations) > kept
+        and replace(now, answer=None, citations=now.citations[:kept]) == was
+    )
 
 
 def _remove_merged_pages(tree: Path) -> None:
@@ -506,12 +656,20 @@ def _session(
     committed: _Committed,
     *,
     tidy: Callable[[], None] = lambda: None,
+    report_problems: Callable[[SessionResult], Sequence[str]] = lambda _: (),
+    reminder: str = "",
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
     it. A session
     that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
     MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
-    the session's result, its cost and turns added up over its attempts."""
+    the session's result, its cost and turns added up over its attempts.
+
+    A phase whose session must report something in its final message (dreaming's outcomes)
+    gives `report_problems`, which says what's wrong with an attempt's report, or raises when
+    the attempt can't be put right. Those problems resume the session too, within the same
+    limit. Every resume's prompt ends with `reminder`.
+    """
     attempts = [runner.start(phase, prompt, now=now)]
     try:
         while True:
@@ -520,17 +678,30 @@ def _session(
                 raise LibrarianRunError(f"the {phase} session failed: {result.error}")
             tidy()
             require_bounds()
+            problems = report_problems(result)
             errors = [e for e in linter(tree).errors if judged(e)]
-            if not errors:
+            if not problems and not errors:
                 return _combined(attempts)
             if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
                 resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
-                raise LibrarianRunError(
-                    f"the {phase} session left {len(errors)} lint errors{resumed}"
-                    f"{committed.blame(errors)}:\n" + _findings(errors)
-                )
+                left = []
+                if problems:
+                    left.append(
+                        f"the {phase} session's final message can't be accepted{resumed}:\n"
+                        + "\n".join(f"  {problem}" for problem in problems)
+                    )
+                if errors:
+                    left.append(
+                        f"the {phase} session left {len(errors)} lint errors{resumed}"
+                        f"{committed.blame(errors)}:\n" + _findings(errors)
+                    )
+                raise LibrarianRunError("\n".join(left))
             attempts.append(
-                runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now)
+                runner.resume(
+                    attempts[0].session_id,
+                    fix_prompt(phase, errors, problems) + reminder,
+                    now=now,
+                )
             )
     except LibrarianRunError as error:
         # The run log records a failed session too, with what it reported.
@@ -550,20 +721,31 @@ def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
         cost_usd=sum(costs) if costs else None,
         turns=sum(turns) if turns else None,
         resumes=len(attempts) - 1,
+        final_message=attempts[-1].final_message,
     )
 
 
-def fix_prompt(phase: Phase, errors: Sequence[Finding]) -> str:
-    """What a session that left lint errors is told when it's resumed: the findings."""
-    findings = "\n".join(f"- {finding}" for finding in errors)
-    return (
-        f"Phase: {phase}\n\n"
-        f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
-        "committed until they are fixed. Fix each one, following CLAUDE.md and staying within "
-        f"this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
-        "<problem>`, with paths relative to the wiki.\n\n"
-        f"{findings}\n"
-    )
+def fix_prompt(phase: Phase, errors: Sequence[Finding], problems: Sequence[str] = ()) -> str:
+    """What a session is told when it's resumed: the `problems` with what its final message
+    reported, if any, then the lint `errors` it left, if any."""
+    parts = [f"Phase: {phase}\n"]
+    if problems:
+        listed = "\n".join(f"- {problem}" for problem in problems)
+        parts.append(
+            "The host can't accept what your final message reported, and the run can't be "
+            "committed until it can. Put each of these right, following CLAUDE.md and staying "
+            f"within this phase's bounds:\n\n{listed}\n"
+        )
+    if errors:
+        findings = "\n".join(f"- {finding}" for finding in errors)
+        parts.append(
+            f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
+            "committed until they are fixed. Fix each one, following CLAUDE.md and staying "
+            "within this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
+            "<problem>`, with paths relative to the wiki.\n\n"
+            f"{findings}\n"
+        )
+    return "\n".join(parts)
 
 
 type _TreeState = dict[str, tuple[str, ...]]
@@ -615,21 +797,35 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
 def consolidation_prompt(
     observations: Sequence[NewObservation],
     counts: Mapping[str, int],
+    engaged_days: Mapping[str, Sequence[date]],
     page_threshold: int,
     page_paths: Mapping[str, str],
     paths: SessionPaths,
+    *,
+    retired: Mapping[str, date] | None = None,
 ) -> str:
     """What the consolidation session is asked: the run's new observations, then the
-    reference counts (with each slug's page, if it has one), each as a JSON block."""
+    reference counts (with each slug's page, if it has one, and whether the owner has engaged
+    with it, by `engaged_days`), each as a JSON block.
+
+    `retired` is each retired slug with the day it was retired (`pa_core.librarian.retirement`).
+    Its count is marked `retired`, and it doesn't reach the threshold while its retirement
+    stands: until the owner engages with it again.
+    """
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
     folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
+    retired = retired or {}
+    still_retired = standing(retired, engaged_days)
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         reference: dict[str, object] = {
             "slug": slug,
             "days": days,
-            "reaches_threshold": days >= page_threshold,
+            "reaches_threshold": days >= page_threshold and slug not in still_retired,
+            "engaged": slug in engaged_days,
         }
+        if slug in retired:
+            reference["retired"] = True
         if slug in page_paths:
             reference["page"] = page_paths[slug]
         references.append(reference)
@@ -642,9 +838,14 @@ def consolidation_prompt(
         f"```json\n{_json(new)}\n```\n\n"
         "These are the reference counts: for each slug linked in the day logs, the number of "
         "distinct days it's linked on, over all day logs, and its `page` (relative to the wiki) "
-        "if it has one. A slug with no page gets one once it "
+        "if it has one. `engaged` says whether the owner has engaged with the slug: whether an "
+        "observation linking it cites an episode the owner sent, wrote, organized, or attends. "
+        "A slug with no page gets one once it "
         f"reaches {page_threshold} days (`reaches_threshold`), or as soon as it appears in a "
-        "decision or loop line.\n\n"
+        "decision or loop line. A person gets a page at the threshold only when `engaged`; an "
+        "organization or a topic gets one either way. A slug marked `retired` had a page that "
+        "dreaming retired: it doesn't reach the threshold again until the owner engages with "
+        "it, whatever its days.\n\n"
         f"```json\n{_json(references)}\n```\n"
     )
 
@@ -695,7 +896,10 @@ def identity_prompt(identities: IdentityTable) -> str:
         f"by its group's suggested slug. The owner is `{identities.owner.slug}`, and only at "
         "the owner's addresses: a group marked `uses_owner_name` is someone else using the "
         "owner's name. Mail listed under `forged` claims to be from the owner but was not sent "
-        "from the owner's mailbox: it is not the owner speaking. Nicknames that appear only in "
+        "from the owner's mailbox: it is not the owner speaking. A group marked `automated` is "
+        "a mailbox no person writes from (no-reply, notifications, and the like): it never "
+        "gets a person page, and what it sends belongs to its organization or its topic. "
+        "Nicknames that appear only in "
         "the episodes' text are not in the table; read the episodes for them.\n\n"
         f"```json\n{table}\n```\n"
     )
@@ -715,6 +919,28 @@ def warnings_prompt(warnings: Sequence[Finding]) -> str:
         "the warnings about pages you touch in this run, where the evidence settles them; "
         "leave the rest.\n\n"
         f"```json\n{_json(listed)}\n```\n"
+    )
+
+
+PROPOSALS_HEADING = "## Open proposals"
+"""The heading the open proposals are listed under, in a consolidation prompt as in a dreaming
+one (`dreaming.py`, which has more to say under it)."""
+
+
+def open_proposals_prompt(asked: Sequence[Proposal], paths: SessionPaths) -> str:
+    """The open proposals as a section of consolidation's prompt, under `PROPOSALS_HEADING`:
+    `asked`, as a JSON block, and the one change consolidation may make to the file."""
+    return (
+        f"{PROPOSALS_HEADING}\n\n"
+        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
+        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
+        "cites. When one of this run's new observations is the owner's answer to one of them "
+        "(an owner turn in a chat), apply the answer to the pages as CLAUDE.md's Corrections "
+        "section describes, and resolve the proposal. Resolving a proposal is the one change "
+        f"you may make to that file: move its line under `## {ANSWERED}`, checked, saying how "
+        "and when it was answered, with the chat cited last and the rest of the line as it "
+        "was. Never add a proposal, and never change or remove any other line.\n\n"
+        f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
     )
 
 

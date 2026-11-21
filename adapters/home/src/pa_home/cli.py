@@ -13,6 +13,7 @@ from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
+from pa_core.librarian.dreaming import OUTCOMES, DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
@@ -241,6 +242,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Observe the episodes captured since the last run into the wiki, and fold them "
         "into pages.",
     )
+    librarian_commands.add_parser(
+        "dream",
+        help="Review the whole wiki once: judge the candidate problems the host flags, fix "
+        "what L0 settles, and commit.",
+    )
     replay = librarian_commands.add_parser(
         "replay",
         help="Rebuild a wiki in a new directory by replaying L0 through the librarian, a batch "
@@ -369,6 +375,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "librarian" and args.librarian_command == "seed":
             with data_root_lock(data_root):
                 _seed(data_root, args.eval_wiki, args.captured_through)
+        elif args.command == "librarian" and args.librarian_command == "dream":
+            _dream(data_root)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -685,6 +693,29 @@ def _report_run(outcome: RunOutcome, name: str) -> None:
     batch = outcome.batch
     print(
         f"{name}: offered {len(batch.episodes)} of {batch.captured} new episodes; "
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
+    )
+
+
+def _dream(data_root: DataRoot) -> None:
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    try:
+        with data_root_lock(data_root):
+            outcome = librarian.dream(data_root, owner=owner, time_zone=time_zone, config=config)
+    except LockHeld:
+        print(skipped("librarian dream"))
+        return
+    _report_dreaming(outcome, "librarian dream")
+
+
+def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
+    """Print what a dreaming run did, as `name`: counts, never content."""
+    if outcome.commit is None:
+        print(f"{name}: no candidates in the wiki")
+        return
+    counts = ", ".join(f"{outcome.count(o)} {o}" for o in OUTCOMES)
+    print(
+        f"{name}: judged {len(outcome.candidates)} candidates ({counts}); "
         f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
     )
 

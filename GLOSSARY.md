@@ -150,16 +150,32 @@ _Avoid_: Fact, note, entry
 The second phase of every librarian run: folding that run's new observations into pages, and creating pages for the people, organizations, and topics that have come up often enough to need one.
 _Avoid_: Dreaming, compaction
 
+**Engagement**:
+The owner's own hand in a person, organization, or topic: an observation linking it cites an episode the owner sent, wrote, organized, or attends. A person gets a page only once engaged; being written to is not engagement.
+_Avoid_: Interaction, activity, relevance
+
 **Replay**:
 Rebuilding a wiki from scratch by running L0 through the librarian a week of occurrence at a time, each week one run told its end as now. It is the rebuild for recovery, and it builds each eval wiki.
 _Avoid_: Rebuild run, backfill
 
 **Dreaming**:
-A separate, periodic librarian run over the whole wiki. It judges candidate problems (duplicate pages, contradictions, stale loops), fixes what a re-read of L0 settles, and turns the rest into proposals for the owner.
+The librarian's weekly review of the whole wiki, a step of the nightly job and one commit of its own. It judges each candidate against a re-read of L0 and gives it one outcome: applied (L0 settles it, so the wiki is fixed), proposed (it needs the owner's knowledge), or dismissed (it isn't a problem).
 _Avoid_: Consolidation, cleanup
 
+**Candidate**:
+Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem. It is the same candidate from run to run by its kind, its pages, and for a loop the episode its line cites: a dismissed one isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits for the owner's answer.
+_Avoid_: Issue, defect, finding, warning
+
+**Proposal**:
+Something the librarian asks the owner because L0 can't settle it: a proposed change the owner accepts or declines, or a question only the owner can answer. Dreaming adds each as one line of `proposals.md` at the wiki's root, with an id, links to the pages it is about, and the episodes behind it. The owner answers in chat, and the answer is what settles it; a proposal is never evidence.
+_Avoid_: Request, task, ticket, to-do
+
+**Retired page**:
+A page dreaming cleared from the wiki because the owner has no use for it: a person or organization the owner never engaged with, with nothing owed either way. The day logs keep its facts and git keeps the page. Its slug is listed in `retired.md` at the wiki's root, links to it stay valid, and it gets no page again until the owner engages with it, a loop or decision names it, or the owner asks for one.
+_Avoid_: Deleted page, archived page, hidden page
+
 **Correction**:
-An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
+An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. The owner's answer to a proposal is a correction too. Like every episode it is never an edit; the librarian applies it on its next run, which also resolves the proposal it answers.
 _Avoid_: Fix, override
 
 ## Assistant

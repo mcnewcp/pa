@@ -45,6 +45,36 @@ def test_the_librarians_turn_cap_is_a_whole_number_of_at_least_one(value: str):
     assert load_librarian_config({"PA_LIBRARIAN_MAX_TURNS": "40"}).max_turns == 40
 
 
+@pytest.mark.parametrize("value", ["2.5", "0", "many"])
+def test_dreamings_candidate_cap_is_thirty_or_a_configured_whole_number_of_at_least_one(
+    value: str,
+):
+    with pytest.raises(ConfigError, match="PA_LIBRARIAN_CANDIDATE_CAP must be a whole number"):
+        load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": value})
+
+    assert load_librarian_config({}).candidate_cap == 30
+    assert load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": "12"}).candidate_cap == 12
+
+
+def test_a_dreaming_run_may_add_five_proposals_up_to_fifteen_open_unless_configured():
+    caps = load_librarian_config({}).proposal_caps
+
+    assert (caps.new, caps.open) == (5, 15)
+
+    configured = load_librarian_config(
+        {"PA_LIBRARIAN_NEW_PROPOSALS": "3", "PA_LIBRARIAN_OPEN_PROPOSALS": "8"}
+    ).proposal_caps
+
+    assert (configured.new, configured.open) == (3, 8)
+
+
+@pytest.mark.parametrize("var", ["PA_LIBRARIAN_NEW_PROPOSALS", "PA_LIBRARIAN_OPEN_PROPOSALS"])
+@pytest.mark.parametrize("value", ["2.5", "0", "few"])
+def test_a_proposal_cap_is_a_whole_number_of_at_least_one(var: str, value: str):
+    with pytest.raises(ConfigError, match=f"{var} must be a whole number"):
+        load_librarian_config({var: value})
+
+
 # The iCloud credential: an Apple ID, and an app-specific password in a file only the owner can
 # read. Neither may appear in an error.
 APPLE_ID = "zq.hush@quackmail.example"

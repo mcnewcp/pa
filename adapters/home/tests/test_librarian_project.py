@@ -13,7 +13,14 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from pa_core.librarian.lint import L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import PAGE_TYPES, parse_decision, parse_loop, parse_observation
+from pa_core.librarian.wiki import (
+    PAGE_TYPES,
+    parse_decision,
+    parse_loop,
+    parse_observation,
+    parse_proposal,
+    parse_retirement,
+)
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
 from pa_home.cli import main
@@ -97,6 +104,37 @@ def test_the_instructions_point_at_the_wiki_schema_and_every_template():
         assert f"`templates/{template.name}`" in claude_md
 
 
+def _section(name: str) -> str:
+    """A section of the instructions, by its `## ` heading, with its whitespace collapsed."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    found = re.search(rf"^## {name}\n(.*?)(?=^## |\Z)", claude_md, re.MULTILINE | re.DOTALL)
+    assert found is not None, name
+    return " ".join(found[1].split())
+
+
+def test_consolidations_instructions_hold_the_page_creation_rules_and_the_cold_request_rule():
+    consolidation = _section("Consolidation")
+
+    for rule in (
+        # A person needs engagement at the threshold; a loop or decision still makes a page.
+        "A person also needs `engaged`",
+        "a decision or loop line of yours names gets a page at once",
+        # An automated mailbox is never a person.
+        "marked `automated` never gets a person page",
+        "its organization's page, or else its topic's",
+        # A person page one already has is merged away, in the way the host can finish.
+        "move its loops and notes there, add its slug to that page's aliases",
+        # A cold request is an observation, unless the owner started the matter.
+        "A cold request opens no loop",
+        "an order, an application, a booking",
+    ):
+        assert rule in consolidation, rule
+
+
+def test_observations_instructions_link_an_automated_mailbox_by_its_organization():
+    assert "marked `automated`, link its organization" in _section("Observation")
+
+
 def test_the_wiki_schema_is_written_for_any_reader_and_names_no_instance_path():
     """The assistant reads the same schema (#67), and sees the wiki at another path, so the
     schema gives paths relative to the wiki and holds no placeholders."""
@@ -119,8 +157,55 @@ def test_the_wiki_schemas_example_lines_are_well_formed():
 
     assert len(examples) >= 4
     for line in examples:
-        parsed = parse_observation(line) or parse_decision(line) or parse_loop(line)
+        parsed = (
+            parse_observation(line)
+            or parse_decision(line)
+            or parse_loop(line)
+            or parse_proposal(line)
+            or parse_retirement(line)
+        )
         assert parsed is not None, line
+
+
+def test_the_wiki_schema_gives_the_proposals_file_and_its_line_format():
+    schema = WIKI_SCHEMA.read_text()
+    layout = re.search(r"^## Layout\n\n```\n(.*?)^```$", schema, re.MULTILINE | re.DOTALL)
+    assert layout is not None
+    examples = [parse_proposal(line) for line in schema.splitlines()]
+    shown = [proposal for proposal in examples if proposal is not None]
+
+    # The file is in the layout, with an example of an open proposal and of an answered one.
+    assert re.search(r"^proposals\.md ", layout[1], re.MULTILINE)
+    assert [(p.id, p.kind, p.is_open) for p in shown] == [
+        ("P12", "change", True),
+        ("P9", "question", False),
+    ]
+    # An answered proposal cites the owner's answer last.
+    assert shown[1].citations[-1].startswith("assistant_chat_")
+    # And a reader can find the open ones with one grep.
+    assert "| `^- \\[ \\] P[0-9]+ · ` | `proposals.md` |" in schema
+
+
+def test_the_wiki_schema_gives_the_retired_file_and_its_line_format():
+    schema = WIKI_SCHEMA.read_text()
+    layout = re.search(r"^## Layout\n\n```\n(.*?)^```$", schema, re.MULTILINE | re.DOTALL)
+    assert layout is not None
+    shown = [parse_retirement(line) for line in schema.splitlines()]
+
+    # The file is in the layout, with an example of its one kind of line.
+    assert re.search(r"^retired\.md ", layout[1], re.MULTILINE)
+    assert [(r.slug, r.day.isoformat()) for r in shown if r is not None] == [
+        ("shipping-updates", "2026-11-22")
+    ]
+    retired = re.search(r"^## Retired slugs\n(.*?)(?=^## )", schema, re.MULTILINE | re.DOTALL)
+    assert retired is not None
+    said = " ".join(retired[1].split())
+    # The host keeps it, a link to a retired slug is good, and the day logs keep the facts.
+    assert "The host writes it" in said
+    assert "A link to a retired slug is still good" in said
+    assert "the day logs" in said
+    # And a reader can find whether a slug was retired with one grep.
+    assert "| `^- <slug> · retired ` | `retired.md` |" in schema
 
 
 def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):

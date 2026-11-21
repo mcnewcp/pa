@@ -51,7 +51,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
+| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a nightly run, a dreaming run, a replay, or a seed |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 | `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
@@ -350,7 +350,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 ```
 
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
-- `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run. It's the owner's to read: a development session never prints it.
+- `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run: its pages and what it recorded, so after the last night's commit is reverted the next run takes that night's episodes again. Keep git's `This reverts commit …` line in the message; it is how the host knows. It's the owner's to read: a development session never prints it.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
 - `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another job holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
 
@@ -465,6 +465,8 @@ The suite skips the tests that call a real model unless asked, since they cost m
 ```sh
 PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_page_creation_fixture.py # the page-creation fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 PA_SMOKE_CLAUDE_MODEL=sonnet uv run pytest -s deploy/home/tests/test_proposal_answer_fixture.py # the proposal-answer fixture: the assistant on the host, then pa-librarian
 ```
 
 The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
@@ -473,6 +475,22 @@ The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the ow
 2. After new mail and a note from both Chris Lees and from Okie. The test checks that the split still holds and the merge too.
 
 The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost: the two runs come to about $1 on Opus 5.5 at medium effort.
+
+The page-creation fixture (`deploy/home/tests/fixtures/page-creation/`) is one night that would clutter the wiki, over a wiki an earlier rule already cluttered. It seeds a data root with a starting wiki in which a no-reply mailbox has a person page holding an open loop, which lint now fails, so the run can't commit until its consolidation merges that page away. The night is three more days of delivery updates from the mailbox, three requests for a call from a salesman the owner never engaged with, a shop's request about an order the owner placed, and a friend the owner wrote to. The test makes one real librarian run, with a fixed "now", and checks that:
+
+- the mailbox's person page is gone, its loop is on an organization's or a topic's page, and no link to its slug is left without a page;
+- the salesman has no person page and his request opened no loop;
+- the shop's request is an open loop;
+- the friend has a page and a loop.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PAGE_CREATION_DIR`).
+
+The proposal-answer fixture (`deploy/home/tests/fixtures/proposal-answer/`) shows the owner answering a proposal from chat. Its starting wiki has JR and Jordan Reyes on two pages and two open proposals: P1 asks whether they are the same person, and P2 asks about a remodeler's quote. The fictional owner's two turns are in the test, and the assistant's replies are real:
+
+1. The real assistant, on the host as `PA_SMOKE_CLAUDE` tests run it, is asked "What do you need from me?" and then told "On P1: yes, JR is Jordan Reyes." Each turn is a session of its own. The test checks that the first reply gives both proposals, that one sentence of the second names P1 and both names and that it says the wiki will show it after the next run, and that neither cites anything but an episode.
+2. Both exchanges are captured as the assistant replied, and one real librarian run in `pa-librarian` takes them. The test checks that P1 is under Answered as accepted, citing the owner's answer last; that one page goes by both names, keeps both loops, and cites the answer; that no link to the other slug is left; and that P2 is open as it was.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PROPOSAL_ANSWER_DIR`). With `PA_SMOKE_CLAUDE=1` alone, the file runs only the assistant's two turns, in a temporary directory.
 
 ## Evals in the VM
 
