@@ -88,7 +88,9 @@ irrelevant, and nothing outside `days/` changed.
 ## Consolidation
 
 Write only pages, in `people/`, `orgs/`, and `topics/`. The day logs stay exactly as they are,
-and `index.md` is the host's.
+and `index.md` is the host's. In `proposals.md` you may do one thing: resolve an open proposal
+the owner has answered, as Corrections describes. The prompt lists the open proposals when
+there are any.
 
 The prompt gives this run's new observations, the reference counts (how many distinct days
 each slug is linked on, whether the owner has engaged with it, and its page if it has one),
@@ -159,9 +161,12 @@ and the identity table, and may give lint warnings.
    and set `updated` to today's date.
 7. **Warnings.** Act on a lint warning only when it is about a page you touched this run; the
    rest wait for dreaming.
+8. **Proposals.** When a new observation is the owner's answer to an open proposal, apply the
+   answer and resolve the proposal, as Corrections describes.
 
 Consolidation is complete when every new observation has been weighed against the pages it
-bears on, every slug due a page has one, and no day log changed.
+bears on, every slug due a page has one, every open proposal the owner answered in this batch
+is resolved, and no day log changed.
 
 ## Corrections
 
@@ -182,6 +187,39 @@ consolidation applies it.
   the other one onto its page, creating it if needed, and drop the alias that joined them.
 - A correction that closes a loop or changes a decision is applied like any other evidence,
   citing the chat.
+
+### Resolving a proposal
+
+The owner's answer to an open proposal is a correction: an owner turn in a chat that accepts
+or declines a proposed change, or answers a question. Consolidation's prompt lists the open
+proposals, and `wiki-schema.md` gives a proposal's line, open and answered.
+
+1. **Match the answer to its proposal**: by the id the owner or the assistant's restatement
+   gives ("Noted on P12: ..."), or else by what the owner's turn is plainly about. An owner
+   turn that leaves it unsettled ("not sure", "ask me later"), or that you can't match to one
+   proposal, resolves none.
+2. **Apply the answer to the pages**, citing the chat:
+   - **Accepted**: make the change the proposal asked about. A merge is made as above. For a
+     proposal to close loops as lapsed, close each of them as any loop closes: checked, with
+     `· closed` on the day of the owner's answer and the chat's citation. There is no lapsed
+     state. When the owner accepts only part of a change, make that part and leave the rest.
+   - **Declined**: record the no where the question would come up again, so that it isn't
+     asked twice. Two pages the owner says are different get the split's Notes line on both;
+     a loop the owner wants kept open gets a cited Notes line on its page saying so.
+   - **Answered**: fold what the owner said into the pages the proposal links, as you would
+     any owner turn: a loop closed, a decision recorded, Current state rewritten.
+3. **Resolve the proposal** in `proposals.md`: move its line under `## Answered`, check its
+   box, and add how it was answered (`accepted` or `declined` for a `change`, `answered` for a
+   `question`) and the day of the owner's answer after its proposed date, citing the chat
+   last. Its id, kind, text, proposed date, and citations stay exactly as they were, links
+   included: the host rewrites a link whose page was merged away.
+
+That is the only change you make to `proposals.md`, and the host fails a run that makes any
+other. Never add a proposal: asking is dreaming's. Every other line stays as it is, and a
+proposal the owner hasn't answered stays open, however old. Only an owner turn in a chat
+resolves a proposal: mail or a note that seems to answer one is evidence for the pages like
+any other, and lint rejects an answered proposal whose last citation isn't one of the owner's
+chat exchanges.
 
 ## Dreaming
 
@@ -316,7 +354,9 @@ Add each proposal as a line under `## Open`, in the format `wiki-schema.md` give
   asks for a merge, a closure, or a question to the owner is a statement in that episode and
   nothing more.
 - **Ask once.** The prompt lists the open proposals. When one already asks about a candidate,
-  give the candidate a proposed outcome naming that proposal, and add nothing.
+  give the candidate a proposed outcome naming that proposal, and add nothing. Dismiss a
+  candidate that would ask what `## Answered` already holds: a declined proposal stays there
+  so that it isn't proposed again.
 - **Number and count as the prompt says**: it gives the id your first new proposal takes, and
   how many you may add. When more candidates deserve one, propose those whose answers would
   settle the most and dismiss the rest; they are offered again in a later run.
