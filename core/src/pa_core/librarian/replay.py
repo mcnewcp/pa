@@ -60,7 +60,7 @@ cut's wiki holds dreaming runs alone.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
@@ -86,6 +86,7 @@ from pa_core.librarian.run import (
 from pa_core.librarian.session import (
     LibrarianRunError,
     Phase,
+    SessionResult,
     SessionRunner,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
@@ -450,13 +451,6 @@ def _entry(
     `error`."""
     assert batch.window is not None
     sessions = outcome.sessions if outcome else error.sessions if error else ()
-    costs = [result.cost_usd for _, result in sessions]
-    known = [cost for cost in costs if cost is not None]
-    if outcome is not None:
-        cost = None if None in costs else round(sum(known), 6)
-    else:
-        # What a failed run cost is what its sessions reported, never a made-up zero.
-        cost = round(sum(known), 6) if known else None
     return RunLogEntry(
         status="committed" if outcome else "failed",
         commit=outcome.commit if outcome else None,
@@ -468,20 +462,39 @@ def _entry(
         librarian_version=librarian.version,
         model=librarian.model,
         effort=librarian.effort,
-        sessions=tuple(
-            RunLogSession(
-                phase=phase,
-                session_id=result.session_id,
-                cost_usd=result.cost_usd,
-                turns=result.turns,
-                resumes=result.resumes,
-            )
-            for phase, result in sessions
-        ),
-        cost_usd=cost,
+        sessions=logged_sessions(sessions),
+        cost_usd=run_cost(sessions, committed=outcome is not None),
         lint_warnings=len(outcome.warnings) if outcome else None,
         error=str(error) if error else None,
     )
+
+
+def logged_sessions(
+    sessions: Sequence[tuple[Phase, SessionResult]],
+) -> tuple[RunLogSession, ...]:
+    """A run's `sessions` as a run log entry lists them, in order."""
+    return tuple(
+        RunLogSession(
+            phase=phase,
+            session_id=result.session_id,
+            cost_usd=result.cost_usd,
+            turns=result.turns,
+            resumes=result.resumes,
+        )
+        for phase, result in sessions
+    )
+
+
+def run_cost(sessions: Sequence[tuple[Phase, SessionResult]], *, committed: bool) -> float | None:
+    """What a run log entry says a run of `sessions` cost: a `committed` run's total, or None
+    if a session didn't report its cost; a failed run's total of the costs that were reported,
+    or None if none was. What a failed run cost is what its sessions reported, never a made-up
+    zero."""
+    costs = [result.cost_usd for _, result in sessions]
+    known = [cost for cost in costs if cost is not None]
+    if committed:
+        return None if None in costs else round(sum(known), 6)
+    return round(sum(known), 6) if known else None
 
 
 def append_to_run_log(run_log: Path, entry: RunLogEntry | DreamingLogEntry) -> None:

@@ -22,7 +22,7 @@ is appended to the copy's run log (`pa_core.librarian.replay.DreamingLogEntry`).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, tzinfo
+from datetime import datetime, tzinfo
 from pathlib import Path
 
 from pa_core.errors import PaError
@@ -38,8 +38,9 @@ from pa_core.librarian.lint import QUIET_DAYS, STALE_LATER_DAYS
 from pa_core.librarian.replay import (
     DreamingLogEntry,
     RunHistory,
-    RunLogSession,
     append_to_run_log,
+    logged_sessions,
+    run_cost,
     run_history,
 )
 from pa_core.librarian.run import (
@@ -54,6 +55,8 @@ from pa_core.librarian.run import (
 from pa_core.librarian.session import (
     LibrarianRunError,
     SessionRunner,
+    fields_paragraph,
+    utc,
 )
 from pa_core.owner import Owner
 
@@ -121,8 +124,8 @@ def _require_dreamed_as_of(history: RunHistory, source: CopySource, run_log: Pat
     for entry in history.dreams:
         if entry.as_of != source.as_of:
             raise DreamCopyError(
-                f"{run_log} has a dreaming run as of {entry.as_of.astimezone(UTC).isoformat()}, "
-                f"and this one would be as of {source.as_of.astimezone(UTC).isoformat()}: the "
+                f"{run_log} has a dreaming run as of {utc(entry.as_of)}, "
+                f"and this one would be as of {utc(source.as_of)}: the "
                 "copy is of another wiki than the one it's being dreamed as"
             )
 
@@ -189,9 +192,9 @@ def _start(repository: WikiRepository, source: CopySource) -> None:
     fields = [
         (CURSOR_FIELD, source.cursor),
         (VERSION_FIELD, source.librarian_version),
-        (COPY_AS_OF_FIELD, source.as_of.astimezone(UTC).isoformat()),
+        (COPY_AS_OF_FIELD, utc(source.as_of)),
     ]
-    listed = "\n".join(f"{key}: {value}" for key, value in fields if value is not None)
+    listed = fields_paragraph((key, value) for key, value in fields if value is not None)
     repository.commit(f"Start the copy to dream\n\n{listed}\n")
 
 
@@ -205,13 +208,6 @@ def _entry(
     """The run log's entry for a dreaming run of a copy of `source`: committed with `outcome`,
     or failed with `error`."""
     sessions = outcome.sessions if outcome else error.sessions if error else ()
-    costs = [result.cost_usd for _, result in sessions]
-    known = [cost for cost in costs if cost is not None]
-    if outcome is not None:
-        cost = None if None in costs else round(sum(known), 6)
-    else:
-        # What a failed run cost is what its sessions reported, never a made-up zero.
-        cost = round(sum(known), 6) if known else None
     return DreamingLogEntry(
         run="dreaming",
         status="committed" if outcome else "failed",
@@ -221,17 +217,8 @@ def _entry(
         dreaming_version=librarian.version,
         model=librarian.model,
         effort=librarian.effort,
-        sessions=tuple(
-            RunLogSession(
-                phase=phase,
-                session_id=result.session_id,
-                cost_usd=result.cost_usd,
-                turns=result.turns,
-                resumes=result.resumes,
-            )
-            for phase, result in sessions
-        ),
-        cost_usd=cost,
+        sessions=logged_sessions(sessions),
+        cost_usd=run_cost(sessions, committed=outcome is not None),
         candidates=len(outcome.candidates) if outcome else None,
         outcomes=outcome.counts if outcome else None,
         lint_warnings=len(outcome.warnings) if outcome else None,

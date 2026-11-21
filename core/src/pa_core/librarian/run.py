@@ -74,13 +74,14 @@ from pa_core.librarian.session import (
     as_json,
     changed_paths,
     commit_fields,
-    figure,
+    fields_paragraph,
     finding_key,
     findings_text,
     in_pages,
     open_proposals_section,
     remove_merged_pages,
     run_session,
+    session_fields,
     tree_state,
     utc,
 )
@@ -814,17 +815,10 @@ def commit_message(
             ("Batch-Occurred-From", utc(batch.window.start)),
             (OCCURRED_TO_FIELD, utc(batch.window.end)),
         ]
-    for phase, result in sessions:
-        name = phase.value.capitalize()
-        fields += [
-            (f"{name}-Cost-USD", figure(result.cost_usd)),
-            (f"{name}-Turns", figure(result.turns)),
-            (f"{name}-Session", result.session_id or "unknown"),
-            (f"{name}-Resumes", result.resumes),
-        ]
+    fields += session_fields(sessions)
     fields.append(("Lint-Warnings", len(warnings)))
     paragraphs = [f"librarian run: {len(batch.episodes)} new episodes"]
     if warnings:
         paragraphs.append("Lint warnings:\n" + "\n".join(f"- {w}" for w in warnings))
-    paragraphs.append("\n".join(f"{key}: {value}" for key, value in fields))
+    paragraphs.append(fields_paragraph(fields))
     return "\n\n".join(paragraphs) + "\n"

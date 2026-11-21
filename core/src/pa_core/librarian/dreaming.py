@@ -36,7 +36,7 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal
@@ -90,13 +90,15 @@ from pa_core.librarian.session import (
     as_json,
     changed_paths,
     commit_fields,
-    figure,
+    fields_paragraph,
     findings_text,
     in_pages,
     open_proposals_section,
     remove_merged_pages,
     run_reporting_session,
+    session_fields,
     tree_state,
+    utc,
 )
 from pa_core.librarian.wiki import (
     INDEX,
@@ -915,16 +917,9 @@ def dreaming_commit_message(
         (DREAMING_VERSION_FIELD, librarian.version),
         ("Model", librarian.model),
         ("Effort", librarian.effort),
-        (DREAMING_AT_FIELD, now.astimezone(UTC).isoformat()),
+        (DREAMING_AT_FIELD, utc(now)),
     ]
-    for phase, result in outcome.sessions:
-        name = phase.value.capitalize()
-        fields += [
-            (f"{name}-Cost-USD", figure(result.cost_usd)),
-            (f"{name}-Turns", figure(result.turns)),
-            (f"{name}-Session", result.session_id or "unknown"),
-            (f"{name}-Resumes", result.resumes),
-        ]
+    fields += session_fields(outcome.sessions)
     fields.append((CANDIDATES_FIELD, len(outcome.candidates)))
     fields += [(f"Dreaming-{name.capitalize()}", count) for name, count in counts.items()]
     if outcome.suggestion is not None:
@@ -940,7 +935,7 @@ def dreaming_commit_message(
     paragraphs = [
         summary,
         CANDIDATES_HEADING + "\n" + "\n".join(listed),
-        "\n".join(f"{key}: {value}" for key, value in fields),
+        fields_paragraph(fields),
     ]
     return "\n\n".join(paragraphs) + "\n"
 

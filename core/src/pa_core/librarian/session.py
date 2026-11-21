@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -367,6 +367,27 @@ def commit_fields(message: str) -> dict[str, str]:
         if separator and key and " " not in key:
             fields[key] = value.strip()
     return fields
+
+
+def session_fields(sessions: Sequence[tuple[Phase, SessionResult]]) -> list[tuple[str, object]]:
+    """The fields a commit message records of each of a run's `sessions`, in order: its cost,
+    its turns, its id, and how many times it was resumed, each under its phase's name."""
+    fields: list[tuple[str, object]] = []
+    for phase, result in sessions:
+        name = phase.value.capitalize()
+        fields += [
+            (f"{name}-Cost-USD", figure(result.cost_usd)),
+            (f"{name}-Turns", figure(result.turns)),
+            (f"{name}-Session", result.session_id or "unknown"),
+            (f"{name}-Resumes", result.resumes),
+        ]
+    return fields
+
+
+def fields_paragraph(fields: Iterable[tuple[str, object]]) -> str:
+    """`fields` as the last paragraph of a commit message, one `Field: value` line each: what
+    `commit_fields` reads back."""
+    return "\n".join(f"{key}: {value}" for key, value in fields)
 
 
 def utc(moment: datetime) -> str:
