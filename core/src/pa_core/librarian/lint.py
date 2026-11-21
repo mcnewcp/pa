@@ -36,6 +36,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 
 from pa_core.envelope import Envelope
@@ -71,6 +72,19 @@ from pa_core.librarian.wiki import (
 from pa_core.owner import Owner
 
 
+class WarningKind(StrEnum):
+    """What a warning is about. Dreaming judges each warning as a candidate of its kind
+    (`pa_core.librarian.candidates`)."""
+
+    ORPHAN = "orphan"
+    LOOP_PAST_DUE = "loop-past-due"
+    LOOP_AGING = "loop-aging"
+    """A loop open longer than the loop age, and not past due."""
+    DUPLICATE = "duplicate"
+    SLUG_WITHOUT_PAGE = "slug-without-page"
+    NEEDS_LOOKUP = "needs-lookup"
+
+
 @dataclass(frozen=True)
 class Finding:
     """One problem lint found, where it is in the wiki."""
@@ -80,6 +94,15 @@ class Finding:
     message: str
     line: int | None = None
     """The line, counting from 1, when the problem is on one."""
+    kind: WarningKind | None = None
+    """A warning's kind; an error has none."""
+    pages: tuple[str, ...] = ()
+    """The pages a warning is about, relative to the wiki: both pages of a duplicate."""
+    episodes: tuple[str, ...] = ()
+    """For a warning about a loop, the episodes its line cites as opening it: which loop it is,
+    wherever its line moves."""
+    slug: str | None = None
+    """For a slug without a page, the slug."""
 
     def __str__(self) -> str:
         where = self.path if self.line is None else f"{self.path}:{self.line}"
@@ -396,7 +419,12 @@ def _orphans(files: Sequence[WikiFile], pages: Sequence[Page]) -> Iterator[Findi
                     linked_from[slug].add(file.path)
     for page in pages:
         if not linked_from[page.slug] - {page.path}:
-            yield Finding(page.path, f"an orphan page: nothing in the wiki links [[{page.slug}]]")
+            yield Finding(
+                page.path,
+                f"an orphan page: nothing in the wiki links [[{page.slug}]]",
+                kind=WarningKind.ORPHAN,
+                pages=(page.path,),
+            )
 
 
 def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Finding]:
@@ -411,7 +439,12 @@ def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Find
             if loop.due is not None and loop.due < thresholds.today:
                 late = (thresholds.today - loop.due).days
                 yield Finding(
-                    page.path, f"a loop past due: due {loop.due}, {late} days ago", number
+                    page.path,
+                    f"a loop past due: due {loop.due}, {late} days ago",
+                    number,
+                    kind=WarningKind.LOOP_PAST_DUE,
+                    pages=(page.path,),
+                    episodes=loop.citations,
                 )
             elif age > thresholds.loop_age_days:
                 yield Finding(
@@ -419,6 +452,9 @@ def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Find
                     f"a loop open {age} days, more than {thresholds.loop_age_days}: is it "
                     "settled, or still owed?",
                     number,
+                    kind=WarningKind.LOOP_AGING,
+                    pages=(page.path,),
+                    episodes=loop.citations,
                 )
 
 
@@ -432,7 +468,10 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
             first = aliased.setdefault(alias, page.path)
             if first != page.path:
                 yield Finding(
-                    page.path, f"a duplicate candidate: it shares the alias {alias} with {first}"
+                    page.path,
+                    f"a duplicate candidate: it shares the alias {alias} with {first}",
+                    kind=WarningKind.DUPLICATE,
+                    pages=(page.path, first),
                 )
     by_slug = {page.slug: page for page in pages}
     by_name = {_folded(page.title): page for page in pages if page.title}
@@ -443,6 +482,8 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: its alias {alias} is the slug of {named.path}",
+                    kind=WarningKind.DUPLICATE,
+                    pages=(page.path, named.path),
                 )
                 continue
             named = by_name.get(_folded(alias))
@@ -450,12 +491,17 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: its alias {alias} is the name of {named.path}",
+                    kind=WarningKind.DUPLICATE,
+                    pages=(page.path, named.path),
                 )
     for index, page in enumerate(pages):
         for other in pages[:index]:
             if _nearly(page.slug, other.slug):
                 yield Finding(
-                    page.path, f"a duplicate candidate: its slug is nearly {other.path}'s"
+                    page.path,
+                    f"a duplicate candidate: its slug is nearly {other.path}'s",
+                    kind=WarningKind.DUPLICATE,
+                    pages=(page.path, other.path),
                 )
 
 
@@ -490,6 +536,8 @@ def _slugs_without_pages(
                 f"{DAYS}/{days[-1].isoformat()}.md",
                 f"`{slug}` is linked on {len(days)} days, reaching the page threshold of "
                 f"{thresholds.page_threshold}, but has no page",
+                kind=WarningKind.SLUG_WITHOUT_PAGE,
+                slug=slug,
             )
 
 
@@ -500,7 +548,13 @@ def _needs_lookup(files: Sequence[WikiFile]) -> Iterator[Finding]:
             continue
         for number, line in enumerate(file.lines, start=1):
             for match in NEEDS_LOOKUP.finditer(line):
-                yield Finding(file.path, f"needs lookup: {match['question']}", number)
+                yield Finding(
+                    file.path,
+                    f"needs lookup: {match['question']}",
+                    number,
+                    kind=WarningKind.NEEDS_LOOKUP,
+                    pages=() if file.is_day_log else (file.path,),
+                )
 
 
 def _is_date(text: str) -> bool:

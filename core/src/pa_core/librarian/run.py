@@ -20,6 +20,10 @@ commit messages) doesn't move and the batch stays new for the next run.
 
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
+
+A dreaming run (`pa_core.librarian.dreaming`) sits beside this one, over the same two ports,
+and reuses its parts: the session and its resume loop (`_session`), the tree states its bounds
+are checked with, the removal of merged pages, and the commit message's fields.
 """
 
 from __future__ import annotations
@@ -71,6 +75,9 @@ class Phase(StrEnum):
     """Writes one observation per relevant episode into the day log for its day."""
     CONSOLIDATION = "consolidation"
     """Folds the run's new observations into pages, creating those that have come up enough."""
+    DREAMING = "dreaming"
+    """A dreaming run's one session (`pa_core.librarian.dreaming`): judges the candidates the
+    host flagged over the whole wiki."""
 
 
 @dataclass(frozen=True)
@@ -94,7 +101,10 @@ class SessionResult:
     error: str | None = None
     """What went wrong, when it didn't finish."""
     resumes: int = 0
-    """How many times the run resumed it to fix lint errors."""
+    """How many times the run resumed it to fix what it left."""
+    final_message: str | None = None
+    """The last thing it said, which is where a dreaming session reports its outcomes. Over a
+    session's attempts, its last attempt's."""
 
 
 class SessionRunner(Protocol):
@@ -506,12 +516,20 @@ def _session(
     committed: _Committed,
     *,
     tidy: Callable[[], None] = lambda: None,
+    report_problems: Callable[[SessionResult], Sequence[str]] = lambda _: (),
+    reminder: str = "",
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
     it. A session
     that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
     MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
-    the session's result, its cost and turns added up over its attempts."""
+    the session's result, its cost and turns added up over its attempts.
+
+    A phase whose session must report something in its final message (dreaming's outcomes)
+    gives `report_problems`, which says what's wrong with an attempt's report, or raises when
+    the attempt can't be put right. Those problems resume the session too, within the same
+    limit. Every resume's prompt ends with `reminder`.
+    """
     attempts = [runner.start(phase, prompt, now=now)]
     try:
         while True:
@@ -520,17 +538,30 @@ def _session(
                 raise LibrarianRunError(f"the {phase} session failed: {result.error}")
             tidy()
             require_bounds()
+            problems = report_problems(result)
             errors = [e for e in linter(tree).errors if judged(e)]
-            if not errors:
+            if not problems and not errors:
                 return _combined(attempts)
             if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
                 resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
-                raise LibrarianRunError(
-                    f"the {phase} session left {len(errors)} lint errors{resumed}"
-                    f"{committed.blame(errors)}:\n" + _findings(errors)
-                )
+                left = []
+                if problems:
+                    left.append(
+                        f"the {phase} session's final message can't be accepted{resumed}:\n"
+                        + "\n".join(f"  {problem}" for problem in problems)
+                    )
+                if errors:
+                    left.append(
+                        f"the {phase} session left {len(errors)} lint errors{resumed}"
+                        f"{committed.blame(errors)}:\n" + _findings(errors)
+                    )
+                raise LibrarianRunError("\n".join(left))
             attempts.append(
-                runner.resume(attempts[0].session_id, fix_prompt(phase, errors), now=now)
+                runner.resume(
+                    attempts[0].session_id,
+                    fix_prompt(phase, errors, problems) + reminder,
+                    now=now,
+                )
             )
     except LibrarianRunError as error:
         # The run log records a failed session too, with what it reported.
@@ -550,20 +581,31 @@ def _combined(attempts: Sequence[SessionResult]) -> SessionResult:
         cost_usd=sum(costs) if costs else None,
         turns=sum(turns) if turns else None,
         resumes=len(attempts) - 1,
+        final_message=attempts[-1].final_message,
     )
 
 
-def fix_prompt(phase: Phase, errors: Sequence[Finding]) -> str:
-    """What a session that left lint errors is told when it's resumed: the findings."""
-    findings = "\n".join(f"- {finding}" for finding in errors)
-    return (
-        f"Phase: {phase}\n\n"
-        f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
-        "committed until they are fixed. Fix each one, following CLAUDE.md and staying within "
-        f"this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
-        "<problem>`, with paths relative to the wiki.\n\n"
-        f"{findings}\n"
-    )
+def fix_prompt(phase: Phase, errors: Sequence[Finding], problems: Sequence[str] = ()) -> str:
+    """What a session is told when it's resumed: the `problems` with what its final message
+    reported, if any, then the lint `errors` it left, if any."""
+    parts = [f"Phase: {phase}\n"]
+    if problems:
+        listed = "\n".join(f"- {problem}" for problem in problems)
+        parts.append(
+            "The host can't accept what your final message reported, and the run can't be "
+            "committed until it can. Put each of these right, following CLAUDE.md and staying "
+            f"within this phase's bounds:\n\n{listed}\n"
+        )
+    if errors:
+        findings = "\n".join(f"- {finding}" for finding in errors)
+        parts.append(
+            f"Lint found {len(errors)} errors in the wiki after your work, and the run can't be "
+            "committed until they are fixed. Fix each one, following CLAUDE.md and staying "
+            "within this phase's bounds; change nothing else. Each finding is `<path>[:<line>]: "
+            "<problem>`, with paths relative to the wiki.\n\n"
+            f"{findings}\n"
+        )
+    return "\n".join(parts)
 
 
 type _TreeState = dict[str, tuple[str, ...]]
