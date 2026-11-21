@@ -12,7 +12,9 @@ import os
 import re
 import subprocess
 import textwrap
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
+from datetime import UTC, datetime, time, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -26,7 +28,26 @@ from pa_home.cut import take_cut
 from pa_home.librarian_project import LIBRARIAN_PROJECT
 from pa_home.lock import data_root_lock
 
-# Sent late on 30 Sep in Chicago, which is already 1 Oct in UTC.
+CHICAGO = ZoneInfo("America/Chicago")
+"""The owner's time zone."""
+
+
+def days_ago(days: int) -> str:
+    """The date `days` days before today in the owner's time zone; runs are told the clock."""
+    return (datetime.now(CHICAGO).date() - timedelta(days=days)).isoformat()
+
+
+def mailed(days: int, clock: str) -> str:
+    """An email's `Date`: `clock` in the owner's time zone, `days` days before today."""
+    moment = datetime.combine(
+        datetime.now(CHICAGO).date() - timedelta(days=days), time.fromisoformat(clock), CHICAGO
+    )
+    return format_datetime(moment)
+
+
+# The wiki's mail is dated by the clock, as the runs are: a page's age is measured from today.
+HOTEL_DAY, ROOM_LIST_DAY = days_ago(12), days_ago(10)
+"""The days the two emails of `run_with_pages` are logged on."""
 HOTEL = "gmail_9ff7394d0df8584d"
 """The id of the episode `email()` makes by default."""
 
@@ -35,7 +56,8 @@ def email(
     *,
     message_id: str = "wedding-0001@example.net",
     labels: str = "Inbox",
-    date: str = "Wed, 30 Sep 2026 21:30:00 -0500",
+    # Sent late in Chicago, which is already the next day in UTC.
+    date: str = mailed(12, "21:30"),
     sender: str = "David Kim <dkim@example.net>",
     to: str = "Argus McNevans <argus@example.com>",
     subject: str = "Hotel block",
@@ -70,6 +92,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
         "PA_LIBRARIAN_TIMEOUT_SECONDS",
         "PA_LIBRARIAN_PAGE_THRESHOLD",
         "PA_LIBRARIAN_LOOP_AGE_DAYS",
+        "PA_LIBRARIAN_STALE_LATER_DAYS",
+        "PA_LIBRARIAN_QUIET_DAYS",
         "PA_LIBRARIAN_SANDBOX",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -148,11 +172,6 @@ def tree_state(directory: Path) -> dict[str, object]:
     return state
 
 
-def days_ago(days: int) -> str:
-    """The date `days` days before today in the owner's time zone; runs are told the clock."""
-    return (datetime.now(ZoneInfo("America/Chicago")).date() - timedelta(days=days)).isoformat()
-
-
 PERSON, TOPIC = "people/david-kim.md", "topics/wedding.md"
 ROOM_LIST = f"- [ ] [[david-kim]] → me: the room list · asked {days_ago(40)} [ep:{HOTEL}]"
 """The wedding's loop, open 40 days: more than lint's 30."""
@@ -169,7 +188,7 @@ def wedding_pages() -> dict[str, str]:
             aliases: [Dave]
             status: active
             summary: Old friend, getting married on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             emails: [dkim@example.net]
             ---
             # David Kim
@@ -189,7 +208,7 @@ def wedding_pages() -> dict[str, str]:
             aliases: [Dave's wedding]
             status: active
             summary: Dave's wedding on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             ---
             # Wedding
 
@@ -211,10 +230,18 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "we
 """The slugs the stand-in's observations link, by the episode's subject."""
 
 
-def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
+def linked(day: str, *slugs: str) -> dict:
+    """The stand-in's action logging an observation on `day` that links `slugs`."""
+    links = " and ".join(f"[[{slug}]]" for slug in slugs)
+    return {"append": f"days/{day}.md", "text": f"- a note about {links} [ep:{HOTEL}]\n"}
+
+
+def run_with_pages(
+    data_root: Path, pages: dict[str, str] | None = None, logged: Sequence[dict] = ()
+) -> str:
     """One nightly run over the hotel email and a later one sending the room list, whose
-    consolidation writes `pages` (the wedding pages unless given). Returns the later email's
-    episode id."""
+    observation also logs `logged` (`linked` actions) and whose consolidation writes `pages`
+    (the wedding pages unless given). Returns the later email's episode id."""
     ingest(
         data_root,
         {
@@ -222,7 +249,7 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
                 labels="Sent",
-                date="Fri, 2 Oct 2026 09:00:00 -0500",
+                date=mailed(10, "09:00"),
                 sender="Argus McNevans <argus@example.com>",
                 to="David Kim <dkim@example.net>",
                 subject="Room list",
@@ -233,7 +260,7 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
     pages = wedding_pages() if pages is None else pages
     script(
         data_root,
-        observation=[{"observe": True, "links": LINKS}],
+        observation=[{"observe": True, "links": LINKS}, *logged],
         consolidation=[{"write": path, "text": text} for path, text in pages.items()],
     )
     assert run_librarian() == 0
@@ -338,7 +365,7 @@ KITCHEN = textwrap.dedent(
     aliases: []
     status: active
     summary: The kitchen remodel.
-    updated: 2026-10-02
+    updated: {ROOM_LIST_DAY}
     ---
     # Kitchen
 
@@ -502,7 +529,7 @@ KINDS = {
         {
             "kind": "slug-without-page",
             "pages": [],
-            "path": "days/2026-10-02.md",
+            "path": f"days/{ROOM_LIST_DAY}.md",
             "message": "`wedding` is linked on 2 days, reaching the page threshold of 2, but "
             "has no page",
             "slug": "wedding",
@@ -554,13 +581,13 @@ def test_a_slug_at_the_threshold_is_a_candidate_only_once_the_owner_has_engaged_
             "gmail/hotel.eml": email(),
             "gmail/deposit.eml": email(
                 message_id="wedding-0004@example.net",
-                date="Fri, 2 Oct 2026 08:00:00 -0500",
+                date=mailed(10, "08:00"),
                 subject="Deposit",
             ),
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
                 labels="Sent",
-                date="Fri, 2 Oct 2026 09:00:00 -0500",
+                date=mailed(10, "09:00"),
                 sender="Argus McNevans <argus@example.com>",
                 to="David Kim <dkim@example.net>",
                 subject="Room list",
@@ -709,18 +736,18 @@ FAILURES = {
     "a line added to a day log": (
         [
             LOOP_CLOSED,
-            {"append": "days/2026-09-30.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
+            {"append": f"days/{HOTEL_DAY}.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
             reporting(APPLIED),
         ],
-        "the dreaming session changed days/2026-09-30.md, outside the pages",
+        f"the dreaming session changed days/{HOTEL_DAY}.md, outside the pages",
         1,
     ),
     "a new day log": (
         [
-            {"write": "days/2026-10-03.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
+            {"write": f"days/{days_ago(9)}.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
             reporting(DISMISSED),
         ],
-        "the dreaming session changed days/2026-10-03.md, outside the pages",
+        f"the dreaming session changed days/{days_ago(9)}.md, outside the pages",
         1,
     ),
     "the index written": (
@@ -809,7 +836,7 @@ DAVE = textwrap.dedent(
     aliases: []
     status: active
     summary: Dave, who sent the room list.
-    updated: 2026-10-02
+    updated: {ROOM_LIST_DAY}
     emails: []
     ---
     # Dave
@@ -863,7 +890,7 @@ def test_the_host_removes_a_merged_page_rewrites_its_links_and_regenerates_the_i
     assert "people/dave.md" not in files
     assert files[PERSON] == merged
     # The day log's link now goes to the page that took the name, and the index follows.
-    assert files["days/2026-10-02.md"] == (
+    assert files[f"days/{ROOM_LIST_DAY}.md"] == (
         f"- email about Room list with [[david-kim|dave]] and [[wedding]] [ep:{room_list}]\n"
     )
     assert "dave" not in files["index.md"].replace("david-kim", "")
@@ -924,7 +951,7 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
     stamp = re.search(r"; (\S+)\)\. Treat it as now\.", flag(argv, "--append-system-prompt"))
     assert stamp is not None
     told = datetime.fromisoformat(stamp[1])
-    chicago = datetime.now(ZoneInfo("America/Chicago"))
+    chicago = datetime.now(CHICAGO)
     assert told.utcoffset() == chicago.utcoffset()
     assert abs(chicago - told) < timedelta(minutes=1)
     # Its prompt names its phase, and says where it may read and write.
@@ -945,6 +972,348 @@ def test_pa_librarian_dream_skips_while_another_job_holds_the_lock(data_root: Pa
     assert out == "librarian dream: skipped: another job holds the data root's lock\n"
     assert sessions(data_root, "dreaming") == []
     assert commit_messages(data_root) == history
+
+
+# Stale pages, statuses that disagree with their loops, and quiet pages (#145): what dreaming
+# sees that lint doesn't.
+
+
+def _each(*edits):
+    def edit(pages: dict[str, str]) -> None:
+        for one in edits:
+            one(pages)
+
+    return edit
+
+
+OPEN = ROOM_LIST.replace(f"asked {days_ago(40)}", f"asked {days_ago(1)}")
+"""The wedding's loop as the settled pages have it: open since yesterday, owed by Dave."""
+RSVP = f"- [ ] me → [[david-kim]]: an RSVP · promised {days_ago(1)} [ep:{HOTEL}]"
+"""A loop for Dave's own page."""
+MISMATCH = "a status that disagrees with its loops: "
+
+
+def _kitchen(updated: str, status: str = "active"):
+    """The kitchen's page added, last updated on `updated`."""
+
+    def edit(pages: dict[str, str]) -> None:
+        pages["topics/kitchen.md"] = KITCHEN.replace(
+            f"updated: {ROOM_LIST_DAY}", f"updated: {updated}"
+        ).replace("status: active", f"status: {status}")
+
+    return edit
+
+
+# Each wiki with such a problem: what puts it in the settled pages, what the day logs also
+# hold, the candidate the session is given for it (after its id, `c01`), and the environment
+# that brings it out.
+FLAGGED = {
+    "a page linked on three days since its update": (
+        lambda pages: None,
+        # Dave is linked on two of them, and on a day yet to come: a dinner booked ahead.
+        [
+            linked(days_ago(8), "wedding", "david-kim"),
+            linked(days_ago(5), "wedding", "david-kim"),
+            linked(days_ago(3), "wedding"),
+            linked(days_ago(-4), "david-kim"),
+        ],
+        {
+            "kind": "stale",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"a stale page: updated {ROOM_LIST_DAY}, and observations link "
+            "[[wedding]] on 3 later days",
+            "day_logs": [f"days/{days_ago(days)}.md" for days in (8, 5, 3)],
+        },
+        {},
+    ),
+    "a page linked on one later day, at a threshold of one": (
+        lambda pages: None,
+        [linked(days_ago(8), "wedding")],
+        {
+            "kind": "stale",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"a stale page: updated {ROOM_LIST_DAY}, and observations link "
+            "[[wedding]] on 1 later day",
+            "day_logs": [f"days/{days_ago(8)}.md"],
+        },
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+    "a settled topic with an open loop": (
+        _edit(TOPIC, "status: active", "status: settled"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"{MISMATCH}it is settled, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "a dormant topic with an open loop": (
+        _edit(TOPIC, "status: active", "status: dormant"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [TOPIC],
+            "path": TOPIC,
+            "message": f"{MISMATCH}it is dormant, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "an inactive person who owes an open loop on a topic's page": (
+        _edit(PERSON, "status: active", "status: inactive"),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [PERSON, TOPIC],
+            "path": PERSON,
+            "message": f"{MISMATCH}it is inactive, with 1 open loop on {TOPIC}",
+        },
+        {},
+    ),
+    "an inactive person with open loops on their own page and a topic's": (
+        _each(
+            _edit(PERSON, "status: active", "status: inactive"),
+            _edit(PERSON, "## Open loops\n", f"## Open loops\n{RSVP}\n"),
+        ),
+        [],
+        {
+            "kind": "status-mismatch",
+            "pages": [PERSON, TOPIC],
+            "path": PERSON,
+            "message": f"{MISMATCH}it is inactive, with 2 open loops on {PERSON}, {TOPIC}",
+        },
+        {},
+    ),
+    "an active page nothing has linked for 90 days": (
+        _kitchen(days_ago(90)),
+        # A visit booked ahead is logged on its day, which is yet to come.
+        [
+            linked(days_ago(120), "kitchen"),
+            linked(days_ago(90), "kitchen"),
+            linked(days_ago(-3), "kitchen"),
+        ],
+        {
+            "kind": "quiet",
+            "pages": ["topics/kitchen.md"],
+            "path": "topics/kitchen.md",
+            "message": "a quiet page: it is active, and no observation has linked "
+            f"[[kitchen]] since {days_ago(90)}, 90 days ago",
+        },
+        {},
+    ),
+    "an active page nothing has linked for as long as configured": (
+        _kitchen(days_ago(11)),
+        [linked(days_ago(11), "kitchen")],
+        {
+            "kind": "quiet",
+            "pages": ["topics/kitchen.md"],
+            "path": "topics/kitchen.md",
+            "message": "a quiet page: it is active, and no observation has linked "
+            f"[[kitchen]] since {days_ago(11)}, 11 days ago",
+        },
+        {"PA_LIBRARIAN_QUIET_DAYS": "11"},
+    ),
+}
+
+BOTH = ("wedding", "david-kim")
+
+
+def _updated(day: str):
+    """Every page last updated on `day`."""
+
+    def edit(pages: dict[str, str]) -> None:
+        for path in pages:
+            _edit(path, f"updated: {ROOM_LIST_DAY}", f"updated: {day}")(pages)
+
+    return edit
+
+
+# Wikis with no such problem: what changes the settled pages, what the day logs also hold, and
+# the environment.
+NOT_FLAGGED = {
+    "pages linked on two days since their update": (
+        lambda pages: None,
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH)],
+        {},
+    ),
+    "pages updated on their latest linking day": (
+        _updated(days_ago(3)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH), linked(days_ago(3), *BOTH)],
+        {},
+    ),
+    "pages updated after their latest linking day": (
+        _updated(days_ago(1)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH), linked(days_ago(3), *BOTH)],
+        {},
+    ),
+    # Day logs exist for days yet to come: calendar events booked ahead.
+    "pages linked on three days after today": (
+        lambda pages: None,
+        [linked(days_ago(-1), *BOTH), linked(days_ago(-2), *BOTH), linked(days_ago(-9), *BOTH)],
+        {},
+    ),
+    "pages updated on their latest linking day, at a threshold of one": (
+        _updated(days_ago(3)),
+        [linked(days_ago(8), *BOTH), linked(days_ago(3), *BOTH), linked(days_ago(-1), *BOTH)],
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+    ),
+    "a settled topic and an inactive person whose loops are closed": (
+        _each(
+            _edit(TOPIC, "status: active", "status: settled"),
+            _edit(PERSON, "status: active", "status: inactive"),
+            _edit(PERSON, "## Open loops\n", f"## Open loops\n{RSVP}\n"),
+            *(
+                _edit(
+                    page,
+                    loop,
+                    loop.replace("- [ ]", "- [x]") + f" · closed {days_ago(0)} [ep:{HOTEL}]",
+                )
+                for page, loop in ((TOPIC, OPEN), (PERSON, RSVP))
+            ),
+        ),
+        [],
+        {},
+    ),
+    "an active page linked 89 days ago": (
+        _kitchen(days_ago(89)),
+        [linked(days_ago(120), "kitchen"), linked(days_ago(89), "kitchen")],
+        {},
+    ),
+    "a settled topic nothing has linked for 120 days": (
+        _kitchen(days_ago(120), status="settled"),
+        [linked(days_ago(120), "kitchen")],
+        {},
+    ),
+    # Nothing has linked it yet, so there is nothing to measure its quiet from.
+    "an active page linked only on a day after today": (
+        _kitchen(days_ago(120)),
+        [linked(days_ago(-3), "kitchen")],
+        {},
+    ),
+}
+
+
+@pytest.mark.parametrize("wiki", NOT_FLAGGED, ids=list(NOT_FLAGGED))
+def test_a_wiki_with_no_stale_page_mismatched_status_or_quiet_page_offers_no_candidate(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys, wiki: str
+):
+    edit, logged, environment = NOT_FLAGGED[wiki]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    pages = settled_pages()
+    edit(pages)
+    run_with_pages(data_root, pages, logged)
+    capsys.readouterr()
+
+    assert dream() == 0
+
+    assert sessions(data_root, "dreaming") == []
+    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("problem", FLAGGED, ids=list(FLAGGED))
+def test_a_stale_page_a_status_that_disagrees_with_its_loops_and_a_quiet_page_are_candidates(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, problem: str
+):
+    edit, logged, candidate, environment = FLAGGED[problem]
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    pages = settled_pages()
+    edit(pages)
+    run_with_pages(data_root, pages, logged)
+    script(data_root, dreaming=[reporting(DISMISSED)])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert session["candidates"] == [{"id": "c01", **candidate}]
+    summary = commit_messages(data_root)[0].splitlines()[0]
+    assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+
+
+def test_candidates_are_offered_in_a_fixed_order_of_kinds(data_root: Path):
+    # The wedding's page is stale and its loop is aging, Dave is inactive though he owes that
+    # loop, and nothing has linked the kitchen in 90 days.
+    pages = wedding_pages()
+    _each(_edit(PERSON, "status: active", "status: inactive"), _kitchen(days_ago(90)))(pages)
+    logged = [
+        linked(days_ago(90), "kitchen"),
+        *(linked(days_ago(days), "wedding") for days in (8, 5, 3)),
+    ]
+    run_with_pages(data_root, pages, logged)
+    judged = [{"candidate": f"c0{number}", "outcome": "dismissed"} for number in (1, 2, 3, 4)]
+    script(data_root, dreaming=[reporting(*judged)])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert [(c["id"], c["kind"], c["pages"]) for c in session["candidates"]] == [
+        ("c01", "stale", [TOPIC]),
+        ("c02", "status-mismatch", [PERSON, TOPIC]),
+        ("c03", "loop-aging", [TOPIC]),
+        ("c04", "quiet", ["topics/kitchen.md"]),
+    ]
+    assert commit_messages(data_root)[0].split("\n\n")[1].splitlines() == [
+        "Candidates:",
+        f"- c01 · stale · {TOPIC} · dismissed",
+        f"- c02 · status-mismatch · {PERSON}, {TOPIC} · dismissed",
+        f"- c03 · loop-aging · {TOPIC} [ep:{HOTEL}] · dismissed",
+        "- c04 · quiet · topics/kitchen.md · dismissed",
+    ]
+
+
+def test_a_stale_page_brought_up_to_date_is_committed_and_claimed_by_its_outcome(
+    data_root: Path,
+):
+    later = [linked(days_ago(days), "wedding") for days in (8, 5, 3)]
+    run_with_pages(data_root, settled_pages(), later)
+    history = commit_messages(data_root)
+    current = (
+        settled_pages()[TOPIC]
+        .replace(f"updated: {ROOM_LIST_DAY}", f"updated: {days_ago(0)}")
+        .replace("The hotel block closes on Oct 9", "The hotel block is full")
+    )
+    script(data_root, dreaming=[{"write": TOPIC, "text": current}, reporting(APPLIED)])
+
+    assert dream() == 0
+
+    assert wiki_files(data_root)[TOPIC] == current
+    assert git(data_root, "show", "--format=", "--name-only", "HEAD").split() == [TOPIC]
+    summary, listed, _ = commit_messages(data_root)[0].split("\n\n")
+    assert summary == "dreaming run: 1 candidates, 1 applied, 0 dismissed"
+    assert listed.splitlines() == ["Candidates:", f"- c01 · stale · {TOPIC} · applied: {TOPIC}"]
+    assert commit_messages(data_root)[1:] == history
+    # Updated after everything that links it, the page is no longer a candidate.
+    assert dream() == 0
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert len(commit_messages(data_root)) == len(history) + 1
+
+
+def judging(kind: str) -> str:
+    """How the instructions say to judge a `kind` candidate: its bullet under "How to judge
+    each kind", with its whitespace collapsed."""
+    bullet = re.search(
+        rf"^- \*\*`{kind}`\*\*.*?(?=^- \*\*`|^### )", dreaming_instructions(), re.M | re.S
+    )
+    assert bullet is not None, f"no bullet says how to judge a {kind} candidate"
+    return " ".join(bullet[0].split())
+
+
+def test_the_instructions_say_how_to_judge_the_three_kinds_lint_has_no_warning_for():
+    # A stale page is brought up to date from the day logs its candidate lists.
+    stale = judging("stale")
+    assert "The candidate lists those `day_logs`" in stale
+    assert "Bring the page up to date from them" in stale
+    # A status is corrected in whichever direction L0 supports.
+    mismatch = judging("status-mismatch")
+    assert "close the loop" in mismatch
+    assert "set the page's `status` to `active`" in mismatch
+    # A quiet page is marked dormant or inactive.
+    quiet = judging("quiet")
+    assert "`dormant`" in quiet and "`inactive`" in quiet
 
 
 def dreaming_instructions() -> str:

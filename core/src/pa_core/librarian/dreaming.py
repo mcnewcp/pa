@@ -38,7 +38,14 @@ from pa_core.l0 import L0Store
 from pa_core.librarian.candidates import Candidate, candidates
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
-from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import (
+    QUIET_DAYS,
+    STALE_LATER_DAYS,
+    Finding,
+    L0Metadata,
+    Thresholds,
+    lint,
+)
 from pa_core.librarian.run import (
     CURSOR_FIELD,
     LOOP_AGE_DAYS,
@@ -145,6 +152,8 @@ def run_dreaming(
     now: datetime,
     page_threshold: int = PAGE_THRESHOLD,
     loop_age_days: int = LOOP_AGE_DAYS,
+    stale_later_days: int = STALE_LATER_DAYS,
+    quiet_days: int = QUIET_DAYS,
 ) -> DreamingOutcome:
     """Runs dreaming once over the wiki as last committed, and commits what it changed.
 
@@ -152,13 +161,21 @@ def run_dreaming(
     measured against, with `page_threshold` and `loop_age_days` as a nightly run's lint has
     them. With no candidates it does nothing. Raises LibrarianRunError when the run fails,
     after restoring the wiki.
+
+    `stale_later_days` and `quiet_days` are as `Thresholds` describes them.
     """
     tree = repository.tree
     sessions: list[tuple[Phase, SessionResult]] = []
     try:
         # Whatever an interrupted run left behind goes before this one starts.
         repository.discard()
-        thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
+        thresholds = Thresholds(
+            now.date(),
+            page_threshold,
+            loop_age_days,
+            stale_later_days=stale_later_days,
+            quiet_days=quiet_days,
+        )
         l0 = L0Metadata.of(store.envelopes())
         offered = candidates(tree, l0=l0, owner=owner, thresholds=thresholds)
         if not offered:
