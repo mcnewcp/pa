@@ -553,6 +553,8 @@ def pages(tree: Path) -> list[Page]:
 
 # Proposals
 
+PROPOSALS_TITLE = "# Proposals"
+"""The one line `proposals.md` may hold before its sections."""
 OPEN, ANSWERED = "Open", "Answered"
 """The sections of `proposals.md` (`## <name>`), in order."""
 PROPOSAL_KINDS = {"change": ("accepted", "declined"), "question": ("answered",)}

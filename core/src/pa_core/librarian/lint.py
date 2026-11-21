@@ -15,11 +15,12 @@ An error fails the run. The rules so far:
   named for a file at the wiki's top level (`index`, `proposals`, `retired`), which a link by
   that name goes to.
 - **Citations** name episodes that are in L0.
-- **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
-  nothing in them but well-formed proposal lines, open ones under Open and answered ones under
-  Answered. No two share an id; a proposal's text is short and holds no URL; every link of
-  an open proposal goes to a page, or to a retired slug; and an answered proposal's last
-  citation is one of the owner's chat exchanges, so nothing but the owner's word closes one.
+- **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, after
+  at most its title, `# Proposals`, and nothing in them but well-formed proposal lines, open
+  ones under Open and answered ones under Answered. No two share an id; a proposal's text is
+  short and holds no URL; every link of an open proposal goes to a page, or to a retired
+  slug; and an answered proposal's last citation is one of the owner's chat exchanges, so
+  nothing but the owner's word closes one.
 - **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once, after an
   optional title.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
@@ -76,6 +77,7 @@ from pa_core.librarian.wiki import (
     PROPOSAL_FORMAT,
     PROPOSAL_TEXT_LIMIT,
     PROPOSALS,
+    PROPOSALS_TITLE,
     RETIRED,
     RETIREMENT_FORMAT,
     ROOT_FILES,
@@ -511,10 +513,11 @@ _URL = re.compile(
 def _proposals(
     files: Sequence[WikiFile], tree: Path, l0: L0Metadata, owner: Owner
 ) -> Iterator[Finding]:
-    """`proposals.md` follows its schema: the two sections, in order, with only a `# <title>`
-    before them, and in them only proposal lines, each in its section, with its own id, short
-    plain text, and, while it's open, links that go to pages. An answered one cites one of
-    `owner`'s chat exchanges last: only the owner's word closes a proposal.
+    """`proposals.md` follows its schema, every line of it: the two sections, in order, with
+    only its fixed title before them, and in them only proposal lines, each in its section,
+    with its own id, short plain text, and, while it's open, links that go to pages. An
+    answered one cites one of `owner`'s chat exchanges last: only the owner's word closes a
+    proposal.
 
     A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
     paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
@@ -545,8 +548,15 @@ def _proposals(
             if titled or not line.startswith("# "):
                 yield Finding(
                     PROPOSALS,
-                    "text before its first section: only a `# <title>` line may come before "
-                    f"the sections, got {line!r}",
+                    f"text before its first section: only its title, `{PROPOSALS_TITLE}`, may "
+                    f"come before the sections, got {line!r}",
+                    number,
+                )
+            elif line.rstrip() != PROPOSALS_TITLE:
+                # The owner reads the file whole, so no line of it is free text.
+                yield Finding(
+                    PROPOSALS,
+                    f"its title is `{PROPOSALS_TITLE}`, and nothing else, got {line!r}",
                     number,
                 )
             titled = True

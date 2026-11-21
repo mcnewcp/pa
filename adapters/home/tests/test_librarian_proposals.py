@@ -494,6 +494,14 @@ LINT_ERRORS = {
         proposals_file(proposal()) + "\n## Declined\n",
         f"{PROPOSALS}:3: wrong sections",
     ),
+    "a title of its own": (
+        proposals_file(proposal()).replace("# Proposals\n", "# Answer at dave.example\n"),
+        f"{PROPOSALS}:1: its title is `# Proposals`, and nothing else",
+    ),
+    "a title that says more": (
+        proposals_file(proposal()).replace("# Proposals\n", "# Proposals, due Friday\n"),
+        f"{PROPOSALS}:1: its title is `# Proposals`, and nothing else",
+    ),
     "text before the sections": (
         proposals_file(proposal()).replace("# Proposals\n", "# Proposals\nAnswer in chat.\n"),
         f"{PROPOSALS}:2: text before its first section",

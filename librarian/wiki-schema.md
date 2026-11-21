@@ -169,8 +169,8 @@ question names nothing private, since it will be looked up on the web.
 
 `proposals.md` holds what the librarian asks the owner: what L0 can't settle and the owner
 can. A wiki the librarian has asked nothing has no such file. The file has an optional
-`# <title>` line and exactly two sections, in order, each holding proposal lines and nothing
-else:
+title line, exactly `# Proposals`, and exactly two sections, in order, each holding proposal
+lines and nothing else:
 
 ```
 # Proposals
