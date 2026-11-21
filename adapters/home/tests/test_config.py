@@ -56,6 +56,22 @@ def test_dreamings_candidate_cap_is_thirty_or_a_configured_whole_number_of_at_le
     assert load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": "12"}).candidate_cap == 12
 
 
+def test_dreaming_is_due_every_seven_days_unless_configured_and_zero_turns_it_off():
+    assert load_librarian_config({}).dreaming_interval_days == 7
+    configured = load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": "14"})
+    assert configured.dreaming_interval_days == 14
+    off = load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": "0"})
+    assert off.dreaming_interval_days == 0
+
+
+@pytest.mark.parametrize("value", ["2.5", "-1", "weekly"])
+def test_the_dreaming_interval_is_a_whole_number_of_days(value: str):
+    with pytest.raises(
+        ConfigError, match="PA_LIBRARIAN_DREAMING_INTERVAL_DAYS must be a whole number"
+    ):
+        load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": value})
+
+
 def test_a_dreaming_run_may_add_five_proposals_up_to_fifteen_open_unless_configured():
     caps = load_librarian_config({}).proposal_caps
 

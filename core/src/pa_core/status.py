@@ -79,11 +79,37 @@ class LibrarianRun(_Model):
     """How many lint warnings the run left."""
 
 
+class DreamingRun(_Model):
+    """The outcome of the last dreaming run, the librarian's review of the whole wiki, by the
+    nightly job or by hand: counts and a reason, never a page, a proposal, or what a
+    candidate was about."""
+
+    at: AwareDatetime
+    succeeded: bool
+    reason: str | None = None
+    """Why it failed, without content."""
+    cost_usd: float | None = None
+    candidates: int | None = None
+    """How many candidate problems the run judged: 0 when it found nothing to judge, and so
+    ran no session and made no commit. None for a failed run."""
+    outcomes: dict[str, int] = {}
+    """How many of those candidates got each outcome (`applied`, `proposed`, `dismissed`).
+    Empty for a failed run."""
+    held_back: int | None = None
+    """How many candidates the wiki had that the run didn't offer, because an earlier run
+    dismissed them or a proposal about them is still open. None for a failed run."""
+
+
 class WikiStatus(_Model):
     current_through: AwareDatetime | None = None
     """The librarian's cursor after its last committed run: episodes captured after this
     aren't in the wiki yet, so they're only in L0."""
     last_run: LibrarianRun | None = None
+    last_dreaming: DreamingRun | None = None
+    """None until dreaming first runs."""
+    open_proposals: int | None = None
+    """How many proposals are open in the wiki as last committed: what the librarian is
+    waiting on the owner for. None until a run first counts them."""
 
 
 class NightlyStatus(_Model):

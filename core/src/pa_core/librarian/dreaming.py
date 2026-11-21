@@ -48,6 +48,7 @@ from pa_core.librarian.candidates import (
     DreamingHistory,
     PastRun,
     candidates,
+    held_back,
 )
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
@@ -159,6 +160,10 @@ class DreamingOutcome:
     """The run's one session, as a nightly run lists its own."""
     warnings: tuple[Finding, ...] = ()
     """Lint's warnings about the wiki as committed."""
+    held_back: int = 0
+    """How many candidates the wiki had that the run wasn't offered, because its history
+    holds them back (`pa_core.librarian.candidates`). A run with no candidates and some held
+    back had nothing to judge, in a wiki that still has what an earlier run flagged."""
 
     def count(self, outcome: str) -> int:
         """How many candidates got `outcome` (one of `OUTCOMES`)."""
@@ -239,16 +244,18 @@ def run_dreaming(
             quiet_days=quiet_days,
         )
         l0 = L0Metadata.of(store.envelopes())
+        history = dreaming_history(repository, now)
         offered = candidates(
             tree,
             l0=l0,
             owner=owner,
             thresholds=thresholds,
-            history=dreaming_history(repository, now),
+            history=history,
             cap=candidate_cap,
         )
+        waiting = held_back(tree, l0=l0, owner=owner, thresholds=thresholds, history=history)
         if not offered:
-            return DreamingOutcome()
+            return DreamingOutcome(held_back=waiting)
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
         committed = _Committed(linter(tree).errors)
         result, outcomes, suggestion = _dream(
@@ -270,6 +277,7 @@ def run_dreaming(
             suggestion=suggestion,
             sessions=tuple(sessions),
             warnings=report.warnings,
+            held_back=waiting,
         )
         commit = repository.commit(dreaming_commit_message(judged, carried, librarian, now))
     except LibrarianRunError as error:

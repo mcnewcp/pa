@@ -710,6 +710,9 @@ def _dream(data_root: DataRoot) -> None:
 
 def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
     """Print what a dreaming run did, as `name`: counts, never content."""
+    if outcome.commit is None and outcome.held_back:
+        print(f"{name}: nothing to judge; every candidate is held back ({outcome.held_back})")
+        return
     if outcome.commit is None:
         print(f"{name}: no candidates in the wiki")
         return

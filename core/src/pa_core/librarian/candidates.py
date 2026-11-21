@@ -45,6 +45,7 @@ together.
 
 from __future__ import annotations
 
+import sys
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -296,6 +297,28 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
                 held.add(identity)
         judged |= decided
     return held
+
+
+def held_back(
+    tree: Path,
+    *,
+    l0: L0Metadata,
+    owner: Owner,
+    thresholds: Thresholds,
+    history: DreamingHistory,
+) -> int:
+    """How many of the candidates flagged in the wiki at `tree` `history` holds back, as
+    `candidates` would: what a run isn't offered because an earlier run dismissed it or asked
+    the owner about it. A wiki whose every candidate is held back has nothing to judge, which
+    isn't the same as having no problems."""
+
+    def flagged(history: DreamingHistory) -> int:
+        offered = candidates(
+            tree, l0=l0, owner=owner, thresholds=thresholds, history=history, cap=sys.maxsize
+        )
+        return len(offered)
+
+    return flagged(NO_HISTORY) - flagged(history)
 
 
 _UNNUMBERED = ""

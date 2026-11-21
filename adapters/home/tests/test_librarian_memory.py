@@ -320,7 +320,8 @@ def test_a_dismissed_candidate_isnt_offered_by_the_next_run(data_root: Path, cap
     # no commit.
     assert offered(data_root) == [[ORPHAN]]
     assert commit_messages(data_root) == history
-    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+    said = "librarian dream: nothing to judge; every candidate is held back (1)"
+    assert said in capsys.readouterr().out
 
 
 def night(data_root: Path, subject: str, written: dict[str, str]) -> None:
