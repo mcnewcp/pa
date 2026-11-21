@@ -47,6 +47,9 @@ ROOM_LIST_DAY = days_ago(10)
 """The day the later email of `run_with_pages` is logged on, and its pages were updated."""
 HOTEL = "gmail_9ff7394d0df8584d"
 """The id of the episode `email()` makes by default."""
+CHAT = Path(__file__).parents[3] / "core/tests/fixtures/assistant_chat/single_exchange.json"
+ANSWER = "assistant_chat_532dd6398f1dd884"
+"""The id of that chat exchange's episode: the owner's word, which alone answers a proposal."""
 
 
 def email(
@@ -257,8 +260,8 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["dave", "wedding
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email and a later one sending the room list, whose
-    consolidation writes `written` (`pages()` unless given)."""
+    """One nightly run over the hotel email, a later one sending the room list, and a chat
+    exchange, whose consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
         {
@@ -272,6 +275,7 @@ def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> No
                 subject="Room list",
                 body="Here is the room list.",
             ),
+            "assistant_chat/answer.json": CHAT.read_bytes(),
         },
     )
     written = pages() if written is None else written
@@ -410,10 +414,9 @@ def padded(length: int) -> str:
 
 ANSWERED_LINE = (
     f"- [x] P2 · question · Did [[david-kim]] send the room list? · proposed {days_ago(9)} "
-    f"· answered {days_ago(2)} [ep:{HOTEL}] [ep:{HOTEL}]"
+    f"· answered {days_ago(2)} [ep:{HOTEL}] [ep:{ANSWER}]"
 )
-"""An answered proposal in the schema's format (whether its last citation is the owner's answer
-is a later rule)."""
+"""An answered proposal in the schema's format, citing the owner's chat exchange last."""
 
 # What a dreaming session leaves in `proposals.md` beside its outcome, proposed P1, and what
 # lint says of it when the session is resumed.
@@ -512,8 +515,13 @@ LINT_ERRORS = {
         f"{PROPOSALS}:7: malformed proposal",
     ),
     "an answered proposal that cites no answer": (
-        proposals_file(proposal(), answered=(ANSWERED_LINE.removesuffix(f" [ep:{HOTEL}]"),)),
+        proposals_file(proposal(), answered=(ANSWERED_LINE.removesuffix(f" [ep:{ANSWER}]"),)),
         f"{PROPOSALS}:7: malformed proposal",
+    ),
+    "an answered proposal whose last citation isn't the owner's chat": (
+        proposals_file(proposal(), answered=(ANSWERED_LINE.replace(ANSWER, HOTEL),)),
+        f"{PROPOSALS}:7: P2 is answered, but its last citation, {HOTEL}, isn't one of the "
+        "owner's chat exchanges",
     ),
 }
 

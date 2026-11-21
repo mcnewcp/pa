@@ -55,13 +55,17 @@ from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
 from pa_core.librarian.wiki import (
+    ANSWERED,
     DAYS,
     INDEX,
     PAGE_FOLDERS,
+    PROPOSALS,
+    Proposal,
     day_logs,
     folder_files,
     is_page_name,
     pages,
+    read_proposals,
     reference_counts,
     slugify,
 )
@@ -421,6 +425,8 @@ def _consolidate(
     committed: _Committed,
 ) -> tuple[Phase, SessionResult]:
     report = linter(tree)
+    standing = read_proposals(tree)
+    asked = [proposal for proposal in standing if proposal.is_open]
     prompt = (
         consolidation_prompt(
             observations,
@@ -434,27 +440,42 @@ def _consolidate(
         + identity_prompt(identities)
         + "\n"
         + warnings_prompt(report.warnings)
+        + ("\n" + open_proposals_prompt(asked, runner.paths) if asked else "")
         + ("\n" + errors_prompt(page_errors) if page_errors else "")
     )
     before, logged = _tree_state(tree), day_logs(tree)
-    # Consolidation may not change day-log lines, so it can't fix the errors already in them.
-    unfixable = {_key(e) for e in report.errors if _in_days(e)}
+    # Consolidation may not change day-log lines, nor a proposal but to resolve it, so it can't
+    # fix the errors already in them: only those its own work leaves there.
+    unfixable = {_key(e) for e in report.errors if not _in_pages(e)}
 
     def fixable(finding: Finding) -> bool:
-        return _in_pages(finding) or (_in_days(finding) and _key(finding) not in unfixable)
+        mine = _in_days(finding) or finding.path == PROPOSALS
+        return _in_pages(finding) or (mine and _key(finding) not in unfixable)
 
     def require_bounds() -> None:
+        changed = _changed(before, _tree_state(tree))
         outside = [
             path
-            for path in _changed(before, _tree_state(tree))
-            if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS)
+            for path in changed
+            if path.partition("/")[0] not in (DAYS, *PAGE_FOLDERS) and path != PROPOSALS
         ]
         if outside:
             raise LibrarianRunError(
                 f"the consolidation session changed {', '.join(outside)}, outside the pages; "
                 "consolidation may change only pages, in "
-                f"{', '.join(f'{f}/' for f in PAGE_FOLDERS)}"
+                f"{', '.join(f'{f}/' for f in PAGE_FOLDERS)}, and resolve a proposal in "
+                f"{PROPOSALS}"
             )
+        if PROPOSALS in changed:
+            problems = _resolution_problems(standing, read_proposals(tree))
+            if problems:
+                raise LibrarianRunError(
+                    f"the consolidation session changed {PROPOSALS} other than by resolving a "
+                    "proposal:\n"
+                    + "\n".join(f"  {problem}" for problem in problems)
+                    + f"\nconsolidation may change {PROPOSALS} only by resolving an open "
+                    "proposal from the owner's answer"
+                )
         after = day_logs(tree)
         edited = [
             f"{DAYS}/{day.isoformat()}.md"
@@ -480,6 +501,61 @@ def _consolidate(
         tidy=partial(_remove_merged_pages, tree),
     )
     return Phase.CONSOLIDATION, result
+
+
+def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal]) -> list[str]:
+    """What's wrong with how a consolidation session changed `proposals.md`, from `standing`
+    (as last committed) to `left` (as the session left it).
+
+    Consolidation only resolves: an open proposal may become an answered one, keeping its id,
+    kind, text, proposed date, and citations, and citing the owner's answer after them. Every
+    other proposal is there still, exactly as it was, and none is added: proposals are
+    dreaming's to add. A session that changed the file and resolved nothing has a problem too.
+    Lint judges the lines themselves, whether a resolved one's last citation is the owner's
+    chat included.
+    """
+    problems: list[str] = []
+    now: dict[str, list[Proposal]] = {}
+    for proposal in left:
+        now.setdefault(proposal.id, []).append(proposal)
+    resolved = 0
+    for was in standing:
+        found = now.get(was.id, [])
+        # A line copied under Answered and left under Open too is lint's duplicate id.
+        answers = [proposal for proposal in found if proposal != was]
+        if not found:
+            problems.append(f"{was.id} was removed: put its line back as it was: `{was.line}`")
+        elif all(_resolves(was, proposal) for proposal in answers):
+            resolved += bool(answers)
+        elif was.is_open and not any(proposal.is_open for proposal in answers):
+            problems.append(
+                f"{was.id} was changed as it was resolved: a resolved proposal keeps its id, "
+                "kind, text, proposed date, and citations, and gains only how and when it was "
+                f"answered and the owner's chat, cited last. It was: `{was.line}`"
+            )
+        else:
+            problems.append(f"{was.id} was changed: put its line back as it was: `{was.line}`")
+    known = {proposal.id for proposal in standing}
+    problems += [
+        f"{name} was added: proposals are added by dreaming alone"
+        for name in now
+        if name not in known
+    ]
+    if not problems and not resolved:
+        problems.append("no proposal was resolved")
+    return problems
+
+
+def _resolves(was: Proposal, now: Proposal) -> bool:
+    """Whether `now` is the open proposal `was`, answered: the same but for its answer and the
+    citations after its own."""
+    kept = len(was.citations)
+    return (
+        was.is_open
+        and not now.is_open
+        and len(now.citations) > kept
+        and replace(now, answer=None, citations=now.citations[:kept]) == was
+    )
 
 
 def _remove_merged_pages(tree: Path) -> None:
@@ -767,6 +843,28 @@ def warnings_prompt(warnings: Sequence[Finding]) -> str:
         "the warnings about pages you touch in this run, where the evidence settles them; "
         "leave the rest.\n\n"
         f"```json\n{_json(listed)}\n```\n"
+    )
+
+
+PROPOSALS_HEADING = "## Open proposals"
+"""The heading the open proposals are listed under, in a consolidation prompt as in a dreaming
+one (`dreaming.py`, which has more to say under it)."""
+
+
+def open_proposals_prompt(asked: Sequence[Proposal], paths: SessionPaths) -> str:
+    """The open proposals as a section of consolidation's prompt, under `PROPOSALS_HEADING`:
+    `asked`, as a JSON block, and the one change consolidation may make to the file."""
+    return (
+        f"{PROPOSALS_HEADING}\n\n"
+        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
+        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
+        "cites. When one of this run's new observations is the owner's answer to one of them "
+        "(an owner turn in a chat), apply the answer to the pages as CLAUDE.md's Corrections "
+        "section describes, and resolve the proposal. Resolving a proposal is the one change "
+        f"you may make to that file: move its line under `## {ANSWERED}`, checked, saying how "
+        "and when it was answered, with the chat cited last and the rest of the line as it "
+        "was. Never add a proposal, and never change or remove any other line.\n\n"
+        f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
     )
 
 
