@@ -162,7 +162,7 @@ class L0Metadata:
     engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
     """For each episode that is someone's own doing, the addresses it's the doing of, in
     lowercase (`engagers` in `engagement.py`): what engagement is read from."""
-    chats: frozenset[str] = frozenset()
+    exchanges: frozenset[str] = frozenset()
     """The episodes that are chat exchanges with the assistant."""
 
     @classmethod
@@ -170,7 +170,7 @@ class L0Metadata:
         ids: set[str] = set()
         addresses: set[str] = set()
         doers: dict[str, frozenset[str]] = {}
-        chats: set[str] = set()
+        exchanges: set[str] = set()
         for envelope in envelopes:
             ids.add(envelope.episode_id)
             addresses.update(
@@ -179,15 +179,15 @@ class L0Metadata:
             if who := engagers(envelope):
                 doers[envelope.episode_id] = who
             if envelope.kind is Kind.CHAT:
-                chats.add(envelope.episode_id)
-        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(chats))
+                exchanges.add(envelope.episode_id)
+        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(exchanges))
 
-    def owner_chats(self, owner: Owner) -> frozenset[str]:
+    def owner_exchanges(self, owner: Owner) -> frozenset[str]:
         """The chat exchanges `owner` took part in: where the owner's own word is."""
         mine = {address.strip().lower() for address in owner.email_addresses}
         return frozenset(
             episode
-            for episode in self.chats
+            for episode in self.exchanges
             if not self.engagers.get(episode, frozenset()).isdisjoint(mine)
         )
 
@@ -538,7 +538,7 @@ def _proposals(
     resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
     # A retired slug's link stays good: the proposal may be what brings its page back.
     resolvable |= read_retired(tree).keys()
-    owners_word = l0.owner_chats(owner)
+    owners_word = l0.owner_exchanges(owner)
     expected = (OPEN, ANSWERED)
     headings: list[tuple[int, str]] = []
     titled = False

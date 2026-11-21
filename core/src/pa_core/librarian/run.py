@@ -276,7 +276,7 @@ def run_librarian(
                         page_errors,
                         page_threshold,
                         # The owner's exchanges an earlier run took: none answers a proposal now.
-                        l0.owner_chats(owner) - offered,
+                        l0.owner_exchanges(owner) - offered,
                         identities,
                         tree,
                         runner,

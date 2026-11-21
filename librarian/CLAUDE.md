@@ -140,7 +140,7 @@ and the identity table, and may give lint warnings.
    topic's page, or else the other party's), never on two.
    - A cold request opens no loop. A request is cold when its sender is someone the owner has
      never engaged with (the sender's slug has `engaged` false) and it is about nothing the
-     owner started: a pitch, a recruiter's note, a stranger's ask. It stays an observation in
+     owner started: a pitch, a recruiter's note, a stranger's request. It stays an observation in
      the day log, and no page is made for it. A request about something the owner started (an
      order, an application, a booking) is a loop like any other, whoever sends it.
    - Record implied waits as loops too, owed by whoever will deliver, with `(implied)` at the
@@ -245,7 +245,7 @@ exactly as they are, and `index.md` and `retired.md` are the host's. You may rea
 day log, and any episode in L0.
 
 Each candidate has an `id`, a `kind`, the `pages` it is about, and the `message` of what the
-host found, at a `path` and sometimes a `line`. A loop's candidate lists the `episodes` its
+host flagged, at a `path` and sometimes a `line`. A loop's candidate lists the `episodes` its
 line cites: find the loop by them, since line numbers move as a page is edited.
 
 1. Read `wiki-schema.md`.

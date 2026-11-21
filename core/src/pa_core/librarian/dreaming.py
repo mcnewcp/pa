@@ -829,7 +829,7 @@ def dreaming_prompt(offered: Sequence[Candidate], paths: SessionPaths) -> str:
         "be committed without one outcome for every candidate.\n\n"
         f"{CANDIDATES_PROMPT_HEADING}\n\n"
         "Each candidate has its `id`, its `kind`, the `pages` it is about, and the file "
-        "(`path`, and `line` when it is on one) and `message` of what the host found, with "
+        "(`path`, and `line` when it is on one) and `message` of what the host flagged, with "
         "paths relative to the wiki. A loop's candidate lists the `episodes` its line cites, "
         "since its line number moves as the page is edited; a slug without a page gives the "
         "`slug`.\n\n"

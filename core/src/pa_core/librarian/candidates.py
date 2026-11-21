@@ -1,17 +1,18 @@
-"""Candidates: the problems the host flags mechanically for dreaming to judge (spec #140).
+"""Candidates: what the host flags mechanically for dreaming to judge (spec #140).
 
 The model's judgment is spent on judging, not on finding: before a dreaming run the host lists
 what looks wrong with the wiki, and the session gives each candidate one outcome
 (`pa_core.librarian.dreaming`). `candidates` is the one entry point, and nothing else knows
-which problems are offered, in what order, how many, or what each is called. It returns an
+what is flagged, in what order it is offered, how much of it, or what each is called. It returns an
 `Offer`: the candidates a run is offered, and the ones it isn't, held back by dreaming's
 memory or left over the cap.
 
-A candidate is one of two things:
+A candidate is a question, not a finding: dreaming decides whether it is a problem. It is
+one of two things:
 
 - **A lint warning**: an orphan page, a loop past due or open too long, a duplicate candidate,
   an engaged slug that reached the page threshold without a page, or a "needs lookup" marker.
-- **A problem lint has no warning for**, since only dreaming acts on it. These are found
+- **Something lint has no warning for**, since only dreaming acts on it. These are found
   here, against lint's thresholds:
   - a stale page, which observations have linked on enough days since it was last updated;
   - a status that disagrees with its loops: a page that says its matter is over (a settled
@@ -46,7 +47,7 @@ its kind, its pages, and for a loop the episodes its line cites. Two things hold
   so the next run is offered it again.
 - **It was proposed**, while that proposal is open.
 
-An applied candidate is never held back: if the problem is still there, it is offered again.
+An applied candidate is never held back: if it is still flagged, it is offered again.
 Two loops on one page that cite the same episodes are one identity, so they are held back
 together.
 """
@@ -101,7 +102,7 @@ class CandidateKind(StrEnum):
 
 @dataclass(frozen=True)
 class Candidate:
-    """One problem offered to a dreaming run."""
+    """One thing the host flagged in the wiki, offered to a dreaming run to judge."""
 
     id: str
     """What the run's outcomes call it: `c01`, `c02`, and so on, in the order offered."""
@@ -111,11 +112,11 @@ class Candidate:
     status disagrees with its loops and then every other page holding one of them, and none
     for a slug without a page."""
     path: str
-    """The file the problem is in, relative to the wiki: one of `pages`, or a day log."""
+    """The file it is flagged in, relative to the wiki: one of `pages`, or a day log."""
     message: str
-    """The problem, as lint words it, or as this module does."""
+    """What was flagged, as lint words it, or as this module does."""
     line: int | None = None
-    """The line in `path`, counting from 1, when the problem is on one."""
+    """The line in `path`, counting from 1, when it is on one."""
     episodes: tuple[str, ...] = ()
     """For a loop, the episodes its line cites as opening it: which loop it is, wherever its
     line moves."""
@@ -328,8 +329,8 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
     outcome for it is superseded.
 
     A proposed candidate is held back while its proposal is open, so the owner isn't asked the
-    same thing twice. Once it is answered, the candidate is offered again if the problem
-    remains.
+    same thing twice. Once it is answered, the candidate is offered again if it is still
+    flagged.
 
     A dismissed candidate is held back for `DISMISSAL_DAYS`, or until one of its pages
     changes: until a page's content differs from what the run that dismissed it committed,

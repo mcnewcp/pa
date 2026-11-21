@@ -238,7 +238,7 @@ def test_the_run_after_the_owners_exchanges_takes_exactly_them(tmp_path: Path):
     assert [e.owner_turns for e in batch.episodes] == [(ASKING,), (ANSWERING,)]
     assert {e.day for e in batch.episodes} == {date(2026, 11, 14)}
     # Both are the owner's chat exchanges, which is what lint lets answer a proposal.
-    assert _l0(tmp_path).owner_chats(OWNER) == {ids["asked"], ids["answered"]}
+    assert _l0(tmp_path).owner_exchanges(OWNER) == {ids["asked"], ids["answered"]}
 
 
 def test_the_checks_find_everything_the_answer_must_do_missing_from_the_starting_wiki(
