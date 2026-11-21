@@ -723,6 +723,56 @@ def test_a_proposal_resolved_without_the_owners_chat_after_two_resumes_discards_
     assert commit_messages(data_root) == history
 
 
+NOT_THIS_BATCHS = (
+    f"{PROPOSALS}:7: P1 is newly answered, but its last citation, {EARLIER_CHAT}, isn't one of "
+    "the owner's exchanges in this run's batch"
+)
+"""What the host says of a proposal resolved from an exchange an earlier run already took."""
+
+
+def test_a_proposal_resolved_from_an_exchange_of_an_earlier_batch_resumes_the_session(
+    data_root: Path,
+):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})
+    ingest(data_root, answer())
+    # The earlier exchange is the owner's, and answered another proposal weeks ago.
+    stale = resolving(answered(proposal(), "accepted", EARLIER_CHAT))
+    script(
+        data_root,
+        consolidation=[*merged(), stale],
+        consolidation_resume=[resolving(ACCEPTED)],
+    )
+
+    assert run_librarian() == 0
+
+    started, resumed = sessions(data_root, "consolidation")[-2:]
+    assert "--resume" not in started["argv"]
+    assert flag(resumed["argv"], "--resume") == "session-1"
+    assert NOT_THIS_BATCHS in resumed["prompt"]
+    assert f"[ep:{HOTEL}] [ep:{ANSWER}]" in wiki_files(data_root)[PROPOSALS]
+    # The proposal that exchange did answer, in its own batch, stands as it was.
+    assert EARLIER in wiki_files(data_root)[PROPOSALS]
+
+
+def test_a_night_without_the_owners_answer_resolves_no_proposal(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    # Mail came, and no exchange: a session swayed by it has no answer of this batch to cite.
+    ingest(data_root, gift())
+    attempt = [resolving(answered(proposal(), "accepted", EARLIER_CHAT))]
+    script(data_root, consolidation=attempt, consolidation_resume=attempt)
+
+    assert run_librarian() != 0
+
+    error = run_error(data_root)
+    assert "the consolidation session left 1 lint errors after 2 resumes" in error
+    assert NOT_THIS_BATCHS in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
 def test_a_proposal_copied_under_answered_and_left_open_resumes_the_session(data_root: Path):
     run_with_pages(data_root)
     commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})

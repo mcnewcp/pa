@@ -76,6 +76,7 @@ from pa_core.librarian.wiki import (
     folder_files,
     is_page_name,
     pages,
+    parse_proposal,
     read_proposals,
     read_retired,
     reference_counts,
@@ -254,9 +255,8 @@ def run_librarian(
         repository.discard()
         sessions: list[tuple[Phase, SessionResult]] = []
         thresholds = Thresholds(now.date(), page_threshold, loop_age_days)
-        linter = partial(
-            lint, l0=L0Metadata.of(store.envelopes()), owner=owner, thresholds=thresholds
-        )
+        l0 = L0Metadata.of(store.envelopes())
+        linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
         # Errors the last commit already has (a rule tightened since, or a seeded wiki): a
         # session is judged only on errors it can fix, and consolidation is handed the pages'.
         committed = _Committed(linter(tree).errors)
@@ -269,11 +269,14 @@ def run_librarian(
                 sessions.append(_observe(batch, identities, tree, runner, now, linter, committed))
                 observations = _new_observations(logged, day_logs(tree))
             if observations or page_errors:
+                offered = {episode.episode_id for episode in batch.episodes}
                 sessions.append(
                     _consolidate(
                         observations,
                         page_errors,
                         page_threshold,
+                        # The owner's exchanges an earlier run took: none answers a proposal now.
+                        l0.owner_chats(owner) - offered,
                         identities,
                         tree,
                         runner,
@@ -496,6 +499,7 @@ def _consolidate(
     observations: Sequence[NewObservation],
     page_errors: Sequence[Finding],
     page_threshold: int,
+    earlier_exchanges: Collection[str],
     identities: IdentityTable,
     tree: Path,
     runner: SessionRunner,
@@ -503,6 +507,9 @@ def _consolidate(
     linter: Linter,
     committed: _Committed,
 ) -> tuple[Phase, SessionResult]:
+    """Runs the consolidation session. `earlier_exchanges` are the owner's exchanges that
+    aren't in this run's batch: a proposal the session resolves cites none of them as its
+    answer (`_stale_answers`)."""
     report = linter(tree)
     standing = read_proposals(tree)
     asked = [proposal for proposal in standing if proposal.is_open]
@@ -568,6 +575,13 @@ def _consolidate(
                 f"{', '.join(edited)}; consolidation may not change the day logs"
             )
 
+    def lint_resolving(tree: Path) -> LintReport:
+        """The run's lint of the wiki, and the host's check of each proposal this session
+        resolved, as findings of the same kind: the session is resumed to fix either."""
+        found = linter(tree)
+        stale = _stale_answers(standing, tree, earlier_exchanges)
+        return replace(found, errors=(*found.errors, *stale))
+
     result = _session(
         Phase.CONSOLIDATION,
         prompt,
@@ -576,7 +590,7 @@ def _consolidate(
         tree,
         runner,
         now,
-        linter,
+        lint_resolving,
         committed,
         tidy=partial(_remove_merged_pages, tree),
     )
@@ -592,7 +606,7 @@ def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal])
     other proposal is there still, exactly as it was, and none is added: proposals are
     dreaming's to add. A session that changed the file and resolved nothing has a problem too.
     Lint judges the lines themselves, whether a resolved one's last citation is the owner's
-    chat included.
+    chat included, and `_stale_answers` whether that chat is in this run's batch.
     """
     problems: list[str] = []
     now: dict[str, list[Proposal]] = {}
@@ -624,6 +638,44 @@ def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal])
     if not problems and not resolved:
         problems.append("no proposal was resolved")
     return problems
+
+
+def _stale_answers(
+    standing: Sequence[Proposal], tree: Path, earlier_exchanges: Collection[str]
+) -> list[Finding]:
+    """What's wrong with the answers a consolidation session resolved proposals from: each
+    proposal that was open in `standing` (the file as last committed) and is answered in the
+    wiki at `tree`, citing as its answer one of `earlier_exchanges`, the owner's exchanges
+    that aren't in this run's batch.
+
+    Lint holds an answered proposal's last citation to one of the owner's exchanges, any of
+    them. Only the host knows the batch: the owner answers a proposal after it was asked, in
+    an exchange a run takes once, so the answer that resolves one is among this run's new
+    episodes. An old exchange about something else, cited by a session that mail swayed,
+    resolves nothing.
+    """
+    was_open = {proposal.id for proposal in standing if proposal.is_open}
+    file = tree / PROPOSALS
+    if not file.is_file() or file.is_symlink():
+        return []
+    stale: list[Finding] = []
+    lines = file.read_text(encoding="utf-8", errors="replace").splitlines()
+    for number, line in enumerate(lines, start=1):
+        proposal = parse_proposal(line)
+        if proposal is None or proposal.is_open or proposal.id not in was_open:
+            continue
+        last = proposal.citations[-1]
+        if last in earlier_exchanges:
+            stale.append(
+                Finding(
+                    PROPOSALS,
+                    f"{proposal.id} is newly answered, but its last citation, {last}, isn't "
+                    "one of the owner's exchanges in this run's batch: a proposal is resolved "
+                    "only from the owner's answer among this run's new observations, cited last",
+                    number,
+                )
+            )
+    return stale
 
 
 def _resolves(was: Proposal, now: Proposal) -> bool:
