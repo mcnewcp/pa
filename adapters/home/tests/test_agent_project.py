@@ -150,7 +150,9 @@ def test_with_a_wiki_the_rendered_claude_md_says_how_to_ask_and_answer_the_propo
         "give every open proposal",
     ):
         assert value in claude_md, value
-    # It mentions an open proposal when it bears on what was asked.
+    # It mentions an open proposal when it bears on what was asked, so on every question it
+    # reads the open ones, which the index says are there.
+    assert "When it says proposals are open, read `proposals.md` too" in claude_md
     assert "When an open proposal bears on what the owner asked" in claude_md
     # It restates the owner's answer in one sentence that names the proposal, and says when the
     # wiki will show it, so the captured exchange stands on its own.
