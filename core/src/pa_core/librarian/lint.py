@@ -3,9 +3,9 @@
 An error fails the run. The rules so far:
 
 - **Layout.** Nothing but `index.md`, the root files (`proposals.md`), and Markdown files
-  directly in `days/`, `people/`,
-  `orgs/`, and `topics/`: no dotfiles, symbolic links, subdirectories, other files, or any
-  `CLAUDE.md`, so nothing in the wiki can be loaded as instructions or run as code (ADR-0007).
+  directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic links,
+  subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded as
+  instructions or run as code (ADR-0007).
   A day log is named for its day (`YYYY-MM-DD.md`), a page for its slug (`<slug>.md`).
 - **Day logs** hold only observation lines (and blank lines).
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields

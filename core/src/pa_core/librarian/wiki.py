@@ -564,8 +564,8 @@ _PROPOSAL = re.compile(
 )
 PROPOSAL_FORMAT = (
     "- [ ] P<number> · <change|question> · <text> · proposed YYYY-MM-DD [ep:<id>], answered as "
-    "- [x] <the same> · <accepted|declined|answered> YYYY-MM-DD [ep:<id>] [ep:<the owner's "
-    "answer>]"
+    "- [x] P<number> · <change|question> · <text> · proposed YYYY-MM-DD · "
+    "<accepted|declined|answered> YYYY-MM-DD [ep:<id>] [ep:<the owner's answer>]"
 )
 
 

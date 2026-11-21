@@ -2,9 +2,8 @@
 
 It opens with the number of open proposals, what the librarian is waiting on the owner for,
 and a link to them. Then it lists each page as a link with its one-line summary, grouped by
-type. Under each type the
-active pages come first, the most recently updated first, so what's live is at the top; the
-rest follow by slug.
+type. Under each type the active pages come first, the most recently updated first, so what's
+live is at the top; the rest follow by slug.
 """
 
 from __future__ import annotations
