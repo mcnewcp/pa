@@ -92,6 +92,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
         "PA_LIBRARIAN_PAGE_THRESHOLD",
         "PA_LIBRARIAN_LOOP_AGE_DAYS",
         "PA_LIBRARIAN_STALE_LATER_DAYS",
+        "PA_LIBRARIAN_QUIET_DAYS",
         "PA_LIBRARIAN_SANDBOX",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -952,6 +953,18 @@ RSVP = f"- [ ] me → [[david-kim]]: an RSVP · promised {days_ago(1)} [ep:{HOTE
 """A loop for Dave's own page."""
 MISMATCH = "a status that disagrees with its loops: "
 
+
+def _kitchen(updated: str, status: str = "active"):
+    """The kitchen's page added, last updated on `updated`."""
+
+    def edit(pages: dict[str, str]) -> None:
+        pages["topics/kitchen.md"] = KITCHEN.replace(
+            f"updated: {ROOM_LIST_DAY}", f"updated: {updated}"
+        ).replace("status: active", f"status: {status}")
+
+    return edit
+
+
 # Each wiki with such a problem: what puts it in the settled pages, what the day logs also
 # hold, the candidate the session is given for it (after its id, `c01`), and the environment
 # that brings it out.
@@ -1035,6 +1048,35 @@ FLAGGED = {
         },
         {},
     ),
+    "an active page nothing has linked for 90 days": (
+        _kitchen(days_ago(90)),
+        # A visit booked ahead is logged on its day, which is yet to come.
+        [
+            linked(days_ago(120), "kitchen"),
+            linked(days_ago(90), "kitchen"),
+            linked(days_ago(-3), "kitchen"),
+        ],
+        {
+            "kind": "quiet",
+            "pages": ["topics/kitchen.md"],
+            "path": "topics/kitchen.md",
+            "message": "a quiet page: it is active, and no observation has linked "
+            f"[[kitchen]] since {days_ago(90)}, 90 days ago",
+        },
+        {},
+    ),
+    "an active page nothing has linked for as long as configured": (
+        _kitchen(days_ago(11)),
+        [linked(days_ago(11), "kitchen")],
+        {
+            "kind": "quiet",
+            "pages": ["topics/kitchen.md"],
+            "path": "topics/kitchen.md",
+            "message": "a quiet page: it is active, and no observation has linked "
+            f"[[kitchen]] since {days_ago(11)}, 11 days ago",
+        },
+        {"PA_LIBRARIAN_QUIET_DAYS": "11"},
+    ),
 }
 
 BOTH = ("wedding", "david-kim")
@@ -1096,6 +1138,22 @@ NOT_FLAGGED = {
         [],
         {},
     ),
+    "an active page linked 89 days ago": (
+        _kitchen(days_ago(89)),
+        [linked(days_ago(120), "kitchen"), linked(days_ago(89), "kitchen")],
+        {},
+    ),
+    "a settled topic nothing has linked for 120 days": (
+        _kitchen(days_ago(120), status="settled"),
+        [linked(days_ago(120), "kitchen")],
+        {},
+    ),
+    # Nothing has linked it yet, so there is nothing to measure its quiet from.
+    "an active page linked only on a day after today": (
+        _kitchen(days_ago(120)),
+        [linked(days_ago(-3), "kitchen")],
+        {},
+    ),
 }
 
 
@@ -1137,6 +1195,37 @@ def test_a_stale_page_a_status_that_disagrees_with_its_loops_and_a_quiet_page_ar
     assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
 
 
+def test_candidates_are_offered_in_a_fixed_order_of_kinds(data_root: Path):
+    # The wedding's page is stale and its loop is aging, Dave is inactive though he owes that
+    # loop, and nothing has linked the kitchen in 90 days.
+    pages = wedding_pages()
+    _each(_edit(PERSON, "status: active", "status: inactive"), _kitchen(days_ago(90)))(pages)
+    logged = [
+        linked(days_ago(90), "kitchen"),
+        *(linked(days_ago(days), "wedding") for days in (8, 5, 3)),
+    ]
+    run_with_pages(data_root, pages, logged)
+    judged = [{"candidate": f"c0{number}", "outcome": "dismissed"} for number in (1, 2, 3, 4)]
+    script(data_root, dreaming=[reporting(*judged)])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert [(c["id"], c["kind"], c["pages"]) for c in session["candidates"]] == [
+        ("c01", "stale", [TOPIC]),
+        ("c02", "status-mismatch", [PERSON, TOPIC]),
+        ("c03", "loop-aging", [TOPIC]),
+        ("c04", "quiet", ["topics/kitchen.md"]),
+    ]
+    assert commit_messages(data_root)[0].split("\n\n")[1].splitlines() == [
+        "Candidates:",
+        f"- c01 · stale · {TOPIC} · dismissed",
+        f"- c02 · status-mismatch · {PERSON}, {TOPIC} · dismissed",
+        f"- c03 · loop-aging · {TOPIC} [ep:{HOTEL}] · dismissed",
+        "- c04 · quiet · topics/kitchen.md · dismissed",
+    ]
+
+
 def test_a_stale_page_brought_up_to_date_is_committed_and_claimed_by_its_outcome(
     data_root: Path,
 ):
@@ -1162,6 +1251,30 @@ def test_a_stale_page_brought_up_to_date_is_committed_and_claimed_by_its_outcome
     assert dream() == 0
     assert len(sessions(data_root, "dreaming")) == 1
     assert len(commit_messages(data_root)) == len(history) + 1
+
+
+def judging(kind: str) -> str:
+    """How the instructions say to judge a `kind` candidate: its bullet under "How to judge
+    each kind", with its whitespace collapsed."""
+    bullet = re.search(
+        rf"^- \*\*`{kind}`\*\*.*?(?=^- \*\*`|^### )", dreaming_instructions(), re.M | re.S
+    )
+    assert bullet is not None, f"no bullet says how to judge a {kind} candidate"
+    return " ".join(bullet[0].split())
+
+
+def test_the_instructions_say_how_to_judge_the_three_kinds_lint_has_no_warning_for():
+    # A stale page is brought up to date from the day logs its candidate lists.
+    stale = judging("stale")
+    assert "The candidate lists those `day_logs`" in stale
+    assert "Bring the page up to date from them" in stale
+    # A status is corrected in whichever direction L0 supports.
+    mismatch = judging("status-mismatch")
+    assert "close the loop" in mismatch
+    assert "set the page's `status` to `active`" in mismatch
+    # A quiet page is marked dormant or inactive.
+    quiet = judging("quiet")
+    assert "`dormant`" in quiet and "`inactive`" in quiet
 
 
 def dreaming_instructions() -> str:

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.envelope import Source
 from pa_core.errors import PaError
-from pa_core.librarian.lint import STALE_LATER_DAYS
+from pa_core.librarian.lint import QUIET_DAYS, STALE_LATER_DAYS
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
 from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
 from pa_core.librarian.wiki import TREE as WIKI_TREE
@@ -34,6 +34,7 @@ LIBRARIAN_SANDBOX_VAR = "PA_LIBRARIAN_SANDBOX"
 LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
 LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
 LIBRARIAN_STALE_LATER_DAYS_VAR = "PA_LIBRARIAN_STALE_LATER_DAYS"
+LIBRARIAN_QUIET_DAYS_VAR = "PA_LIBRARIAN_QUIET_DAYS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -146,6 +147,8 @@ class LibrarianConfig:
     stale_later_days: int = STALE_LATER_DAYS
     """The distinct days a page is linked on after its last update before dreaming is offered
     it as stale."""
+    quiet_days: int = QUIET_DAYS
+    """How long an active page may go unlinked before dreaming is offered it as quiet."""
 
 
 @dataclass(frozen=True)
@@ -317,6 +320,7 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         stale_later_days=_positive_integer(
             environ, LIBRARIAN_STALE_LATER_DAYS_VAR, default.stale_later_days
         ),
+        quiet_days=_positive_integer(environ, LIBRARIAN_QUIET_DAYS_VAR, default.quiet_days),
     )
 
 

@@ -153,6 +153,7 @@ def dream(
             page_threshold=config.page_threshold,
             loop_age_days=config.loop_age_days,
             stale_later_days=config.stale_later_days,
+            quiet_days=config.quiet_days,
         )
 
 

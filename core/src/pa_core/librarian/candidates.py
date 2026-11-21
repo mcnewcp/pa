@@ -13,7 +13,18 @@ A candidate is one of two things:
   here, against lint's thresholds:
   - a stale page, which observations have linked on enough days since it was last updated;
   - a status that disagrees with its loops: a page that says its matter is over (a settled
-    or dormant topic, an inactive person or organization) while one of its loops is open.
+    or dormant topic, an inactive person or organization) while one of its loops is open;
+  - a quiet page: an active one that no observation has linked for a long time.
+
+They are offered in a fixed order of kinds, which matters once a run offers only so many:
+
+1. Stale pages. Every later judgment about a page reads it, so it is brought up to date
+   first, and a page left behind is the failure that costs a wrong answer.
+2. Statuses that disagree with their loops, ahead of the loops themselves: settling one often
+   closes the loop.
+3. Lint's warnings, in lint's order.
+4. Quiet pages. Whether one may be marked dormant or inactive depends on its loops, which are
+   judged before it, and leaving one for the next run costs only the index's order.
 
 Days after the run's own date never count. Day logs exist for them wherever a calendar event
 is booked ahead, and what hasn't happened yet has left no page behind.
@@ -34,8 +45,9 @@ from pa_core.owner import Owner
 
 
 class CandidateKind(StrEnum):
-    """What a candidate is about. The librarian project's dreaming instructions say how to
-    judge each."""
+    """What a candidate is about, listed in the order `candidates` offers the kinds (the two
+    kinds of loop come together, page by page). The librarian project's dreaming instructions
+    say how to judge each."""
 
     STALE = "stale"
     """A page that observations have linked on enough days since it was last updated."""
@@ -50,6 +62,8 @@ class CandidateKind(StrEnum):
     """Two pages that may be one."""
     SLUG_WITHOUT_PAGE = "slug-without-page"
     NEEDS_LOOKUP = "needs-lookup"
+    QUIET = "quiet"
+    """An active page no observation has linked for a long time."""
 
 
 @dataclass(frozen=True)
@@ -111,8 +125,8 @@ def candidates(
     tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds
 ) -> tuple[Candidate, ...]:
     """The candidates to offer a dreaming run over the wiki at `tree`, in order: the stale
-    pages, the statuses that disagree with their loops, then every lint warning, measured
-    against `l0`'s metadata and `thresholds` for `owner`.
+    pages, the statuses that disagree with their loops, every lint warning, then the quiet
+    pages, measured against `l0`'s metadata and `thresholds` for `owner`.
 
     The ids follow from the wiki alone, so the same wiki on the same day offers the same
     candidates under the same ids.
@@ -124,6 +138,7 @@ def candidates(
         *_stale(found, linked, thresholds),
         *_status_mismatches(found),
         *(_of_warning(warning) for warning in warnings),
+        *_quiet(found, linked, thresholds),
     ]
     return tuple(
         replace(candidate, id=f"c{number:02d}") for number, candidate in enumerate(offered, start=1)
@@ -206,6 +221,27 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
             message=f"a status that disagrees with its loops: it is {status}, with "
             f"{_count(len(held), 'open loop')} on {', '.join(where)}",
         )
+
+
+def _quiet(
+    pages: Sequence[Page], linked: Mapping[str, Sequence[date]], thresholds: Thresholds
+) -> Iterator[Candidate]:
+    """An active page whose slug no observation has linked for the quiet threshold's days. A
+    page no observation has linked yet has nothing to measure from, and isn't one."""
+    for page in pages:
+        days = linked.get(page.slug)
+        if page.fields.get("status") != _ACTIVE or not days:
+            continue
+        quiet = (thresholds.today - days[-1]).days
+        if quiet >= thresholds.quiet_days:
+            yield Candidate(
+                id=_UNNUMBERED,
+                kind=CandidateKind.QUIET,
+                pages=(page.path,),
+                path=page.path,
+                message="a quiet page: it is active, and no observation has linked "
+                f"[[{page.slug}]] since {days[-1]}, {_count(quiet, 'day')} ago",
+            )
 
 
 def _updated(page: Page) -> date | None:

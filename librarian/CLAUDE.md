@@ -215,6 +215,16 @@ an applied outcome, and no day log changed.
     acting on it), set the page's `status` to `active`, and bring its Current state and
     `summary` in line.
   - When L0 shows neither, dismiss it.
+- **`quiet`**: an active page whose slug no day log has linked for a long time. Read the last
+  day-log lines that link it and the episodes they cite, to see how things were left.
+  - When they show the matter ended or simply stopped, with nothing owed either way, set the
+    page's `status`: a topic to `settled` when an episode shows it concluded, and to
+    `dormant` otherwise; a person or an organization to `inactive`. Bring its Current state
+    and `summary` in line, citing those episodes.
+  - Dismiss it when the page has an open loop, or a loop on another page names it; when a day
+    log dated after today links it, since something is booked ahead; and when it is
+    someone or something the owner relies on however rarely it comes up, such as family, a
+    bank, or a school.
 - **`duplicate`**: two pages that may be one person, organization, or topic.
   - When L0 shows they are one (the same address, or an episode that uses both names for
     one), merge them as a correction's merge does: one page keeps both names as aliases and
