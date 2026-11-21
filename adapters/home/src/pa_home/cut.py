@@ -52,10 +52,10 @@ class CutWiki(BaseModel):
 
     commit: str
     librarian_version: str | None
-    """The librarian version its last commit names; None for a commit that names none (a
-    seed)."""
+    """The librarian version the wiki's last run that still stands names (the commit itself
+    may be a revert, which names nothing); None when that run names none (a seed)."""
     cursor: str | None
-    """Where the librarian had got to: the commit's cursor."""
+    """Where the librarian had got to: that run's cursor."""
 
 
 class CutManifest(BaseModel):
