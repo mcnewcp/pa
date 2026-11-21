@@ -109,8 +109,10 @@ and the identity table, and may give lint warnings.
 
    A group marked `automated` never gets a person page: it is a mailbox, and what it sends
    goes on its organization's page, or else its topic's. When lint reports a person page
-   whose only addresses are automated, merge it into that page the way Corrections describes
-   a merge, leaving the address off.
+   whose only addresses are automated, merge it into that page (creating the page if there
+   is none) as Corrections describes a merge: move its loops and notes there, add its slug to
+   that page's aliases, leave its address off, and write the person page with no content so
+   the host removes it.
 
    Before creating a page, check that it isn't already a page under another name: search the
    pages' `aliases`, the addresses in `emails` and `domains`, and slugs that differ only
