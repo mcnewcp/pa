@@ -504,10 +504,16 @@ _URL = re.compile(
     r"|\bwww\.\S+"
     r"|\bmailto:\S+"
     r"|\]\(\S*"  # a Markdown link's target
-    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/\S+",  # a host and a path
+    r"|[^\s@]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"  # an email address
+    # A bare hostname, with its path if it has one: a dotted name ending in letters.
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b(?:/\S*)?",
     re.IGNORECASE,
 )
-"""A web address, or anything a reader's app would turn into one."""
+"""A web address, or anything a reader's app would turn into one: a chat client on a phone
+links a bare hostname and an email address. A slug holds no dot, so no link to a page is one.
+An abbreviation (`e.g.`, `a.m.`, `U.S.`) and a figure (`2.5`) aren't either: a hostname's last
+part is two letters or more. Prose that leaves out the space after a full stop is taken for
+one, which costs its session a resume."""
 
 
 def _proposals(

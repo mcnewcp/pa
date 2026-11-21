@@ -473,6 +473,18 @@ LINT_ERRORS = {
         proposals_file(proposal(text=QUESTION + " See dave.example/rsvp")),
         f"{PROPOSALS}:4: P1's text holds a URL (dave.example/rsvp)",
     ),
+    "a bare hostname": (
+        proposals_file(proposal(text=QUESTION + " See dave.example")),
+        f"{PROPOSALS}:4: P1's text holds a URL (dave.example)",
+    ),
+    "a hostname and a query": (
+        proposals_file(proposal(text=QUESTION + " See dave.example?rsvp=1")),
+        f"{PROPOSALS}:4: P1's text holds a URL (dave.example)",
+    ),
+    "an email address": (
+        proposals_file(proposal(text=QUESTION + " Write to rsvp@dave.example")),
+        f"{PROPOSALS}:4: P1's text holds a URL (rsvp@dave.example)",
+    ),
     "a Markdown link": (
         proposals_file(proposal(text="Are [[dave]] and [David](dave) the same person?")),
         f"{PROPOSALS}:4: P1's text holds a URL (](dave))",
@@ -1012,6 +1024,12 @@ WELL_FORMED = {
         proposal(text="Are [[dave|Dave]] and [[david-kim|David]] the same person?")
     ),
     "text of exactly 200 characters": proposals_file(proposal(text=padded(200))),
+    "prose with abbreviations and figures": proposals_file(
+        proposal(
+            text="Is [[dave]] (a.k.a. D.K., i.e. the best man) due at 9 a.m. on Oct. 9, e.g. "
+            "for the U.S. trip, at $1.5k vs. the 2.5 quoted? No..."
+        )
+    ),
     "several citations": proposals_file(proposal(cites=f"[ep:{HOTEL}] [ep:{HOTEL}]")),
     "no link at all": proposals_file(proposal(text="Who is the Dave that sent the room list?")),
     "answered proposals below it": proposals_file(
