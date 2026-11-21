@@ -173,12 +173,7 @@ def dream(
                 runner=runner,
                 librarian=_librarian(config, files),
                 now=started.astimezone(time_zone),
-                page_threshold=config.page_threshold,
-                loop_age_days=config.loop_age_days,
-                stale_later_days=config.stale_later_days,
-                quiet_days=config.quiet_days,
-                candidate_cap=config.candidate_cap,
-                proposal_caps=config.proposal_caps,
+                settings=config.dreaming,
             )
     except Exception as error:
         sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
@@ -217,11 +212,7 @@ def count_candidates(
         owner=owner,
         repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
         now=now().astimezone(time_zone),
-        page_threshold=config.page_threshold,
-        loop_age_days=config.loop_age_days,
-        stale_later_days=config.stale_later_days,
-        quiet_days=config.quiet_days,
-        candidate_cap=config.candidate_cap,
+        settings=config.dreaming,
     )
 
 
@@ -321,12 +312,7 @@ def dream_copy(
                 librarian=_librarian(config, files),
                 run_log=layout.run_log,
                 source=source,
-                page_threshold=config.page_threshold,
-                loop_age_days=config.loop_age_days,
-                stale_later_days=config.stale_later_days,
-                quiet_days=config.quiet_days,
-                candidate_cap=config.candidate_cap,
-                proposal_caps=config.proposal_caps,
+                settings=config.dreaming,
             )
 
 

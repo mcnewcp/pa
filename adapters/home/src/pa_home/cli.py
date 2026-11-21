@@ -34,8 +34,10 @@ from pa_home.collectors.calendar_server import CalDavServer, CalendarServer
 from pa_home.collectors.gmail import GmailClient, GmailCollector, count_by_category
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
+    DREAMING_INTERVAL_DAYS,
     GMAIL_CLIENT_VAR,
     GMAIL_TOKEN_VAR,
+    LIBRARIAN_DREAMING_INTERVAL_VAR,
     CaptureConfig,
     ConfigError,
     DataRoot,
@@ -159,7 +161,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
         "reconciliation, then the librarian run, then a dreaming run when one is due "
-        "(every PA_LIBRARIAN_DREAMING_INTERVAL_DAYS days, 7 unless set; 0 for never), then the "
+        f"(every {LIBRARIAN_DREAMING_INTERVAL_VAR} days, {DREAMING_INTERVAL_DAYS} unless set; "
+        "0 for never), then the "
         "backup, each recorded in the status. A step that fails doesn't stop the next. Skips "
         "if another job holds the lock.",
     )

@@ -52,8 +52,8 @@ def test_dreamings_candidate_cap_is_thirty_or_a_configured_whole_number_of_at_le
     with pytest.raises(ConfigError, match="PA_LIBRARIAN_CANDIDATE_CAP must be a whole number"):
         load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": value})
 
-    assert load_librarian_config({}).candidate_cap == 30
-    assert load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": "12"}).candidate_cap == 12
+    assert load_librarian_config({}).dreaming.candidate_cap == 30
+    assert load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": "12"}).dreaming.candidate_cap == 12
 
 
 def test_dreaming_is_due_every_seven_days_unless_configured_and_zero_turns_it_off():
@@ -73,13 +73,13 @@ def test_the_dreaming_interval_is_a_whole_number_of_days(value: str):
 
 
 def test_a_dreaming_run_may_add_five_proposals_up_to_fifteen_open_unless_configured():
-    caps = load_librarian_config({}).proposal_caps
+    caps = load_librarian_config({}).dreaming.proposal_caps
 
     assert (caps.new, caps.open) == (5, 15)
 
     configured = load_librarian_config(
         {"PA_LIBRARIAN_NEW_PROPOSALS": "3", "PA_LIBRARIAN_OPEN_PROPOSALS": "8"}
-    ).proposal_caps
+    ).dreaming.proposal_caps
 
     assert (configured.new, configured.open) == (3, 8)
 

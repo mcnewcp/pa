@@ -237,6 +237,39 @@ PROPOSAL_CAPS = ProposalCaps()
 """The caps on a run's proposals, unless configured otherwise: 5 new, and 15 open."""
 
 
+@dataclass(frozen=True)
+class DreamingSettings:
+    """What a dreaming run goes by, unless configured otherwise: what its candidates are
+    measured against, how many it is offered, and how much it may ask of the owner."""
+
+    page_threshold: int = PAGE_THRESHOLD
+    """The distinct days a slug is linked on before it should have a page, as a librarian
+    run's lint has it."""
+    loop_age_days: int = LOOP_AGE_DAYS
+    """How long a loop may stay open before it's flagged, as a librarian run's lint has it."""
+    stale_later_days: int = STALE_LATER_DAYS
+    quiet_days: int = QUIET_DAYS
+    """These two are as `Thresholds` describes them."""
+    candidate_cap: int = CANDIDATE_CAP
+    """The most candidates a run is offered; the rest wait for the next run."""
+    proposal_caps: ProposalCaps = PROPOSAL_CAPS
+    """The most proposals a run may add, and the most that may be open at once."""
+
+    def thresholds(self, today: date) -> Thresholds:
+        """What the candidates of a run told the day is `today` are measured against."""
+        return Thresholds(
+            today,
+            self.page_threshold,
+            self.loop_age_days,
+            stale_later_days=self.stale_later_days,
+            quiet_days=self.quiet_days,
+        )
+
+
+DREAMING_SETTINGS = DreamingSettings()
+"""What a dreaming run goes by, unless configured otherwise."""
+
+
 def run_dreaming(
     *,
     store: L0Store,
@@ -245,35 +278,20 @@ def run_dreaming(
     runner: SessionRunner,
     librarian: Librarian,
     now: datetime,
-    page_threshold: int = PAGE_THRESHOLD,
-    loop_age_days: int = LOOP_AGE_DAYS,
-    stale_later_days: int = STALE_LATER_DAYS,
-    quiet_days: int = QUIET_DAYS,
-    proposal_caps: ProposalCaps = PROPOSAL_CAPS,
-    candidate_cap: int = CANDIDATE_CAP,
+    settings: DreamingSettings = DREAMING_SETTINGS,
 ) -> DreamingOutcome:
     """Runs dreaming once over the wiki as last committed, and commits what it changed.
 
     `now` is what the session is told the current time is, and what the candidates are
-    measured against, with `page_threshold` and `loop_age_days` as a librarian run's lint has
-    them. With no candidates it does nothing. Raises LibrarianRunError when the run fails,
-    after restoring the wiki.
-
-    `stale_later_days` and `quiet_days` are as `Thresholds` describes them. `proposal_caps`
-    bounds the proposals the run may add, and `candidate_cap` the candidates it is offered.
+    measured against, by `settings`. With no candidates it does nothing. Raises
+    LibrarianRunError when the run fails, after restoring the wiki.
     """
     tree = repository.tree
     sessions: list[tuple[Phase, SessionResult]] = []
     try:
         # Whatever an interrupted run left behind goes before this one starts.
         repository.discard()
-        thresholds = Thresholds(
-            now.date(),
-            page_threshold,
-            loop_age_days,
-            stale_later_days=stale_later_days,
-            quiet_days=quiet_days,
-        )
+        thresholds = settings.thresholds(now.date())
         l0 = L0Metadata.of(store.envelopes())
         offer = candidates(
             tree,
@@ -281,7 +299,7 @@ def run_dreaming(
             owner=owner,
             thresholds=thresholds,
             history=dreaming_history(repository, now),
-            cap=candidate_cap,
+            cap=settings.candidate_cap,
         )
         offered, waiting = offer.offered, len(offer.held_back)
         if not offered:
@@ -289,7 +307,7 @@ def run_dreaming(
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
         committed = Committed(linter(tree).errors)
         result, outcomes, suggestion = _dream(
-            offered, tree, runner, now, linter, committed, proposal_caps
+            offered, tree, runner, now, linter, committed, settings.proposal_caps
         )
         sessions.append((Phase.DREAMING, result))
         rewrite_alias_links(tree)
@@ -349,23 +367,13 @@ def count_candidates(
     owner: Owner,
     repository: WikiRepository,
     now: datetime,
-    page_threshold: int = PAGE_THRESHOLD,
-    loop_age_days: int = LOOP_AGE_DAYS,
-    stale_later_days: int = STALE_LATER_DAYS,
-    quiet_days: int = QUIET_DAYS,
-    candidate_cap: int = CANDIDATE_CAP,
+    settings: DreamingSettings = DREAMING_SETTINGS,
 ) -> CandidateCounts:
     """Counts what a dreaming run told that `now` is the time would find in the wiki as it
-    is, with the thresholds, cap, and memory `run_dreaming` goes by. It runs no session and
+    is, by the `settings` and the memory `run_dreaming` goes by. It runs no session and
     changes nothing: the counts are what a session that may not read the wiki can report of
     it, before a run and after."""
-    thresholds = Thresholds(
-        now.date(),
-        page_threshold,
-        loop_age_days,
-        stale_later_days=stale_later_days,
-        quiet_days=quiet_days,
-    )
+    thresholds = settings.thresholds(now.date())
     l0 = L0Metadata.of(store.envelopes())
     offer = candidates(
         repository.tree,
@@ -373,7 +381,7 @@ def count_candidates(
         owner=owner,
         thresholds=thresholds,
         history=dreaming_history(repository, now),
-        cap=candidate_cap,
+        cap=settings.candidate_cap,
     )
     flagged = Counter(str(candidate.kind) for candidate in offer.flagged)
     return CandidateCounts(
@@ -381,7 +389,7 @@ def count_candidates(
         offered=len(offer.offered),
         held_back=len(offer.held_back),
         left_over=len(offer.left_over),
-        cap=candidate_cap,
+        cap=settings.candidate_cap,
         unengaged_without_loops=unengaged_without_loops(repository.tree, l0=l0, owner=owner),
     )
 
