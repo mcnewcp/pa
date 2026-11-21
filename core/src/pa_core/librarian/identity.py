@@ -207,7 +207,7 @@ def identity_table(envelopes: Iterable[Envelope], owner: Owner) -> IdentityTable
             name = _clean(participant.name)
             if name and "@" not in name:
                 seen[name] += 1
-            if participant.role is Role.SENDER and address in mine and _forged(envelope):
+            if participant.role is Role.SENDER and address in mine and arrived_by_mail(envelope):
                 forged.append(ForgedMail(envelope.episode_id, address))
 
     # Everyone's addresses in the order first seen, the owner's first.
@@ -378,8 +378,9 @@ def _commonest(seen: Counter[str]) -> str:
     return seen.most_common(1)[0][0] if seen else ""
 
 
-def _forged(envelope: Envelope) -> bool:
-    """Whether it's email the owner's mailbox didn't send (other sources have no forging)."""
+def arrived_by_mail(envelope: Envelope) -> bool:
+    """Whether it's email the owner's mailbox didn't send, so its sender is only a claim: from
+    one of the owner's addresses, it's forged (other sources have no forging)."""
     sent = any(label.strip().casefold() == _SENT_LABEL for label in envelope.labels)
     return envelope.kind is Kind.EMAIL and not sent
 

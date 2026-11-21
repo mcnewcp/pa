@@ -60,6 +60,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Sent late on 30 Sep in Chicago, which is already 1 Oct in UTC.
 HOTEL_EMAIL_ID = "gmail_9ff7394d0df8584d"
+OWNER_ADDRESS = "Argus McNevans <argus@example.com>"
+"""The sender of the owner's own mail, which carries the Sent label."""
 
 
 def email(
@@ -626,8 +628,8 @@ WEDDING = {
 }
 
 
-def wedding_mail(subject: str, date: str) -> dict[str, bytes]:
-    message = email(message_id=f"{subject}@example.net", subject=subject, date=date)
+def wedding_mail(subject: str, date: str, **fields: str) -> dict[str, bytes]:
+    message = email(message_id=f"{subject}@example.net", subject=subject, date=date, **fields)
     return {f"gmail/{subject}.eml": message}
 
 
@@ -663,11 +665,12 @@ def test_consolidation_gets_the_runs_new_observations_and_the_reference_counts(
             f"[ep:{gift['id']}]",
         }
     ]
-    # Distinct days over all day logs: the two lines on 2 Oct count once.
+    # Distinct days over all day logs: the two lines on 2 Oct count once. All of it is mail
+    # David sent, so the owner has engaged with none of them.
     assert counts == [
-        {"slug": "david-kim", "days": 3, "reaches_threshold": True},
-        {"slug": "wedding", "days": 3, "reaches_threshold": True},
-        {"slug": "kitchen", "days": 1, "reaches_threshold": False},
+        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "wedding", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "kitchen", "days": 1, "reaches_threshold": False, "engaged": False},
     ]
     fields = trailers(commit_messages(data_root)[0])
     assert fields["Consolidation-Cost-USD"] == "0.0421"
@@ -695,8 +698,8 @@ def test_the_page_threshold_is_configurable_and_starts_at_three(
     [consolidation] = sessions(data_root, "consolidation")
     _, counts = consolidation["inputs"]
     assert counts == [
-        {"slug": "david-kim", "days": 2, "reaches_threshold": reached},
-        {"slug": "wedding", "days": 2, "reaches_threshold": reached},
+        {"slug": "david-kim", "days": 2, "reaches_threshold": reached, "engaged": False},
+        {"slug": "wedding", "days": 2, "reaches_threshold": reached, "engaged": False},
     ]
 
 
@@ -858,9 +861,9 @@ def test_consolidation_creates_and_edits_pages_and_the_host_regenerates_the_inde
     assert run_librarian() == 0
 
     _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
-    assert counts[:2] == [
-        {"slug": "wedding", "days": 4, "reaches_threshold": True, "page": "topics/wedding.md"},
-        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "page": "people/david-kim.md"},
+    assert [(count["slug"], count["days"], count["page"]) for count in counts[:2]] == [
+        ("wedding", 4, "topics/wedding.md"),
+        ("david-kim", 3, "people/david-kim.md"),
     ]
     assert wiki_files(data_root)["index.md"] == textwrap.dedent(
         """\
@@ -1540,7 +1543,14 @@ def run_with_wedding_pages(data_root: Path, edit=None) -> None:
         {
             "gmail/hotel.eml": email(),
             **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
-            **wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"),
+            # The owner's own mail, so the owner has engaged with the wedding.
+            **wedding_mail(
+                "Menu",
+                "Mon, 5 Oct 2026 09:00:00 -0500",
+                labels="Sent",
+                sender=OWNER_ADDRESS,
+                to="David Kim <dkim@example.net>",
+            ),
         },
     )
     pages = current_wedding_pages()
@@ -1672,7 +1682,8 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     script(data_root, observation=[{"observe": True, "links": {"Menu": ["wedding"]}}])
     assert run_librarian() == 0
     _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
-    assert {"slug": "david-kim", "days": 2, "reaches_threshold": False, "page": PERSON} in counts
+    [david] = [count for count in counts if count["slug"] == "david-kim"]
+    assert (david["days"], david["page"]) == (2, PERSON)
     assert "dave" not in {count["slug"] for count in counts}
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
@@ -2426,6 +2437,182 @@ def test_a_wiki_seeded_from_a_windowed_replay_carries_on_from_the_backfills_capt
     assert run_librarian() == 0
     assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
     assert wiki_files(data_root)["days/2026-10-07.md"].count("[ep:") == 1
+
+
+# Engagement and the page-creation rules (#142)
+
+DAVID = "CN=David Kim:mailto:dkim@example.net"
+
+# One episode each, and whether the slug its observation links is engaged: the owner sent,
+# wrote, organized, or attends it.
+ENGAGEMENT = {
+    "mail the owner sent": (
+        {
+            "gmail/sent.eml": email(
+                labels="Sent", sender=OWNER_ADDRESS, to="David Kim <dkim@example.net>"
+            )
+        },
+        True,
+    ),
+    "mail to the owner": ({"gmail/received.eml": email()}, False),
+    "mail copying the owner": (
+        {
+            "gmail/copied.eml": email(to="Mara McNevans <mara@example.com>").replace(
+                b"Subject:", f"Cc: {OWNER_ADDRESS}\r\nSubject:".encode()
+            )
+        },
+        False,
+    ),
+    # Mail from the owner's address that the owner's mailbox never sent isn't the owner's.
+    "forged mail": (
+        {"gmail/forged.eml": email(sender=OWNER_ADDRESS, to="Denise Hart <denise@example.org>")},
+        False,
+    ),
+    "a daily note": (
+        {"obsidian/note.md": daily_note("2026-10-05T21:00:00-05:00", "Called Dave about it.")},
+        True,
+    ),
+    "a chat": ({"assistant_chat/chat.json": CHAT.read_bytes()}, True),
+    "an event the owner organized": (
+        {
+            "icloud_calendar/lunch.ics": captured_event(
+                "lunch@example.com",
+                "Lunch",
+                "20261006T120000",
+                "20261006T130000",
+                "ORGANIZER;CN=Argus McNevans:mailto:Argus@Example.com",
+                f"ATTENDEE;{DAVID}",
+            )
+        },
+        True,
+    ),
+    "an event the owner attends": (
+        {
+            "icloud_calendar/lunch.ics": captured_event(
+                "lunch@example.com",
+                "Lunch",
+                "20261006T120000",
+                "20261006T130000",
+                f"ORGANIZER;{DAVID}",
+                "ATTENDEE;CN=Argus McNevans:mailto:argus@example.com",
+            )
+        },
+        True,
+    ),
+    # An event with no organizer and no attendee lists no one, the owner included.
+    "an event listing no one": (
+        {
+            "icloud_calendar/dentist.ics": captured_event(
+                "dentist@example.com", "Dentist", "20261006T090000", "20261006T100000"
+            )
+        },
+        False,
+    ),
+    "an event among other people": (
+        {
+            "icloud_calendar/recital.ics": captured_event(
+                "recital@example.com",
+                "Recital",
+                "20261006T180000",
+                "20261006T190000",
+                f"ORGANIZER;{DAVID}",
+                "ATTENDEE;CN=Mara McNevans:mailto:mara@example.com",
+            )
+        },
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("episode", ENGAGEMENT, ids=list(ENGAGEMENT))
+def test_a_slug_is_engaged_when_the_owner_sent_wrote_organized_or_attends_an_episode_linking_it(
+    data_root: Path, episode: str
+):
+    payloads, engaged = ENGAGEMENT[episode]
+    ingest(data_root, payloads)
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    _, counts = consolidation["inputs"]
+    assert counts == [
+        {"slug": "someone", "days": 1, "reaches_threshold": False, "engaged": engaged}
+    ]
+
+
+def engaged_slugs(data_root: Path) -> dict[str, bool]:
+    """Whether each slug is engaged, as the last consolidation was told."""
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    return {count["slug"]: count["engaged"] for count in counts}
+
+
+def test_engagement_goes_by_any_episode_an_observation_cites_and_reaches_every_slug_it_links(
+    data_root: Path,
+):
+    sent = email(
+        message_id="rsvp@example.com",
+        labels="Sent",
+        sender=OWNER_ADDRESS,
+        to="David Kim <dkim@example.net>",
+        subject="RSVP",
+    )
+    ingest(data_root, {"gmail/hotel.eml": email(), "gmail/rsvp.eml": sent})
+    links = {"Hotel block": ["north-shore-lodge"], "RSVP": ["david-kim", "wedding"]}
+    script(data_root, observation=[{"observe": True, "links": links}])
+    assert run_librarian() == 0
+    assert engaged_slugs(data_root) == {
+        "david-kim": True,
+        "wedding": True,
+        "north-shore-lodge": False,
+    }
+
+    # A later observation of the lodge cites the hotel mail and the owner's RSVP together.
+    ids = observed_ids(data_root)
+    ingest(data_root, wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    cited = f"[ep:{HOTEL_EMAIL_ID}] [ep:{ids['RSVP']}]"
+    both = f"- the lodge holds the block [[north-shore-lodge]] {cited}\n"
+    script(data_root, observation=[{"write": "days/2026-10-05.md", "text": both}])
+    assert run_librarian() == 0
+
+    assert engaged_slugs(data_root)["north-shore-lodge"] is True
+
+
+def test_only_an_engaged_slug_at_the_threshold_is_warned_about_for_having_no_page(
+    data_root: Path,
+):
+    # Three days of mail from David, and on the third the owner's own mail about the wedding.
+    ingest(
+        data_root,
+        {
+            **wedding_mail("Hotel block", "Wed, 30 Sep 2026 09:00:00 -0500"),
+            **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
+            **wedding_mail("Gift", "Mon, 5 Oct 2026 09:00:00 -0500"),
+            **wedding_mail(
+                "Menu",
+                "Mon, 5 Oct 2026 17:00:00 -0500",
+                labels="Sent",
+                sender=OWNER_ADDRESS,
+                to="Lakeside Catering <events@lakesidecatering.example>",
+            ),
+        },
+    )
+    links = {subject: ["david-kim", "wedding"] for subject in ("Hotel block", "RSVP")}
+    links |= {"Gift": ["david-kim"], "Menu": ["wedding"]}
+    script(data_root, observation=[{"observe": True, "links": links}])
+
+    assert run_librarian() == 0
+
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    assert counts == [
+        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "wedding", "days": 3, "reaches_threshold": True, "engaged": True},
+    ]
+    _, warnings, _ = commit_messages(data_root)[0].split("\n\n")
+    assert warnings == (
+        "Lint warnings:\n"
+        "- days/2026-10-05.md: `wedding` is linked on 3 days, reaching the page threshold of 3, "
+        "but has no page"
+    )
 
 
 # The librarian's sandbox (#66)

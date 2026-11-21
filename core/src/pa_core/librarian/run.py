@@ -415,6 +415,7 @@ def _consolidate(
         consolidation_prompt(
             observations,
             reference_counts(tree),
+            report.engaged_days,
             page_threshold,
             {page.slug: page.path for page in pages(tree)},
             runner.paths,
@@ -615,6 +616,7 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
 def consolidation_prompt(
     observations: Sequence[NewObservation],
     counts: Mapping[str, int],
+    engaged_days: Mapping[str, Sequence[date]],
     page_threshold: int,
     page_paths: Mapping[str, str],
     paths: SessionPaths,
@@ -629,6 +631,7 @@ def consolidation_prompt(
             "slug": slug,
             "days": days,
             "reaches_threshold": days >= page_threshold,
+            "engaged": slug in engaged_days,
         }
         if slug in page_paths:
             reference["page"] = page_paths[slug]
