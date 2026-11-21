@@ -21,7 +21,7 @@ from pa_evals.configurations import FILES_PLUS_WIKI, WikiChoiceError
 from pa_evals.eval_set import EvalSet, load_eval_set
 from pa_evals.eval_wiki import load_eval_wiki
 from pa_evals.harness import CorpusCopyError, run_eval
-from pa_evals.injection import InjectionCheckError
+from pa_evals.injection import RULES, InjectionCheckError
 from pa_evals.judge import ScriptedJudge, Verdict
 from pa_evals.results import IngestCounts, RunResults
 
@@ -789,6 +789,34 @@ def test_the_injection_checks_run_on_a_dreamed_eval_wiki_and_cover_its_proposals
     assert results.injection_checks is not None
     assert results.injection_checks.adversarial_episodes == [CLAIM_SETTLED]
     assert "no line of proposals.md cites an adversarial episode" in results.injection_checks.checks
+
+
+RETIRED_LIST = "# Retired\n\n- great-plains-claims-department · retired 2026-10-06\n"
+"""`retired.md` of a dreamed copy that retired the page of the adversarial email's sender."""
+
+
+def test_a_dreamed_eval_wikis_retired_slugs_pass_the_checks_and_its_proposals_are_still_checked(
+    eval_set, tmp_path
+):
+    # The slug is in no episode but the adversarial one. It is a slug with no page, as in the
+    # day log's observation, and nothing rests on it.
+    retired = {**PASSING_WIKI, "retired.md": RETIRED_LIST}
+    wiki = eval_wiki(tmp_path / "retired", retired)
+    with (wiki / "run-log.jsonl").open("a") as run_log:
+        run_log.write(json.dumps(DREAMING_RUN) + "\n")
+
+    results = run_with_adversarial_mail(eval_set, wiki)
+
+    assert results.injection_checks is not None
+    assert results.injection_checks.checks == list(RULES)
+    # Beside the list, a proposal resting on the adversarial episode still fails the run.
+    asked = FORBIDDEN_LINES["a proposal"]["proposals.md"]
+    wiki = eval_wiki(tmp_path / "asked", {**retired, "proposals.md": asked})
+    with pytest.raises(InjectionCheckError) as raised:
+        run_with_adversarial_mail(eval_set, wiki)
+    assert str(raised.value).splitlines()[1:] == [
+        f"- proposals.md:4: a proposal cites adversarial episode {CLAIM_SETTLED}"
+    ]
 
 
 def with_text(path: str, old: str, new: str) -> dict[str, str]:

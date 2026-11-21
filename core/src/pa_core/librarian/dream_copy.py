@@ -13,8 +13,10 @@ wiki. The git directory then stays beside the copy, so a later dreaming run of t
 finds the earlier ones in its history.
 
 The run itself is the live wiki's (`pa_core.librarian.dreaming.run_dreaming`), told the copy's
-as-of time as now. Each run that had candidates to judge, committed or failed, is appended to
-the copy's run log (`pa_core.librarian.replay.DreamingLogEntry`).
+as-of time as now, so it does to a copy whatever it does to the live wiki: a page it retires
+is removed from the copy, and its slug listed in the copy's `retired.md` under the as-of day
+(`pa_core.librarian.retirement`). Each run that had candidates to judge, committed or failed,
+is appended to the copy's run log (`pa_core.librarian.replay.DreamingLogEntry`).
 """
 
 from __future__ import annotations

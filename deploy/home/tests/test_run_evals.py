@@ -304,6 +304,9 @@ def dreamed(tmp_path: Path) -> Path:
     (copy / "wiki" / "people").mkdir(parents=True)
     (copy / "wiki" / "index.md").write_text("# Index\n")
     (copy / "wiki" / "people" / "someone.md").write_text("# Someone\n")
+    # What dreaming leaves at a wiki's root: what it asked the owner, and what it retired.
+    (copy / "wiki" / "proposals.md").write_text("# Proposals\n")
+    (copy / "wiki" / "retired.md").write_text("# Retired\n")
     (copy / "wiki.git").mkdir()
     (copy / "wiki.git" / "HEAD").write_text("ref: refs/heads/main\n")
     (copy / "run-log.jsonl").write_text('{"run": "dreaming"}\n')
@@ -320,7 +323,13 @@ def test_a_run_over_a_cut_with_a_dreamed_copy_of_its_wiki_pushes_the_copy_and_as
     assert result.returncode == 0, result.stderr
     push_wiki, _check, _push_cut, _push_set, ask, pull = recorded(calls)
     # The copy's tree and run log, never its git directory.
-    assert pushed(push_wiki) == ["run-log.jsonl", "wiki/index.md", "wiki/people/someone.md"]
+    assert pushed(push_wiki) == [
+        "run-log.jsonl",
+        "wiki/index.md",
+        "wiki/people/someone.md",
+        "wiki/proposals.md",
+        "wiki/retired.md",
+    ]
     assert f"tar -C {VM_EVAL_WIKI} -xf -" in push_wiki["argv"][-1]
     assert pa_eval_args(ask) == [
         "--agent",

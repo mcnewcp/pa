@@ -17,7 +17,9 @@ A dreamed eval wiki is a copy of one that dreaming has run over
 (`pa librarian dream TARGET --corpus DIR`), so that dreaming's effect can be measured against
 the same wiki without it. Its run log holds the replay's runs, then the copy's dreaming runs,
 which name the librarian version that dreamed it; the results record both. Any other mix is
-refused (`pa_core.librarian.replay.run_history`).
+refused (`pa_core.librarian.replay.run_history`). Its tree may also hold what dreaming leaves
+at a wiki's root: `proposals.md`, what it asked the owner, and `retired.md`, the slugs of the
+pages it retired. The assistant is given both with the rest of the tree.
 
 A run over a cut (`pa_home.cut`) is given the cut's own wiki instead: the live wiki at its last
 commit when the cut was taken (`cut_wiki`). Its librarian version is the one that commit names.

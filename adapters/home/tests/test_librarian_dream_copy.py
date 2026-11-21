@@ -212,8 +212,13 @@ CLOSED = PAGES[TOPIC].replace(
     ROOM_LIST, ROOM_LIST.replace("- [ ]", "- [x]") + f" · closed 2026-10-13 [ep:{HOTEL}]"
 )
 """The wedding's page with its loop closed."""
-LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "wedding"]}
-"""The slugs the stand-in's observations link, by the episode's subject."""
+LINKS = {
+    "Hotel block": ["david-kim", "wedding"],
+    "Room list": ["david-kim", "wedding"],
+    "Listing": ["nina-park"],
+}
+"""The slugs the stand-in's observations link, by the episode's subject. The owner's own mail,
+the room list, links Dave, so his page is one the owner has engaged with."""
 APPLIED = {"candidate": "c01", "outcome": "applied", "pages": [TOPIC]}
 DISMISSED = {"candidate": "c01", "outcome": "dismissed"}
 
@@ -449,6 +454,88 @@ def test_a_copy_with_more_candidates_than_the_cap_is_dreamed_run_by_run_until_no
         (1, 0),
         (1, 1),
     ]
+
+
+NINA = "people/nina-park.md"
+LISTING = email(
+    message_id="listing-0001@lakeview.example",
+    date="Mon, 12 Oct 2026 08:00:00 -0500",
+    sender="Nina Park <nina@lakeview.example>",
+    subject="Listing",
+    body="A new listing near you.",
+)
+"""Mail from a realtor, which the owner never asked for and never answered."""
+NINA_PARK = textwrap.dedent(
+    f"""\
+    ---
+    type: person
+    aliases: []
+    status: active
+    summary: A realtor who sent a listing.
+    updated: 2026-10-13
+    emails: []
+    ---
+    # Nina Park
+
+    ## Current state
+    Sent a listing [ep:{HOTEL}].
+
+    ## Open loops
+
+    ## Notes
+    """
+)
+"""Her page, which only her own mail's observation links: one the owner never engaged with."""
+RETIRING = {"candidate": "c02", "outcome": "applied", "pages": [NINA], "retired": ["nina-park"]}
+
+
+def test_dreaming_a_copy_retires_a_page_as_dreaming_the_live_wiki_does(
+    data_root: Path, corpus: Path, capsys
+):
+    (corpus / "gmail" / "listing.eml").write_bytes(LISTING)
+    original = replayed(data_root, corpus, {**PAGES, NINA: NINA_PARK})
+    before = tree_state(original)
+    target = copy_of(original)
+    # The session empties her page, which is all its file tools can do, and says it retired it.
+    script(data_root, dreaming=[{"write": NINA, "text": ""}, {"outcomes": [DISMISSED, RETIRING]}])
+
+    assert dream(target, "--corpus", corpus) == 0
+
+    # The copy's session is offered the unengaged page, judged over the corpus the copy was
+    # built over, and is told what is retired already.
+    [session] = sessions(data_root, "dreaming")
+    assert [(c["kind"], c["pages"]) for c in session["candidates"]] == [
+        ("loop-aging", [TOPIC]),
+        ("unengaged", [NINA]),
+    ]
+    assert "## Retired slugs" in session["prompt"]
+    # The host removes the page and lists its slug, retired on the copy's as-of day in the
+    # owner's time zone, in the copy's dreaming commit.
+    assert not (target / "wiki" / NINA).exists()
+    assert (target / "wiki" / "retired.md").read_text() == (
+        "# Retired\n\n- nina-park · retired 2026-10-14\n"
+    )
+    assert "nina-park" not in (target / "wiki" / "index.md").read_text()
+    head = git(target, "rev-parse", "HEAD").strip()
+    changed = git(target, "show", "--format=", "--name-only", "HEAD").split()
+    assert sorted(changed) == ["index.md", NINA, "retired.md"]
+    assert git(target, f"--work-tree={target / 'wiki'}", "status", "--porcelain") == ""
+    # The copy's run log records the run; lint's one warning is the loop left open. The day
+    # log links her as it did.
+    entry = run_log(target)[-1]
+    assert (entry["run"], entry["status"], entry["commit"]) == ("dreaming", "committed", head)
+    assert (entry["candidates"], entry["outcomes"], entry["lint_warnings"]) == (
+        2,
+        {"applied": 1, "proposed": 0, "dismissed": 1},
+        1,
+    )
+    assert "[[nina-park]]" in (target / "wiki" / "days" / "2026-10-12.md").read_text()
+    assert tree_state(original) == before
+    # She stays retired: a second run of the copy has nothing left to judge.
+    capsys.readouterr()
+    assert dream(target, "--corpus", corpus) == 0
+    assert "librarian dream: no candidates in the wiki" in capsys.readouterr().out
+    assert len(sessions(data_root, "dreaming")) == 1
 
 
 def test_a_failed_dreaming_run_of_a_copy_is_logged_and_leaves_the_copy_as_it_was(
