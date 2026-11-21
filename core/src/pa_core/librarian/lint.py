@@ -158,9 +158,12 @@ type Rule = Callable[[WikiFile, L0Metadata], Iterator[Finding]]
 """A check of one file, given L0's metadata."""
 
 
-STALE_LATER_DAYS = 3
+STALE_LATER_DAYS = 1
 """Unless configured otherwise, the days a page is linked on after its last update before
-dreaming is offered it as stale."""
+dreaming is offered it as stale. One: a page that an observation linked after it was last
+updated is the shape of the stale cross-page state the wiki has answered wrongly from (the
+v0.12.1 verdict), and the scale eval wiki holds no page linked on three later days. A stale
+page that turns out fine is dismissed, and held back until it changes."""
 QUIET_DAYS = 90
 """Unless configured otherwise, how long an active page may go unlinked before dreaming is
 offered it as quiet."""

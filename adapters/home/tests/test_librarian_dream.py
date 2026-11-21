@@ -1058,7 +1058,7 @@ def _kitchen(updated: str, status: str = "active"):
 # hold, the candidate the session is given for it (after its id, `c01`), and the environment
 # that brings it out.
 FLAGGED = {
-    "a page linked on three days since its update": (
+    "a page linked on three days since its update, at a threshold of three": (
         lambda pages: None,
         # Dave is linked on two of them, and on a day yet to come: a dinner booked ahead.
         [
@@ -1075,9 +1075,9 @@ FLAGGED = {
             "[[wedding]] on 3 later days",
             "day_logs": [f"days/{days_ago(days)}.md" for days in (8, 5, 3)],
         },
-        {},
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "3"},
     ),
-    "a page linked on one later day, at a threshold of one": (
+    "a page linked on one later day": (
         lambda pages: None,
         [linked(days_ago(8), "wedding")],
         {
@@ -1088,7 +1088,7 @@ FLAGGED = {
             "[[wedding]] on 1 later day",
             "day_logs": [f"days/{days_ago(8)}.md"],
         },
-        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+        {},
     ),
     "a settled topic with an open loop": (
         _edit(TOPIC, "status: active", "status: settled"),
@@ -1184,10 +1184,10 @@ def _updated(day: str):
 # Wikis with no such problem: what changes the settled pages, what the day logs also hold, and
 # the environment.
 NOT_FLAGGED = {
-    "pages linked on two days since their update": (
+    "pages linked on two days since their update, at a threshold of three": (
         lambda pages: None,
         [linked(days_ago(8), *BOTH), linked(days_ago(5), *BOTH)],
-        {},
+        {"PA_LIBRARIAN_STALE_LATER_DAYS": "3"},
     ),
     "pages updated on their latest linking day": (
         _updated(days_ago(3)),
@@ -1205,10 +1205,10 @@ NOT_FLAGGED = {
         [linked(days_ago(-1), *BOTH), linked(days_ago(-2), *BOTH), linked(days_ago(-9), *BOTH)],
         {},
     ),
-    "pages updated on their latest linking day, at a threshold of one": (
+    "pages updated on their latest linking day, with one booked ahead": (
         _updated(days_ago(3)),
         [linked(days_ago(8), *BOTH), linked(days_ago(3), *BOTH), linked(days_ago(-1), *BOTH)],
-        {"PA_LIBRARIAN_STALE_LATER_DAYS": "1"},
+        {},
     ),
     "a settled topic and an inactive person whose loops are closed": (
         _each(

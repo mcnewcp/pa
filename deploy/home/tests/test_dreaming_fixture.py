@@ -807,14 +807,14 @@ def test_the_seeded_wiki_lints_clean_and_offers_exactly_the_planted_candidates(t
     ]
 
 
-def test_the_fixture_offers_the_same_candidates_when_one_later_day_makes_a_page_stale(
+def test_the_fixture_offers_the_same_candidates_when_three_later_days_make_a_page_stale(
     tmp_path: Path,
 ):
-    """The stale threshold is 3 later days and may become 1. Nora Castillo's page is stale
-    under either, and no other page is linked on any day after it was updated."""
+    """One later day makes a page stale, and the threshold can be set higher. Nora Castillo's
+    page is stale at three too, and no other page is linked on any day after it was updated."""
     seed_dreaming_fixture(tmp_path)
 
-    [stale, *others] = offered(tmp_path, stale_later_days=1)
+    [stale, *others] = offered(tmp_path, stale_later_days=3)
 
     assert stale.day_logs == ("days/2026-10-26.md", "days/2026-11-08.md", "days/2026-11-15.md")
     assert [stale, *others] == list(offered(tmp_path))

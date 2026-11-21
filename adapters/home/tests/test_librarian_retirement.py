@@ -113,6 +113,9 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: 
         "PA_LIBRARIAN_SANDBOX",
     ):
         monkeypatch.delenv(var, raising=False)
+    # These wikis link their pages on days after the pages' last update, which makes each one a
+    # stale candidate ahead of the unengaged one under test. Three later days keeps them out.
+    monkeypatch.setenv("PA_LIBRARIAN_STALE_LATER_DAYS", "3")
     return root
 
 
