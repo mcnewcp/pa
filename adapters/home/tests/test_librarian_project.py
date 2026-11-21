@@ -115,6 +115,8 @@ def test_consolidations_instructions_hold_the_page_creation_rules_and_the_cold_r
         # An automated mailbox is never a person.
         "marked `automated` never gets a person page",
         "its organization's page, or else its topic's",
+        # A person page one already has is merged away, in the way the host can finish.
+        "move its loops and notes there, add its slug to that page's aliases",
         # A cold request is an observation, unless the owner started the matter.
         "A cold request opens no loop",
         "an order, an application, a booking",

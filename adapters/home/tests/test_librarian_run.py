@@ -2755,6 +2755,68 @@ def test_a_person_page_whose_only_addresses_are_automated_mailboxes_fails_the_ru
         assert wiki_files(data_root)[PERSON] == page
 
 
+def test_a_committed_person_page_for_an_automated_mailbox_is_merged_into_its_organization(
+    data_root: Path,
+):
+    # A wiki from before the rule: the clinic's no-reply mailbox has a person page of its own.
+    survey = email(
+        message_id="survey@birchwood.example",
+        sender="noreply@birchwood.example",
+        subject="How did we do?",
+    )
+    ingest(data_root, {"gmail/survey.eml": survey})
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"How did we do?": ["noreply-birchwood"]}}],
+    )
+    assert run_librarian() == 0
+    survey_id = observed_ids(data_root)["How did we do?"]
+    pages = wedding_pages(survey_id, survey_id)
+    mailbox = pages[PERSON].replace("[dkim@example.net]", "[noreply@birchwood.example]")
+    mailbox = mailbox.replace("[[david-kim]]", "[[noreply-birchwood]]")
+    clinic = pages[ORG].replace("domains: []", "domains: [birchwood.example]")
+    before = {"people/noreply-birchwood.md": mailbox, "orgs/birchwood.md": clinic}
+    commit_by_hand(data_root, before)
+    history = commit_messages(data_root)
+
+    # The next run's consolidation moves the loop to the clinic's page, which takes the
+    # mailbox's name as an alias, and empties the mailbox's page.
+    loop = f"- [ ] [[birchwood]] → me: send the reading text · promised 2026-10-02 [ep:{survey_id}]"
+    merged = clinic.replace("aliases: []", "aliases: [noreply-birchwood]")
+    merged = merged.replace("## Open loops\n", f"## Open loops\n{loop}\n")
+    ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
+    script(
+        data_root,
+        consolidation=[
+            {"write": "orgs/birchwood.md", "text": merged},
+            {"write": "people/noreply-birchwood.md", "text": ""},
+        ],
+    )
+
+    assert run_librarian() == 0
+
+    consolidation = sessions(data_root, "consolidation")[-1]
+    assert consolidation["errors"] == [
+        {
+            "path": "people/noreply-birchwood.md",
+            "line": 1,
+            "message": "`emails` lists only automated mailboxes (noreply@birchwood.example): an "
+            "automated mailbox never gets a person page; what it sends belongs on its "
+            "organization's page or its topic's",
+        }
+    ]
+    assert "--resume" not in consolidation["argv"]
+    assert len(commit_messages(data_root)) == len(history) + 1
+    files = wiki_files(data_root)
+    assert "people/noreply-birchwood.md" not in files
+    assert files["orgs/birchwood.md"] == merged
+    # Links to the mailbox now go to the clinic, still showing the name they were written with.
+    assert files["days/2026-09-30.md"] == (
+        f"- email about How did we do? with [[birchwood|noreply-birchwood]] [ep:{survey_id}]\n"
+    )
+    assert "noreply-birchwood" not in files["index.md"]
+
+
 def test_the_index_lists_active_pages_newest_first_then_the_rest_by_slug(data_root: Path):
     def topic(status: str, updated: str) -> str:
         page = KITCHEN.replace("status: active", f"status: {status}")
