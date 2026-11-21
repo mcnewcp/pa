@@ -221,8 +221,6 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
             "gmail/hotel.eml": email(),
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
-                # The owner's own mail carries the Sent label; without it, it's forged, and
-                # the owner hasn't engaged with what it links (#142).
                 labels="Sent",
                 date="Fri, 2 Oct 2026 09:00:00 -0500",
                 sender="Argus McNevans <argus@example.com>",
@@ -543,6 +541,43 @@ def test_every_lint_warning_is_offered_as_a_candidate_with_its_kind_and_pages(
     assert session["candidates"] == [{"id": "c01", **candidate}]
     summary = commit_messages(data_root)[0].splitlines()[0]
     assert summary == "dreaming run: 1 candidates, 0 applied, 1 dismissed"
+
+
+def test_a_slug_at_the_threshold_is_a_candidate_only_once_the_owner_has_engaged_with_it(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_LIBRARIAN_PAGE_THRESHOLD", "2")
+    # Both slugs are linked on two days; only the wedding by mail the owner sent.
+    ingest(
+        data_root,
+        {
+            "gmail/hotel.eml": email(),
+            "gmail/deposit.eml": email(
+                message_id="wedding-0004@example.net",
+                date="Fri, 2 Oct 2026 08:00:00 -0500",
+                subject="Deposit",
+            ),
+            "gmail/room-list.eml": email(
+                message_id="wedding-0002@example.net",
+                labels="Sent",
+                date="Fri, 2 Oct 2026 09:00:00 -0500",
+                sender="Argus McNevans <argus@example.com>",
+                to="David Kim <dkim@example.net>",
+                subject="Room list",
+            ),
+        },
+    )
+    links = {"Hotel block": ["lodge", "wedding"], "Deposit": ["lodge"], "Room list": ["wedding"]}
+    script(data_root, observation=[{"observe": True, "links": links}])
+    assert run_librarian() == 0
+    script(data_root, dreaming=[{"outcomes": [{"candidate": "c01", "outcome": "dismissed"}]}])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert [(c["kind"], c["slug"]) for c in session["candidates"]] == [
+        ("slug-without-page", "wedding")
+    ]
 
 
 def flag(argv: list[str], name: str) -> str:

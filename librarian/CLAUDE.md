@@ -240,9 +240,10 @@ an applied outcome, and no day log changed.
 - **`orphan`**: a page that no page or day log links to. When L0 shows where it belongs (the
   topic it is part of, the organization a person works at), add a cited line that links it
   to that page, and name the page you changed. Otherwise dismiss it.
-- **`slug-without-page`**: a `slug` linked on enough days to have a page, with none. Create
-  its page as consolidation's step 3 does, checking first that it isn't already a page under
-  another name, and name the page you created or changed.
+- **`slug-without-page`**: a `slug` linked on enough days to have a page, with none. The host
+  offers one only when the owner has engaged with it, so a person's passes step 3's test.
+  Create its page as consolidation's step 3 does, checking first that it isn't already a
+  page under another name, and name the page you created or changed.
 - **`needs-lookup`**: a `[needs lookup: ...]` marker for outside information. When an episode
   now answers the question, replace the marker with the cited answer. Otherwise dismiss it:
   the answer is not in L0, and you never write from your own knowledge.
