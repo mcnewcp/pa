@@ -388,7 +388,7 @@ def plant(data_root: Path, files: dict[str, str]) -> None:
     repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
     for path, text in files.items():
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def test_a_run_with_no_candidates_is_recorded_as_a_review_that_judged_nothing(

@@ -405,7 +405,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
     for path, text in files.items():
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def test_a_candidate_isnt_offered_while_a_proposal_about_it_is_open(data_root: Path):
