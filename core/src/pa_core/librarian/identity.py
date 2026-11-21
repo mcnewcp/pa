@@ -82,11 +82,13 @@ PERSONAL_MAIL_DOMAINS = frozenset(
 
 _SENT_LABEL = "sent"
 _AUTOMATED = re.compile(
-    r"(?:^|-)(?:no-?reply|do-?not-?reply|mailer-?daemon|postmaster|bounces?|notify|"
-    r"notifications?|alerts?|automated)\d*(?:-|$)"
+    r"(?:^|-)(?:no-?reply|do-?not-?reply|mailer-?daemon|notifications?|alerts?|automated)\d*"
+    r"(?:-|$)|^(?:postmaster|bounces?|notify)\d*$"
 )
-"""An automated mailbox's local part, as a slug: one of these words on its own, never inside a
-name (`nino.reply` and `notary` are people)."""
+"""An automated mailbox's local part, as a slug: a word no person goes by, standing on its own
+(`billing-noreply`, never `nino.reply` or `notary`), or a plainer word that is all of it
+(`bounces`, never `bounce.house`). A wrong match would fail a real person's page, so the
+words are few."""
 _SECOND_LEVEL = frozenset({"ac", "co", "com", "edu", "gov", "net", "org"})
 """Labels under a country's domain (`co.uk`): the label before them names the organization."""
 

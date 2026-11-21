@@ -2632,6 +2632,7 @@ AUTOMATED_MAILBOXES = (
     "notification@harborgym.example",
     "notify@pinecrest.example",
     "alerts@firstprairie.example",
+    "account-alerts@lakeshorebank.example",
     "mailer-daemon@example.net",
     "postmaster@example.org",
     "bounces@lists.example",
@@ -2644,6 +2645,7 @@ OTHER_MAILBOXES = (
     "reply@cedarbooks.example",
     "nino.reply@example.net",
     "notary@lakeside.example",
+    "bounce.house@lindenparties.example",
 )
 
 
