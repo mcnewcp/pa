@@ -78,6 +78,7 @@ from pa_core.librarian.session import (
     finding_key,
     findings_text,
     in_pages,
+    open_proposals_section,
     remove_merged_pages,
     run_session,
     tree_state,
@@ -752,25 +753,18 @@ def warnings_prompt(warnings: Sequence[Finding]) -> str:
     )
 
 
-PROPOSALS_HEADING = "## Open proposals"
-"""The heading the open proposals are listed under, in a consolidation prompt as in a dreaming
-one (`dreaming.py`, which has more to say under it)."""
-
-
 def open_proposals_prompt(open_now: Sequence[Proposal], paths: SessionPaths) -> str:
     """The open proposals as a section of consolidation's prompt, under `PROPOSALS_HEADING`:
     `open_now`, as a JSON block, and the one change consolidation may make to the file."""
-    return (
-        f"{PROPOSALS_HEADING}\n\n"
-        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
-        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
-        "cites. When one of this run's new observations is the owner's answer to one of them "
+    return open_proposals_section(
+        open_now,
+        paths,
+        "When one of this run's new observations is the owner's answer to one of them "
         "(an owner turn in a chat), apply the answer to the pages as CLAUDE.md's Corrections "
         "section describes, and resolve the proposal. Resolving a proposal is the one change "
         f"you may make to that file: move its line under `## {ANSWERED}`, checked, saying how "
         "and when it was answered, with the chat cited last and the rest of the line as it "
-        "was. Never add a proposal, and never change or remove any other line.\n\n"
-        f"```json\n{as_json([proposal.to_json() for proposal in open_now])}\n```\n"
+        "was. Never add a proposal, and never change or remove any other line.",
     )
 
 

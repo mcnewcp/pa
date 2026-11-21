@@ -93,6 +93,7 @@ from pa_core.librarian.session import (
     figure,
     findings_text,
     in_pages,
+    open_proposals_section,
     remove_merged_pages,
     run_reporting_session,
     tree_state,
@@ -842,7 +843,6 @@ def dreaming_prompt(offered: Sequence[Candidate], paths: SessionPaths) -> str:
     )
 
 
-PROPOSALS_PROMPT_HEADING = "## Open proposals"
 NO_ROOM_SAID = 'with `"no_room": true` in its outcome, so that the next run is offered it again'
 """How a prompt says to dismiss a candidate the run has no proposal left for."""
 
@@ -851,7 +851,7 @@ def proposals_prompt(
     as_committed: Sequence[Proposal], caps: ProposalCaps, paths: SessionPaths
 ) -> str:
     """The proposals as a section of the dreaming session's prompt, under
-    `PROPOSALS_PROMPT_HEADING`: the open ones among `as_committed` (the file as last
+    `PROPOSALS_HEADING`: the open ones among `as_committed` (the file as last
     committed) as a JSON block, how many the run may add within `caps`, and the id the first
     one takes."""
     open_now = [proposal for proposal in as_committed if proposal.is_open]
@@ -870,16 +870,14 @@ def proposals_prompt(
             f"{caps.open} may be open at once. Dismiss a candidate you would have proposed "
             f"{NO_ROOM_SAID}."
         )
-    return (
-        f"{PROPOSALS_PROMPT_HEADING}\n\n"
-        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
-        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
-        "cites. A candidate that one of them already asks about gets a proposed outcome naming "
+    return open_proposals_section(
+        open_now,
+        paths,
+        "A candidate that one of them already asks about gets a proposed outcome naming "
         "it; never ask the same thing twice. For any other candidate CLAUDE.md says to "
         f"propose, add a line under `## {OPEN}`, creating the file as `wiki-schema.md` "
         f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
-        "already in the file.\n\n"
-        f"```json\n{as_json([proposal.to_json() for proposal in open_now])}\n```\n"
+        "already in the file.",
     )
 
 

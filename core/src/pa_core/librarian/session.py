@@ -9,6 +9,8 @@
   times. A run that can't go on raises `LibrarianRunError`.
 - **Tree states**: `tree_state` and `changed_paths`, which a phase's bounds are checked with.
 - **The host's tidying**: `remove_merged_pages`.
+- **The open proposals** as a section of a prompt: `open_proposals_section`, which each
+  phase ends with what it may do about them.
 - **The commit message's fields**: the `Field: value` paragraph that ends a run's commit
   message, which `commit_fields` reads back, and the figures written into it.
 """
@@ -27,7 +29,15 @@ from typing import Protocol
 
 from pa_core.errors import PaError
 from pa_core.librarian.lint import Finding, LintReport
-from pa_core.librarian.wiki import PAGE_FOLDERS, folder_files, is_page_name, pages, slugify
+from pa_core.librarian.wiki import (
+    PAGE_FOLDERS,
+    PROPOSALS,
+    Proposal,
+    folder_files,
+    is_page_name,
+    pages,
+    slugify,
+)
 
 
 class Phase(StrEnum):
@@ -330,6 +340,23 @@ def remove_merged_pages(tree: Path) -> None:
 def as_json(value: object) -> str:
     """`value` as the JSON a prompt lists it in."""
     return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+PROPOSALS_HEADING = "## Open proposals"
+"""The heading the open proposals are listed under, in a consolidation prompt and in a
+dreaming one."""
+
+
+def open_proposals_section(open_now: Sequence[Proposal], paths: SessionPaths, then: str) -> str:
+    """The open proposals as a section of a session's prompt, under `PROPOSALS_HEADING`: what
+    they are, `then` what this phase may do about them, and `open_now` as a JSON block."""
+    return (
+        f"{PROPOSALS_HEADING}\n\n"
+        "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
+        f"proposals in `{paths.wiki / PROPOSALS}`, each listed below with the `episodes` it "
+        f"cites. {then}\n\n"
+        f"```json\n{as_json([proposal.to_json() for proposal in open_now])}\n```\n"
+    )
 
 
 def commit_fields(message: str) -> dict[str, str]:
