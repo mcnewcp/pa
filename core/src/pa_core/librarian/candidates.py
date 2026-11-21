@@ -338,9 +338,9 @@ first. The module's docstring gives the reasons. A new kind is a row here."""
 _RANK = {kind: rank for rank, row in enumerate(ORDER) for kind in row}
 
 
-def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity]:
-    """The candidates not to offer again yet, given the ids of the proposals `asked` of the
-    owner and still open. What counts is the newest run that judged a candidate; any older
+def _held_back(history: DreamingHistory, open_ids: Collection[str]) -> set[Identity]:
+    """The candidates not to offer again yet, given the ids of the proposals that are still
+    open (`open_ids`). What counts is the newest run that judged a candidate; any older
     outcome for it is superseded.
 
     A proposed candidate is held back while its proposal is open, so the owner isn't asked the
@@ -362,7 +362,7 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
             if identity in judged:
                 continue
             if past.outcome is OutcomeName.PROPOSED:
-                waits = past.proposal in asked
+                waits = past.proposal in open_ids
             else:
                 waits = (
                     past.outcome is OutcomeName.DISMISSED

@@ -152,19 +152,61 @@ def run_session(
     committed: Committed,
     *,
     tidy: Callable[[], None] = lambda: None,
-    report_problems: Callable[[SessionResult], Sequence[str]] = lambda _: (),
-    reminder: str = "",
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
-    it. A session
-    that leaves lint errors it can fix (those `judged` picks) is resumed with them, up to
-    MAX_RESUMES times; the rest are left to the next phase, or to the run's last lint. Returns
-    the session's result, its cost and turns added up over its attempts.
+    it. A session that leaves lint errors it can fix (those `judged` picks) is resumed with
+    them, up to MAX_RESUMES times; the rest are left to the next phase, or to the run's last
+    lint. Returns the session's result, its cost and turns added up over its attempts.
+    """
+    result, _ = run_reporting_session(
+        phase,
+        prompt,
+        require_bounds,
+        judged,
+        tree,
+        runner,
+        now,
+        linter,
+        committed,
+        tidy=tidy,
+        act_on_report=lambda _: None,
+    )
+    return result
 
-    A phase whose session must report something in its final message (dreaming's outcomes)
-    gives `report_problems`, which says what's wrong with an attempt's report, or raises when
-    the attempt can't be put right. Those problems resume the session too, within the same
-    limit. Every resume's prompt ends with `reminder`.
+
+@dataclass(frozen=True)
+class Refused:
+    """What the host can't accept of what a session's final message reported."""
+
+    problems: Sequence[str]
+    """Each thing wrong with it, as the session is told when it's resumed."""
+
+
+def run_reporting_session[Accepted](
+    phase: Phase,
+    prompt: str,
+    require_bounds: Callable[[], None],
+    judged: Callable[[Finding], bool],
+    tree: Path,
+    runner: SessionRunner,
+    now: datetime,
+    linter: Linter,
+    committed: Committed,
+    *,
+    act_on_report: Callable[[SessionResult], Accepted | Refused],
+    tidy: Callable[[], None] = lambda: None,
+    reminder: str = "",
+) -> tuple[SessionResult, Accepted]:
+    """Runs the session of a `phase` that must report something in its final message
+    (dreaming's outcomes), as `run_session` runs any, and returns its result with what the
+    host accepted of its last report.
+
+    After each attempt's bounds hold, `act_on_report` reads the attempt's report and does the
+    host's part of what it says, which may change the wiki (dreaming removes the pages an
+    outcome retires), before lint sees it. It returns what it accepted, or `Refused` with
+    what's wrong, or raises when the attempt can't be put right. What is refused resumes the
+    session, as lint errors do and within the same limit. Every resume's prompt ends with
+    `reminder`.
     """
     attempts = [runner.start(phase, prompt, now=now)]
     try:
@@ -174,10 +216,11 @@ def run_session(
                 raise LibrarianRunError(f"the {phase} session failed: {result.error}")
             tidy()
             require_bounds()
-            problems = report_problems(result)
+            accepted = act_on_report(result)
+            problems = accepted.problems if isinstance(accepted, Refused) else ()
             errors = [e for e in linter(tree).errors if judged(e)]
-            if not problems and not errors:
-                return _combined(attempts)
+            if not isinstance(accepted, Refused) and not errors:
+                return _combined(attempts), accepted
             if len(attempts) > MAX_RESUMES or attempts[0].session_id is None:
                 resumed = f" after {len(attempts) - 1} resumes" if len(attempts) > 1 else ""
                 left = []

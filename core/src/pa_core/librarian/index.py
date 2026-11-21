@@ -28,10 +28,10 @@ def render_index(listed: Iterable[Page], open_proposals: int = 0) -> str:
     by_folder: dict[str, list[Page]] = {}
     for page in listed:
         by_folder.setdefault(page.folder, []).append(page)
-    asked = f"Open proposals: {open_proposals}"
+    opening = f"Open proposals: {open_proposals}"
     if open_proposals:
-        asked += f", in [[{PROPOSALS.removesuffix('.md')}]]"
-    parts = ["# Index\n", f"{asked}\n"]
+        opening += f", in [[{PROPOSALS.removesuffix('.md')}]]"
+    parts = ["# Index\n", f"{opening}\n"]
     for folder, page_type in PAGE_TYPES.items():
         group = sorted(by_folder.get(folder, ()), key=index_order)
         if group:

@@ -689,8 +689,8 @@ def _print_status(data_root: DataRoot) -> None:
     print(f"wiki: current through {moment(status.wiki.current_through)}; last run {last_run}")
     dreamed = status.wiki.last_dreaming
     print(f"dreaming: last run {'never' if dreamed is None else _dreamed(dreamed, moment)}")
-    asked = status.wiki.open_proposals
-    print(f"proposals: {'not counted yet' if asked is None else f'{asked} open'}")
+    waiting = status.wiki.open_proposals
+    print(f"proposals: {'not counted yet' if waiting is None else f'{waiting} open'}")
     print(
         f"backup: last success {moment(status.backup.last_success)}; "
         f"last failure {failure(status.backup.last_failure)}"

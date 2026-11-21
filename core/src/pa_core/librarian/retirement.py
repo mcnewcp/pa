@@ -36,7 +36,7 @@ TITLE = "Retired"
 """The title the host gives `retired.md` when it starts the file."""
 
 
-def standing(
+def still_retired(
     retired: Mapping[str, date], engaged_days: Mapping[str, Sequence[date]]
 ) -> frozenset[str]:
     """The slugs among `retired` (each with the day it was retired) that stay retired: those

@@ -62,7 +62,7 @@ from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, LintReport, Thresholds, lint
 from pa_core.librarian.metadata import L0Metadata
-from pa_core.librarian.retirement import standing, update_retired
+from pa_core.librarian.retirement import still_retired, update_retired
 from pa_core.librarian.session import (
     Committed,
     LibrarianRunError,
@@ -431,8 +431,8 @@ def _consolidate(
     aren't in this run's batch: a proposal the session resolves cites none of them as its
     answer (`_stale_answers`)."""
     report = linter(tree)
-    standing = read_proposals(tree)
-    asked = [proposal for proposal in standing if proposal.is_open]
+    as_committed = read_proposals(tree)
+    open_now = [proposal for proposal in as_committed if proposal.is_open]
     prompt = (
         consolidation_prompt(
             observations,
@@ -447,7 +447,7 @@ def _consolidate(
         + identity_prompt(identities)
         + "\n"
         + warnings_prompt(report.warnings)
-        + ("\n" + open_proposals_prompt(asked, runner.paths) if asked else "")
+        + ("\n" + open_proposals_prompt(open_now, runner.paths) if open_now else "")
         + ("\n" + errors_prompt(page_errors) if page_errors else "")
     )
     before, logged = tree_state(tree), day_logs(tree)
@@ -474,7 +474,7 @@ def _consolidate(
                 f"{PROPOSALS}"
             )
         if PROPOSALS in changed:
-            problems = _resolution_problems(standing, read_proposals(tree))
+            problems = _resolution_problems(as_committed, read_proposals(tree))
             if problems:
                 raise LibrarianRunError(
                     f"the consolidation session changed {PROPOSALS} other than by resolving a "
@@ -499,7 +499,7 @@ def _consolidate(
         """The run's lint of the wiki, and the host's check of each proposal this session
         resolved, as findings of the same kind: the session is resumed to fix either."""
         found = linter(tree)
-        stale = _stale_answers(standing, tree, earlier_exchanges)
+        stale = _stale_answers(as_committed, tree, earlier_exchanges)
         return replace(found, errors=(*found.errors, *stale))
 
     result = run_session(
@@ -517,8 +517,8 @@ def _consolidate(
     return Phase.CONSOLIDATION, result
 
 
-def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal]) -> list[str]:
-    """What's wrong with how a consolidation session changed `proposals.md`, from `standing`
+def _resolution_problems(as_committed: Sequence[Proposal], left: Sequence[Proposal]) -> list[str]:
+    """What's wrong with how a consolidation session changed `proposals.md`, from `as_committed`
     (as last committed) to `left` (as the session left it).
 
     Consolidation only resolves: an open proposal may become an answered one, keeping its id,
@@ -533,7 +533,7 @@ def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal])
     for proposal in left:
         now.setdefault(proposal.id, []).append(proposal)
     resolved = 0
-    for was in standing:
+    for was in as_committed:
         found = now.get(was.id, [])
         # A line copied under Answered and left under Open too is lint's duplicate id.
         answers = [proposal for proposal in found if proposal != was]
@@ -549,7 +549,7 @@ def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal])
             )
         else:
             problems.append(f"{was.id} was changed: put its line back as it was: `{was.line}`")
-    known = {proposal.id for proposal in standing}
+    known = {proposal.id for proposal in as_committed}
     problems += [
         f"{name} was added: proposals are added by dreaming alone"
         for name in now
@@ -561,10 +561,10 @@ def _resolution_problems(standing: Sequence[Proposal], left: Sequence[Proposal])
 
 
 def _stale_answers(
-    standing: Sequence[Proposal], tree: Path, earlier_exchanges: Collection[str]
+    as_committed: Sequence[Proposal], tree: Path, earlier_exchanges: Collection[str]
 ) -> list[Finding]:
     """What's wrong with the answers a consolidation session resolved proposals from: each
-    proposal that was open in `standing` (the file as last committed) and is answered in the
+    proposal that was open in `as_committed` (the file as last committed) and is answered in the
     wiki at `tree`, citing as its answer one of `earlier_exchanges`, the owner's exchanges
     that aren't in this run's batch.
 
@@ -574,7 +574,7 @@ def _stale_answers(
     episodes. An old exchange about something else, cited by a session that mail swayed,
     resolves nothing.
     """
-    was_open = {proposal.id for proposal in standing if proposal.is_open}
+    was_open = {proposal.id for proposal in as_committed if proposal.is_open}
     file = tree / PROPOSALS
     if not file.is_file() or file.is_symlink():
         return []
@@ -649,13 +649,13 @@ def consolidation_prompt(
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
     folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
     retired = retired or {}
-    still_retired = standing(retired, engaged_days)
+    kept = still_retired(retired, engaged_days)
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         reference: dict[str, object] = {
             "slug": slug,
             "days": days,
-            "reaches_threshold": days >= page_threshold and slug not in still_retired,
+            "reaches_threshold": days >= page_threshold and slug not in kept,
             "engaged": slug in engaged_days,
         }
         if slug in retired:
@@ -757,9 +757,9 @@ PROPOSALS_HEADING = "## Open proposals"
 one (`dreaming.py`, which has more to say under it)."""
 
 
-def open_proposals_prompt(asked: Sequence[Proposal], paths: SessionPaths) -> str:
+def open_proposals_prompt(open_now: Sequence[Proposal], paths: SessionPaths) -> str:
     """The open proposals as a section of consolidation's prompt, under `PROPOSALS_HEADING`:
-    `asked`, as a JSON block, and the one change consolidation may make to the file."""
+    `open_now`, as a JSON block, and the one change consolidation may make to the file."""
     return (
         f"{PROPOSALS_HEADING}\n\n"
         "What the librarian has asked the owner, and the owner hasn't answered yet: the open "
@@ -770,7 +770,7 @@ def open_proposals_prompt(asked: Sequence[Proposal], paths: SessionPaths) -> str
         f"you may make to that file: move its line under `## {ANSWERED}`, checked, saying how "
         "and when it was answered, with the chat cited last and the rest of the line as it "
         "was. Never add a proposal, and never change or remove any other line.\n\n"
-        f"```json\n{as_json([proposal.to_json() for proposal in asked])}\n```\n"
+        f"```json\n{as_json([proposal.to_json() for proposal in open_now])}\n```\n"
     )
 
 

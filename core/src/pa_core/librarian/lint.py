@@ -58,7 +58,7 @@ from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.links import alias_targets
 from pa_core.librarian.metadata import L0Metadata
-from pa_core.librarian.retirement import standing
+from pa_core.librarian.retirement import still_retired
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -201,7 +201,7 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         *_aging_loops(found, thresholds),
         *_duplicate_candidates(found),
         *_slugs_without_pages(
-            tree, found, thresholds, engaged, standing(read_retired(tree), engaged)
+            tree, found, thresholds, engaged, still_retired(read_retired(tree), engaged)
         ),
         *_needs_lookup(files),
     ]

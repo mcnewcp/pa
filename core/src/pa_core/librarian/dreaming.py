@@ -83,6 +83,7 @@ from pa_core.librarian.session import (
     LibrarianRunError,
     Linter,
     Phase,
+    Refused,
     SessionPaths,
     SessionResult,
     SessionRunner,
@@ -93,7 +94,7 @@ from pa_core.librarian.session import (
     findings_text,
     in_pages,
     remove_merged_pages,
-    run_session,
+    run_reporting_session,
     tree_state,
 )
 from pa_core.librarian.wiki import (
@@ -394,7 +395,7 @@ def _dream(
     """Runs the dreaming session over `offered`, and returns its result, its outcomes, in the
     candidates' order, and its template suggestion, if it made one."""
     before = tree_state(tree)
-    standing = read_proposals(tree)
+    as_committed = read_proposals(tree)
     retirements = _Retirements(tree, before, now.date())
 
     def require_bounds() -> None:
@@ -413,31 +414,32 @@ def _dream(
                 f"and {PROPOSALS}"
             )
 
-    judged: dict[str | None, Outcome] = {}
-
-    def report_problems(attempt: SessionResult) -> Sequence[str]:
+    def carry_out(attempt: SessionResult) -> tuple[Outcome, ...] | Refused:
+        """Carries out the retirements an attempt's outcomes report, in place of those of the
+        attempt before it, and returns the outcomes, or what's wrong with them and with the
+        proposals the attempt left."""
         retirements.undo()
-        asked = read_proposals(tree)
-        problems = _proposal_problems(standing, asked, caps)
+        left = read_proposals(tree)
+        problems = _proposal_problems(as_committed, left, caps)
         try:
-            reported = _reported(attempt.final_message)
+            outcomes = _reported(attempt.final_message)
         except InvalidOutcomesError as error:
-            return (*error.problems, *problems)
-        problems += retirements.carry_out(reported)
+            return Refused((*error.problems, *problems))
+        problems += retirements.carry_out(outcomes)
         # The bounds held, so everything changed in a folder is a page; a page merged away or
         # retired is gone by now, and gone is changed.
         changed = [path for path in changed_paths(before, tree_state(tree)) if "/" in path]
         try:
-            outcomes = read_outcomes(
-                attempt.final_message,
+            check_outcomes(
+                outcomes,
                 offered,
                 changed,
-                asked=[proposal.id for proposal in asked if proposal.is_open],
-                added=[proposal.id for proposal in _added(standing, asked)],
+                open_ids=[proposal.id for proposal in left if proposal.is_open],
+                added=[proposal.id for proposal in _added(as_committed, left)],
             )
         except InvalidOutcomesError as error:
-            return (*error.problems, *problems)
-        problems += _room_problems(outcomes, standing, asked, caps)
+            return Refused((*error.problems, *problems))
+        problems += _room_problems(outcomes, as_committed, left, caps)
         applied = [o for o in outcomes if isinstance(o, Applied)]
         claimed = {page for o in applied for page in o.pages}
         # A retired page left out of `pages` is a problem to resume for, above; it is claimed.
@@ -449,19 +451,15 @@ def _dream(
                 "dreaming may change a page only to settle a candidate, and its applied "
                 "outcome names it"
             )
-        if problems:
-            return problems
-        judged.clear()
-        judged.update({outcome.candidate: outcome for outcome in outcomes})
-        return ()
+        return Refused(problems) if problems else outcomes
 
     # Dreaming may change only pages and the proposals, so it's judged only on the errors in
     # them.
-    result = run_session(
+    result, outcomes = run_reporting_session(
         Phase.DREAMING,
         dreaming_prompt(offered, runner.paths)
         + "\n"
-        + proposals_prompt(standing, caps, runner.paths)
+        + proposals_prompt(as_committed, caps, runner.paths)
         + "\n"
         + retired_prompt(read_retired(tree), runner.paths),
         require_bounds,
@@ -472,9 +470,10 @@ def _dream(
         linter,
         committed,
         tidy=partial(remove_merged_pages, tree),
-        report_problems=report_problems,
+        act_on_report=carry_out,
         reminder=OUTCOMES_REMINDER,
     )
+    judged = {outcome.candidate: outcome for outcome in outcomes}
     suggestion = judged.get(None)
     return (
         result,
@@ -612,33 +611,33 @@ def _open_loop_lines(page: Page) -> list[str]:
     ]
 
 
-def _added(standing: Sequence[Proposal], asked: Sequence[Proposal]) -> list[Proposal]:
-    """The proposals in `asked`, the file as a session left it, that weren't in `standing`,
+def _added(as_committed: Sequence[Proposal], left: Sequence[Proposal]) -> list[Proposal]:
+    """The proposals in `left`, the file as a session left it, that weren't in `as_committed`,
     the file as last committed, by their ids."""
-    known = {proposal.id for proposal in standing}
-    return [proposal for proposal in asked if proposal.id not in known]
+    known = {proposal.id for proposal in as_committed}
+    return [proposal for proposal in left if proposal.id not in known]
 
 
 def _proposal_problems(
-    standing: Sequence[Proposal], asked: Sequence[Proposal], caps: ProposalCaps
+    as_committed: Sequence[Proposal], left: Sequence[Proposal], caps: ProposalCaps
 ) -> list[str]:
-    """What's wrong with how a dreaming session changed `proposals.md`, from `standing` (as
-    last committed) to `asked` (as it left it), whatever its outcomes say.
+    """What's wrong with how a dreaming session changed `proposals.md`, from `as_committed` (as
+    last committed) to `left` (as it left it), whatever its outcomes say.
 
     A dreaming run only adds proposals: every proposal that was there is there still, exactly
     as it was. What it adds is numbered above every id the file held, so an id is never reused,
     and stays within `caps`.
     """
     problems: list[str] = []
-    now = {proposal.id: proposal for proposal in reversed(asked)}
-    for was in standing:
+    now = {proposal.id: proposal for proposal in reversed(left)}
+    for was in as_committed:
         if now.get(was.id) != was:
             problems.append(
                 f"{was.id} was {'changed' if was.id in now else 'removed'}: a dreaming run only "
                 f"adds proposals. Put its line back as it was: `{was.line}`"
             )
-    highest = max((proposal.number for proposal in standing), default=0)
-    added = _added(standing, asked)
+    highest = max((proposal.number for proposal in as_committed), default=0)
+    added = _added(as_committed, left)
     for proposal in added:
         if proposal.number <= highest:
             problems.append(
@@ -651,9 +650,9 @@ def _proposal_problems(
             f"keep the {caps.new} most useful to the owner, and dismiss the other candidates, "
             'each with `"no_room": true`'
         )
-    still_open = sum(proposal.is_open for proposal in asked)
+    still_open = sum(proposal.is_open for proposal in left)
     if added and still_open > caps.open:
-        were_open = sum(proposal.is_open for proposal in standing)
+        were_open = sum(proposal.is_open for proposal in as_committed)
         problems.append(
             f"{still_open} proposals would be open, more than the {caps.open} that may be open "
             f"at once: {were_open} were open already, so add at most "
@@ -665,19 +664,20 @@ def _proposal_problems(
 
 def _room_problems(
     outcomes: Sequence[Outcome],
-    standing: Sequence[Proposal],
-    asked: Sequence[Proposal],
+    as_committed: Sequence[Proposal],
+    left: Sequence[Proposal],
     caps: ProposalCaps,
 ) -> list[str]:
     """What's wrong with the candidates a session dismissed for lack of room (`no_room`),
-    given the proposals as last committed (`standing`) and as it left them (`asked`): there
+    given the proposals as last committed (`as_committed`) and as it left them (`left`): there
     is none while the run may still add a proposal within `caps`. Such a dismissal isn't
     remembered, so it must be what it says."""
-    left = caps.room(sum(proposal.is_open for proposal in standing)) - len(_added(standing, asked))
-    if left <= 0:
+    were_open = sum(proposal.is_open for proposal in as_committed)
+    room = caps.room(were_open) - len(_added(as_committed, left))
+    if room <= 0:
         return []
     return [
-        f"{outcome.candidate} is dismissed for lack of room, but this run may still add {left} "
+        f"{outcome.candidate} is dismissed for lack of room, but this run may still add {room} "
         "proposals: propose it, or dismiss it without `no_room` if it isn't worth asking"
         for outcome in outcomes
         if isinstance(outcome, Dismissed) and outcome.no_room
@@ -732,27 +732,25 @@ def _reported(message: str | None) -> tuple[Outcome, ...]:
         ) from error
 
 
-def read_outcomes(
-    message: str | None,
+def check_outcomes(
+    outcomes: Sequence[Outcome],
     offered: Sequence[Candidate],
     changed: Sequence[str],
     *,
-    asked: Collection[str] = (),
-    added: Collection[str] = (),
-) -> tuple[Outcome, ...]:
-    """The outcomes a dreaming session's final `message` carries, in its last fenced `json`
-    block (or as the whole message), checked against the candidates it was `offered`, the
-    paths it `changed`, relative to the wiki, and the proposals in `proposals.md` as the
-    session left it: the ids of those `asked` of the owner (the open ones), and of those the
-    session `added`.
+    open_ids: Collection[str],
+    added: Collection[str],
+) -> None:
+    """Checks the `outcomes` a dreaming session reported (`_reported`) against the candidates
+    it was `offered`, the paths it `changed`, relative to the wiki, and the proposals in
+    `proposals.md` as the session left it: the ids of the open ones (`open_ids`), and of those
+    the session `added`.
 
-    Raises InvalidOutcomesError unless they are in the outcomes' shape; every candidate has
-    exactly one, and none is for anything else but one template suggestion (a proposed outcome
-    with no candidate); each applied outcome names pages, all of which changed; each proposed
-    outcome names an open proposal, the suggestion one of its own that the session added; and
-    every proposal the session added is named.
+    Raises InvalidOutcomesError unless every candidate has exactly one outcome, and none is
+    for anything else but one template suggestion (a proposed outcome with no candidate); each
+    applied outcome names pages, all of which changed; each proposed outcome names an open
+    proposal, the suggestion one of its own that the session added; and every proposal the
+    session added is named.
     """
-    outcomes = _reported(message)
     problems: list[str] = []
     given = Counter(outcome.candidate for outcome in outcomes if outcome.candidate is not None)
     for candidate in offered:
@@ -793,7 +791,7 @@ def read_outcomes(
                     f"the template suggestion names {outcome.proposal}, which a candidate's "
                     "outcome names too: a suggestion is a proposal of its own"
                 )
-        elif isinstance(outcome, Proposed) and outcome.proposal not in asked:
+        elif isinstance(outcome, Proposed) and outcome.proposal not in open_ids:
             problems.append(
                 f"{outcome.candidate} names {outcome.proposal}, which isn't an open proposal in "
                 f"{PROPOSALS}: a proposed outcome names the proposal you added for it under "
@@ -814,7 +812,6 @@ def read_outcomes(
                 )
     if problems:
         raise InvalidOutcomesError(problems)
-    return outcomes
 
 
 CANDIDATES_PROMPT_HEADING = "## Candidates"
@@ -850,23 +847,26 @@ NO_ROOM_SAID = 'with `"no_room": true` in its outcome, so that the next run is o
 """How a prompt says to dismiss a candidate the run has no proposal left for."""
 
 
-def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: SessionPaths) -> str:
+def proposals_prompt(
+    as_committed: Sequence[Proposal], caps: ProposalCaps, paths: SessionPaths
+) -> str:
     """The proposals as a section of the dreaming session's prompt, under
-    `PROPOSALS_PROMPT_HEADING`: the open ones among `standing` (the file as last committed) as
-    a JSON block, how many the run may add within `caps`, and the id the first one takes."""
-    asked = [proposal for proposal in standing if proposal.is_open]
-    room = caps.room(len(asked))
-    first = max((proposal.number for proposal in standing), default=0) + 1
+    `PROPOSALS_PROMPT_HEADING`: the open ones among `as_committed` (the file as last
+    committed) as a JSON block, how many the run may add within `caps`, and the id the first
+    one takes."""
+    open_now = [proposal for proposal in as_committed if proposal.is_open]
+    room = caps.room(len(open_now))
+    first = max((proposal.number for proposal in as_committed), default=0) + 1
     if room:
         may = (
-            f"You may add at most {room} in this run ({len(asked)} are open, and at most "
+            f"You may add at most {room} in this run ({len(open_now)} are open, and at most "
             f"{caps.open} may be open at once): number them from P{first}, in the order you "
             "add them, since an id is never reused. Dismiss a candidate you would have proposed "
             f"past that {NO_ROOM_SAID}."
         )
     else:
         may = (
-            f"You may add none in this run: {len(asked)} are open already, and at most "
+            f"You may add none in this run: {len(open_now)} are open already, and at most "
             f"{caps.open} may be open at once. Dismiss a candidate you would have proposed "
             f"{NO_ROOM_SAID}."
         )
@@ -879,7 +879,7 @@ def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: Se
         f"propose, add a line under `## {OPEN}`, creating the file as `wiki-schema.md` "
         f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
         "already in the file.\n\n"
-        f"```json\n{as_json([proposal.to_json() for proposal in asked])}\n```\n"
+        f"```json\n{as_json([proposal.to_json() for proposal in open_now])}\n```\n"
     )
 
 
