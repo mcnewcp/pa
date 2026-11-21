@@ -21,9 +21,11 @@ new to fold in; a run that fails only on errors its last commit already had says
 anything fails, the wiki goes back to its last commit, so the cursor (kept in the
 commit messages) doesn't move and the batch stays new for the next run.
 
-What a run records is read from the last run's commit that still stands (`standing_runs`),
-not from the last commit: a `git revert` of a run's commit takes back the run's cursor with
-what it wrote, so the next run is offered that run's episodes again.
+What a run records is read from the last librarian run's commit that still stands
+(`last_run_fields`), not from the last commit: a `git revert` of a run's commit takes back the
+run's cursor with what it wrote, so the next run is offered that run's episodes again. A
+dreaming commit carries the cursor forward, and is never where it is read from: reverting the
+librarian run under one takes the cursor back all the same.
 
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
@@ -210,6 +212,10 @@ CURSOR_FIELD = "Cursor"
 VERSION_FIELD = "Librarian-Version"
 OCCURRED_TO_FIELD = "Batch-Occurred-To"
 """A replay run's commit message field holding its window's end."""
+DREAMING_AT_FIELD = "Dreaming-At"
+"""The dreaming commit's field holding the time the run was told is now: what marks a commit as
+a dreaming run's (`pa_core.librarian.dreaming`), and what intervals between dreaming runs are
+measured from (the commit's own date is the clock's, whatever the run was told)."""
 PAGE_THRESHOLD = 3
 """The distinct days a slug is linked on before it gets a page, unless configured otherwise."""
 LOOP_AGE_DAYS = 30
@@ -377,15 +383,26 @@ def standing_runs(repository: WikiRepository) -> tuple[Commit, ...]:
 
 
 def last_run_fields(repository: WikiRepository) -> dict[str, str]:
-    """The fields of the last run that still stands (`standing_runs`): where the wiki is, its
-    cursor and librarian version among them. Empty before the first run, or once every run is
-    reverted."""
-    runs = standing_runs(repository)
-    return commit_fields(runs[0].message) if runs else {}
+    """The fields of the last librarian run that still stands (`standing_runs`): where the wiki
+    is, its cursor and librarian version among them. Empty before the first run, or once every
+    run is reverted.
+
+    A seed counts, and so does the commit that starts a copy to dream: each says where its
+    wiki is. A dreaming run's commit doesn't. It carries the cursor and version of the run it
+    sat on, which may since have been reverted from under it, so they are read from the run
+    itself: reverting a night's librarian run takes its cursor back whether or not that
+    night's dreaming commit still stands.
+    """
+    for commit in standing_runs(repository):
+        fields = commit_fields(commit.message)
+        if DREAMING_AT_FIELD not in fields:
+            return fields
+    return {}
 
 
 def last_cursor(repository: WikiRepository) -> Cursor | None:
-    """The cursor the last run that still stands recorded, or None before the first."""
+    """The cursor the last librarian run that still stands recorded, or None before the
+    first."""
     value = last_run_fields(repository).get(CURSOR_FIELD)
     return Cursor.parse(value) if value else None
 

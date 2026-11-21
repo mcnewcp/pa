@@ -66,6 +66,7 @@ from pa_core.librarian.lint import (
 from pa_core.librarian.retirement import update_retired
 from pa_core.librarian.run import (
     CURSOR_FIELD,
+    DREAMING_AT_FIELD,
     LOOP_AGE_DAYS,
     PAGE_THRESHOLD,
     VERSION_FIELD,
@@ -184,10 +185,6 @@ class DreamingOutcome:
         return sum(o.outcome == outcome for o in self.outcomes)
 
 
-DREAMING_AT_FIELD = "Dreaming-At"
-"""The dreaming commit's field holding the time the run was told is now: what marks a commit as
-a dreaming run's, and what intervals between dreaming runs are measured from (the commit's own
-date is the clock's, whatever the run was told)."""
 DREAMING_VERSION_FIELD = "Dreaming-Version"
 """The dreaming commit's field holding the version of the librarian that dreamed, beside the
 carried `Librarian-Version`: the librarian whose runs built the wiki."""
@@ -804,8 +801,8 @@ def dreaming_commit_message(
     list under `CANDIDATES_HEADING`, then one `Field: value` line per fact, in the last
     paragraph, where `commit_fields` reads them.
 
-    `carried` is the last commit's fields: its cursor and librarian version are carried
-    forward as they are, when it has them.
+    `carried` is the fields of the last librarian run that stands (`last_run_fields`): its
+    cursor and librarian version are carried forward as they are, when it has them.
     """
     counts = [(name, outcome.count(name)) for name in OUTCOMES]
     fields: list[tuple[str, object]] = [

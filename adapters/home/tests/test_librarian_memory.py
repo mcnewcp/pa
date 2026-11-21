@@ -610,6 +610,31 @@ def test_after_a_nightly_runs_commit_is_reverted_that_nights_episodes_are_offere
     assert sorted(new_episodes(data_root)) == ["Gift", "Menu"]
 
 
+def test_reverting_a_nightly_commit_under_a_dreaming_commit_offers_its_episodes_again(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages(loop(opened=40)))
+    first_night = fields(commit_messages(data_root)[0])
+    night(data_root, "Gift", {})
+    # That night's dreaming run sits on its librarian run, and carries its cursor forward.
+    script(data_root, dreaming=dismissing(2))
+    assert dream() == 0
+    dreamed = fields(commit_messages(data_root)[0])
+    assert "Dreaming-At" in dreamed
+    assert dreamed["Cursor"] != first_night["Cursor"]
+
+    revert(data_root, "HEAD~1")
+
+    # The cursor is the newest librarian run's that stands, never one a dreaming commit
+    # carried forward from a run since reverted.
+    assert cut_wiki(data_root, datetime.now(UTC)) == (
+        first_night["Librarian-Version"],
+        first_night["Cursor"],
+    )
+    night(data_root, "Menu", {})
+    assert sorted(new_episodes(data_root)) == ["Gift", "Menu"]
+
+
 def test_reverting_a_revert_puts_the_run_back_with_what_it_recorded(data_root: Path, capsys):
     run_with_pages(data_root, pages(loop(opened=40)))
     night(data_root, "Gift", {TOPIC: pages(loop(opened=40))[TOPIC].replace("Oct 24.", "Oct 25.")})
