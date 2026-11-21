@@ -12,6 +12,7 @@ for Nina Park, a realtor who wrote to the owner once and never heard back.
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Sequence
 from datetime import datetime, time, timedelta
@@ -21,8 +22,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pa_core.librarian.dreaming import Applied, Outcomes
 from pa_home.cli import main
 from pa_home.git_wiki import GitWikiRepository
+from pa_home.librarian_project import LIBRARIAN_PROJECT
 
 CHICAGO = ZoneInfo("America/Chicago")
 """The owner's time zone."""
@@ -951,3 +954,89 @@ def test_a_dreaming_session_over_a_wiki_with_nothing_retired_is_told_so(data_roo
     [session] = sessions(data_root, "dreaming")
     assert "\n## Retired slugs\n" in session["prompt"]
     assert session["inputs"][-1] == []
+
+
+def instructions_text(section: str) -> str:
+    """A `## ` section of the librarian's instructions, as the checkout has them (a session
+    runs the project as committed)."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    found = re.search(rf"^## {section}\n(.*?)(?=^## |\Z)", claude_md, re.M | re.S)
+    assert found is not None, f"CLAUDE.md has no {section} section"
+    return found[1]
+
+
+def instructions(section: str, subsection: str | None = None) -> str:
+    """A `## ` section of the librarian's instructions, or one `### ` subsection of it, with
+    its whitespace collapsed."""
+    text = instructions_text(section)
+    if subsection is not None:
+        found = re.search(rf"^### {subsection}\n(.*?)(?=^### |\Z)", text, re.M | re.S)
+        assert found is not None, f"{section} has no {subsection} subsection"
+        text = found[1]
+    return " ".join(text.split())
+
+
+def judging(kind: str) -> str:
+    """How the instructions say to judge a `kind` candidate: its bullet, whitespace collapsed."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    bullet = re.search(rf"^- \*\*`{kind}`\*\*.*?(?=^- \*\*`|^### )", claude_md, re.M | re.S)
+    assert bullet is not None, f"no bullet says how to judge a {kind} candidate"
+    return " ".join(bullet[0].split())
+
+
+def test_the_dreaming_instructions_cover_the_three_judgments_of_an_unengaged_page():
+    unengaged = judging("unengaged")
+
+    # No open loop, and nothing owed either way: retire it, folding what is worth keeping.
+    assert "nothing owed either way" in unengaged
+    assert "retire it" in unengaged
+    assert "into the page it belongs" in unengaged
+    # An organization the owner plainly relies on is kept.
+    assert "a bank" in unengaged and "a school" in unengaged
+    assert "dismiss it" in unengaged
+    # An open loop: propose, never retire.
+    assert "open loop" in unengaged
+    assert "never retire" in unengaged
+    assert "propose" in unengaged
+
+
+def test_the_dreaming_instructions_say_an_orphan_may_be_retired_and_how_to_retire_a_page():
+    assert "retire it" in judging("orphan")
+    retiring_a_page = instructions("Dreaming", "Retiring a page")
+    # The session empties the page and names its slug; the host does the rest.
+    assert "with no content at all" in retiring_a_page
+    assert "`retired`" in retiring_a_page
+    assert "Never write `retired.md`" in retiring_a_page
+    # The day logs aren't rewritten, and links stay.
+    assert "Leave every link to it" in retiring_a_page
+
+
+def test_the_instructions_example_outcomes_show_a_retirement():
+    [example] = re.findall(r"^```json\n(.*?)^```$", instructions_text("Dreaming"), re.M | re.S)
+
+    outcomes = Outcomes.model_validate_json(example).outcomes
+
+    retired = [o.retired for o in outcomes if isinstance(o, Applied) and o.retired]
+    assert retired == [("shipping-updates",)]
+    assert "`retired`" in instructions("Dreaming", "Outcomes")
+
+
+def test_the_consolidation_instructions_cover_a_retired_slug_and_bringing_its_page_back():
+    consolidation = instructions("Consolidation")
+    # A retired slug stays without a page until the reference counts say otherwise.
+    assert "marked `retired`" in consolidation
+    assert "never write `retired.md`" in consolidation
+    # The owner's word brings a page back, whatever the counts say.
+    corrections = instructions("Corrections")
+    assert "keep a page for" in corrections
+    assert "retired" in corrections
+    assert "the host then drops its slug from `retired.md`" in corrections
+
+
+def test_the_glossary_defines_a_retired_page():
+    glossary = (LIBRARIAN_PROJECT.parent / "GLOSSARY.md").read_text()
+    entry = re.search(r"^\*\*Retired page\*\*:\n(.*?)\n_Avoid_: ", glossary, re.M | re.S)
+
+    assert entry is not None
+    for said in ("never engaged with", "`retired.md`", "The day logs keep its facts"):
+        assert said in entry[1], said

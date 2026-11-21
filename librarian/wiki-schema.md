@@ -13,6 +13,7 @@ librarian run; a run that breaks one is fixed or discarded, never committed.
 ```
 index.md      generated from the pages' summaries, by type; never written by hand
 proposals.md  what the librarian asks the owner: open proposals, then answered ones
+retired.md    the slugs whose pages were retired, each with the day; kept by the host
 days/         day logs, one per day: YYYY-MM-DD.md
 people/       person pages: <slug>.md
 orgs/         organization pages: <slug>.md
@@ -209,6 +210,31 @@ in the file, so the same thing isn't asked again.
 A proposal is a question, never evidence: it shows what is unsettled, and the episodes it
 cites are what to open. `index.md` opens with the number of open proposals.
 
+## Retired slugs
+
+`retired.md` lists the slugs whose pages the librarian retired in a review of the whole wiki:
+pages for people and organizations the owner never engaged with, with nothing owed either
+way. A wiki with nothing retired has no such file. The host writes it, and nothing else does.
+It has an optional `# <title>` line, then one line for each retired slug, with the day it was
+retired:
+
+```
+- <slug> · retired YYYY-MM-DD
+```
+
+```
+- shipping-updates · retired 2026-11-22
+```
+
+A retired slug has no page. What its page held is in the day logs, which are never rewritten:
+the slug's timeline is still there. A link to a retired slug is still good, like a link to any
+slug without a page. The slug gets a page again once the owner engages with it on or after
+that day, a decision or loop names it, or the owner asks for one, and it then leaves this
+file.
+
+No page is named `index`, `proposals`, or `retired`: a link by one of those names goes to the
+file at the wiki's root.
+
 ## Searching the wiki
 
 Every format above is one line, so one grep finds it. Patterns are extended regular
@@ -223,6 +249,7 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 | loops with a due date (overdue is due before now) | `^- \[ \] .*· due [0-9-]{10} ` | `people/ orgs/ topics/` |
 | decisions still only proposed | `^- [0-9-]{10} · [^:]+: proposed ` | `topics/` |
 | what the librarian is waiting on the owner for | `^- \[ \] P[0-9]+ · ` | `proposals.md` |
+| whether a slug's page was retired, and when | `^- <slug> · retired ` | `retired.md` |
 | who has an address, or a mail domain | the address or domain | `people/ orgs/` |
 | a page by another name | `^aliases: .*<name>`, ignoring case | `people/ orgs/ topics/` |
 | a slug's timeline (file names are the days) | `\[\[<slug>(\|[^]]*)?\]\]` | `days/` |

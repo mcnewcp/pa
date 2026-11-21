@@ -19,6 +19,7 @@ from pa_core.librarian.wiki import (
     parse_loop,
     parse_observation,
     parse_proposal,
+    parse_retirement,
 )
 from pa_core.owner import Owner
 from pa_home.claude_session import FILE_TOOLS
@@ -161,6 +162,7 @@ def test_the_wiki_schemas_example_lines_are_well_formed():
             or parse_decision(line)
             or parse_loop(line)
             or parse_proposal(line)
+            or parse_retirement(line)
         )
         assert parsed is not None, line
 
@@ -182,6 +184,28 @@ def test_the_wiki_schema_gives_the_proposals_file_and_its_line_format():
     assert shown[1].citations[-1].startswith("assistant_chat_")
     # And a reader can find the open ones with one grep.
     assert "| `^- \\[ \\] P[0-9]+ · ` | `proposals.md` |" in schema
+
+
+def test_the_wiki_schema_gives_the_retired_file_and_its_line_format():
+    schema = WIKI_SCHEMA.read_text()
+    layout = re.search(r"^## Layout\n\n```\n(.*?)^```$", schema, re.MULTILINE | re.DOTALL)
+    assert layout is not None
+    shown = [parse_retirement(line) for line in schema.splitlines()]
+
+    # The file is in the layout, with an example of its one kind of line.
+    assert re.search(r"^retired\.md ", layout[1], re.MULTILINE)
+    assert [(r.slug, r.day.isoformat()) for r in shown if r is not None] == [
+        ("shipping-updates", "2026-11-22")
+    ]
+    retired = re.search(r"^## Retired slugs\n(.*?)(?=^## )", schema, re.MULTILINE | re.DOTALL)
+    assert retired is not None
+    said = " ".join(retired[1].split())
+    # The host keeps it, a link to a retired slug is good, and the day logs keep the facts.
+    assert "The host writes it" in said
+    assert "A link to a retired slug is still good" in said
+    assert "the day logs" in said
+    # And a reader can find whether a slug was retired with one grep.
+    assert "| `^- <slug> · retired ` | `retired.md` |" in schema
 
 
 def test_rendering_refuses_a_target_that_already_has_files(tmp_path: Path):

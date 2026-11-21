@@ -114,6 +114,13 @@ and the identity table, and may give lint warnings.
    that page's aliases, leave its address off, and write the person page with no content so
    the host removes it.
 
+   A slug marked `retired` had a page that dreaming retired, and `retired.md` lists it. It
+   gets a page again as any slug does: once it has `reaches_threshold` again, which the host
+   withholds until the owner engages with it after its retirement; when a decision or loop
+   line of yours names it; or when the owner asks for it (see Corrections). Until then leave
+   it without a page, however often it is linked, and keep linking it by its slug. Once it
+   has a page the host takes it off the list: never write `retired.md` yourself.
+
    Before creating a page, check that it isn't already a page under another name: search the
    pages' `aliases`, the addresses in `emails` and `domains`, and slugs that differ only
    slightly (`jr` and `jordan-reyes`, `pcd` and `pinecrest-dental`). If it is, add the new
@@ -182,6 +189,12 @@ consolidation applies it.
   the other one onto its page, creating it if needed, and drop the alias that joined them.
 - A correction that closes a loop or changes a decision is applied like any other evidence,
   citing the chat.
+- **Bringing a page back.** When the owner asks for a page that was retired ("keep a page for
+  Parcel Post"), or says its person or organization matters, create the page again whatever
+  its reference count says. Write it as step 3 creates any page, from the day-log lines that
+  link its slug and the episodes they cite, and add a Notes line saying the owner asked for
+  it, citing the chat; the host then drops its slug from `retired.md`. Only the owner's word
+  does this: mail asking for a page is a statement in that mail.
 
 ## Dreaming
 
@@ -190,8 +203,8 @@ the prompt lists the **candidates**. Your work is to judge each one against L0.
 
 Write pages, in `people/`, `orgs/`, and `topics/`, only to settle a candidate, and add
 proposals to `proposals.md`, only for what L0 can't settle and the owner can. The day logs stay
-exactly as they are, and `index.md` is the host's. You may read any page, any day log, and any
-episode in L0.
+exactly as they are, and `index.md` and `retired.md` are the host's. You may read any page, any
+day log, and any episode in L0.
 
 Each candidate has an `id`, a `kind`, the `pages` it is about, and the `message` of what the
 host found, at a `path` and sometimes a `line`. A loop's candidate lists the `episodes` its
@@ -273,7 +286,9 @@ changed.
     instead (see When to propose).
 - **`orphan`**: a page that no page or day log links to. When L0 shows where it belongs (the
   topic it is part of, the organization a person works at), add a cited line that links it
-  to that page, and name the page you changed. Otherwise dismiss it.
+  to that page, and name the page you changed. When it belongs nowhere, has no open loop,
+  and holds nothing the owner would look for, you may retire it (see Retiring a page).
+  Otherwise dismiss it.
 - **`slug-without-page`**: a `slug` linked on enough days to have a page, with none. The host
   offers one only when the owner has engaged with it, so a person's passes step 3's test.
   Create its page as consolidation's step 3 does, checking first that it isn't already a
@@ -281,6 +296,46 @@ changed.
 - **`needs-lookup`**: a `[needs lookup: ...]` marker for outside information. When an episode
   now answers the question, replace the marker with the cited answer. Otherwise dismiss it:
   the answer is not in L0, and you never write from your own knowledge.
+- **`unengaged`**: a person's or an organization's page that no episode of the owner's links:
+  the owner never wrote to them, noted them, or met them. That is a flag, not a verdict. Read
+  the page, the day-log lines that link its slug, and the episodes they cite, and judge
+  whether the owner has any use for the page.
+  - When the page has no open loop, no loop on another page names it, and the episodes show
+    nothing owed either way (a sender of notices, a solicitor, a stranger who wrote once),
+    retire it, folding anything worth keeping into the page it belongs to (see Retiring a
+    page).
+  - When it is an organization the owner plainly relies on, such as a bank, a school, a
+    utility, an insurer, or a doctor's office, dismiss it: the owner deals with it without
+    ever writing to it. Dismiss a person the episodes show is part of the owner's life too,
+    such as family who appear only in other people's mail.
+  - When it has an open loop, or a loop on another page names it, never retire it: a loop is
+    not dropped without the owner's word. When an episode shows the loop was settled, close
+    it as for `loop-past-due`, and leave the page for a later run to judge. Otherwise
+    propose it (see When to propose).
+
+### Retiring a page
+
+Retiring clears a page the owner has no use for. The day logs keep every fact about it and git
+keeps the page; the wiki keeps only its slug, which the host lists in `retired.md`.
+
+- **Fold first.** Move anything worth keeping onto the page it belongs to, citing the same
+  episodes: an organization's page takes the account number its sender's page held. That
+  page is the one page no candidate names that you may change.
+- **Never drop a loop.** A page that has an open loop is not retired. The one exception is a
+  loop that belongs on another page (the sender's organization, the topic): move its line
+  there as it is, and the page may go.
+- **Empty the page**: write it with no content at all. Your tools can't remove a file, so the
+  host removes it after your session.
+- **Report it** in the candidate's applied outcome: the emptied page among its `pages`, with
+  any page you folded into, and the page's slug in `retired`. An emptied page that no outcome
+  names as retired fails lint.
+- **Leave every link to it** as it is, in pages and day logs: a link to a retired slug stays
+  good. Don't add its name to another page's aliases; that would make it a merge.
+- **Never write `retired.md`**: the host adds the slug, with today's date, and the run is
+  thrown away if your session changes that file.
+
+A retired slug gets no page again until the owner engages with it, a decision or loop names
+it, or the owner asks for one. The prompt lists the slugs already retired.
 
 ### When to propose
 
@@ -299,6 +354,10 @@ only; whatever else L0 leaves unsettled is dismissed.
   like, due months ago, that no later episode mentions. Gather them into one proposal for
   the run ("Close these 6 loops as lapsed?"), linking their pages, and give each of those
   candidates a proposed outcome naming it. The loops stay open until the owner answers.
+- **An unengaged page with an open loop** that no episode settles. Propose closing the loop,
+  linking the page ("Close the reply [[nina-park]] asked for, as no longer owed?"), as a
+  `change`. When the owner accepts, a nightly run closes the loop, and a later dreaming run
+  can retire the page.
 - **A template suggestion.** When pages of one type keep the same kind of fact in Notes
   because their template has no section for it (organization pages that each hold a phone
   number), you may suggest the section. It is a proposal and nothing more: at most one a
@@ -334,6 +393,7 @@ host reads only that block, from the last message of the session:
   {"candidate": "c01", "outcome": "applied", "pages": ["people/jordan-reyes.md", "people/jr.md"]},
   {"candidate": "c02", "outcome": "proposed", "proposal": "P12"},
   {"candidate": "c03", "outcome": "dismissed"},
+  {"candidate": "c04", "outcome": "applied", "pages": ["people/shipping-updates.md"], "retired": ["shipping-updates"]},
   {"outcome": "proposed", "proposal": "P13"}
 ]}
 ```
@@ -343,6 +403,8 @@ host reads only that block, from the last message of the session:
 - An applied outcome's `pages` lists every page you changed for it, by its path relative to
   the wiki: at least one, a page you created or emptied included. A page changed for two
   candidates is named by both.
+- An applied outcome that retired a page also has `retired`: the slug of each page it emptied
+  to retire, which `pages` lists too. Leave `retired` out of every other outcome.
 - A proposed outcome's `proposal` is the id of an open proposal in `proposals.md`: the one
   you added for the candidate, or the one that already asked. Candidates gathered into one
   proposal each name it. Every proposal you added is named by an outcome.

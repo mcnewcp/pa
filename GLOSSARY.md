@@ -170,6 +170,10 @@ _Avoid_: Issue, defect, finding, warning
 Something the librarian asks the owner because L0 can't settle it: a proposed change the owner accepts or declines, or a question only the owner can answer. Dreaming adds each as one line of `proposals.md` at the wiki's root, with an id, links to the pages it is about, and the episodes behind it. The owner answers in chat, and the answer is what settles it; a proposal is never evidence.
 _Avoid_: Request, task, ticket, to-do
 
+**Retired page**:
+A page dreaming cleared from the wiki because the owner has no use for it: a person or organization the owner never engaged with, with nothing owed either way. The day logs keep its facts and git keeps the page. Its slug is listed in `retired.md` at the wiki's root, links to it stay valid, and it gets no page again until the owner engages with it, a loop or decision names it, or the owner asks for one.
+_Avoid_: Deleted page, archived page, hidden page
+
 **Correction**:
 An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
 _Avoid_: Fix, override
