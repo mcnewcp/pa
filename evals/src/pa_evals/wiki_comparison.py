@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from pa_evals.comparison import (
     ComparisonError,
-    WikiVerdict,
+    WikiComparison,
     answers,
     compare_wikis,
     format_spread,
@@ -44,7 +44,7 @@ class WikiRuns:
 
     first: Sequence[RunResults]
     second: Sequence[RunResults]
-    comparison: WikiVerdict
+    comparison: WikiComparison
 
     @property
     def labels(self) -> tuple[str, str]:

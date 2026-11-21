@@ -178,9 +178,9 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
 
     if len(labels) == 2:
-        verdict = compare_wikis(configurations[labels[0]], configurations[labels[1]])
-        if verdict is not None:
-            lines += ["", *wiki_comparison_section(labels[0], labels[1], verdict)]
+        comparison = compare_wikis(configurations[labels[0]], configurations[labels[1]])
+        if comparison is not None:
+            lines += ["", *wiki_comparison_section(labels[0], labels[1], comparison)]
 
     lines += [
         "",
@@ -251,7 +251,7 @@ class CategoryDrop:
 
 
 @dataclass(frozen=True)
-class WikiVerdict:
+class WikiComparison:
     """Whether a second eval wiki does as well as a first, over runs given each."""
 
     overall: CategoryDrop
@@ -273,7 +273,9 @@ class WikiVerdict:
         return self.overall_holds and not self.dropped
 
 
-def compare_wikis(first: Sequence[RunResults], second: Sequence[RunResults]) -> WikiVerdict | None:
+def compare_wikis(
+    first: Sequence[RunResults], second: Sequence[RunResults]
+) -> WikiComparison | None:
     """The second runs' eval wiki against the first's, or None unless each set of runs was
     given one eval wiki throughout, and not the same one: a wiki is named by the librarian
     version that built it and the one that dreamed it."""
@@ -290,10 +292,10 @@ def compare_wikis(first: Sequence[RunResults], second: Sequence[RunResults]) -> 
         was, now = correctness(first, category), correctness(second, category)
         if was is not None and now is not None:
             drops.append(CategoryDrop(category, was, now))
-    return WikiVerdict(overall=drops[-1], categories=tuple(drops[:-1]))
+    return WikiComparison(overall=drops[-1], categories=tuple(drops[:-1]))
 
 
-def wiki_comparison_section(first: str, second: str, verdict: WikiVerdict) -> list[str]:
+def wiki_comparison_section(first: str, second: str, comparison: WikiComparison) -> list[str]:
     """The wiki comparison's section of a report, as its lines: `second`'s wiki against
     `first`'s, each named as the report names it. Numbers only."""
     first, second = table_cell(first), table_cell(second)
@@ -309,29 +311,29 @@ def wiki_comparison_section(first: str, second: str, verdict: WikiVerdict) -> li
         f"| Category | {first} | {second} | Drop | Spread | Within it |",
         "|---|---|---|---|---|---|",
     ]
-    for category in verdict.categories:
+    for category in comparison.categories:
         lines.append(
             f"| {table_cell(category.category)} | {format_spread(category.first)} | "
             f"{format_spread(category.second)} | {_drop(category)} | {category.spread:.2f} | "
             f"{'yes' if category.within_spread else 'no'} |"
         )
-    overall = verdict.overall
+    overall = comparison.overall
     lines += [
         f"| {OVERALL} | {format_spread(overall.first)} | {format_spread(overall.second)} | "
-        f"{_drop(overall)} | n/a | {'yes' if verdict.overall_holds else 'no'} |",
+        f"{_drop(overall)} | n/a | {'yes' if comparison.overall_holds else 'no'} |",
         "",
     ]
-    if verdict.passed:
+    if comparison.passed:
         lines.append(
             f"**Passes**: overall correctness is {overall.second.mean:.2f}, at least "
             f"{overall.first.mean:.2f}, and no category drops by more than the spread."
         )
-    if not verdict.overall_holds:
+    if not comparison.overall_holds:
         lines.append(
             f"**Fails**: overall correctness is {overall.second.mean:.2f}, below "
             f"{overall.first.mean:.2f}."
         )
-    for category in verdict.dropped:
+    for category in comparison.dropped:
         lines.append(
             f"**Fails**: {category.category} drops by {category.drop:.2f}, more than the "
             f"spread of {category.spread:.2f}."
