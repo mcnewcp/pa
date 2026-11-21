@@ -34,6 +34,7 @@ HOTEL = "gmail_9ff7394d0df8584d"
 def email(
     *,
     message_id: str = "wedding-0001@example.net",
+    labels: str = "Inbox",
     date: str = "Wed, 30 Sep 2026 21:30:00 -0500",
     sender: str = "David Kim <dkim@example.net>",
     to: str = "Argus McNevans <argus@example.com>",
@@ -41,7 +42,7 @@ def email(
     body: str = "The hotel block closes on Oct 9.",
 ) -> bytes:
     return (
-        "X-Gmail-Labels: Inbox\r\n"
+        f"X-Gmail-Labels: {labels}\r\n"
         f"Message-ID: <{message_id}>\r\n"
         f"Date: {date}\r\n"
         f"From: {sender}\r\n"
@@ -220,6 +221,9 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
             "gmail/hotel.eml": email(),
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
+                # The owner's own mail carries the Sent label; without it, it's forged, and
+                # the owner hasn't engaged with what it links (#142).
+                labels="Sent",
                 date="Fri, 2 Oct 2026 09:00:00 -0500",
                 sender="Argus McNevans <argus@example.com>",
                 to="David Kim <dkim@example.net>",
