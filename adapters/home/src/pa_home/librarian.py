@@ -47,7 +47,6 @@ from pa_core.librarian.dream_copy import (
     run_copy_dreaming,
 )
 from pa_core.librarian.dreaming import (
-    OUTCOMES,
     CandidateCounts,
     DreamingOutcome,
     last_dreaming_at,
@@ -192,7 +191,7 @@ def dream(
         succeeded=True,
         cost_usd=_cost(outcome.sessions),
         candidates=len(outcome.candidates),
-        outcomes={name: outcome.count(name) for name in OUTCOMES},
+        outcomes=outcome.counts,
         held_back=outcome.held_back,
         left_over=outcome.left_over,
     )

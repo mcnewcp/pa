@@ -49,6 +49,7 @@ from pa_core.librarian.candidates import (
     ORDER,
     Candidate,
     DreamingHistory,
+    OutcomeName,
     PastOutcome,
     PastRun,
     candidates,
@@ -188,18 +189,22 @@ class DreamingOutcome:
     """How many more it had that the run wasn't offered because of the cap on a run's
     candidates: they wait for the next run."""
 
-    def count(self, outcome: str) -> int:
-        """How many candidates got `outcome` (one of `OUTCOMES`)."""
-        return sum(o.outcome == outcome for o in self.outcomes)
+    @property
+    def counts(self) -> dict[str, int]:
+        """How many candidates got each outcome, by the outcome's name, in `OUTCOMES`' order:
+        what the commit message, the status, and the run log record of a run."""
+        given = Counter(outcome.outcome for outcome in self.outcomes)
+        return {str(name): given[name] for name in OUTCOMES}
 
 
 DREAMING_VERSION_FIELD = "Dreaming-Version"
 """The dreaming commit's field holding the version of the librarian that dreamed, beside the
 carried `Librarian-Version`: the librarian whose runs built the wiki."""
 CANDIDATES_FIELD = "Dreaming-Candidates"
-OUTCOMES = ("applied", "proposed", "dismissed")
+OUTCOMES = tuple(OutcomeName)
 """Every outcome a candidate can get, in the order the commit message counts them (each as
-`Dreaming-<Outcome>`)."""
+`Dreaming-<Outcome>`). The session's outcomes (`Applied`, `Proposed`, `Dismissed`) name
+theirs by the same values."""
 SUGGESTION_FIELD = "Dreaming-Template-Suggestion"
 """The dreaming commit's field holding the id of the proposal that is the run's template
 suggestion, when it made one."""
@@ -903,7 +908,7 @@ def dreaming_commit_message(
     `carried` is the fields of the last librarian run that stands (`last_run_fields`): its
     cursor and librarian version are carried forward as they are, when it has them.
     """
-    counts = [(name, outcome.count(name)) for name in OUTCOMES]
+    counts = outcome.counts
     fields: list[tuple[str, object]] = [
         *((key, carried[key]) for key in (CURSOR_FIELD, VERSION_FIELD) if key in carried),
         (DREAMING_VERSION_FIELD, librarian.version),
@@ -920,12 +925,12 @@ def dreaming_commit_message(
             (f"{name}-Resumes", result.resumes),
         ]
     fields.append((CANDIDATES_FIELD, len(outcome.candidates)))
-    fields += [(f"Dreaming-{name.capitalize()}", count) for name, count in counts]
+    fields += [(f"Dreaming-{name.capitalize()}", count) for name, count in counts.items()]
     if outcome.suggestion is not None:
         fields.append((SUGGESTION_FIELD, outcome.suggestion.proposal))
     fields.append(("Lint-Warnings", len(outcome.warnings)))
     summary = f"dreaming run: {len(outcome.candidates)} candidates, " + ", ".join(
-        f"{count} {name}" for name, count in counts
+        f"{count} {name}" for name, count in counts.items()
     )
     listed = [
         _listed(candidate, judged)
@@ -997,9 +1002,12 @@ def dreaming_history(repository: WikiRepository, now: datetime) -> DreamingHisto
                     PastOutcome(
                         kind=found["kind"],
                         subject=found["subject"],
-                        outcome=found["outcome"],
-                        proposal=found["detail"] if found["outcome"] == "proposed" else None,
-                        no_room=found["outcome"] == "dismissed" and found["detail"] == NO_ROOM,
+                        outcome=OutcomeName(found["outcome"]),
+                        proposal=found["detail"]
+                        if found["outcome"] == OutcomeName.PROPOSED
+                        else None,
+                        no_room=found["outcome"] == OutcomeName.DISMISSED
+                        and found["detail"] == NO_ROOM,
                     )
                     for found in listed
                     if found

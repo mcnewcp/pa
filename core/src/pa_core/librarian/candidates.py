@@ -58,6 +58,7 @@ from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
+from enum import StrEnum
 from pathlib import Path
 
 from pa_core.librarian.engagement import engaged_days
@@ -139,6 +140,18 @@ class Candidate:
         return listed
 
 
+class OutcomeName(StrEnum):
+    """Each outcome a dreaming run can give a candidate, in the order they are counted in. A
+    session reports one by its value, and a dreaming commit lists and counts them by it."""
+
+    APPLIED = "applied"
+    """L0 settled the candidate, so the session fixed the wiki."""
+    PROPOSED = "proposed"
+    """L0 can't settle it and the owner can, so a proposal asks."""
+    DISMISSED = "dismissed"
+    """It isn't a problem, or nothing can settle it; nothing changed for it."""
+
+
 @dataclass(frozen=True)
 class PastOutcome:
     """What an earlier dreaming run decided about one candidate, as its commit lists it."""
@@ -146,8 +159,7 @@ class PastOutcome:
     kind: str
     subject: str
     """What the candidate was about, as `Candidate.subject` wrote it."""
-    outcome: str
-    """`applied`, `proposed`, or `dismissed`."""
+    outcome: OutcomeName
     proposal: str | None = None
     """For a proposed candidate, the id of the proposal that asks about it."""
     no_room: bool = False
@@ -324,11 +336,11 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
             identity = _identity(past.kind, past.subject)
             if identity in judged:
                 continue
-            if past.outcome == "proposed":
+            if past.outcome is OutcomeName.PROPOSED:
                 waits = past.proposal in asked
             else:
                 waits = (
-                    past.outcome == "dismissed"
+                    past.outcome is OutcomeName.DISMISSED
                     and not past.no_room
                     and run.age < timedelta(days=DISMISSAL_DAYS)
                     and not any(_is_page(path) for path in run.changed & identity[1])

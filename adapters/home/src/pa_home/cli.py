@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -13,7 +13,7 @@ from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
-from pa_core.librarian.dreaming import OUTCOMES, DreamingOutcome
+from pa_core.librarian.dreaming import DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import LibrarianRunError, RunOutcome
 from pa_core.renormalize import renormalize
@@ -710,12 +710,17 @@ def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
     held_back = f", {run.held_back} held back" if run.held_back else ""
     if not run.candidates:
         return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
-    counts = ", ".join(f"{count} {outcome}" for outcome, count in run.outcomes.items())
+    counts = _counts_text(run.outcomes)
     left_over = f", {run.left_over} over the cap" if run.left_over else ""
     return (
         f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
         f"{held_back}{left_over}"
     )
+
+
+def _counts_text(counts: Mapping[str, int]) -> str:
+    """A dreaming run's count per outcome, as a run's report and `pa status` both show it."""
+    return ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
@@ -882,7 +887,7 @@ def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
     if outcome.commit is None:
         print(f"{name}: no candidates in the wiki")
         return
-    counts = ", ".join(f"{outcome.count(o)} {o}" for o in OUTCOMES)
+    counts = _counts_text(outcome.counts)
     left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
     print(
         f"{name}: judged {len(outcome.candidates)} candidates ({counts}); "

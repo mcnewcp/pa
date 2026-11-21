@@ -29,7 +29,6 @@ from pa_core.errors import PaError
 from pa_core.l0 import L0Store
 from pa_core.librarian.candidates import CANDIDATE_CAP
 from pa_core.librarian.dreaming import (
-    OUTCOMES,
     PROPOSAL_CAPS,
     DreamingOutcome,
     ProposalCaps,
@@ -232,7 +231,7 @@ def _entry(
         ),
         cost_usd=cost,
         candidates=len(outcome.candidates) if outcome else None,
-        outcomes={name: outcome.count(name) for name in OUTCOMES} if outcome else None,
+        outcomes=outcome.counts if outcome else None,
         lint_warnings=len(outcome.warnings) if outcome else None,
         error=str(error) if error else None,
     )
