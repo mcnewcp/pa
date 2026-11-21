@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from pa_core.librarian.candidates import CandidateKind
-from pa_core.librarian.dreaming import Applied, Dismissed, Outcomes
+from pa_core.librarian.dreaming import OUTCOMES, Applied, Dismissed, Outcomes, Proposed
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.cut import take_cut
@@ -1332,7 +1332,7 @@ def test_the_instructions_name_the_dreaming_phase_and_how_to_judge_every_kind_of
     assert "`Phase: dreaming`" in claude_md.split("\n## ")[0]
     for kind in CandidateKind:
         assert f"`{kind}`" in instructions, f"nothing says how to judge a {kind} candidate"
-    for outcome in ("applied", "dismissed"):
+    for outcome in OUTCOMES:
         assert f"**{outcome}**" in instructions
 
 
@@ -1341,4 +1341,4 @@ def test_the_instructions_example_outcomes_are_in_the_shape_the_host_accepts():
 
     outcomes = Outcomes.model_validate_json(example).outcomes
 
-    assert {type(outcome) for outcome in outcomes} == {Applied, Dismissed}
+    assert {type(outcome) for outcome in outcomes} == {Applied, Proposed, Dismissed}

@@ -12,6 +12,7 @@ librarian run; a run that breaks one is fixed or discarded, never committed.
 
 ```
 index.md      generated from the pages' summaries, by type; never written by hand
+proposals.md  what the librarian asks the owner: open proposals, then answered ones
 days/         day logs, one per day: YYYY-MM-DD.md
 people/       person pages: <slug>.md
 orgs/         organization pages: <slug>.md
@@ -163,6 +164,51 @@ Each loop lives on one page: its topic's page, or else the page of its party oth
 `[needs lookup: how long does an untreated redwood pergola usually last?]`. The
 question names nothing private, since it will be looked up on the web.
 
+## Proposals
+
+`proposals.md` holds what the librarian asks the owner: what L0 can't settle and the owner
+can. A wiki the librarian has asked nothing has no such file. The file has an optional
+`# <title>` line and exactly two sections, in order, each holding proposal lines and nothing
+else:
+
+```
+# Proposals
+
+## Open
+- [ ] P12 · change · Are [[jr]] and [[jordan-reyes]] the same person? · proposed 2026-11-22 [ep:gmail_6666666666666666]
+
+## Answered
+- [x] P9 · question · Did [[birchwood-remodeling]] send the revised quote? · proposed 2026-11-15 · answered 2026-11-17 [ep:gmail_7777777777777777] [ep:assistant_chat_8888888888888888]
+```
+
+**Open proposal:** one line asking one thing, under `## Open`:
+
+```
+- [ ] P<number> · <change|question> · <text> · proposed YYYY-MM-DD [ep:<id>]
+```
+
+- The id is `P` and a number, and is never reused: a new proposal takes the number after the
+  highest in the file, answered proposals included.
+- The kind is `change` (a change the owner can accept or decline) or `question` (something
+  only the owner knows).
+- `<text>` is one short question in plain words: at most 200 characters, with no URL and no
+  ` · `. It links the pages it is about, and every link of an open proposal goes to a page.
+- The citations are the episodes that raise the question.
+
+**Answered proposal:** the owner answers in chat, and the line moves under `## Answered`,
+checked, saying how and when it was answered. It keeps its citations, and cites the owner's
+answer last:
+
+```
+- [x] P<number> · <change|question> · <text> · proposed YYYY-MM-DD · <accepted|declined|answered> YYYY-MM-DD [ep:<id>] [ep:<the owner's answer>]
+```
+
+A `change` is `accepted` or `declined`; a `question` is `answered`. A declined proposal stays
+in the file, so the same thing isn't asked again.
+
+A proposal is a question, never evidence: it shows what is unsettled, and the episodes it
+cites are what to open. `index.md` opens with the number of open proposals.
+
 ## Searching the wiki
 
 Every format above is one line, so one grep finds it. Patterns are extended regular
@@ -176,6 +222,7 @@ expressions (`grep -E`, `rg`, or the Grep tool), run from the wiki's root:
 | every open loop, or every closed one | `^- \[ \] `, `^- \[x\] ` | `people/ orgs/ topics/` |
 | loops with a due date (overdue is due before now) | `^- \[ \] .*· due [0-9-]{10} ` | `people/ orgs/ topics/` |
 | decisions still only proposed | `^- [0-9-]{10} · [^:]+: proposed ` | `topics/` |
+| what the librarian is waiting on the owner for | `^- \[ \] P[0-9]+ · ` | `proposals.md` |
 | who has an address, or a mail domain | the address or domain | `people/ orgs/` |
 | a page by another name | `^aliases: .*<name>`, ignoring case | `people/ orgs/ topics/` |
 | a slug's timeline (file names are the days) | `\[\[<slug>(\|[^]]*)?\]\]` | `days/` |

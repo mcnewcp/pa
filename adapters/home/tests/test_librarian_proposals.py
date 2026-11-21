@@ -10,6 +10,7 @@ the session was given: the stand-in records the open proposals listed under the 
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 from datetime import datetime, time, timedelta
@@ -21,6 +22,7 @@ import pytest
 
 from pa_home.cli import main
 from pa_home.git_wiki import GitWikiRepository
+from pa_home.librarian_project import LIBRARIAN_PROJECT
 
 CHICAGO = ZoneInfo("America/Chicago")
 """The owner's time zone."""
@@ -1137,3 +1139,61 @@ def test_the_index_counts_only_the_proposals_the_owner_hasnt_answered(data_root:
     assert run_librarian() == 0
 
     assert index_opening(data_root) == ["# Index", "", "Open proposals: 0", ""]
+
+
+def dreaming_instructions(subsection: str | None = None) -> str:
+    """The librarian project's instructions for the dreaming phase, as the checkout has them,
+    with their whitespace collapsed: CLAUDE.md's Dreaming section, or one `### ` subsection of
+    it."""
+    claude_md = (LIBRARIAN_PROJECT / "CLAUDE.md").read_text()
+    section = re.search(r"^## Dreaming\n(.*?)(?=^## )", claude_md, re.M | re.S)
+    assert section is not None, "CLAUDE.md has no Dreaming section"
+    text = section[1]
+    if subsection is not None:
+        found = re.search(rf"^### {subsection}\n(.*?)(?=^###? |\Z)", text, re.M | re.S)
+        assert found is not None, subsection
+        text = found[1]
+    return " ".join(text.split())
+
+
+def test_the_dreaming_instructions_say_when_to_propose():
+    proposing_rules = dreaming_instructions("When to propose")
+
+    for rule in (
+        # The four cases the owner is asked about.
+        "**A duplicate L0 can't settle.**",
+        "**A current state that contradicts its decisions**, where L0 doesn't settle which is "
+        "right.",
+        "**Routine loops long past due with nothing since.**",
+        "Gather them into one proposal",
+        "**A template suggestion.**",
+        "at most one a run",
+        "with no `candidate`",
+        # A proposal is in the librarian's voice, so mail can't put one to the owner.
+        "Never cite suspicious mail",
+        # And it stays short and plain.
+        "at most 200 characters",
+        "no URL",
+    ):
+        assert rule in proposing_rules, rule
+
+
+def test_the_dreaming_instructions_widen_its_bounds_to_the_proposals():
+    instructions = dreaming_instructions()
+
+    assert "**proposed**" in instructions
+    assert "and add proposals to `proposals.md`" in instructions
+    assert "every proposal you added is named by a proposed outcome" in instructions
+    # The kinds whose judgment used to end in a dismissal now point at the proposals.
+    judging = dreaming_instructions("How to judge each kind")
+    assert "When L0 shows neither, propose it" in judging
+    assert "`proposed`" in dreaming_instructions("Outcomes")
+
+
+def test_the_glossary_defines_a_proposal():
+    glossary = (LIBRARIAN_PROJECT.parent / "GLOSSARY.md").read_text()
+    entry = re.search(r"^\*\*Proposal\*\*:\n(.*?)\n_Avoid_: ", glossary, re.M | re.S)
+
+    assert entry is not None
+    for said in ("`proposals.md`", "proposed change", "question", "answers in chat"):
+        assert said in entry[1], said
