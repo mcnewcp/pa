@@ -6,8 +6,8 @@ what looks wrong with the wiki, and the session gives each candidate one outcome
 which problems are offered, in what order, or what each is called.
 
 So far a candidate is a lint warning: an orphan page, a loop past due or open too long, a
-duplicate candidate, a slug that reached the page threshold without a page, or a "needs lookup"
-marker.
+duplicate candidate, an engaged slug that reached the page threshold without a page, or a
+"needs lookup" marker.
 """
 
 from __future__ import annotations
