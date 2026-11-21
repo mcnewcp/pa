@@ -131,14 +131,14 @@ def run(
         failed = LibrarianRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record_run(data_root, repository, failed, now)
+        _record(data_root, repository, now, failed)
         _keep_error(data_root.run_errors / RUN_ERROR, error, started)
         raise
     warnings = None if outcome.batch is None else len(outcome.warnings)
     succeeded = LibrarianRun(
         at=started, succeeded=True, cost_usd=_cost(outcome.sessions), warnings=warnings
     )
-    _record_run(data_root, repository, succeeded, now)
+    _record(data_root, repository, now, succeeded)
     return outcome
 
 
@@ -180,7 +180,7 @@ def dream(
         failed = DreamingRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record(data_root, repository, now, last_dreaming=failed)
+        _record(data_root, repository, now, failed)
         _keep_error(data_root.run_errors / DREAMING_ERROR, error, started)
         raise
     succeeded = DreamingRun(
@@ -192,7 +192,7 @@ def dream(
         held_back=outcome.held_back,
         left_over=outcome.left_over,
     )
-    _record(data_root, repository, now, last_dreaming=succeeded)
+    _record(data_root, repository, now, succeeded)
     return outcome
 
 
@@ -323,36 +323,27 @@ def record_run_not_made(
     held back or one with no configuration, with `reason`, which must hold no content."""
     at = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), now)
-
-
-def _record_run(
-    data_root: DataRoot,
-    repository: GitWikiRepository,
-    run: LibrarianRun,
-    now: Callable[[], datetime],
-) -> None:
-    """Writes `run` into the status as the wiki's last run."""
-    _record(data_root, repository, now, last_run=run)
+    _record(data_root, repository, now, LibrarianRun(at=at, succeeded=False, reason=reason))
 
 
 def _record(
     data_root: DataRoot,
     repository: GitWikiRepository,
     now: Callable[[], datetime],
-    **ran: LibrarianRun | DreamingRun,
+    run: LibrarianRun | DreamingRun,
 ) -> None:
-    """Writes into the status's part for the wiki the run that just ended (as `last_run` or
-    `last_dreaming`), with what the wiki as last committed says: the time it is current through
-    and how many proposals are open. Everything else there stands, so a librarian run keeps the
-    last dreaming run's record, and a dreaming run the librarian run's."""
+    """Writes into the status's part for the wiki the `run` that just ended (a librarian run
+    as its `last_run`, a dreaming run as its `last_dreaming`), with what the wiki as last
+    committed says: the time it is current through and how many proposals are open. Everything
+    else there stands, so a librarian run keeps the last dreaming run's record, and a dreaming
+    run the librarian run's."""
     cursor = last_cursor(repository)
     status = read_status(data_root.status)
     wiki = status.wiki.model_copy(
         update={
             "current_through": None if cursor is None else cursor.captured_at,
             "open_proposals": len(open_proposals(repository.tree)),
-            **ran,
+            "last_run" if isinstance(run, LibrarianRun) else "last_dreaming": run,
         }
     )
     write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=now())
