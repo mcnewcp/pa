@@ -515,7 +515,7 @@ def test_a_files_plus_wiki_run_records_the_librarian_version_of_its_wiki(tmp_pat
     [run_dir] = runs.iterdir()
     results = json.loads((run_dir / "results.json").read_text())
     assert results["configuration"] == "files-plus-wiki"
-    assert results["wiki"] == {"librarian_version": "0123456789ab"}
+    assert results["wiki"] == {"librarian_version": "0123456789ab", "dreaming_version": None}
     report = (run_dir / "report.md").read_text()
     assert "- Configuration: files-plus-wiki\n- Wiki: librarian version 0123456789ab\n" in report
 
@@ -600,3 +600,159 @@ def test_the_comparison_names_the_librarian_version_of_each_configurations_wiki(
     [run_dir] = runs.iterdir()
     comparison = (run_dir / "comparison.md").read_text()
     assert "- files-plus-wiki: 2 runs (wiki librarian version 0123456789ab)\n" in comparison
+
+
+# Dreamed eval wikis (#150)
+
+DREAMING_RUN = {
+    "run": "dreaming",
+    "status": "committed",
+    "commit": "c3" * 20,
+    "as_of": "2026-10-07T01:00:00+00:00",
+    "librarian_version": "0123456789ab",
+    "dreaming_version": "ba9876543210",
+    "model": "opus",
+    "effort": "high",
+    "sessions": [
+        {"phase": "dreaming", "session_id": "s5", "cost_usd": 0.9, "turns": 20, "resumes": 0}
+    ],
+    "cost_usd": 0.9,
+    "candidates": 4,
+    "outcomes": {"applied": 2, "proposed": 1, "dismissed": 1},
+    "lint_warnings": 0,
+    "error": None,
+}
+
+
+def dreamed_eval_wiki(tmp_path: Path) -> list[str]:
+    """The options asking with a dreamed copy of the fixture's eval wiki: the same tree, and
+    a dreaming run after the replay's in its run log."""
+    copy = tmp_path / "dreamed-eval-wiki"
+    shutil.copytree(EVAL_WIKI, copy)
+    with (copy / "run-log.jsonl").open("a") as run_log:
+        run_log.write(json.dumps(DREAMING_RUN) + "\n")
+    return ["--configuration", "files-plus-wiki", "--wiki", str(copy)]
+
+
+def test_a_run_with_a_dreamed_eval_wiki_records_both_of_its_versions(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts, *dreamed_eval_wiki(tmp_path)) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert results["wiki"] == {
+        "librarian_version": "0123456789ab",
+        "dreaming_version": "ba9876543210",
+    }
+    report = (run_dir / "report.md").read_text()
+    assert (
+        "- Wiki: librarian version 0123456789ab, dreamed by librarian version ba9876543210\n"
+    ) in report
+
+
+def two_wikis(tmp_path: Path, undreamed: dict[str, list[bool]], dreamed: dict[str, list[bool]]):
+    """Three files-plus-wiki runs with the fixture's eval wiki, then three with its dreamed
+    copy, each given whether its two questions are right, run by run. Returns the two run
+    directories."""
+    for name, wiki, right in (
+        ("undreamed", FILES_PLUS_WIKI, undreamed),
+        ("dreamed", dreamed_eval_wiki(tmp_path), dreamed),
+    ):
+        scripts = repeated_scripts(tmp_path, name, right["deadline"], right["canary"])
+        assert pa_eval_run(tmp_path / name, scripts, "--runs", "3", *wiki) == 0
+    [first] = (tmp_path / "undreamed").iterdir()
+    [second] = (tmp_path / "dreamed").iterdir()
+    return first, second
+
+
+Y, N = True, False
+
+
+def test_compare_puts_two_wikis_side_by_side_by_category_and_says_whether_the_second_passes(
+    tmp_path, capsys
+):
+    first, second = two_wikis(
+        tmp_path,
+        undreamed={"deadline": [Y, N, Y], "canary": [N, N, Y]},
+        dreamed={"deadline": [Y, N, N], "canary": [Y, Y, Y]},
+    )
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    # Each side names its wiki: the version that built it, and the one that dreamed it.
+    assert (
+        f"- {first}: 3 runs (configuration files-plus-wiki; "
+        "wiki librarian version 0123456789ab)\n"
+        f"- {second}: 3 runs (configuration files-plus-wiki; "
+        "wiki librarian version 0123456789ab, dreamed by librarian version ba9876543210)\n"
+    ) in comparison
+    wikis = comparison[comparison.index("## Wiki against wiki") :].split("\n## ")[0]
+    assert f"| Category | {first} | {second} | Drop | Spread | Within it |" in wikis
+    # Down by 0.33, where the first wiki's own runs spread from 0 to 1.
+    assert (
+        "| single_fact_recall | 0.67 (0.00 to 1.00) | 0.33 (0.00 to 1.00) | 0.33 | 1.00 | yes |"
+    ) in wikis
+    assert "| canary | 0.33 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | none | 1.00 | yes |" in wikis
+    assert "| Overall | 0.50 (0.00 to 1.00) | 0.67 (0.50 to 1.00) |" in wikis
+    assert (
+        "**Passes**: overall correctness is 0.67, at least 0.50, and no category drops by "
+        "more than the spread."
+    ) in wikis
+
+
+def test_a_category_that_drops_by_more_than_the_first_wikis_own_spread_fails_the_second(
+    tmp_path, capsys
+):
+    # The dreamed wiki's runs spread from 0 to 1, which excuses nothing.
+    first, second = two_wikis(
+        tmp_path,
+        undreamed={"deadline": [Y, Y, Y], "canary": [N, N, N]},
+        dreamed={"deadline": [Y, Y, N], "canary": [Y, Y, Y]},
+    )
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert (
+        "| single_fact_recall | 1.00 (1.00 to 1.00) | 0.67 (0.00 to 1.00) | 0.33 | 0.00 | no |"
+    ) in comparison
+    assert "| Overall | 0.50 (0.50 to 0.50) | 0.83 (0.50 to 1.00) |" in comparison
+    assert (
+        "**Fails**: single_fact_recall drops by 0.33, more than the spread of 0.00."
+    ) in comparison
+    assert "**Passes**" not in comparison
+
+
+def test_overall_correctness_below_the_first_wikis_fails_the_second(tmp_path, capsys):
+    first, second = two_wikis(
+        tmp_path,
+        undreamed={"deadline": [Y, N, Y], "canary": [Y, N, Y]},
+        dreamed={"deadline": [Y, N, N], "canary": [Y, N, N]},
+    )
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert (
+        "| canary | 0.67 (0.00 to 1.00) | 0.33 (0.00 to 1.00) | 0.33 | 1.00 | yes |" in comparison
+    )
+    assert "**Fails**: overall correctness is 0.33, below 0.67." in comparison
+    assert "**Passes**" not in comparison
+
+
+def test_run_sets_that_dont_differ_in_their_wiki_get_no_wiki_comparison(tmp_path, capsys):
+    for name in ("a", "b"):
+        scripts = repeated_scripts(tmp_path, name, [Y, N, Y], [Y, Y, Y])
+        assert pa_eval_run(tmp_path / name, scripts, "--runs", "3", *FILES_PLUS_WIKI) == 0
+    [first] = (tmp_path / "a").iterdir()
+    [second] = (tmp_path / "b").iterdir()
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    assert "## Wiki against wiki" not in capsys.readouterr().out
