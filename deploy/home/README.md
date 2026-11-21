@@ -466,6 +466,7 @@ The suite skips the tests that call a real model unless asked, since they cost m
 PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_page_creation_fixture.py # the page-creation fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 PA_SMOKE_CLAUDE_MODEL=sonnet uv run pytest -s deploy/home/tests/test_proposal_answer_fixture.py # the proposal-answer fixture: the assistant on the host, then pa-librarian
 ```
 
 The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
@@ -483,6 +484,13 @@ The page-creation fixture (`deploy/home/tests/fixtures/page-creation/`) is one n
 - the friend has a page and a loop.
 
 Its data root goes under `replays/` too (or `PA_SMOKE_PAGE_CREATION_DIR`).
+
+The proposal-answer fixture (`deploy/home/tests/fixtures/proposal-answer/`) shows the owner answering a proposal from chat. Its starting wiki has JR and Jordan Reyes on two pages and two open proposals: P1 asks whether they are the same person, and P2 asks about a remodeler's quote. The fictional owner's two turns are in the test, and the assistant's replies are real:
+
+1. The real assistant, on the host as `PA_SMOKE_CLAUDE` tests run it, is asked "What do you need from me?" and then told "On P1: yes, JR is Jordan Reyes." Each turn is a session of its own. The test checks that the first reply gives both proposals, that one sentence of the second names P1 and both names and that it says the wiki will show it after the next run, and that neither cites anything but an episode.
+2. Both exchanges are captured as the assistant replied, and one real librarian run in `pa-librarian` takes them. The test checks that P1 is under Answered as accepted, citing the owner's answer last; that one page goes by both names, keeps both loops, and cites the answer; that no link to the other slug is left; and that P2 is open as it was.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PROPOSAL_ANSWER_DIR`). With `PA_SMOKE_CLAUDE=1` alone, the file runs only the assistant's two turns, in a temporary directory.
 
 ## Evals in the VM
 
