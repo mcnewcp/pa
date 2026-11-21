@@ -855,8 +855,9 @@ DAVE = textwrap.dedent(
 def test_the_host_removes_a_merged_page_rewrites_its_links_and_regenerates_the_index(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    # The later email is observed as from [[dave]], who has a page beside David Kim's.
-    monkeypatch.setitem(LINKS, "Room list", ["dave", "wedding"])
+    # The later email, the owner's own, is observed as to [[dave]], who has a page beside
+    # David Kim's: the owner has engaged with both.
+    monkeypatch.setitem(LINKS, "Room list", ["dave", "david-kim", "wedding"])
     pages = {**settled_pages(), "people/dave.md": DAVE}
     room_list = run_with_pages(data_root, pages)
     assert "- [[dave]]: Dave, who sent the room list." in wiki_files(data_root)["index.md"]
@@ -891,7 +892,8 @@ def test_the_host_removes_a_merged_page_rewrites_its_links_and_regenerates_the_i
     assert files[PERSON] == merged
     # The day log's link now goes to the page that took the name, and the index follows.
     assert files[f"days/{ROOM_LIST_DAY}.md"] == (
-        f"- email about Room list with [[david-kim|dave]] and [[wedding]] [ep:{room_list}]\n"
+        "- email about Room list with [[david-kim|dave]] and [[david-kim]] and [[wedding]] "
+        f"[ep:{room_list}]\n"
     )
     assert "dave" not in files["index.md"].replace("david-kim", "")
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""

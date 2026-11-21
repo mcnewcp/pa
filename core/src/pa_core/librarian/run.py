@@ -10,7 +10,8 @@ it stayed in bounds and lints the wiki; a session that leaves lint errors it can
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
 most twice. Consolidation is also given the open proposals (`proposals.md`, what dreaming has
 asked the owner), and may change that file in one way: by resolving a proposal the owner has
-answered. Then the host rewrites links to aliases, regenerates `index.md`,
+answered. Then the host drops from `retired.md` each retired slug that has a page again,
+rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 
@@ -61,6 +62,7 @@ from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
+from pa_core.librarian.retirement import standing, update_retired
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -73,6 +75,7 @@ from pa_core.librarian.wiki import (
     is_page_name,
     pages,
     read_proposals,
+    read_retired,
     reference_counts,
     slugify,
 )
@@ -273,6 +276,8 @@ def run_librarian(
                         committed,
                     )
                 )
+        # A retired slug that has a page again is retired no longer.
+        update_retired(tree, today=thresholds.today)
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
@@ -492,6 +497,7 @@ def _consolidate(
             page_threshold,
             {page.slug: page.path for page in pages(tree)},
             runner.paths,
+            retired=read_retired(tree),
         )
         + "\n"
         + identity_prompt(identities)
@@ -795,20 +801,31 @@ def consolidation_prompt(
     page_threshold: int,
     page_paths: Mapping[str, str],
     paths: SessionPaths,
+    *,
+    retired: Mapping[str, date] | None = None,
 ) -> str:
     """What the consolidation session is asked: the run's new observations, then the
     reference counts (with each slug's page, if it has one, and whether the owner has engaged
-    with it, by `engaged_days`), each as a JSON block."""
+    with it, by `engaged_days`), each as a JSON block.
+
+    `retired` is each retired slug with the day it was retired (`pa_core.librarian.retirement`).
+    Its count is marked `retired`, and it doesn't reach the threshold while its retirement
+    stands: until the owner engages with it again.
+    """
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
     folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
+    retired = retired or {}
+    still_retired = standing(retired, engaged_days)
     references: list[dict[str, object]] = []
     for slug, days in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
         reference: dict[str, object] = {
             "slug": slug,
             "days": days,
-            "reaches_threshold": days >= page_threshold,
+            "reaches_threshold": days >= page_threshold and slug not in still_retired,
             "engaged": slug in engaged_days,
         }
+        if slug in retired:
+            reference["retired"] = True
         if slug in page_paths:
             reference["page"] = page_paths[slug]
         references.append(reference)
@@ -826,7 +843,9 @@ def consolidation_prompt(
         "A slug with no page gets one once it "
         f"reaches {page_threshold} days (`reaches_threshold`), or as soon as it appears in a "
         "decision or loop line. A person gets a page at the threshold only when `engaged`; an "
-        "organization or a topic gets one either way.\n\n"
+        "organization or a topic gets one either way. A slug marked `retired` had a page that "
+        "dreaming retired: it doesn't reach the threshold again until the owner engages with "
+        "it, whatever its days.\n\n"
         f"```json\n{_json(references)}\n```\n"
     )
 

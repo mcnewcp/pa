@@ -697,14 +697,20 @@ def test_a_wiki_whose_history_records_no_run_is_dreamed_and_remembered_like_any_
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
     repository.commit("Copy the eval wiki\n")
-    script(data_root, dreaming=dismissing(3))
+    script(data_root, dreaming=dismissing(4))
 
     assert dream() == 0
     assert dream() == 0
 
-    # No observation links the pages, so each is an orphan; the second run remembers the first.
+    # No observation links the pages, so each is an orphan, and the person's is unengaged
+    # too; the second run remembers the first.
     assert offered(data_root) == [
-        [f"c01 · orphan · {PERSON}", f"c02 · orphan · {KITCHEN}", f"c03 · orphan · {TOPIC}"]
+        [
+            f"c01 · orphan · {PERSON}",
+            f"c02 · orphan · {KITCHEN}",
+            f"c03 · orphan · {TOPIC}",
+            f"c04 · unengaged · {PERSON}",
+        ]
     ]
     # With no run before it, the dreaming commit has no cursor or version to carry.
     recorded = fields(commit_messages(data_root)[0])
