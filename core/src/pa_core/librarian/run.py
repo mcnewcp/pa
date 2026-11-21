@@ -281,7 +281,7 @@ def seed_wiki(
     Refuses a wiki that has runs or files already, and a seed that fails lint against `store`
     for `owner` (the wiki is left as it was). `index.md` is regenerated.
     """
-    if last_run_fields(repository):
+    if standing_runs(repository):
         raise WikiSeedError("the wiki already has runs; a seed starts a fresh wiki")
     tree = repository.tree
     if any(tree.iterdir()):
@@ -350,6 +350,13 @@ def last_run_fields(repository: WikiRepository) -> dict[str, str]:
         if DREAMING_AT_FIELD not in fields:
             return fields
     return {}
+
+
+def last_standing_fields(repository: WikiRepository) -> dict[str, str]:
+    """The fields of the last run of any kind that still stands, a dreaming run's included:
+    what the wiki's history last recorded. Where the wiki is, is `last_run_fields`."""
+    runs = standing_runs(repository)
+    return commit_fields(runs[0].message) if runs else {}
 
 
 def last_cursor(repository: WikiRepository) -> Cursor | None:

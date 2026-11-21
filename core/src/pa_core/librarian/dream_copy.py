@@ -46,7 +46,7 @@ from pa_core.librarian.run import (
     VERSION_FIELD,
     Librarian,
     WikiRepository,
-    last_run_fields,
+    standing_runs,
 )
 from pa_core.librarian.session import (
     LibrarianRunError,
@@ -181,7 +181,7 @@ def run_copy_dreaming(
 def _start(repository: WikiRepository, source: CopySource) -> None:
     """Commits the copy's tree as it is, unless its history already says where it's from: a
     dreaming run starts by restoring the last commit, which must hold the copy."""
-    if last_run_fields(repository):
+    if standing_runs(repository):
         return
     fields = [
         (CURSOR_FIELD, source.cursor),

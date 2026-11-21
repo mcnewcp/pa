@@ -80,7 +80,7 @@ from pa_core.librarian.run import (
     Librarian,
     RunOutcome,
     WikiRepository,
-    last_run_fields,
+    last_standing_fields,
     run_librarian,
 )
 from pa_core.librarian.session import (
@@ -391,8 +391,9 @@ def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
 
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
-    """Where the last committed replay run's window ended, or None in a fresh wiki."""
-    fields = last_run_fields(repository)
+    """Where the last committed replay run's window ended, or None in a fresh wiki. The
+    wiki's last run must be a replay's: a wiki that was dreamed since isn't replayed on."""
+    fields = last_standing_fields(repository)
     if OCCURRED_TO_FIELD not in fields:
         if fields:
             raise ReplayError(

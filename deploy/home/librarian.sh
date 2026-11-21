@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: librarian.sh run
-#        librarian.sh dream
+#        librarian.sh dream [--count]
 #        librarian.sh dream <copy> --corpus <dir>... | --cut <cut>
 #        librarian.sh replay <target> [<option>...]
 #        librarian.sh seed <eval wiki> [--captured-through <time>]
@@ -9,7 +9,8 @@
 # its sessions in the librarian's VM (librarian-sandbox.sh): started for the run (or the whole
 # replay) and stopped after it. A replay's target must be under PA_REPLAYS, the replays'
 # filesystem (install-wiki.sh). In v0.12.1 runs start by hand: after ingest.sh, say. dream
-# reviews the whole wiki once, as one commit of its own. seed runs no session: it starts the
+# reviews the whole wiki once, as one commit of its own; with --count it runs nothing and
+# prints what a run would find, in counts alone. seed runs no session: it starts the
 # data root's fresh wiki from an eval wiki, after a reseed.
 #
 # dream <copy> reviews a copy instead of the data root's wiki, at the copy's as-of time: a copy
