@@ -12,7 +12,8 @@ import os
 import re
 import subprocess
 import textwrap
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -26,7 +27,26 @@ from pa_home.cut import take_cut
 from pa_home.librarian_project import LIBRARIAN_PROJECT
 from pa_home.lock import data_root_lock
 
-# Sent late on 30 Sep in Chicago, which is already 1 Oct in UTC.
+CHICAGO = ZoneInfo("America/Chicago")
+"""The owner's time zone."""
+
+
+def days_ago(days: int) -> str:
+    """The date `days` days before today in the owner's time zone; runs are told the clock."""
+    return (datetime.now(CHICAGO).date() - timedelta(days=days)).isoformat()
+
+
+def mailed(days: int, clock: str) -> str:
+    """An email's `Date`: `clock` in the owner's time zone, `days` days before today."""
+    moment = datetime.combine(
+        datetime.now(CHICAGO).date() - timedelta(days=days), time.fromisoformat(clock), CHICAGO
+    )
+    return format_datetime(moment)
+
+
+# The wiki's mail is dated by the clock, as the runs are: a page's age is measured from today.
+HOTEL_DAY, ROOM_LIST_DAY = days_ago(12), days_ago(10)
+"""The days the two emails of `run_with_pages` are logged on."""
 HOTEL = "gmail_9ff7394d0df8584d"
 """The id of the episode `email()` makes by default."""
 
@@ -34,7 +54,8 @@ HOTEL = "gmail_9ff7394d0df8584d"
 def email(
     *,
     message_id: str = "wedding-0001@example.net",
-    date: str = "Wed, 30 Sep 2026 21:30:00 -0500",
+    # Sent late in Chicago, which is already the next day in UTC.
+    date: str = mailed(12, "21:30"),
     sender: str = "David Kim <dkim@example.net>",
     to: str = "Argus McNevans <argus@example.com>",
     subject: str = "Hotel block",
@@ -147,11 +168,6 @@ def tree_state(directory: Path) -> dict[str, object]:
     return state
 
 
-def days_ago(days: int) -> str:
-    """The date `days` days before today in the owner's time zone; runs are told the clock."""
-    return (datetime.now(ZoneInfo("America/Chicago")).date() - timedelta(days=days)).isoformat()
-
-
 PERSON, TOPIC = "people/david-kim.md", "topics/wedding.md"
 ROOM_LIST = f"- [ ] [[david-kim]] → me: the room list · asked {days_ago(40)} [ep:{HOTEL}]"
 """The wedding's loop, open 40 days: more than lint's 30."""
@@ -168,7 +184,7 @@ def wedding_pages() -> dict[str, str]:
             aliases: [Dave]
             status: active
             summary: Old friend, getting married on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             emails: [dkim@example.net]
             ---
             # David Kim
@@ -188,7 +204,7 @@ def wedding_pages() -> dict[str, str]:
             aliases: [Dave's wedding]
             status: active
             summary: Dave's wedding on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             ---
             # Wedding
 
@@ -220,7 +236,7 @@ def run_with_pages(data_root: Path, pages: dict[str, str] | None = None) -> str:
             "gmail/hotel.eml": email(),
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
-                date="Fri, 2 Oct 2026 09:00:00 -0500",
+                date=mailed(10, "09:00"),
                 sender="Argus McNevans <argus@example.com>",
                 to="David Kim <dkim@example.net>",
                 subject="Room list",
@@ -336,7 +352,7 @@ KITCHEN = textwrap.dedent(
     aliases: []
     status: active
     summary: The kitchen remodel.
-    updated: 2026-10-02
+    updated: {ROOM_LIST_DAY}
     ---
     # Kitchen
 
@@ -500,7 +516,7 @@ KINDS = {
         {
             "kind": "slug-without-page",
             "pages": [],
-            "path": "days/2026-10-02.md",
+            "path": f"days/{ROOM_LIST_DAY}.md",
             "message": "`wedding` is linked on 2 days, reaching the page threshold of 2, but "
             "has no page",
             "slug": "wedding",
@@ -670,18 +686,18 @@ FAILURES = {
     "a line added to a day log": (
         [
             LOOP_CLOSED,
-            {"append": "days/2026-09-30.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
+            {"append": f"days/{HOTEL_DAY}.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
             reporting(APPLIED),
         ],
-        "the dreaming session changed days/2026-09-30.md, outside the pages",
+        f"the dreaming session changed days/{HOTEL_DAY}.md, outside the pages",
         1,
     ),
     "a new day log": (
         [
-            {"write": "days/2026-10-03.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
+            {"write": f"days/{days_ago(9)}.md", "text": f"- [[wedding]] again [ep:{HOTEL}]\n"},
             reporting(DISMISSED),
         ],
-        "the dreaming session changed days/2026-10-03.md, outside the pages",
+        f"the dreaming session changed days/{days_ago(9)}.md, outside the pages",
         1,
     ),
     "the index written": (
@@ -770,7 +786,7 @@ DAVE = textwrap.dedent(
     aliases: []
     status: active
     summary: Dave, who sent the room list.
-    updated: 2026-10-02
+    updated: {ROOM_LIST_DAY}
     emails: []
     ---
     # Dave
@@ -824,7 +840,7 @@ def test_the_host_removes_a_merged_page_rewrites_its_links_and_regenerates_the_i
     assert "people/dave.md" not in files
     assert files[PERSON] == merged
     # The day log's link now goes to the page that took the name, and the index follows.
-    assert files["days/2026-10-02.md"] == (
+    assert files[f"days/{ROOM_LIST_DAY}.md"] == (
         f"- email about Room list with [[david-kim|dave]] and [[wedding]] [ep:{room_list}]\n"
     )
     assert "dave" not in files["index.md"].replace("david-kim", "")
@@ -885,7 +901,7 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
     stamp = re.search(r"; (\S+)\)\. Treat it as now\.", flag(argv, "--append-system-prompt"))
     assert stamp is not None
     told = datetime.fromisoformat(stamp[1])
-    chicago = datetime.now(ZoneInfo("America/Chicago"))
+    chicago = datetime.now(CHICAGO)
     assert told.utcoffset() == chicago.utcoffset()
     assert abs(chicago - told) < timedelta(minutes=1)
     # Its prompt names its phase, and says where it may read and write.
