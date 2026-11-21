@@ -591,6 +591,10 @@ deploy/home/run-evals.sh --agent claude --judge model --cut <data root>/cuts/<as
   --eval-set <data root>/evals/<set>.json --runs 3 --configuration files-plus-wiki --wiki <replays>/<name>
 
 uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by category, with a pass or fail
+
+# Over a cut: the same comparison as two files, numbers for the repository and the failure analysis under the data root.
+uv run pa-eval compare-wikis --first <runs with the cut's wiki> --second <runs with its dreamed copy> \
+  --public <a path in this checkout>.md --private <data root>/evals/<name>-private.md
 ```
 
 - **The copy** is laid out as a replay target is, under `replays/`, the one filesystem beside the live wiki that the librarian's VM takes a wiki from. Its first dreaming run makes `wiki.git/` beside it and commits the tree as copied; a copy of a cut's wiki also gets its `run-log.jsonl` then. Each run that had candidates is appended to the run log, and running `dream` again carries on in the same history (one run judges only so many candidates).
@@ -598,6 +602,7 @@ uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by 
 - **The session is told the copy's as-of time** as now: the end of the replay's last run, or the moment the cut was taken.
 - **The eval run** names both versions in its report: the librarian that built the wiki, and the one that dreamed it. It refuses a run log that mixes anything else, and over a cut it refuses a copy that wasn't dreamed as of that cut. Its injection checks cover `proposals.md`.
 - **A copy of a cut's wiki is the owner's data**, as the cut is: `pa librarian dream`, `run-evals.sh`, and `pa-eval run` refuse it inside this checkout, and a development session never prints it or its run log.
+- **Over a cut, `pa-eval compare-wikis`** writes the comparison as `pa-eval verdict` writes the verdict: a public report of numbers only (correctness by category on each wiki, the pass or fail, recall, citations, cost), and a private analysis of every question run by run with each failed answer. It needs 3 runs of files plus wiki with each wiki over the same cut, and refuses the run directories and the private file inside this checkout. It prints only whether the second wiki passes and the two paths.
 - **The comparison passes** when overall correctness with the second wiki is at least the first's, and no category drops by more than the run-to-run spread: the spread of the first wiki's own runs in that category, lowest to highest. The second wiki's spread excuses nothing.
 
 ### Drafting the real-data eval set

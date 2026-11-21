@@ -1,0 +1,168 @@
+"""The wiki comparison on real data (#140): files plus wiki over one cut with two eval wikis,
+such as the cut's own wiki and a dreamed copy of it.
+
+Like the real-data verdict (`pa_evals.verdict`), it comes in two parts. The public report,
+which can be committed, holds numbers only: correctness by category on each wiki with its
+spread, whether the second wiki passes (`pa_evals.comparison.compare_wikis`), evidence recall,
+citation validity, and cost. Nothing from the real-data eval set reaches it, and it names the
+live wiki, never its commit. The private analysis, kept under the data root, holds every
+question's outcome in every run and each failed answer, with what its session never opened.
+
+Each wiki is asked over at least `MIN_RUNS` runs, so that a drop can be told from noise.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from pa_evals.comparison import (
+    ComparisonError,
+    WikiVerdict,
+    answers,
+    compare_wikis,
+    format_spread,
+    wiki_comparison_section,
+)
+from pa_evals.report import format_cost, format_score, format_turns
+from pa_evals.results import RunResults, cited_opened, median
+from pa_evals.verdict import (
+    FILES_PLUS_WIKI,
+    MIN_RUNS,
+    SETUP_SHOWN,
+    failure_analysis,
+    format_dollars,
+    overall_spread,
+    total_cost,
+)
+
+
+@dataclass(frozen=True)
+class WikiRuns:
+    """The runs given each of the two eval wikis a comparison is of, the second against the
+    first, with what the reports call each."""
+
+    first: Sequence[RunResults]
+    second: Sequence[RunResults]
+    comparison: WikiVerdict
+
+    @property
+    def labels(self) -> tuple[str, str]:
+        """What the reports call each wiki: by whether it was dreamed, when that tells them
+        apart."""
+        first, second = (_dreamed(runs) for runs in (self.first, self.second))
+        if first == second:
+            return "the first wiki", "the second wiki"
+        return _DREAMED[first], _DREAMED[second]
+
+    def by_label(self) -> dict[str, Sequence[RunResults]]:
+        first, second = self.labels
+        return {first: self.first, second: self.second}
+
+
+_DREAMED = {True: "the dreamed wiki", False: "the undreamed wiki"}
+
+
+def _dreamed(runs: Sequence[RunResults]) -> bool:
+    """Whether the eval wiki these runs were given was dreamed."""
+    wiki = runs[0].wiki
+    return wiki is not None and wiki.dreaming_version is not None
+
+
+def check_wiki_runs(name: str, runs: Sequence[RunResults]) -> None:
+    """Refuse runs (given by the option `name`) that aren't all files plus wiki over a cut
+    with one eval wiki, or that are fewer than MIN_RUNS."""
+    others = sorted({run.configuration or "unnamed" for run in runs} - {FILES_PLUS_WIKI})
+    if others:
+        raise ComparisonError(f"{name} holds runs of {', '.join(others)}, not {FILES_PLUS_WIKI}")
+    if any(run.cut is None for run in runs):
+        raise ComparisonError(f"{name} holds a run that wasn't asked over a cut")
+    given = {(run.wiki.librarian_version, run.wiki.dreaming_version) for run in runs if run.wiki}
+    if len(given) != 1 or any(run.wiki is None for run in runs):
+        raise ComparisonError(f"{name} holds runs given more than one eval wiki, or none")
+    if len(runs) < MIN_RUNS:
+        raise ComparisonError(
+            f"{name} holds {len(runs)} run{'s' if len(runs) != 1 else ''}; a comparison needs "
+            f"{MIN_RUNS} runs of each wiki"
+        )
+
+
+def wiki_runs(first: Sequence[RunResults], second: Sequence[RunResults]) -> WikiRuns:
+    """The two sets of runs as a comparison of `second`'s eval wiki against `first`'s, each
+    set already checked (`check_wiki_runs`). Refused unless they were asked over the same
+    cut, and given different wikis."""
+    cuts = sorted({run.cut.name for run in (*first, *second) if run.cut is not None})
+    if len(cuts) != 1:
+        raise ComparisonError(f"the runs weren't all asked over the same cut ({', '.join(cuts)})")
+    comparison = compare_wikis(first, second)
+    if comparison is None:
+        raise ComparisonError(
+            "both sets of runs were given the same eval wiki: a comparison is of two wikis"
+        )
+    return WikiRuns(first, second, comparison)
+
+
+def render_public(runs: WikiRuns) -> str:
+    """The public report: numbers only."""
+    one = runs.first[0]
+    assert one.cut is not None
+    cut = one.cut
+    first, second = runs.labels
+    settings = [
+        f"  - {key.capitalize()}: {one.setup[key]}" for key in SETUP_SHOWN if key in one.setup
+    ]
+    wikis = [
+        f"  - {label.capitalize()}: {given[0].wiki.versions}"
+        for label, given in runs.by_label().items()
+        if given[0].wiki is not None
+    ]
+    lines = [
+        "# Wiki against wiki on real data",
+        "",
+        "Numbers only. The questions, answers and failure analysis are in the private analysis "
+        "under the data root.",
+        "",
+        f"- **The cut:** taken {cut.as_of.strftime('%Y-%m-%d %H:%M UTC')}, {cut.episodes} "
+        f"episodes{' and the live wiki' if cut.wiki_commit else ', no wiki'}.",
+        f"- **The set:** {len(one.questions)} questions, asked at the cut's time.",
+        f"- **The runs:** files plus wiki, {first} {len(runs.first)}, {second} {len(runs.second)}.",
+        "- **The wikis:**",
+        *wikis,
+        *(["- **The setup:**", *settings] if settings else []),
+        "",
+        *wiki_comparison_section(first, second, runs.comparison),
+        "",
+        "## Evidence, citations and cost",
+        "",
+        f"| | {first.capitalize()} | {second.capitalize()} |",
+        "|---|---|---|",
+    ]
+    spreads = (("Evidence recall", "evidence_recall"), ("Citation validity", "citation_validity"))
+    for label, score in spreads:
+        cells = [format_spread(overall_spread(given, score)) for given in runs.by_label().values()]
+        lines.append(f"| {label} | {' | '.join(cells)} |")
+    rows = {
+        "Cited episodes opened": lambda given: format_score(cited_opened(answers(given))),
+        "Total cost": lambda given: format_dollars(total_cost(answers(given))),
+        "Per answer, median cost": lambda given: format_cost(
+            median([q.cost_usd for q in answers(given)])
+        ),
+        "Per answer, median turns": lambda given: format_turns(
+            median([q.turns for q in answers(given)])
+        ),
+        "Failed answers (agent or judge)": lambda given: str(
+            sum(q.status == "failed" for q in answers(given))
+        ),
+    }
+    for label, cell in rows.items():
+        cells = [cell(given) for given in runs.by_label().values()]
+        lines.append(f"| {label} | {' | '.join(cells)} |")
+    return "\n".join(lines) + "\n"
+
+
+def render_private(runs: WikiRuns) -> str:
+    """The private analysis: every question's outcome in every run on each wiki, and each
+    failed answer."""
+    return failure_analysis(
+        "# Wiki against wiki on real data, private: the failure analysis", runs.by_label()
+    )

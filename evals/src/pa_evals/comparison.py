@@ -180,7 +180,7 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
     if len(labels) == 2:
         verdict = compare_wikis(configurations[labels[0]], configurations[labels[1]])
         if verdict is not None:
-            lines += ["", *_wiki_comparison(labels[0], labels[1], verdict)]
+            lines += ["", *wiki_comparison_section(labels[0], labels[1], verdict)]
 
     lines += [
         "",
@@ -293,8 +293,9 @@ def compare_wikis(first: Sequence[RunResults], second: Sequence[RunResults]) -> 
     return WikiVerdict(overall=drops[-1], categories=tuple(drops[:-1]))
 
 
-def _wiki_comparison(first: str, second: str, verdict: WikiVerdict) -> list[str]:
-    """The wiki comparison's section of the report: `second`'s wiki against `first`'s."""
+def wiki_comparison_section(first: str, second: str, verdict: WikiVerdict) -> list[str]:
+    """The wiki comparison's section of a report, as its lines: `second`'s wiki against
+    `first`'s, each named as the report names it. Numbers only."""
     first, second = table_cell(first), table_cell(second)
     lines = [
         "## Wiki against wiki",
