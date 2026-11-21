@@ -955,3 +955,166 @@ def test_a_cap_lowered_below_what_is_open_fails_no_run_that_adds_nothing(
     assert run_librarian() == 0
 
     assert wiki_files(data_root)[PROPOSALS] == proposals_file(*questions(3))
+
+
+# Proposals in every shape the schema allows: what the session writes, proposing P1.
+WELL_FORMED = {
+    "no title line": proposals_file(proposal()).removeprefix("# Proposals\n\n"),
+    "a question": proposals_file(
+        proposal(text="Did [[david-kim]] get the room list?", kind="question")
+    ),
+    "a link shown under another name": proposals_file(
+        proposal(text="Are [[dave|Dave]] and [[david-kim|David]] the same person?")
+    ),
+    "text of exactly 200 characters": proposals_file(proposal(text=padded(200))),
+    "several citations": proposals_file(proposal(cites=f"[ep:{HOTEL}] [ep:{HOTEL}]")),
+    "no link at all": proposals_file(proposal(text="Who is the Dave that sent the room list?")),
+    "answered proposals below it": proposals_file(
+        proposal(3),
+        answered=(
+            ANSWERED_LINE,
+            ANSWERED_LINE.replace("P2 · question", "P1 · change").replace(
+                "· answered", "· declined"
+            ),
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", WELL_FORMED, ids=list(WELL_FORMED))
+def test_a_well_formed_proposals_file_passes_lint(data_root: Path, shape: str):
+    run_with_pages(data_root)
+    written = WELL_FORMED[shape]
+    if "## Answered\n-" in written:
+        # The owner's answers are there already; the session adds P3 above them.
+        commit_by_hand(data_root, {PROPOSALS: written.replace(proposal(3) + "\n", "")})
+    new = "P3" if "## Answered\n-" in written else "P1"
+    script(data_root, dreaming=[{"write": PROPOSALS, "text": written}, reporting(proposed(new))])
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert wiki_files(data_root)[PROPOSALS] == written
+
+
+def test_a_wiki_with_no_proposals_file_still_lints_clean(data_root: Path):
+    run_with_pages(data_root)
+    script(data_root, dreaming=[reporting(DISMISSED)])
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert PROPOSALS not in wiki_files(data_root)
+    assert fields(commit_messages(data_root)[0])["Dreaming-Dismissed"] == "1"
+
+
+KITCHEN = "topics/kitchen.md"
+KITCHEN_PAGE = textwrap.dedent(
+    f"""\
+    ---
+    type: topic
+    aliases: []
+    status: active
+    summary: The kitchen remodel.
+    updated: 2026-10-02
+    ---
+    # Kitchen
+
+    ## Current state
+    Waiting on a quote [ep:{HOTEL}].
+
+    ## Decisions
+
+    ## Open loops
+
+    ## Notes
+    """
+)
+"""A topic page nothing links to."""
+
+
+def test_a_page_linked_only_from_a_proposal_is_still_an_orphan(data_root: Path):
+    run_with_pages(data_root, {**pages(), KITCHEN: KITCHEN_PAGE})
+    asked = proposal(text="What is [[kitchen]] part of?", kind="question")
+    script(
+        data_root,
+        dreaming=[
+            proposing(asked),
+            reporting(proposed("P1", "c01"), {"candidate": "c02", "outcome": "dismissed"}),
+        ],
+    )
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert [c["kind"] for c in session["candidates"]] == ["orphan", "duplicate"]
+    # Asking about the page doesn't link it into the wiki: lint still warns about both.
+    assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "2"
+
+
+def test_after_a_merge_an_open_proposals_link_to_the_alias_goes_to_the_page(data_root: Path):
+    written = pages()
+    run_with_pages(data_root, written)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})
+    # L0 settles it after all: David Kim's page takes Dave's, which is emptied.
+    merged = written[DAVID].replace(
+        "## Notes\n", f"## Notes\nGoes by Dave, who sent the room list [ep:{HOTEL}].\n"
+    )
+    script(
+        data_root,
+        dreaming=[
+            {"write": DAVE, "text": ""},
+            {"write": DAVID, "text": merged},
+            reporting({"candidate": "c01", "outcome": "applied", "pages": [DAVE, DAVID]}),
+        ],
+    )
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    files = wiki_files(data_root)
+    assert DAVE not in files
+    assert files[PROPOSALS] == proposals_file(
+        proposal(text="Are [[david-kim|dave]] and [[david-kim]] the same person?")
+    )
+
+
+def index_opening(data_root: Path) -> list[str]:
+    """The index's lines down to its first section."""
+    lines = wiki_files(data_root)["index.md"].splitlines()
+    return lines[: lines.index("## People")]
+
+
+def test_the_index_opens_with_the_number_of_open_proposals_and_a_link_to_them(data_root: Path):
+    run_with_pages(data_root)
+    # Before the librarian has asked anything, there is nothing to link.
+    assert index_opening(data_root) == ["# Index", "", "Open proposals: 0", ""]
+    second = proposal(2, "Is [[dave]] invited to the wedding?", kind="question")
+    script(
+        data_root,
+        dreaming=[proposing(proposal(), second), reporting(proposed("P1"), SUGGESTED)],
+    )
+
+    assert dream() == 0
+
+    assert index_opening(data_root) == ["# Index", "", "Open proposals: 2, in [[proposals]]", ""]
+    changed = git(data_root, "show", "--format=", "--name-only", "HEAD").split()
+    assert changed == ["index.md", PROPOSALS]
+
+
+def test_the_index_counts_only_the_proposals_the_owner_hasnt_answered(data_root: Path):
+    run_with_pages(data_root)
+    answered = ANSWERED_LINE.replace("P2 · question", "P1 · change").replace(
+        "· answered", "· accepted"
+    )
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(answered=(answered, ANSWERED_LINE))})
+    ingest(
+        data_root,
+        {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
+    )
+    script(data_root)
+
+    # The host regenerates the index on a nightly run too.
+    assert run_librarian() == 0
+
+    assert index_opening(data_root) == ["# Index", "", "Open proposals: 0", ""]

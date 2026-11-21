@@ -552,10 +552,11 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
 
 
 def _orphans(files: Sequence[WikiFile], pages: Sequence[Page]) -> Iterator[Finding]:
-    """A page nothing else in the wiki links to (the index aside)."""
+    """A page no other page and no day log links to. The files at the wiki's top level don't
+    count: the index lists every page, and a proposal about a page doesn't place it."""
     linked_from: dict[str, set[str]] = defaultdict(set)
     for file in files:
-        if file.path != INDEX:
+        if "/" in file.path:
             for line in file.lines:
                 for slug in links(line):
                     linked_from[slug].add(file.path)
@@ -691,9 +692,9 @@ def _slugs_without_pages(
 
 
 def _needs_lookup(files: Sequence[WikiFile]) -> Iterator[Finding]:
-    """Outside information still marked as needing a lookup."""
+    """Outside information still marked as needing a lookup, in a page or a day log."""
     for file in files:
-        if file.path == INDEX:
+        if "/" not in file.path:
             continue
         for number, line in enumerate(file.lines, start=1):
             for match in NEEDS_LOOKUP.finditer(line):
