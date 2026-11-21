@@ -333,7 +333,10 @@ def _dream(
             )
         except InvalidOutcomesError as error:
             return (*error.problems, *problems)
-        claimed = {page for o in outcomes if isinstance(o, Applied) for page in o.pages}
+        applied = [o for o in outcomes if isinstance(o, Applied)]
+        claimed = {page for o in applied for page in o.pages}
+        # A retired page left out of `pages` is a problem to resume for, above; it is claimed.
+        claimed |= {f"{f}/{slug}.md" for o in applied for slug in o.retired for f in PAGE_FOLDERS}
         unclaimed = [path for path in changed if path not in claimed]
         if unclaimed:
             raise LibrarianRunError(
@@ -391,20 +394,21 @@ class _Retirements:
     earlier message said.
     """
 
-    def __init__(self, tree: Path, before: Mapping[str, object], today: date) -> None:
+    def __init__(self, tree: Path, before: Mapping[str, tuple[str, ...]], today: date) -> None:
         """Over the wiki at `tree`, whose state as last committed is `before` (`_tree_state`),
         for a run told the day is `today`."""
         self._tree, self._before, self._today = tree, before, today
         self._was = pages(tree)
         """The pages as last committed."""
-        self._listed = (tree / RETIRED).read_bytes() if RETIRED in before else None
-        """`retired.md` as last committed."""
+        is_file = before.get(RETIRED, ("",))[0] == "file"
+        self._listed = (tree / RETIRED).read_bytes() if is_file else None
+        """`retired.md` as last committed, when it was a file."""
         self._left = before.get(RETIRED)
         """`retired.md`'s state as the host last left it."""
         self._removed: list[Path] = []
         """The emptied pages the host removed for the last attempt."""
 
-    def changed_by_session(self, after: Mapping[str, object]) -> bool:
+    def changed_by_session(self, after: Mapping[str, tuple[str, ...]]) -> bool:
         """Whether `retired.md` in `after`, the wiki's state as an attempt left it, isn't as the
         host left it: the file is the host's, and no session may write it."""
         return after.get(RETIRED) != self._left
@@ -430,54 +434,63 @@ class _Retirements:
         A retirement can't be carried out when its slug had no page as last committed, when
         the page still has content, and when the page held an open loop that no page holds
         now, open or closed: a loop is never dropped with its page, though it may move to the
-        page it belongs on. The page of such a retirement stays as the session left it.
+        page it belongs on. The page of such a retirement stays as the session left it. A
+        retired page its outcome doesn't name among its `pages` goes, and is a problem too.
         """
-        tree = self._tree
         problems: list[str] = []
         retiring: list[str] = []
-        carried = [set(loop.citations) for page in pages(tree) for loop in page.loops]
+        carried = [set(loop.citations) for page in pages(self._tree) for loop in page.loops]
         for outcome in reported:
-            for slug in outcome.retired if isinstance(outcome, Applied) else ():
-                name = outcome.candidate
-                paths = [
-                    path
-                    for folder in PAGE_FOLDERS
-                    if (path := f"{folder}/{slug}.md") in self._before
-                ]
-                emptied = [path for path in paths if not _has_content(tree / path)]
-                if not paths:
-                    problems.append(
-                        f"{name} retires `{slug}`, which had no page when this run started: "
-                        "`retired` lists the slug of each page you emptied to retire it"
-                    )
-                elif not emptied:
-                    problems.append(
-                        f"{name} retires `{slug}`, but {paths[0]} still has content: retire a "
-                        "page by writing it with no content at all, and the host removes it"
-                    )
-                dropped = [
-                    (page.path, line)
-                    for page in self._was
-                    if page.path in emptied
-                    for line in _open_loop_lines(page)
-                    if not any(set(citations(line)) <= held for held in carried)
-                ]
-                for path, line in dropped:
-                    problems.append(
-                        f"{name} retires `{slug}`, but {path} held an open loop that is now on "
-                        f"no page: `{line}`. A page with an open loop is never retired: write "
-                        "the page back as it was and propose or dismiss the candidate, or move "
-                        "the loop to the page it belongs on"
-                    )
-                if emptied and not dropped:
-                    retiring.append(slug)
-                    for path in emptied:
-                        if (tree / path).is_file():
-                            (tree / path).unlink()
-                            self._removed.append(tree / path)
-        update_retired(tree, today=self._today, retiring=retiring)
-        self._left = _tree_state(tree).get(RETIRED)
+            if not isinstance(outcome, Applied):
+                continue
+            for slug in outcome.retired:
+                found = self._retire(slug, carried)
+                if isinstance(found, str):
+                    problems.append(f"{outcome.candidate} retires `{slug}`, {found}")
+                    continue
+                retiring.append(slug)
+                for path in found:
+                    if path not in outcome.pages:
+                        problems.append(
+                            f"{outcome.candidate} retires `{slug}`, but doesn't name {path} "
+                            "among its `pages`: an applied outcome names every page changed "
+                            "for it, a retired one included"
+                        )
+        update_retired(self._tree, today=self._today, retiring=retiring)
+        self._left = _tree_state(self._tree).get(RETIRED)
         return problems
+
+    def _retire(self, slug: str, carried: Sequence[set[str]]) -> list[str] | str:
+        """Removes the emptied pages of `slug`, and returns their paths; or, when the
+        retirement can't be carried out, why not. `carried` is the opening citations of each
+        loop the wiki's pages hold now."""
+        paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in self._before]
+        if not paths:
+            return (
+                "which had no page when this run started: `retired` lists the slug of each "
+                "page you emptied to retire it"
+            )
+        emptied = [path for path in paths if not _has_content(self._tree / path)]
+        if not emptied:
+            return (
+                f"but {paths[0]} still has content: retire a page by writing it with no "
+                "content at all, and the host removes it"
+            )
+        for page in self._was:
+            for line in _open_loop_lines(page) if page.path in emptied else ():
+                if not any(set(citations(line)) <= held for held in carried):
+                    return (
+                        f"but {page.path} held an open loop that is now on no page: `{line}`. "
+                        "A page with an open loop is never retired: write the page back as it "
+                        "was and propose or dismiss the candidate, or move the loop to the "
+                        "page it belongs on"
+                    )
+        for path in emptied:
+            file = self._tree / path
+            if file.is_file():
+                file.unlink()
+                self._removed.append(file)
+        return emptied
 
 
 def _has_content(file: Path) -> bool:

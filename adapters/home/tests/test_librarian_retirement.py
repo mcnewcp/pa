@@ -445,6 +445,39 @@ def test_a_retirement_the_host_cant_carry_out_resumes_the_session(data_root: Pat
     assert fields(commit_messages(data_root)[0])["Dreaming-Resumes"] == "1"
 
 
+def test_a_retired_page_its_outcome_leaves_out_of_its_pages_resumes_the_session(
+    data_root: Path,
+):
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    # What her page held goes to her agency's, which the outcome names; her own page it names
+    # only as retired.
+    folded = page(
+        "organization", "Lakeview Realty", notes=[f"Its agent sent a listing [ep:{HOTEL}]."]
+    )
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": LAKEVIEW, "text": folded},
+            reporting(retiring(pages=[LAKEVIEW]), dismissed("c02")),
+        ],
+        dreaming_resume=[reporting(retiring(pages=[NINA, LAKEVIEW]), dismissed("c02"))],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"c01 retires `nina-park`, but doesn't name {NINA} among its `pages`" in (resumed["prompt"])
+    )
+    files = wiki_files(data_root)
+    assert NINA not in files
+    assert files[LAKEVIEW] == folded
+    assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+    listed = commit_messages(data_root)[0].split("\n\n")[1].splitlines()
+    assert listed[1] == f"- c01 · unengaged · {NINA} · applied: {NINA}, {LAKEVIEW}"
+
+
 ASK = f"- [ ] me → [[nina-park]]: a reply about the listing · asked {days_ago(1)} [ep:{HOTEL}]"
 """An open loop on Nina's page."""
 
