@@ -162,7 +162,7 @@ class Candidate:
 
 
 @dataclass(frozen=True)
-class Decision:
+class PastOutcome:
     """What an earlier dreaming run decided about one candidate, as its commit lists it."""
 
     kind: str
@@ -183,7 +183,7 @@ class PastRun:
 
     age: timedelta
     """How long ago it ran: from the time it was told was now to the time this run is told."""
-    decisions: tuple[Decision, ...]
+    outcomes: tuple[PastOutcome, ...]
     changed: frozenset[str] = frozenset()
     """The files, relative to the wiki, whose content now differs from what the run
     committed."""
@@ -325,7 +325,7 @@ def _is_page(path: str) -> bool:
 def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity]:
     """The candidates not to offer again yet, given the ids of the proposals `asked` of the
     owner and still open. What counts is the newest run that judged a candidate; any older
-    decision about it is superseded.
+    outcome for it is superseded.
 
     A proposed candidate is held back while its proposal is open, so the owner isn't asked the
     same thing twice. Once it is answered, the candidate is offered again if the problem
@@ -341,17 +341,17 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
     held: set[Identity] = set()
     judged: set[Identity] = set()
     for run in history.runs:
-        decided = {_identity(decision.kind, decision.subject) for decision in run.decisions}
-        for decision in run.decisions:
-            identity = _identity(decision.kind, decision.subject)
+        decided = {_identity(past.kind, past.subject) for past in run.outcomes}
+        for past in run.outcomes:
+            identity = _identity(past.kind, past.subject)
             if identity in judged:
                 continue
-            if decision.outcome == "proposed":
-                waits = decision.proposal in asked
+            if past.outcome == "proposed":
+                waits = past.proposal in asked
             else:
                 waits = (
-                    decision.outcome == "dismissed"
-                    and not decision.no_room
+                    past.outcome == "dismissed"
+                    and not past.no_room
                     and run.age < timedelta(days=DISMISSAL_DAYS)
                     and not any(_is_page(path) for path in run.changed & identity[1])
                 )

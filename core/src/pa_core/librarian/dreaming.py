@@ -48,8 +48,8 @@ from pa_core.librarian.candidates import (
     CANDIDATE_CAP,
     ORDER,
     Candidate,
-    Decision,
     DreamingHistory,
+    PastOutcome,
     PastRun,
     candidates,
     unengaged_without_loops,
@@ -993,8 +993,8 @@ def dreaming_history(repository: WikiRepository, now: datetime) -> DreamingHisto
         runs.append(
             PastRun(
                 age=now - datetime.fromisoformat(at),
-                decisions=tuple(
-                    Decision(
+                outcomes=tuple(
+                    PastOutcome(
                         kind=found["kind"],
                         subject=found["subject"],
                         outcome=found["outcome"],

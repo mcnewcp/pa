@@ -368,7 +368,7 @@ def standing_runs(repository: WikiRepository) -> tuple[Commit, ...]:
     A commit that is neither (the first commit, an edit by hand) says nothing about the runs.
 
     Reverting a run's commit therefore takes back what the run recorded with what it wrote:
-    its cursor and version, and a dreaming run's decisions. Reverting an older run takes only
+    its cursor and version, and a dreaming run's outcomes. Reverting an older run takes only
     that run out; the runs after it stand, and the newest of them still says where the wiki
     is.
     """
