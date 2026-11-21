@@ -676,7 +676,7 @@ CUT_AS_OF = datetime.fromisoformat(AS_OF_UTC)
 
 
 def cut_of_a_live_wiki(data_root: Path) -> Cut:
-    """A cut of a data root whose wiki a nightly run built from the wedding's mail, captured
+    """A cut of a data root whose wiki a librarian run built from the wedding's mail, captured
     before the cut's as-of time."""
     root = DataRoot(data_root)
     for name, payload in MAIL.items():

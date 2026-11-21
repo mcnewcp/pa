@@ -6,7 +6,7 @@ and gives it one outcome: applied (L0 settles it, so the session fixed the pages
 needs the owner's knowledge, so the session added a proposal to `proposals.md`, or one already
 asks), or dismissed. The session reports the outcomes as JSON in its final message.
 
-The run sits beside the nightly run (`pa_core.librarian.run`) and holds the wiki to the same
+The run sits beside the librarian run (`pa_core.librarian.run`) and holds the wiki to the same
 bar, with the same parts: the session and its resume loop, lint after the session, the host's
 deterministic steps (removing merged and retired pages, rewriting links to aliases,
 regenerating `index.md`), and one commit, or the wiki back at its last commit if anything
@@ -20,7 +20,7 @@ fails. It differs in what it asks and what it records:
   host removes the page and lists the slug in `retired.md`, which only the host writes
   (`pa_core.librarian.retirement`);
 - its commit carries the librarian's cursor and version forward from the last commit, so the
-  next nightly run and a cut still find them there, and records the candidates and outcomes.
+  next librarian run and a cut still find them there, and records the candidates and outcomes.
 
 The commit message is the run's whole record (the wiki's git history is dreaming's memory):
 a summary line, then each candidate with its outcome under `Candidates:`, then the fields.
@@ -177,7 +177,7 @@ class DreamingOutcome:
     """The run's template suggestion, if it made one: the extra outcome with no candidate."""
     commit: str | None = None
     sessions: tuple[tuple[Phase, SessionResult], ...] = ()
-    """The run's one session, as a nightly run lists its own."""
+    """The run's one session, as a librarian run lists its own."""
     warnings: tuple[Finding, ...] = ()
     """Lint's warnings about the wiki as committed."""
     held_back: int = 0
@@ -243,7 +243,7 @@ def run_dreaming(
     """Runs dreaming once over the wiki as last committed, and commits what it changed.
 
     `now` is what the session is told the current time is, and what the candidates are
-    measured against, with `page_threshold` and `loop_age_days` as a nightly run's lint has
+    measured against, with `page_threshold` and `loop_age_days` as a librarian run's lint has
     them. With no candidates it does nothing. Raises LibrarianRunError when the run fails,
     after restoring the wiki.
 

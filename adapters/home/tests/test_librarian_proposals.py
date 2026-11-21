@@ -2,7 +2,7 @@
 
 Whole runs of `pa librarian dream` and `pa librarian run` over a temporary data root, through
 the stand-in `claude` (the conftest at the repository root says what it does and how it's
-scripted). Each test builds a wiki with a nightly run, scripts the dreaming session's writes
+scripted). Each test builds a wiki with a librarian run, scripts the dreaming session's writes
 and the outcomes its final message reports, and asserts on the wiki, its git history, and what
 the session was given: the stand-in records the open proposals listed under the prompt's
 `## Open proposals` heading as `proposals`.
@@ -268,7 +268,7 @@ room list, so both of David Kim's pages are engaged, and neither is an unengaged
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email, a later one sending the room list, and a chat
+    """One librarian run over the hotel email, a later one sending the room list, and a chat
     exchange, whose consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
@@ -362,7 +362,7 @@ def test_a_dreaming_run_that_proposes_commits_the_proposal_and_its_outcome_names
     assert recorded["Dreaming-Proposed"] == "1"
     assert (recorded["Dreaming-Applied"], recorded["Dreaming-Dismissed"]) == ("0", "0")
     assert "judged 1 candidates (0 applied, 1 proposed, 0 dismissed)" in capsys.readouterr().out
-    # The next nightly run commits over the proposal, and leaves it as it is.
+    # The next librarian run commits over the proposal, and leaves it as it is.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -1055,7 +1055,7 @@ def test_a_cap_lowered_below_what_is_open_fails_no_run_that_adds_nothing(
     monkeypatch.setenv("PA_LIBRARIAN_OPEN_PROPOSALS", "2")
     script(data_root, dreaming=[reporting(DISMISSED)])
 
-    # The owner's answers reach the wiki through the nightly run, so it must still commit.
+    # The owner's answers reach the wiki through the librarian run, so it must still commit.
     assert dream() == 0
     ingest(
         data_root,
@@ -1261,7 +1261,7 @@ def test_the_index_counts_only_the_proposals_the_owner_hasnt_answered(data_root:
     )
     script(data_root)
 
-    # The host regenerates the index on a nightly run too.
+    # The host regenerates the index on a librarian run too.
     assert run_librarian() == 0
 
     assert index_opening(data_root) == ["# Index", "", "Open proposals: 0", ""]

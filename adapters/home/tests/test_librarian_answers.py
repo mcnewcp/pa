@@ -1,8 +1,8 @@
-"""The owner answers a proposal, and the next nightly run applies the answer (#144).
+"""The owner answers a proposal, and the next librarian run applies the answer (#144).
 
 Whole runs of `pa librarian run` over a temporary data root, through the stand-in `claude` (the
 conftest at the repository root says what it does and how it's scripted). Each test builds a
-wiki with a nightly run, plants the proposals an earlier dreaming run would have left, delivers
+wiki with a librarian run, plants the proposals an earlier dreaming run would have left, delivers
 the owner's answer as a chat exchange, scripts what consolidation writes, and asserts on the
 wiki, its git history, and what the session was given: the stand-in records the open proposals
 listed under the prompt's `## Open proposals` heading as `proposals`.
@@ -277,7 +277,7 @@ EARLIER_CHAT = chat_id("earlier-answer")
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email, a later one sending the room list, and a chat in
+    """One librarian run over the hotel email, a later one sending the room list, and a chat in
     which the owner answered an earlier proposal; its consolidation writes `written` (`pages()`
     unless given)."""
     ingest(

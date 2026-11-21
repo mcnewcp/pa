@@ -156,7 +156,7 @@ def dream(
     run's sessions run in, with the same model, effort, turn limit, and timeout.
 
     Whatever happens, the run is recorded in the status as the last dreaming run, in counts
-    and a failure's reason without content, beside the nightly run's own record. A run that
+    and a failure's reason without content, beside the librarian run's own record. A run that
     found nothing to judge is recorded too: the review happened. The caller holds the data
     root's lock, as for `run`.
     """
@@ -357,8 +357,8 @@ def _record(
 ) -> None:
     """Writes into the status's part for the wiki the run that just ended (as `last_run` or
     `last_dreaming`), with what the wiki as last committed says: the time it is current through
-    and how many proposals are open. Everything else there stands, so a nightly run keeps the
-    last dreaming run's record, and a dreaming run the nightly run's."""
+    and how many proposals are open. Everything else there stands, so a librarian run keeps the
+    last dreaming run's record, and a dreaming run the librarian run's."""
     cursor = last_cursor(repository)
     status = read_status(data_root.status)
     wiki = status.wiki.model_copy(

@@ -1,7 +1,7 @@
 """`pa librarian dream`: whole dreaming runs over a temporary data root, through the stand-in
 `claude` (the conftest at the repository root says what it does and how it's scripted).
 
-Each test builds a wiki with a nightly run (`run_with_pages`), scripts the dreaming session's
+Each test builds a wiki with a librarian run (`run_with_pages`), scripts the dreaming session's
 edits and the outcomes its final message reports, and runs the command. The tests assert on the
 wiki, its git history, and what the session was given: the stand-in records the candidates
 listed under the prompt's `## Candidates` heading as `candidates`.
@@ -246,7 +246,7 @@ def linked(day: str, *slugs: str) -> dict:
 def run_with_pages(
     data_root: Path, pages: dict[str, str] | None = None, logged: Sequence[dict] = ()
 ) -> str:
-    """One nightly run over the hotel email and a later one sending the room list, whose
+    """One librarian run over the hotel email and a later one sending the room list, whose
     observation also logs `logged` (`linked` actions) and whose consolidation writes `pages`
     (the wedding pages unless given). Returns the later email's episode id."""
     ingest(
@@ -335,7 +335,7 @@ def test_a_dreaming_commit_carries_the_cursor_and_version_forward(data_root: Pat
     assert cut.manifest.wiki.commit == git(data_root, "rev-parse", "HEAD").strip()
     assert cut.manifest.wiki.librarian_version == last_run["Librarian-Version"]
     assert cut.manifest.wiki.cursor == last_run["Cursor"]
-    # The next nightly run offers only what was captured since.
+    # The next librarian run offers only what was captured since.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -810,7 +810,7 @@ def test_a_failed_dreaming_run_leaves_the_wiki_at_its_last_commit(
     assert len(sessions(data_root, "dreaming")) == attempts
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
-    # The next nightly run carries on from the same cursor.
+    # The next librarian run carries on from the same cursor.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -931,7 +931,7 @@ def test_an_emptied_page_no_merge_explains_fails_the_dreaming_run(data_root: Pat
     assert tree_state(data_root / "wiki") == before
 
 
-def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
+def test_the_dreaming_session_gets_the_librarian_sessions_tools_and_settings(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("PA_LIBRARIAN_MAX_TURNS", "40")
@@ -952,8 +952,8 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
         str(data_root / "wiki"),
     ]
     assert Path(flag(argv, "--settings")).is_relative_to(session["cwd"])
-    # Everything a nightly session is started with, but its own prompt, rendered project, and
-    # "now".
+    # Everything a librarian run's session is started with, but its own prompt, rendered
+    # project, and "now".
     assert session["settings"] == nightly["settings"]
     assert session["claude_md"] == nightly["claude_md"]
     assert "\n## Dreaming\n" in session["claude_md"] and "Argus McNevans" in session["claude_md"]

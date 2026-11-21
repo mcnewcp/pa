@@ -228,7 +228,7 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "we
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email and a later one sending the room list, whose
+    """One librarian run over the hotel email and a later one sending the room list, whose
     consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
@@ -255,7 +255,7 @@ def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> No
 
 
 def night(data_root: Path, subject: str = "Gift") -> None:
-    """A later nightly run over one new email about `subject`, which changes no page."""
+    """A later librarian run over one new email about `subject`, which changes no page."""
     ingest(
         data_root,
         {
@@ -306,7 +306,7 @@ def test_a_dreaming_run_is_recorded_in_the_status_in_counts(data_root: Path):
     )
     wiki = status(data_root).wiki
     assert wiki.open_proposals == 1
-    # The nightly run's own record stands, and the wiki is current through where it was.
+    # The librarian run's own record stands, and the wiki is current through where it was.
     assert nightly.last_run is not None and nightly.current_through is not None
     assert (wiki.last_run, wiki.current_through) == (nightly.last_run, nightly.current_through)
 
@@ -332,7 +332,7 @@ def test_pa_status_shows_the_dreaming_run_and_the_open_proposals_without_content
         assert value not in output.out + output.err + recorded, value
 
 
-def test_a_nightly_run_keeps_the_dreaming_record(data_root: Path):
+def test_a_librarian_run_keeps_the_dreaming_record(data_root: Path):
     run_with_pages(data_root, pages(loop()))
     script(data_root, dreaming=JUDGING)
     assert dream() == 0

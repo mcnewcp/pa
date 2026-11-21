@@ -7,7 +7,7 @@ it, and test modules can't import each other (`--import-mode=importlib`).
 The stand-in plays one session. It appends what it was given to `sessions.jsonl` beside it,
 follows the script for its phase in `script.json` beside it, and prints what
 `claude -p --output-format json` prints. `adapters/home/tests/test_librarian_run.py` describes
-the record and the actions a nightly session uses. For dreaming it also:
+the record and the actions a librarian run's session uses. For dreaming it also:
 
 - records the candidates listed under the prompt's `## Candidates` heading, as `candidates`,
   and the open proposals listed under its `## Open proposals` heading, as `proposals`;

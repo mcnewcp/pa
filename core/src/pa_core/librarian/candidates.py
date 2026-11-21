@@ -333,7 +333,7 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
 
     A dismissed candidate is held back for `DISMISSAL_DAYS`, or until one of its pages
     changes: until a page's content differs from what the run that dismissed it committed,
-    whoever changed it (a nightly run, a later dreaming run, the host rewriting a link in it,
+    whoever changed it (a librarian run, a later dreaming run, the host rewriting a link in it,
     the owner by hand). A candidate about no page (a slug without one, a marker in a day log)
     waits out the days. A candidate dismissed for lack of room (`no_room`) isn't held back
     at all.

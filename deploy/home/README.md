@@ -51,7 +51,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a nightly run, a dreaming run (of the wiki, or of a copy of an eval wiki or a cut's wiki), a replay, or a seed |
+| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a librarian run, a dreaming run (of the wiki, or of a copy of an eval wiki or a cut's wiki), a replay, or a seed |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 | `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
@@ -356,7 +356,7 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 
 ### Dreaming and proposals
 
-Dreaming is the librarian's review of the whole wiki, where a nightly run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages, pages the owner never engaged with), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
+Dreaming is the librarian's review of the whole wiki, where a librarian run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages, pages the owner never engaged with), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
 
 - **Proposals** are what the librarian asks the owner: lines in `proposals.md` at the wiki's root, open ones first, each with an id (`P12`), the pages it is about, and the episodes behind it. `index.md` opens with how many are open. The owner reads them in Obsidian, or asks the assistant what the PA is waiting on, and answers in chat. The answer is a correction like any other: the next librarian run applies it and moves the proposal under `## Answered`. A run adds at most 5 proposals, and none while 15 are open.
 - **Retirement.** Dreaming may retire the page of a person or organization the owner never engaged with, once a re-read of L0 shows nothing owed either way: the page goes, anything worth keeping is folded into the page it belongs to, and the host lists the slug with the date in `retired.md` at the wiki's root. One with an open loop is proposed, never retired. A retired slug gets no page again until the owner engages with it, a loop or decision names it, or the owner says "keep a page for X" in chat; any run that gives it a page takes it off the list.
@@ -382,7 +382,7 @@ wiki() { git --git-dir ~/.local/share/pa-home/wiki.git --work-tree ~/.local/shar
 wiki revert --no-edit 1a2b3c4d > /dev/null
 ```
 
-- **What it undoes**: the pages the run changed, the proposals it added (their ids are free again), and what it remembered, so its candidates are offered again. The cursor and the librarian version stay those of the last nightly run, so the next nightly run offers only what's new.
+- **What it undoes**: the pages the run changed, the proposals it added (their ids are free again), and what it remembered, so its candidates are offered again. The cursor and the librarian version stay those of the last librarian run, so the next librarian run offers only what's new.
 - **How the host knows**: by the line git itself writes in the revert's message, `This reverts commit <the full id>.` Keep it (`--no-edit` does). A revert whose message lost that line isn't recognised, and the run it undid is still remembered.
 - **A run that changed no file**, such as one that dismissed every candidate, can't be reverted in one step: git stops with "nothing to commit", so the command above exits 1 and prints nothing. Conclude it with git's own message, and the run is forgotten the same way:
 

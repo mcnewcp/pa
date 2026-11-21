@@ -1,5 +1,5 @@
 """The proposal-answer fixture (spec #140, stories 40 to 43, 49 to 52, and 90): the owner asks
-what the PA needs, answers a proposal in chat, and the next nightly run applies the answer.
+what the PA needs, answers a proposal in chat, and the next librarian run applies the answer.
 
 It is a data root with a starting wiki and one stage of payloads, in
 `fixtures/proposal-answer/`:
