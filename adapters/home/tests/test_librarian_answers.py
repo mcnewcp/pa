@@ -486,6 +486,60 @@ def test_a_run_whose_batch_holds_the_owners_answer_commits_the_proposal_as_answe
     assert sessions(data_root, "consolidation")[-1]["proposals"] is None
 
 
+def engaged(data_root: Path, slug: str) -> bool:
+    """Whether the last consolidation session was told the owner has engaged with `slug`."""
+    [reference] = [
+        reference
+        for reference in sessions(data_root, "consolidation")[-1]["inputs"][1]
+        if reference["slug"] == slug
+    ]
+    return reference["engaged"]
+
+
+CLOSE = proposal(text="Close the reply [[david-kim]] asked for, as no longer owed?")
+
+
+def said_of_david(exchange: str) -> dict:
+    """The stand-in's action observing what the owner said of David Kim in `exchange`."""
+    line = f"- me said what to do about [[david-kim]] [ep:{exchange}]\n"
+    return {"append": f"days/{TODAY}.md", "text": line}
+
+
+def test_the_owners_answer_to_a_proposal_doesnt_engage_the_page_it_is_about(data_root: Path):
+    # David Kim only ever wrote to the owner, so his page is unengaged.
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(CLOSE)})
+    ingest(data_root, answer("On P1: yes, close it."))
+    script(
+        data_root,
+        observation=[{"observe": True, "links": LINKS}, said_of_david(ANSWER)],
+        consolidation=[resolving(answered(CLOSE, "accepted", ANSWER))],
+    )
+    assert run_librarian() == 0
+
+    ingest(data_root, gift())
+    script(data_root)
+    assert run_librarian() == 0
+
+    # Saying yes to closing his loop is the owner's word on a proposal, not the owner's hand
+    # in David Kim: his page is still unengaged, so a dreaming run can still retire it.
+    assert not engaged(data_root, "david-kim")
+
+
+def test_an_exchange_that_answers_no_proposal_engages_what_it_links(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(CLOSE)})
+    ingest(data_root, answer("Not sure about P1. David is a friend, though: keep his page."))
+    script(data_root, observation=[{"observe": True, "links": LINKS}, said_of_david(ANSWER)])
+    assert run_librarian() == 0
+
+    ingest(data_root, gift())
+    script(data_root)
+    assert run_librarian() == 0
+
+    assert engaged(data_root, "david-kim")
+
+
 INVITED = proposal(3, "Is [[dave]] invited to the wedding?", kind="question")
 """A second open proposal, which the owner's answer says nothing about."""
 NEW = proposal(4, "Is [[wedding]] still on Oct 24?", kind="question")
