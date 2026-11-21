@@ -13,7 +13,6 @@ from datetime import date
 from pathlib import Path
 
 from pa_core.librarian.wiki import (
-    ACTIVE,
     INDEX,
     PAGE_TYPES,
     PROPOSALS,
@@ -46,19 +45,10 @@ def render_index(listed: Iterable[Page], open_proposals: int = 0) -> str:
 def index_order(page: Page) -> tuple[int, int, str]:
     """Where `page` sorts among its type's pages: active pages by `updated`, newest first
     (by slug within a day, and last without a date), then every other page by slug."""
-    if page.fields.get("status") != ACTIVE:
+    if not page.is_active:
         return (1, 0, page.slug)
-    return (0, -_updated(page).toordinal(), page.slug)
-
-
-def _updated(page: Page) -> date:
-    """The page's `updated` date, or the earliest date there is when it isn't one (lint fails
-    such a page)."""
-    value = page.fields.get("updated")
-    try:
-        return date.fromisoformat(value) if isinstance(value, str) else date.min
-    except ValueError:
-        return date.min
+    # A page whose `updated` is no date sorts last (lint fails such a page).
+    return (0, -(page.updated or date.min).toordinal(), page.slug)
 
 
 def write_index(tree: Path) -> None:

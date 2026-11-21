@@ -65,7 +65,6 @@ from pa_core.librarian.engagement import engaged_days
 from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
 from pa_core.librarian.wiki import (
-    ACTIVE,
     DAYS,
     ORGANIZATION,
     PAGE_FOLDERS,
@@ -406,7 +405,7 @@ def _stale(
     """A page whose slug observations link on enough days after its `updated` date: what it
     is about moved on, and the page didn't."""
     for page in pages:
-        updated = _updated(page)
+        updated = page.updated
         if updated is None:
             continue
         later = [day for day in linked.get(page.slug, ()) if day > updated]
@@ -431,7 +430,7 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
     for page in pages:
         status = page.fields.get("status")
         held = holding.get(page.slug)
-        if not held or status == ACTIVE or status not in page.page_type.statuses:
+        if not held or page.is_active or status not in page.page_type.statuses:
             continue
         where = tuple(dict.fromkeys(held))
         yield Candidate(
@@ -463,7 +462,7 @@ def _quiet(
     page no observation has linked yet has nothing to measure from, and isn't one."""
     for page in pages:
         days = linked.get(page.slug)
-        if page.fields.get("status") != ACTIVE or not days:
+        if not page.is_active or not days:
             continue
         quiet = (thresholds.today - days[-1]).days
         if quiet >= thresholds.quiet_days:
@@ -491,15 +490,6 @@ def _unengaged(pages: Sequence[Page], engaged: Collection[str]) -> Iterator[Cand
                 message=f"an unengaged page: no observation linking [[{page.slug}]] cites an "
                 "episode the owner sent, wrote, organized, or attends",
             )
-
-
-def _updated(page: Page) -> date | None:
-    """The day a page says it last changed; None when it doesn't say (lint reports that)."""
-    value = page.fields.get("updated")
-    try:
-        return date.fromisoformat(value) if isinstance(value, str) else None
-    except ValueError:
-        return None
 
 
 def _count(number: int, noun: str) -> str:

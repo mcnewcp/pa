@@ -420,6 +420,18 @@ class Page:
         return value if isinstance(value, str) else ""
 
     @property
+    def is_active(self) -> bool:
+        """Whether its `status` says it's live."""
+        return self.fields.get("status") == ACTIVE
+
+    @property
+    def updated(self) -> date | None:
+        """The day it says it last changed; None when it doesn't say, or what it says is no
+        date (lint reports that)."""
+        value = self.fields.get("updated")
+        return _date(value) if isinstance(value, str) else None
+
+    @property
     def aliases(self) -> tuple[str, ...]:
         value = self.fields.get("aliases", ())
         return value if isinstance(value, tuple) else ()
