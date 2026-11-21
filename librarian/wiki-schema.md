@@ -204,7 +204,8 @@ answer last:
 ```
 
 A `change` is `accepted` or `declined`; a `question` is `answered`. A declined proposal stays
-in the file, so the same thing isn't asked again.
+in the file, so the same thing isn't asked again. The last citation of an answered proposal is
+one of the owner's chat exchanges: nothing but the owner's word answers one.
 
 A proposal is a question, never evidence: it shows what is unsettled, and the episodes it
 cites are what to open. `index.md` opens with the number of open proposals.
