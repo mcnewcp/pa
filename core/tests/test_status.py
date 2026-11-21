@@ -41,6 +41,7 @@ def test_the_last_dreaming_run_is_saved_under_the_names_the_assistant_reads(tmp_
         candidates=3,
         outcomes={"applied": 1, "proposed": 1, "dismissed": 1},
         held_back=2,
+        left_over=4,
     )
 
     write_status(path, Status(wiki=WikiStatus(last_dreaming=run, open_proposals=4)), at=AT)
@@ -55,6 +56,7 @@ def test_the_last_dreaming_run_is_saved_under_the_names_the_assistant_reads(tmp_
         "candidates": 3,
         "outcomes": {"applied": 1, "proposed": 1, "dismissed": 1},
         "held_back": 2,
+        "left_over": 4,
     }
     assert read_status(path).wiki.last_dreaming == run
 

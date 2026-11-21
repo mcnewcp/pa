@@ -261,6 +261,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"and kept, and the run is appended to its {RUN_LOG}.",
     )
     dream.add_argument(
+        "--count",
+        action="store_true",
+        help="Run nothing: count what a run over the data root's wiki would find now. Prints "
+        "counts only: the candidates flagged, by kind; how many a run would be offered, how "
+        "many are held back, and how many are over the cap; and the unengaged people and "
+        "organization pages with no open loop.",
+    )
+    dream.add_argument(
         "--cut",
         type=Path,
         metavar="DIR",
@@ -373,6 +381,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             and args.librarian_command == "dream"
             and (args.target or args.corpus or args.cut)
         ):
+            if args.count:
+                raise PaError(
+                    "--count counts the data root's wiki: give it without a TARGET, --corpus, "
+                    "or --cut"
+                )
             # Before the data root is loaded: a copy over a corpus needs none.
             _dream_copy(args.target, args.corpus, args.cut)
             return 0
@@ -416,7 +429,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             with data_root_lock(data_root):
                 _seed(data_root, args.eval_wiki, args.captured_through)
         elif args.command == "librarian" and args.librarian_command == "dream":
-            _dream(data_root)
+            if args.count:
+                _count_candidates(data_root)
+            else:
+                _dream(data_root)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -695,9 +711,10 @@ def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
     if not run.candidates:
         return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
     counts = ", ".join(f"{count} {outcome}" for outcome, count in run.outcomes.items())
+    left_over = f", {run.left_over} over the cap" if run.left_over else ""
     return (
         f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
-        f"{held_back}"
+        f"{held_back}{left_over}"
     )
 
 
@@ -782,6 +799,34 @@ def _dream(data_root: DataRoot) -> None:
     _report_dreaming(outcome, "librarian dream")
 
 
+def _count_candidates(data_root: DataRoot) -> None:
+    """Print what a dreaming run over the data root's wiki would find now: counts, never
+    content."""
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    name = "librarian dream"
+    try:
+        with data_root_lock(data_root):
+            counts = librarian.count_candidates(
+                data_root, owner=owner, time_zone=time_zone, config=config
+            )
+    except LockHeld:
+        print(skipped(name))
+        return
+    kinds = ", ".join(f"{count} {kind}" for kind, count in counts.flagged.items())
+    print(
+        f"{name}: {sum(counts.flagged.values())} candidates flagged{f' ({kinds})' if kinds else ''}"
+    )
+    print(
+        f"{name}: a run now would be offered {counts.offered}, with {counts.held_back} held "
+        f"back and {counts.left_over} over the cap of {counts.cap}"
+    )
+    people, organizations = counts.unengaged_without_loops.values()
+    print(
+        f"{name}: {people + organizations} unengaged pages with no open loop ({people} people, "
+        f"{organizations} organizations)"
+    )
+
+
 def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> None:
     """Dream the copy in `target`, of a replay target replayed over `corpus` or of the wiki
     of the cut in `cut`: no data root is loaded, and none is locked."""
@@ -838,9 +883,10 @@ def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
         print(f"{name}: no candidates in the wiki")
         return
     counts = ", ".join(f"{outcome.count(o)} {o}" for o in OUTCOMES)
+    left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
     print(
         f"{name}: judged {len(outcome.candidates)} candidates ({counts}); "
-        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings{left_over}"
     )
 
 

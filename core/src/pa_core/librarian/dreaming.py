@@ -46,12 +46,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pa_core.l0 import L0Store
 from pa_core.librarian.candidates import (
     CANDIDATE_CAP,
+    ORDER,
     Candidate,
     Decision,
     DreamingHistory,
     PastRun,
     candidates,
-    held_back,
+    unengaged_without_loops,
 )
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
@@ -183,6 +184,9 @@ class DreamingOutcome:
     """How many candidates the wiki had that the run wasn't offered, because its history
     holds them back (`pa_core.librarian.candidates`). A run with no candidates and some held
     back had nothing to judge, in a wiki that still has what an earlier run flagged."""
+    left_over: int = 0
+    """How many more it had that the run wasn't offered because of the cap on a run's
+    candidates: they wait for the next run."""
 
     def count(self, outcome: str) -> int:
         """How many candidates got `outcome` (one of `OUTCOMES`)."""
@@ -259,16 +263,15 @@ def run_dreaming(
             quiet_days=quiet_days,
         )
         l0 = L0Metadata.of(store.envelopes())
-        history = dreaming_history(repository, now)
-        offered = candidates(
+        offer = candidates(
             tree,
             l0=l0,
             owner=owner,
             thresholds=thresholds,
-            history=history,
+            history=dreaming_history(repository, now),
             cap=candidate_cap,
         )
-        waiting = held_back(tree, l0=l0, owner=owner, thresholds=thresholds, history=history)
+        offered, waiting = offer.offered, len(offer.held_back)
         if not offered:
             return DreamingOutcome(held_back=waiting)
         linter = partial(lint, l0=l0, owner=owner, thresholds=thresholds)
@@ -293,6 +296,7 @@ def run_dreaming(
             sessions=tuple(sessions),
             warnings=report.warnings,
             held_back=waiting,
+            left_over=len(offer.left_over),
         )
         commit = repository.commit(dreaming_commit_message(judged, carried, librarian, now))
     except LibrarianRunError as error:
@@ -305,6 +309,69 @@ def run_dreaming(
         repository.discard()
         raise
     return replace(judged, commit=commit)
+
+
+@dataclass(frozen=True)
+class CandidateCounts:
+    """What a dreaming run over a wiki would find, in counts alone: nothing here names a
+    page, a slug, or what a candidate is about."""
+
+    flagged: Mapping[str, int]
+    """How many candidates are flagged of each kind that has any, in the order the kinds are
+    offered in, whether or not a run would be offered them."""
+    offered: int
+    """How many of them a run now would be offered."""
+    held_back: int
+    """How many dreaming's memory holds back."""
+    left_over: int
+    """How many a run now would leave over the cap."""
+    cap: int
+    unengaged_without_loops: Mapping[str, int]
+    """How many pages the owner never engaged with have nothing owed over them, by page type
+    (`pa_core.librarian.candidates.unengaged_without_loops`)."""
+
+
+def count_candidates(
+    *,
+    store: L0Store,
+    owner: Owner,
+    repository: WikiRepository,
+    now: datetime,
+    page_threshold: int = PAGE_THRESHOLD,
+    loop_age_days: int = LOOP_AGE_DAYS,
+    stale_later_days: int = STALE_LATER_DAYS,
+    quiet_days: int = QUIET_DAYS,
+    candidate_cap: int = CANDIDATE_CAP,
+) -> CandidateCounts:
+    """Counts what a dreaming run told that `now` is the time would find in the wiki as it
+    is, with the thresholds, cap, and memory `run_dreaming` goes by. It runs no session and
+    changes nothing: the counts are what a session that may not read the wiki can report of
+    it, before a run and after."""
+    thresholds = Thresholds(
+        now.date(),
+        page_threshold,
+        loop_age_days,
+        stale_later_days=stale_later_days,
+        quiet_days=quiet_days,
+    )
+    l0 = L0Metadata.of(store.envelopes())
+    offer = candidates(
+        repository.tree,
+        l0=l0,
+        owner=owner,
+        thresholds=thresholds,
+        history=dreaming_history(repository, now),
+        cap=candidate_cap,
+    )
+    flagged = Counter(str(candidate.kind) for candidate in offer.flagged)
+    return CandidateCounts(
+        flagged={str(kind): flagged[kind] for row in ORDER for kind in row if flagged[kind]},
+        offered=len(offer.offered),
+        held_back=len(offer.held_back),
+        left_over=len(offer.left_over),
+        cap=candidate_cap,
+        unengaged_without_loops=unengaged_without_loops(repository.tree, l0=l0, owner=owner),
+    )
 
 
 def _dream(

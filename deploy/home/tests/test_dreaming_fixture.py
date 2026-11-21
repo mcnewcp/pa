@@ -175,7 +175,7 @@ def offered(root: Path, *, stale_later_days: int = STALE_LATER_DAYS) -> tuple[Ca
     root at `root`."""
     return candidates(
         DataRoot(root).wiki, l0=_l0(root), owner=OWNER, thresholds=_thresholds(stale_later_days)
-    )
+    ).offered
 
 
 def _thresholds(stale_later_days: int = STALE_LATER_DAYS) -> Thresholds:

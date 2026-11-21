@@ -3,7 +3,9 @@
 The model's judgment is spent on judging, not on finding: before a dreaming run the host lists
 what looks wrong with the wiki, and the session gives each candidate one outcome
 (`pa_core.librarian.dreaming`). `candidates` is the one entry point, and nothing else knows
-which problems are offered, in what order, how many, or what each is called.
+which problems are offered, in what order, how many, or what each is called. It returns an
+`Offer`: the candidates a run is offered, and the ones it isn't, held back by dreaming's
+memory or left over the cap.
 
 A candidate is one of two things:
 
@@ -51,7 +53,6 @@ together.
 
 from __future__ import annotations
 
-import sys
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -59,6 +60,7 @@ from datetime import date, timedelta
 from enum import StrEnum
 from pathlib import Path
 
+from pa_core.librarian.engagement import engaged_days
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
 from pa_core.librarian.wiki import (
     ACTIVE,
@@ -195,6 +197,27 @@ class DreamingHistory:
     runs: tuple[PastRun, ...] = ()
 
 
+@dataclass(frozen=True)
+class Offer:
+    """What the wiki holds for one dreaming run: every candidate flagged in it, as the ones
+    the run is offered and the ones it isn't."""
+
+    offered: tuple[Candidate, ...]
+    """The candidates the run is offered, numbered in the order offered."""
+    held_back: tuple[Candidate, ...] = ()
+    """The candidates history holds back: what an earlier run dismissed, or asked the owner
+    about in a proposal that is still open. A wiki whose every candidate is held back has
+    nothing to judge, which isn't the same as having nothing flagged."""
+    left_over: tuple[Candidate, ...] = ()
+    """The candidates past the cap, in order: they wait for the next run, which this run's
+    outcomes make room for."""
+
+    @property
+    def flagged(self) -> tuple[Candidate, ...]:
+        """Every candidate flagged in the wiki, offered or not."""
+        return (*self.offered, *self.left_over, *self.held_back)
+
+
 NO_HISTORY = DreamingHistory()
 CANDIDATE_CAP = 30
 """The most candidates one run is offered, unless configured otherwise, so that a first run
@@ -211,11 +234,11 @@ def candidates(
     thresholds: Thresholds,
     history: DreamingHistory = NO_HISTORY,
     cap: int = CANDIDATE_CAP,
-) -> tuple[Candidate, ...]:
+) -> Offer:
     """The candidates to offer a dreaming run over the wiki at `tree`: what is flagged in it,
     measured against `l0`'s metadata and `thresholds` for `owner`, in the order of `ORDER`,
     less what `history` holds back, and no more than `cap` of them. The rest wait for the next
-    run, which this run's outcomes make room for.
+    run, which this run's outcomes make room for. The `Offer` holds those it leaves out too.
 
     A candidate that `history` shows an earlier run dismissed is held back until one of its
     pages changes or `DISMISSAL_DAYS` pass, and one an earlier run proposed, while that
@@ -236,13 +259,35 @@ def candidates(
     ]
     held = _held_back(history, {proposal.id for proposal in open_proposals(tree)})
     # The sort is stable: within a row of `ORDER`, candidates stay as they were found.
-    offered = sorted(
-        (candidate for candidate in flagged if candidate.identity not in held),
-        key=lambda candidate: _RANK[candidate.kind],
-    )[:cap]
-    return tuple(
-        replace(candidate, id=f"c{number:02d}") for number, candidate in enumerate(offered, start=1)
+    flagged.sort(key=lambda candidate: _RANK[candidate.kind])
+    free = [candidate for candidate in flagged if candidate.identity not in held]
+    return Offer(
+        offered=tuple(
+            replace(candidate, id=f"c{number:02d}")
+            for number, candidate in enumerate(free[:cap], start=1)
+        ),
+        held_back=tuple(candidate for candidate in flagged if candidate.identity in held),
+        left_over=tuple(free[cap:]),
     )
+
+
+def unengaged_without_loops(tree: Path, *, l0: L0Metadata, owner: Owner) -> dict[str, int]:
+    """How many pages in the wiki at `tree` `owner` never engaged with, by `l0`, and nothing
+    is owed over: a person's or an organization's page that holds no open loop, and that no
+    open loop on any page names as a party. By page type (`person`, `organization`).
+
+    They are the pages dreaming may retire, counted whether or not a run would be offered
+    them, so the count before a run and after it says what the run cleared.
+    """
+    found = pages(tree)
+    engaged = engaged_days(tree, l0, owner)
+    owed = _open_loop_holders(found)
+    counts = {PERSON.type: 0, ORGANIZATION.type: 0}
+    for candidate in _unengaged(found, engaged):
+        [page] = [page for page in found if page.path == candidate.path]
+        if page.slug not in owed:
+            counts[page.page_type.type] += 1
+    return counts
 
 
 ORDER: tuple[tuple[CandidateKind, ...], ...] = (
@@ -316,28 +361,6 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
     return held
 
 
-def held_back(
-    tree: Path,
-    *,
-    l0: L0Metadata,
-    owner: Owner,
-    thresholds: Thresholds,
-    history: DreamingHistory,
-) -> int:
-    """How many of the candidates flagged in the wiki at `tree` `history` holds back, as
-    `candidates` would: what a run isn't offered because an earlier run dismissed it or asked
-    the owner about it. A wiki whose every candidate is held back has nothing to judge, which
-    isn't the same as having no problems."""
-
-    def flagged(history: DreamingHistory) -> int:
-        offered = candidates(
-            tree, l0=l0, owner=owner, thresholds=thresholds, history=history, cap=sys.maxsize
-        )
-        return len(offered)
-
-    return flagged(NO_HISTORY) - flagged(history)
-
-
 _UNNUMBERED = ""
 """A candidate's id until `candidates` numbers it."""
 
@@ -389,13 +412,7 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
     loop on another page that names it as a party. Every status but `active` says the matter
     is over, for good or for now (`settled`, `dormant`, `inactive`), so either the status is
     wrong or the loop is no longer owed; L0 says which."""
-    holding: dict[str, list[str]] = defaultdict(list)
-    """For each slug, the page holding each open loop of its, once per loop."""
-    for page in pages:
-        for loop in page.loops:
-            if loop.is_open:
-                for slug in {page.slug, loop.owed_by, loop.owed_to}:
-                    holding[slug].append(page.path)
+    holding = _open_loop_holders(pages)
     for page in pages:
         status = page.fields.get("status")
         held = holding.get(page.slug)
@@ -410,6 +427,18 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
             message=f"a status that disagrees with its loops: it is {status}, with "
             f"{_count(len(held), 'open loop')} on {', '.join(where)}",
         )
+
+
+def _open_loop_holders(pages: Sequence[Page]) -> dict[str, list[str]]:
+    """For each slug with an open loop, the page holding each one, once per loop: a loop is
+    its page's, and each of its parties'."""
+    holding: dict[str, list[str]] = defaultdict(list)
+    for page in pages:
+        for loop in page.loops:
+            if loop.is_open:
+                for slug in {page.slug, loop.owed_by, loop.owed_to}:
+                    holding[slug].append(page.path)
+    return holding
 
 
 def _quiet(

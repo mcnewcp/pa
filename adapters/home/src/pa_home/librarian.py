@@ -39,6 +39,7 @@ from pa_core.atomic import write_atomically
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
+from pa_core.librarian import dreaming
 from pa_core.librarian.dream_copy import (
     DreamCopyError,
     cut_source,
@@ -47,6 +48,7 @@ from pa_core.librarian.dream_copy import (
 )
 from pa_core.librarian.dreaming import (
     OUTCOMES,
+    CandidateCounts,
     DreamingOutcome,
     last_dreaming_at,
     run_dreaming,
@@ -192,9 +194,34 @@ def dream(
         candidates=len(outcome.candidates),
         outcomes={name: outcome.count(name) for name in OUTCOMES},
         held_back=outcome.held_back,
+        left_over=outcome.left_over,
     )
     _record(data_root, repository, now, last_dreaming=succeeded)
     return outcome
+
+
+def count_candidates(
+    data_root: DataRoot,
+    *,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> CandidateCounts:
+    """Counts what a dreaming run at `now` would find in the data root's wiki, as `dream`
+    would flag it, without running a session, committing, or recording anything. The caller
+    holds the data root's lock, so no run is part way through the wiki."""
+    return dreaming.count_candidates(
+        store=FilesystemL0(data_root.l0),
+        owner=owner,
+        repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
+        now=now().astimezone(time_zone),
+        page_threshold=config.page_threshold,
+        loop_age_days=config.loop_age_days,
+        stale_later_days=config.stale_later_days,
+        quiet_days=config.quiet_days,
+        candidate_cap=config.candidate_cap,
+    )
 
 
 def dreaming_due(
