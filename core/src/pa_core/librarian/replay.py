@@ -83,7 +83,7 @@ from pa_core.librarian.run import (
     RunOutcome,
     SessionRunner,
     WikiRepository,
-    commit_fields,
+    last_run_fields,
     run_librarian,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
@@ -378,7 +378,7 @@ def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
     """Where the last committed replay run's window ended, or None in a fresh wiki."""
-    fields = commit_fields(repository.last_commit_message() or "")
+    fields = last_run_fields(repository)
     if OCCURRED_TO_FIELD not in fields:
         if fields:
             raise ReplayError(

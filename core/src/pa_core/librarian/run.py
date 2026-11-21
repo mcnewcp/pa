@@ -18,6 +18,10 @@ new to fold in; a run that fails only on errors its last commit already had says
 anything fails, the wiki goes back to its last commit, so the cursor (kept in the
 commit messages) doesn't move and the batch stays new for the next run.
 
+What a run records is read from the last run's commit that still stands (`standing_runs`),
+not from the last commit: a `git revert` of a run's commit takes back the run's cursor with
+what it wrote, so the next run is offered that run's episodes again.
+
 It needs two things from an adapter: a `SessionRunner`, which runs the librarian's sessions
 wherever they're fenced, and a `WikiRepository`, which keeps the wiki's history.
 
@@ -31,9 +35,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, tzinfo
 from enum import StrEnum
@@ -124,6 +129,14 @@ class SessionRunner(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Commit:
+    """One commit of the wiki's history."""
+
+    id: str
+    message: str
+
+
 class WikiRepository(Protocol):
     """The wiki's working tree and its history: one commit per run."""
 
@@ -132,8 +145,13 @@ class WikiRepository(Protocol):
         """The wiki's working tree on the host."""
         ...
 
-    def last_commit_message(self) -> str | None:
-        """The last commit's message, or None before the first run."""
+    def commits(self) -> Sequence[Commit]:
+        """Every commit of the wiki's history, newest first; none when it has no history."""
+        ...
+
+    def changed_since(self, commit: str) -> Collection[str]:
+        """The files, relative to the wiki, whose content as last committed differs from what
+        `commit` held, the ones added or removed since included."""
         ...
 
     def commit(self, message: str) -> str:
@@ -294,7 +312,7 @@ def seed_wiki(
     Refuses a wiki that has runs or files already, and a seed that fails lint against `store`
     for `owner` (the wiki is left as it was). `index.md` is regenerated.
     """
-    if commit_fields(repository.last_commit_message() or ""):
+    if last_run_fields(repository):
         raise WikiSeedError("the wiki already has runs; a seed starts a fresh wiki")
     tree = repository.tree
     if any(tree.iterdir()):
@@ -317,10 +335,47 @@ def seed_wiki(
         raise
 
 
+_REVERTS = re.compile(r"^This reverts commit ([0-9a-f]{40})\.$", re.M)
+"""The line `git revert` writes in its commit's message, naming the commit it undoes."""
+
+
+def standing_runs(repository: WikiRepository) -> tuple[Commit, ...]:
+    """The commits that record a run and still stand, newest first.
+
+    A run's commit is one whose message has fields. It stops standing when a later commit
+    reverts it: one that says so in git's own words, `This reverts commit <id>.`, on a line
+    of its message. A revert that is itself reverted undoes nothing, so its run stands again.
+    A commit that is neither (the first commit, an edit by hand) says nothing about the runs.
+
+    Reverting a run's commit therefore takes back what the run recorded with what it wrote:
+    its cursor and version, and a dreaming run's decisions. Reverting an older run takes only
+    that run out; the runs after it stand, and the newest of them still says where the wiki
+    is.
+    """
+    reverted: set[str] = set()
+    runs: list[Commit] = []
+    for commit in repository.commits():
+        if commit.id in reverted:
+            continue
+        undone = _REVERTS.search(commit.message)
+        if undone:
+            reverted.add(undone[1])
+        elif commit_fields(commit.message):
+            runs.append(commit)
+    return tuple(runs)
+
+
+def last_run_fields(repository: WikiRepository) -> dict[str, str]:
+    """The fields of the last run that still stands (`standing_runs`): where the wiki is, its
+    cursor and librarian version among them. Empty before the first run, or once every run is
+    reverted."""
+    runs = standing_runs(repository)
+    return commit_fields(runs[0].message) if runs else {}
+
+
 def last_cursor(repository: WikiRepository) -> Cursor | None:
-    """The cursor the last committed run recorded, or None before the first."""
-    message = repository.last_commit_message()
-    value = commit_fields(message or "").get(CURSOR_FIELD)
+    """The cursor the last run that still stands recorded, or None before the first."""
+    value = last_run_fields(repository).get(CURSOR_FIELD)
     return Cursor.parse(value) if value else None
 
 

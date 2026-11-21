@@ -3,7 +3,7 @@
 The model's judgment is spent on judging, not on finding: before a dreaming run the host lists
 what looks wrong with the wiki, and the session gives each candidate one outcome
 (`pa_core.librarian.dreaming`). `candidates` is the one entry point, and nothing else knows
-which problems are offered, in what order, or what each is called.
+which problems are offered, in what order, how many, or what each is called.
 
 A candidate is one of two things:
 
@@ -16,7 +16,8 @@ A candidate is one of two things:
     or dormant topic, an inactive person or organization) while one of its loops is open;
   - a quiet page: an active one that no observation has linked for a long time.
 
-They are offered in a fixed order of kinds, which matters once a run offers only so many:
+They are offered in a fixed order of kinds (`ORDER`), which matters because a run is offered
+only so many (`CANDIDATE_CAP`, unless configured) and the rest wait for the next run:
 
 1. Stale pages. Every later judgment about a page reads it, so it is brought up to date
    first, and a page left behind is the failure that costs a wrong answer.
@@ -28,26 +29,45 @@ They are offered in a fixed order of kinds, which matters once a run offers only
 
 Days after the run's own date never count. Day logs exist for them wherever a calendar event
 is booked ahead, and what hasn't happened yet has left no page behind.
+
+Dreaming remembers what it has judged, so each run is spent on what's new. The memory is the
+dreaming runs' own commits (`DreamingHistory`, which `pa_core.librarian.dreaming` reads back
+from the wiki's history), and a candidate is the same one from run to run by its identity:
+its kind, its pages, and for a loop the episodes its line cites. Two things hold one back:
+
+- **It was dismissed**, until one of its pages changes or `DISMISSAL_DAYS` pass.
+- **It was proposed**, while that proposal is open.
+
+An applied candidate is never held back: if the problem is still there, it is offered again.
+Two loops on one page that cite the same episodes are one identity, so they are held back
+together.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from enum import StrEnum
 from pathlib import Path
 
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import ACTIVE, DAYS, Page, linked_days, pages
+from pa_core.librarian.wiki import (
+    ACTIVE,
+    DAYS,
+    PAGE_FOLDERS,
+    Page,
+    linked_days,
+    open_proposals,
+    pages,
+)
 from pa_core.owner import Owner
 
 
 class CandidateKind(StrEnum):
-    """What a candidate is about, listed in the order `candidates` offers the kinds (the two
-    kinds of loop come together, page by page). The librarian project's dreaming instructions
-    say how to judge each."""
+    """What a candidate is about. `ORDER` is the order `candidates` offers the kinds in, and
+    the librarian project's dreaming instructions say how to judge each."""
 
     STALE = "stale"
     """A page that observations have linked on enough days since it was last updated."""
@@ -101,6 +121,13 @@ class Candidate:
             return ", ".join(self.pages) + cited
         return f"[[{self.slug}]]" if self.slug else self.path
 
+    @property
+    def identity(self) -> Identity:
+        """Which candidate it is, from run to run: its kind, its pages, and for a loop the
+        episodes its line cites (or its slug, or its file). Its id is only its place in one
+        run."""
+        return _identity(str(self.kind), self.subject)
+
     def to_json(self) -> dict[str, object]:
         """The candidate as a dreaming session is given it."""
         listed: dict[str, object] = {
@@ -121,28 +148,154 @@ class Candidate:
         return listed
 
 
-def candidates(
-    tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds
-) -> tuple[Candidate, ...]:
-    """The candidates to offer a dreaming run over the wiki at `tree`, in order: the stale
-    pages, the statuses that disagree with their loops, every lint warning, then the quiet
-    pages, measured against `l0`'s metadata and `thresholds` for `owner`.
+@dataclass(frozen=True)
+class Decision:
+    """What an earlier dreaming run decided about one candidate, as its commit lists it."""
 
-    The ids follow from the wiki alone, so the same wiki on the same day offers the same
-    candidates under the same ids.
+    kind: str
+    subject: str
+    """What the candidate was about, as `Candidate.subject` wrote it."""
+    outcome: str
+    """`applied`, `proposed`, or `dismissed`."""
+    proposal: str | None = None
+    """For a proposed candidate, the id of the proposal that asks about it."""
+
+
+@dataclass(frozen=True)
+class PastRun:
+    """An earlier dreaming run whose commit still stands."""
+
+    age: timedelta
+    """How long ago it ran: from the time it was told was now to the time this run is told."""
+    decisions: tuple[Decision, ...]
+    changed: frozenset[str] = frozenset()
+    """The files, relative to the wiki, whose content now differs from what the run
+    committed."""
+
+
+@dataclass(frozen=True)
+class DreamingHistory:
+    """What dreaming remembers: its earlier runs that still stand, newest first. A wiki that
+    was never dreamed, or has no history at all, has none."""
+
+    runs: tuple[PastRun, ...] = ()
+
+
+NO_HISTORY = DreamingHistory()
+CANDIDATE_CAP = 30
+"""The most candidates one run is offered, unless configured otherwise, so that a first run
+over a wiki full of them stays inside its session's turn limit."""
+DISMISSAL_DAYS = 30
+"""How long a dismissed candidate is held back while its pages stay as they were."""
+
+
+def candidates(
+    tree: Path,
+    *,
+    l0: L0Metadata,
+    owner: Owner,
+    thresholds: Thresholds,
+    history: DreamingHistory = NO_HISTORY,
+    cap: int = CANDIDATE_CAP,
+) -> tuple[Candidate, ...]:
+    """The candidates to offer a dreaming run over the wiki at `tree`: what is flagged in it,
+    measured against `l0`'s metadata and `thresholds` for `owner`, in the order of `ORDER`,
+    less what `history` holds back, and no more than `cap` of them. The rest wait for the next
+    run, which this run's outcomes make room for.
+
+    A candidate that `history` shows an earlier run dismissed is held back until one of its
+    pages changes or `DISMISSAL_DAYS` pass, and one an earlier run proposed, while that
+    proposal is open in the wiki.
+
+    The ids follow from the wiki and the history alone, so the same wiki on the same day
+    offers the same candidates under the same ids.
     """
     warnings = lint(tree, l0=l0, owner=owner, thresholds=thresholds).warnings
     found = pages(tree)
     linked = _linked_days(tree, thresholds.today)
-    offered = [
+    flagged = [
         *_stale(found, linked, thresholds),
         *_status_mismatches(found),
         *(_of_warning(warning) for warning in warnings),
         *_quiet(found, linked, thresholds),
     ]
+    held = _held_back(history, {proposal.id for proposal in open_proposals(tree)})
+    # The sort is stable: within a row of `ORDER`, candidates stay as they were found.
+    offered = sorted(
+        (candidate for candidate in flagged if candidate.identity not in held),
+        key=lambda candidate: _RANK[candidate.kind],
+    )[:cap]
     return tuple(
         replace(candidate, id=f"c{number:02d}") for number, candidate in enumerate(offered, start=1)
     )
+
+
+ORDER: tuple[tuple[CandidateKind, ...], ...] = (
+    (CandidateKind.STALE,),
+    (CandidateKind.STATUS_MISMATCH,),
+    (CandidateKind.ORPHAN,),
+    # A page's loops come together, past due or aging, page by page.
+    (CandidateKind.LOOP_PAST_DUE, CandidateKind.LOOP_AGING),
+    (CandidateKind.DUPLICATE,),
+    (CandidateKind.SLUG_WITHOUT_PAGE,),
+    (CandidateKind.NEEDS_LOOKUP,),
+    (CandidateKind.QUIET,),
+)
+"""The fixed order the kinds are offered in, one row per place: what a capped run reaches
+first. The module's docstring gives the reasons. A new kind is a row here."""
+_RANK = {kind: rank for rank, row in enumerate(ORDER) for kind in row}
+
+
+type Identity = tuple[str, frozenset[str]]
+"""Which candidate one is, from run to run: its kind and what it's about."""
+
+
+def _identity(kind: str, subject: str) -> Identity:
+    """A candidate's identity, from its kind and its subject: the subject's parts (its pages
+    and a loop's citations, or its slug, or its file) in any order. No part holds a space or a
+    comma."""
+    return kind, frozenset(subject.replace(",", " ").split())
+
+
+def _is_page(path: str) -> bool:
+    return path.partition("/")[0] in PAGE_FOLDERS
+
+
+def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity]:
+    """The candidates not to offer again yet, given the ids of the proposals `asked` of the
+    owner and still open. What counts is the newest run that judged a candidate; any older
+    decision about it is superseded.
+
+    A proposed candidate is held back while its proposal is open, so the owner isn't asked the
+    same thing twice. Once it is answered, the candidate is offered again if the problem
+    remains.
+
+    A dismissed candidate is held back for `DISMISSAL_DAYS`, or until one of its pages
+    changes: until a page's content differs from what the run that dismissed it committed,
+    whoever changed it (a nightly run, a later dreaming run, the host rewriting a link in it,
+    the owner by hand). A candidate about no page (a slug without one, a marker in a day log)
+    waits out the days.
+    """
+    held: set[Identity] = set()
+    judged: set[Identity] = set()
+    for run in history.runs:
+        decided = {_identity(decision.kind, decision.subject) for decision in run.decisions}
+        for decision in run.decisions:
+            identity = _identity(decision.kind, decision.subject)
+            if identity in judged:
+                continue
+            if decision.outcome == "proposed":
+                waits = decision.proposal in asked
+            else:
+                waits = (
+                    decision.outcome == "dismissed"
+                    and run.age < timedelta(days=DISMISSAL_DAYS)
+                    and not any(_is_page(path) for path in run.changed & identity[1])
+                )
+            if waits:
+                held.add(identity)
+        judged |= decided
+    return held
 
 
 _UNNUMBERED = ""
