@@ -71,7 +71,9 @@ from pa_core.librarian.wiki import (
     PAGE_FOLDERS,
     PERSON,
     Page,
+    citations,
     linked_days,
+    links,
     open_proposals,
     pages,
 )
@@ -118,7 +120,11 @@ class Candidate:
         """Which candidate it is, from run to run: its kind, its pages, and for a loop the
         episodes its line cites (or its slug, or its file). Its id is only its place in one
         run."""
-        return _identity(str(self.kind), self.subject)
+        if self.pages:
+            return Identity(str(self.kind), frozenset(self.pages), frozenset(self.episodes))
+        if self.slug:
+            return Identity(str(self.kind), slug=self.slug)
+        return Identity(str(self.kind), file=self.path)
 
     def to_json(self) -> dict[str, object]:
         """The candidate as a dreaming session is given it."""
@@ -140,6 +146,42 @@ class Candidate:
         return listed
 
 
+@dataclass(frozen=True)
+class Identity:
+    """Which candidate one is, from run to run: its kind and what it is about, in any order.
+
+    A dreaming commit lists each candidate by its kind and its subject (`Candidate.subject`),
+    and `parse` reads the identity back from that line, so the two say the same thing in two
+    forms: change one with the other, or dreaming forgets what it judged.
+    """
+
+    kind: str
+    pages: frozenset[str] = frozenset()
+    """The pages it is about, relative to the wiki."""
+    episodes: frozenset[str] = frozenset()
+    """For a loop, the episodes its line cites as opening it."""
+    slug: str | None = None
+    """For a slug without a page, the slug."""
+    file: str | None = None
+    """For a candidate about no page and no slug (a marker in a day log), the file it is in."""
+
+    @classmethod
+    def parse(cls, kind: str, subject: str) -> Identity:
+        """The identity of the candidate a dreaming commit lists with `kind` and `subject`: the
+        subject's parts, which are its pages and a loop's citations, or its slug as a link, or
+        its file. No part holds a space or a comma."""
+        parts = subject.replace(",", " ").split()
+        found = {part for part in parts if part.partition("/")[0] in PAGE_FOLDERS}
+        cited = {episode for part in parts for episode in citations(part)}
+        linked = [slug for part in parts for slug in links(part)]
+        rest = [part for part in parts if part not in found and not citations(part)]
+        if found:
+            return cls(kind, frozenset(found), frozenset(cited))
+        if linked:
+            return cls(kind, slug=linked[0])
+        return cls(kind, file=" ".join(rest) or None)
+
+
 class OutcomeName(StrEnum):
     """Each outcome a dreaming run can give a candidate, in the order they are counted in. A
     session reports one by its value, and a dreaming commit lists and counts them by it."""
@@ -156,9 +198,8 @@ class OutcomeName(StrEnum):
 class PastOutcome:
     """What an earlier dreaming run decided about one candidate, as its commit lists it."""
 
-    kind: str
-    subject: str
-    """What the candidate was about, as `Candidate.subject` wrote it."""
+    identity: Identity
+    """Which candidate it was (`Identity.parse`, of its line in the run's commit)."""
     outcome: OutcomeName
     proposal: str | None = None
     """For a proposed candidate, the id of the proposal that asks about it."""
@@ -297,21 +338,6 @@ first. The module's docstring gives the reasons. A new kind is a row here."""
 _RANK = {kind: rank for rank, row in enumerate(ORDER) for kind in row}
 
 
-type Identity = tuple[str, frozenset[str]]
-"""Which candidate one is, from run to run: its kind and what it's about."""
-
-
-def _identity(kind: str, subject: str) -> Identity:
-    """A candidate's identity, from its kind and its subject: the subject's parts (its pages
-    and a loop's citations, or its slug, or its file) in any order. No part holds a space or a
-    comma."""
-    return kind, frozenset(subject.replace(",", " ").split())
-
-
-def _is_page(path: str) -> bool:
-    return path.partition("/")[0] in PAGE_FOLDERS
-
-
 def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity]:
     """The candidates not to offer again yet, given the ids of the proposals `asked` of the
     owner and still open. What counts is the newest run that judged a candidate; any older
@@ -331,9 +357,8 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
     held: set[Identity] = set()
     judged: set[Identity] = set()
     for run in history.runs:
-        decided = {_identity(past.kind, past.subject) for past in run.outcomes}
         for past in run.outcomes:
-            identity = _identity(past.kind, past.subject)
+            identity = past.identity
             if identity in judged:
                 continue
             if past.outcome is OutcomeName.PROPOSED:
@@ -343,11 +368,11 @@ def _held_back(history: DreamingHistory, asked: Collection[str]) -> set[Identity
                     past.outcome is OutcomeName.DISMISSED
                     and not past.no_room
                     and run.age < timedelta(days=DISMISSAL_DAYS)
-                    and not any(_is_page(path) for path in run.changed & identity[1])
+                    and not identity.pages & run.changed
                 )
             if waits:
                 held.add(identity)
-        judged |= decided
+        judged |= {past.identity for past in run.outcomes}
     return held
 
 

@@ -68,8 +68,9 @@ import pytest
 
 from pa_core.catalog import open_catalog
 from pa_core.ingest import inbox_normalizer, ingest
-from pa_core.librarian.candidates import Candidate, candidates
+from pa_core.librarian.candidates import Candidate, Identity, candidates
 from pa_core.librarian.dreaming import Applied, DreamingOutcome, Outcome, Proposed
+from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.lint import STALE_LATER_DAYS, L0Metadata, Thresholds, lint
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD, LibrarianRunError
 from pa_core.librarian.version import librarian_version
@@ -822,6 +823,27 @@ def test_every_page_of_the_fixture_is_planted_or_a_control(tmp_path: Path):
     # Each page is one candidate's, but the library's, which holds two of the routine loops.
     counts = [page for candidate in offered(tmp_path) for page in candidate.pages]
     assert sorted(page for page in named if counts.count(page) > 1) == ["orgs/northgate-library.md"]
+
+
+def test_every_candidate_is_the_same_one_read_back_from_its_line_in_a_commit(tmp_path: Path):
+    """Dreaming's memory is the commit's lines: a candidate's kind and subject, read back,
+    must name the candidate that was offered, of every kind the fixture plants."""
+    seed_dreaming_fixture(tmp_path)
+
+    # And the two forms the fixture has none of: a slug without a page, and a marker in a
+    # day log, which is about no page.
+    day_log = "days/2026-11-08.md"
+    found = [
+        *offered(tmp_path),
+        Candidate("c98", CandidateKind.SLUG_WITHOUT_PAGE, (), day_log, "", slug="nora-castillo"),
+        Candidate("c99", CandidateKind.NEEDS_LOOKUP, (), day_log, "", line=3),
+    ]
+
+    assert len({candidate.kind for candidate in found}) == 8
+    assert len({candidate.identity for candidate in found}) == len(found)
+    for candidate in found:
+        read_back = Identity.parse(str(candidate.kind), candidate.subject)
+        assert read_back == candidate.identity, candidate.id
 
 
 # The fast tests: the scoring, through dreaming runs with the stand-in `claude`.

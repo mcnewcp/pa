@@ -49,6 +49,7 @@ from pa_core.librarian.candidates import (
     ORDER,
     Candidate,
     DreamingHistory,
+    Identity,
     OutcomeName,
     PastOutcome,
     PastRun,
@@ -1000,8 +1001,7 @@ def dreaming_history(repository: WikiRepository, now: datetime) -> DreamingHisto
                 age=now - datetime.fromisoformat(at),
                 outcomes=tuple(
                     PastOutcome(
-                        kind=found["kind"],
-                        subject=found["subject"],
+                        identity=Identity.parse(found["kind"], found["subject"]),
                         outcome=OutcomeName(found["outcome"]),
                         proposal=found["detail"]
                         if found["outcome"] == OutcomeName.PROPOSED
