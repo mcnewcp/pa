@@ -99,8 +99,15 @@ def test_no_source_is_stale_while_the_nightly_job_runs():
     assert not running.stale(Source.GMAIL, now=NOW)
 
 
-def test_a_nightly_job_running_longer_than_three_hours_no_longer_holds_staleness_off():
-    stuck = a_status(timedelta(hours=4), nightly_since=NOW - timedelta(hours=3, minutes=1))
+def test_a_night_whose_three_sessions_each_run_to_their_hours_timeout_holds_staleness_off():
+    # The librarian run's two sessions and the dreaming run's one, then the backup.
+    long_night = a_status(timedelta(hours=4), nightly_since=NOW - timedelta(hours=3, minutes=30))
+
+    assert not long_night.stale(Source.GMAIL, now=NOW)
+
+
+def test_a_nightly_job_running_longer_than_four_hours_no_longer_holds_staleness_off():
+    stuck = a_status(timedelta(hours=5), nightly_since=NOW - timedelta(hours=4, minutes=1))
 
     assert stuck.stale(Source.GMAIL, now=NOW)
 

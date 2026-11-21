@@ -8,13 +8,14 @@ differs.
 import json
 import re
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from pa_core.librarian.dreaming import OUTCOMES
 from pa_core.owner import Owner
-from pa_core.status import DreamingRun, WikiStatus
+from pa_core.status import NIGHTLY_BOUND, DreamingRun, WikiStatus
 from pa_home.agent_project import (
     AGENT_PROJECT,
     SECTIONS,
@@ -178,8 +179,10 @@ def test_with_a_status_the_rendered_claude_md_says_to_read_it_and_scope_claims_b
     ):
         assert value in claude_md, value
     # Say when a source is stale: more than twice its cadence behind, unless the nightly job
-    # started within 3 hours.
-    for value in ("more than twice its cadence behind now", "`nightly.running_since`", "3 hours"):
+    # started within the time `pa status` gives it too.
+    bound = f"within the last {NIGHTLY_BOUND // timedelta(hours=1)} hours"
+    assert bound == "within the last 4 hours"
+    for value in ("more than twice its cadence behind now", "`nightly.running_since`", bound):
         assert value in claude_md, value
     # A missing status file or watermark means currency is unknown, never fresh.
     assert "can't tell how current" in claude_md

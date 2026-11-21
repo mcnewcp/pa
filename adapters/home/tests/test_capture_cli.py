@@ -163,7 +163,8 @@ def obsidian_line(capsys: pytest.CaptureFixture[str]) -> str:
         (timedelta(minutes=25), None, False),
         (timedelta(minutes=35), None, True),
         (timedelta(hours=2), timedelta(hours=1), False),
-        (timedelta(hours=5), timedelta(hours=4), True),
+        (timedelta(hours=4), timedelta(hours=3, minutes=30), False),
+        (timedelta(hours=6), timedelta(hours=5), True),
     ],
 )
 def test_pa_status_marks_a_source_stale_past_twice_its_cadence_unless_the_nightly_job_runs(

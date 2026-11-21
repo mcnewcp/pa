@@ -26,8 +26,12 @@ from pa_core.envelope import Source
 STATUS_VERSION = 1
 STALE_AFTER_CADENCES = 2
 """A source is stale once its watermark is more than this many cadences behind now."""
-NIGHTLY_BOUND = timedelta(hours=3)
-"""How long the nightly job may run before it stops holding staleness off."""
+NIGHTLY_BOUND = timedelta(hours=4)
+"""How long the nightly job may run before it stops holding staleness off: an hour for each of
+a night's three sessions (the librarian run's two and a dreaming run's one, each at the
+librarian's default timeout), and an hour for the capture cycle and the backup. A night that
+resumes sessions near their timeouts can still outlast it, and is then called stale while it
+runs, which is true of its sources and worth the owner's hearing."""
 LOGIN_WARNING = timedelta(days=7)
 """How long before the assistant's login ends that the owner is told to log in again."""
 
