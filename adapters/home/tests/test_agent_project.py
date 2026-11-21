@@ -136,6 +136,36 @@ def test_with_a_wiki_the_rendered_claude_md_says_how_to_navigate_with_it(tmp_pat
     assert "${" not in text, "a placeholder was left unfilled"
 
 
+def test_with_a_wiki_the_rendered_claude_md_says_how_to_ask_and_answer_the_proposals(
+    tmp_path: Path, instance
+):
+    text = (_render(instance, wiki=tmp_path / "data" / "wiki") / "CLAUDE.md").read_text()
+    claude_md = " ".join(text.split())  # phrases may wrap across lines
+
+    # Asked what the PA needs from the owner, it gives the open proposals.
+    for value in (
+        "`proposals.md`",
+        "under `## Open`",
+        "asks what you need from them",
+        "give every open proposal",
+    ):
+        assert value in claude_md, value
+    # It mentions an open proposal when it bears on what was asked.
+    assert "When an open proposal bears on what the owner asked" in claude_md
+    # It restates the owner's answer in one sentence that names the proposal, and says when the
+    # wiki will show it, so the captured exchange stands on its own.
+    for value in (
+        "restate the answer in one sentence that names the proposal",
+        '"Noted on P12: JR and Jordan Reyes are the same person."',
+        "the wiki will show it after the next librarian run",
+        "stand on its own",
+    ):
+        assert value in claude_md, value
+    # It still cites only episodes: a proposal is a question, never evidence.
+    for value in ("never a page, a day log or a proposal", "Never cite a proposal"):
+        assert value in claude_md, value
+
+
 def test_with_a_wiki_the_settings_attach_it_after_l0_and_scratch(tmp_path: Path, instance):
     wiki = tmp_path / "data" / "wiki"
     target = _render(instance, wiki=wiki)
@@ -289,7 +319,7 @@ def test_without_a_wiki_the_project_says_nothing_of_one(instance):
     target = _render(instance)
 
     claude_md = (target / "CLAUDE.md").read_text()
-    for value in ("index.md", "wiki-schema.md", "librarian"):
+    for value in ("index.md", "wiki-schema.md", "librarian", "proposal"):
         assert value not in claude_md, value
     assert not (target / "wiki-schema.md").exists()
     settings = json.loads((target / SETTINGS).read_text())

@@ -3,10 +3,11 @@ wired to its home adapters.
 
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
-the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
-renders the librarian project as committed (the project its librarian version names) into a
-temporary directory, the sessions' working directory, and runs the sessions with the configured
-command.
+the data root's L0 or a corpus ingested into a throwaway data root. A dreaming run reviews the
+data root's wiki (`dream`), or a copy of a replay target or of a cut's wiki, laid out as a
+replay's target is (`dream_copy`). Each run (each replay) renders the librarian project as
+committed (the project its librarian version names) into a temporary directory, the sessions'
+working directory, and runs the sessions with the configured command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -28,7 +29,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -37,6 +38,12 @@ from zoneinfo import ZoneInfo
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
+from pa_core.librarian.dream_copy import (
+    DreamCopyError,
+    cut_source,
+    replayed_source,
+    run_copy_dreaming,
+)
 from pa_core.librarian.dreaming import (
     OUTCOMES,
     DreamingOutcome,
@@ -64,6 +71,7 @@ from pa_home.agent import wall_clock
 from pa_home.capture import failure_reason
 from pa_home.claude_session import ClaudeSessionRunner
 from pa_home.config import DataRoot, LibrarianConfig
+from pa_home.cut import Cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import (
@@ -219,6 +227,76 @@ def dreaming_due(
         return True
     today = now().astimezone(time_zone).date()
     return (today - last.astimezone(time_zone).date()).days >= config.dreaming_interval_days
+
+
+def dream_copy(
+    target: Path,
+    *,
+    corpus: Sequence[Path] = (),
+    cut: Cut | None = None,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    project: Path = LIBRARIAN_PROJECT,
+) -> DreamingOutcome:
+    """Runs dreaming once over the copy in `target`, at the copy's as-of time, which its
+    session is told is now, and appends the run to the copy's run log.
+
+    `target` is laid out as a replay's target is (`ReplayTarget`), and its `wiki/` is a copy
+    of one of two things:
+
+    - a replay target's wiki, with its run log beside it, replayed over `corpus`: directories
+      of raw payloads, ingested into a throwaway data root as a replay ingests them. Its as-of
+      time is the end of the replay's last run.
+    - `cut`'s wiki. It is dreamed over the cut's L0, at the cut's as-of time, and gets a run
+      log with its first run.
+
+    The copy's git directory is made beside it on its first run and kept, so a later run
+    finds the earlier ones. The run is `dream`'s otherwise: the same project, sandbox, model,
+    and thresholds.
+    """
+    layout = ReplayTarget(target)
+    if not layout.tree.is_dir():
+        raise DreamCopyError(
+            f"{target} has no {layout.tree.name}/: it isn't a copy of a replay target, or of "
+            "a cut's wiki"
+        )
+    if cut is not None:
+        if cut.manifest.wiki is None:
+            raise DreamCopyError(f"the cut {cut.name} holds no wiki, so {target} isn't its copy")
+        source = cut_source(
+            layout.run_log,
+            as_of=cut.as_of,
+            librarian_version=cut.manifest.wiki.librarian_version,
+            cursor=cut.manifest.wiki.cursor,
+        )
+    elif not layout.run_log.is_file():
+        raise DreamCopyError(
+            f"{target} has no {layout.run_log.name}: it isn't a copy of a replay target, "
+            "whose run log says which librarian built the wiki, and as of when"
+        )
+    else:
+        source = replayed_source(layout.run_log)
+    with nullcontext(cut.l0) if cut else _l0(None, corpus, owner, source.as_of) as l0:
+        repository = GitWikiRepository.open(layout.tree, layout.git_dir)
+        files = project_files(project)
+        with _runner(l0, layout.tree, owner, config, files) as runner:
+            return run_copy_dreaming(
+                store=FilesystemL0(l0),
+                owner=owner,
+                time_zone=time_zone,
+                repository=repository,
+                runner=runner,
+                librarian=_librarian(config, files),
+                run_log=layout.run_log,
+                source=source,
+                page_threshold=config.page_threshold,
+                loop_age_days=config.loop_age_days,
+                stale_later_days=config.stale_later_days,
+                quiet_days=config.quiet_days,
+                candidate_cap=config.candidate_cap,
+                proposal_caps=config.proposal_caps,
+            )
 
 
 def record_run_not_made(

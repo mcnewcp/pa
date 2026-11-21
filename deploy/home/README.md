@@ -51,7 +51,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a nightly run, a dreaming run, a replay, or a seed |
+| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a nightly run, a dreaming run (of the wiki, or of a copy of an eval wiki or a cut's wiki), a replay, or a seed |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 | `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
@@ -356,9 +356,10 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 
 ### Dreaming and proposals
 
-Dreaming is the librarian's review of the whole wiki, where a nightly run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
+Dreaming is the librarian's review of the whole wiki, where a nightly run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages, pages the owner never engaged with), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
 
 - **Proposals** are what the librarian asks the owner: lines in `proposals.md` at the wiki's root, open ones first, each with an id (`P12`), the pages it is about, and the episodes behind it. `index.md` opens with how many are open. The owner reads them in Obsidian, or asks the assistant what the PA is waiting on, and answers in chat. The answer is a correction like any other: the next librarian run applies it and moves the proposal under `## Answered`. A run adds at most 5 proposals, and none while 15 are open.
+- **Retirement.** Dreaming may retire the page of a person or organization the owner never engaged with, once a re-read of L0 shows nothing owed either way: the page goes, anything worth keeping is folded into the page it belongs to, and the host lists the slug with the date in `retired.md` at the wiki's root. One with an open loop is proposed, never retired. A retired slug gets no page again until the owner engages with it, a loop or decision names it, or the owner says "keep a page for X" in chat; any run that gives it a page takes it off the list.
 - **Memory.** Each dreaming commit's message lists its candidates with their outcomes, and the next run reads them back. A dismissed candidate isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits while its proposal is open. A run is offered at most 30 candidates, in a fixed order of kinds; the rest wait for the next run.
 - **In the nightly job.** Dreaming is a step between the librarian run and the backup, under the same lock, on the nights it is due: when the wiki's last review is at least `PA_DREAMING_INTERVAL_DAYS` days old (`lib.sh`), counted in days of the owner's calendar. **It is 0 here, which turns the step off: the home deployment doesn't dream on its own until dreaming goes live (#153), which sets it to 7.** It runs only on a night whose librarian run succeeded. A dreaming run that fails leaves the wiki as it was, doesn't stop the backup, and is tried again the next night.
 - **By hand**, whatever the interval says:
@@ -507,6 +508,7 @@ The suite skips the tests that call a real model unless asked, since they cost m
 PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_page_creation_fixture.py # the page-creation fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 PA_SMOKE_CLAUDE_MODEL=sonnet uv run pytest -s deploy/home/tests/test_proposal_answer_fixture.py # the proposal-answer fixture: the assistant on the host, then pa-librarian
 ```
 
 The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
@@ -524,6 +526,13 @@ The page-creation fixture (`deploy/home/tests/fixtures/page-creation/`) is one n
 - the friend has a page and a loop.
 
 Its data root goes under `replays/` too (or `PA_SMOKE_PAGE_CREATION_DIR`).
+
+The proposal-answer fixture (`deploy/home/tests/fixtures/proposal-answer/`) shows the owner answering a proposal from chat. Its starting wiki has JR and Jordan Reyes on two pages and two open proposals: P1 asks whether they are the same person, and P2 asks about a remodeler's quote. The fictional owner's two turns are in the test, and the assistant's replies are real:
+
+1. The real assistant, on the host as `PA_SMOKE_CLAUDE` tests run it, is asked "What do you need from me?" and then told "On P1: yes, JR is Jordan Reyes." Each turn is a session of its own. The test checks that the first reply gives both proposals, that one sentence of the second names P1 and both names and that it says the wiki will show it after the next run, and that neither cites anything but an episode.
+2. Both exchanges are captured as the assistant replied, and one real librarian run in `pa-librarian` takes them. The test checks that P1 is under Answered as accepted, citing the owner's answer last; that one page goes by both names, keeps both loops, and cites the answer; that no link to the other slug is left; and that P2 is open as it was.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PROPOSAL_ANSWER_DIR`). With `PA_SMOKE_CLAUDE=1` alone, the file runs only the assistant's two turns, in a temporary directory.
 
 ## Evals in the VM
 
@@ -547,10 +556,38 @@ The run uses the code and agent project at the VM's deployed commit, under the V
 PA_DATA_DIR=<data root> uv run pa cut          # cuts/<as-of>/ under the data root, as of now
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet \
   --cut <data root>/cuts/<as-of> --eval-set <data root>/evals/<set>.json --runs 3 \
-  [--configuration files-plus-wiki]           # the cut's own wiki; no --wiki
+  [--configuration files-plus-wiki]           # the cut's own wiki, without --wiki
 ```
 
 A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`/srv/pa/eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut, or asked at another time than the cut was taken (its `as_of`), is refused before anything runs; so is a second drafting pass over such a draft.
+
+### Dreamed eval wikis
+
+Dreaming's effect is measured against the same wiki without it: dream a copy, ask the same questions with each, and compare.
+
+```sh
+# A copy of an eval wiki, dreamed over its corpus as the corpus's owner, at the replay's as-of time.
+mkdir <replays>/<name> && cp -r evals/wikis/scale/<librarian version>/{wiki,run-log.jsonl} <replays>/<name>/
+PA_LIBRARIAN_OWNER_ENV=evals/corpus/owner.env deploy/home/librarian.sh dream <replays>/<name> \
+  --corpus evals/corpus/payloads --corpus evals/corpus/payloads-scale
+deploy/home/run-evals.sh --agent claude --judge model --corpus scale --runs 3 \
+  --configuration files-plus-wiki --wiki <replays>/<name>
+
+# A copy of a cut's wiki, dreamed over the cut's L0 as the instance's owner, at the cut's as-of time.
+mkdir <replays>/<name> && cp -r <data root>/cuts/<as-of>/wiki <replays>/<name>/wiki
+deploy/home/librarian.sh dream <replays>/<name> --cut <data root>/cuts/<as-of>
+deploy/home/run-evals.sh --agent claude --judge model --cut <data root>/cuts/<as-of> \
+  --eval-set <data root>/evals/<set>.json --runs 3 --configuration files-plus-wiki --wiki <replays>/<name>
+
+uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by category, with a pass or fail
+```
+
+- **The copy** is laid out as a replay target is, under `replays/`, the one filesystem beside the live wiki that the librarian's VM takes a wiki from. Its first dreaming run makes `wiki.git/` beside it and commits the tree as copied; a copy of a cut's wiki also gets its `run-log.jsonl` then. Each run that had candidates is appended to the run log, and running `dream` again carries on in the same history (one run judges only so many candidates).
+- **The owner**: `librarian.sh` runs as the data root's owner, who isn't a corpus's. `PA_LIBRARIAN_OWNER_ENV` names a file like `owner.env` to take the owner from instead, and `evals/corpus/owner.env` is the frozen corpora's. The script takes it only with `--corpus`, so the data root's own L0 and wiki are never run as someone else.
+- **The session is told the copy's as-of time** as now: the end of the replay's last run, or the moment the cut was taken.
+- **The eval run** names both versions in its report: the librarian that built the wiki, and the one that dreamed it. It refuses a run log that mixes anything else, and over a cut it refuses a copy that wasn't dreamed as of that cut. Its injection checks cover `proposals.md`.
+- **A copy of a cut's wiki is the owner's data**, as the cut is: `pa librarian dream`, `run-evals.sh`, and `pa-eval run` refuse it inside this checkout, and a development session never prints it or its run log.
+- **The comparison passes** when overall correctness with the second wiki is at least the first's, and no category drops by more than the run-to-run spread: the spread of the first wiki's own runs in that category, lowest to highest. The second wiki's spread excuses nothing.
 
 ### Drafting the real-data eval set
 

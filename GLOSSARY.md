@@ -170,8 +170,12 @@ _Avoid_: Issue, defect, finding, warning
 Something the librarian asks the owner because L0 can't settle it: a proposed change the owner accepts or declines, or a question only the owner can answer. Dreaming adds each as one line of `proposals.md` at the wiki's root, with an id, links to the pages it is about, and the episodes behind it. The owner answers in chat, and the answer is what settles it; a proposal is never evidence.
 _Avoid_: Request, task, ticket, to-do
 
+**Retired page**:
+A page dreaming cleared from the wiki because the owner has no use for it: a person or organization the owner never engaged with, with nothing owed either way. The day logs keep its facts and git keeps the page. Its slug is listed in `retired.md` at the wiki's root, links to it stay valid, and it gets no page again until the owner engages with it, a loop or decision names it, or the owner asks for one.
+_Avoid_: Deleted page, archived page, hidden page
+
 **Correction**:
-An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
+An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. The owner's answer to a proposal is a correction too. Like every episode it is never an edit; the librarian applies it on its next run, which also resolves the proposal it answers.
 _Avoid_: Fix, override
 
 ## Assistant
@@ -219,7 +223,7 @@ What the assistant is given besides L0's files in an eval run: nothing (files al
 _Avoid_: Mode, variant, arm
 
 **Eval wiki**:
-The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, or of a cut's wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it and the one that dreamed it.
 _Avoid_: Test wiki, fixture wiki
 
 **Cut**:

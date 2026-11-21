@@ -295,21 +295,80 @@ def test_a_directory_that_isnt_a_cut_stops_before_the_vm_is_touched(
     assert recorded(calls) == []
 
 
+@pytest.fixture
+def dreamed(tmp_path: Path) -> Path:
+    """A dreamed copy of the cut's wiki under the data root's replays, as
+    `librarian.sh dream DIR --cut CUT` leaves one: its tree, its git directory, and the run log
+    its dreaming run started (their contents made up)."""
+    copy = data_root(tmp_path) / "replays" / "cut-dreamed"
+    (copy / "wiki" / "people").mkdir(parents=True)
+    (copy / "wiki" / "index.md").write_text("# Index\n")
+    (copy / "wiki" / "people" / "someone.md").write_text("# Someone\n")
+    # What dreaming leaves at a wiki's root: what it asked the owner, and what it retired.
+    (copy / "wiki" / "proposals.md").write_text("# Proposals\n")
+    (copy / "wiki" / "retired.md").write_text("# Retired\n")
+    (copy / "wiki.git").mkdir()
+    (copy / "wiki.git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (copy / "run-log.jsonl").write_text('{"run": "dreaming"}\n')
+    return copy
+
+
+def test_a_run_over_a_cut_with_a_dreamed_copy_of_its_wiki_pushes_the_copy_and_asks_with_it(
+    tmp_path: Path, calls: Path, cut: Path, eval_set: Path, dreamed: Path
+):
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(dreamed)]
+
+    result = run_evals(tmp_path, calls, *over(cut, eval_set), *wiki, runs_dir=DEFAULT)
+
+    assert result.returncode == 0, result.stderr
+    push_wiki, _check, _push_cut, _push_set, ask, pull = recorded(calls)
+    # The copy's tree and run log, never its git directory.
+    assert pushed(push_wiki) == [
+        "run-log.jsonl",
+        "wiki/index.md",
+        "wiki/people/someone.md",
+        "wiki/proposals.md",
+        "wiki/retired.md",
+    ]
+    assert f"tar -C {VM_EVAL_WIKI} -xf -" in push_wiki["argv"][-1]
+    assert pa_eval_args(ask) == [
+        "--agent",
+        "claude",
+        "--judge",
+        "model",
+        "--configuration",
+        "files-plus-wiki",
+        "--wiki",
+        VM_EVAL_WIKI,
+        "--cut",
+        f"{VM_CUTS}/{CUT_NAME}",
+        "--eval-set",
+        VM_EVAL_SET,
+        "--runs-dir",
+        VM_RUNS,
+    ]
+    assert pull["argv"][-1] == f"{data_root(tmp_path) / 'evals' / 'runs'}/"
+
+
 INSIDE = DEPLOY.parents[1] / "evals" / "runs" / "private-test-never-written"
 
 
-@pytest.mark.parametrize("which", ["cut", "eval set", "runs directory"])
+@pytest.mark.parametrize("which", ["cut", "eval set", "runs directory", "wiki"])
 def test_real_data_paths_inside_the_repository_stop_before_the_vm_is_touched(
-    tmp_path: Path, calls: Path, cut: Path, eval_set: Path, which: str
+    tmp_path: Path, calls: Path, cut: Path, eval_set: Path, dreamed: Path, which: str
 ):
     if which == "cut":
         INSIDE.mkdir(parents=True)
         (INSIDE / "cut.json").write_text("{}\n")
+    if which == "wiki":
+        # A dreamed copy of a cut's wiki is the owner's data, wherever it was put.
+        shutil.copytree(dreamed, INSIDE)
     try:
         result = run_evals(
             tmp_path,
             calls,
             *over(INSIDE if which == "cut" else cut, INSIDE if which == "eval set" else eval_set),
+            *("--wiki", str(INSIDE if which == "wiki" else dreamed)),
             runs_dir=INSIDE if which == "runs directory" else None,
         )
     finally:

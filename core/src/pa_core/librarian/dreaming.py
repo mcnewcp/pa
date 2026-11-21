@@ -8,14 +8,17 @@ asks), or dismissed. The session reports the outcomes as JSON in its final messa
 
 The run sits beside the nightly run (`pa_core.librarian.run`) and holds the wiki to the same
 bar, with the same parts: the session and its resume loop, lint after the session, the host's
-deterministic steps (removing merged pages, rewriting links to aliases, regenerating
-`index.md`), and one commit, or the wiki back at its last commit if anything fails. It differs
-in what it asks and what it records:
+deterministic steps (removing merged and retired pages, rewriting links to aliases,
+regenerating `index.md`), and one commit, or the wiki back at its last commit if anything
+fails. It differs in what it asks and what it records:
 
-- its prompt carries the candidates and the open proposals;
+- its prompt carries the candidates, the open proposals, and the retired slugs;
 - the session may change only pages and `proposals.md`, and there only add proposals: each one
   named by a proposed outcome, numbered above every id the file has held, and within the caps
   on a run's new proposals and on how many are open at once;
+- the session may retire a page, by emptying it and naming its slug in an applied outcome: the
+  host removes the page and lists the slug in `retired.md`, which only the host writes
+  (`pa_core.librarian.retirement`);
 - its commit carries the librarian's cursor and version forward from the last commit, so the
   next nightly run and a cut still find them there, and records the candidates and outcomes.
 
@@ -33,7 +36,7 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal
@@ -60,6 +63,7 @@ from pa_core.librarian.lint import (
     Thresholds,
     lint,
 )
+from pa_core.librarian.retirement import update_retired
 from pa_core.librarian.run import (
     CURSOR_FIELD,
     LOOP_AGE_DAYS,
@@ -89,10 +93,17 @@ from pa_core.librarian.run import (
 from pa_core.librarian.wiki import (
     INDEX,
     OPEN,
+    OPEN_LOOPS,
     PAGE_FOLDERS,
     PROPOSALS,
+    RETIRED,
+    Page,
     Proposal,
+    citations,
+    pages,
+    parse_loop,
     read_proposals,
+    read_retired,
 )
 from pa_core.owner import Owner
 
@@ -109,8 +120,11 @@ class Applied(_Outcome):
 
     outcome: Literal["applied"]
     pages: tuple[str, ...]
-    """Every page it changed for this candidate, relative to the wiki; a page merged away
-    included."""
+    """Every page it changed for this candidate, relative to the wiki; a page merged away or
+    retired included."""
+    retired: tuple[str, ...] = ()
+    """The slugs of the pages it retired (`pa_core.librarian.retirement`): each one a page
+    the session emptied, for the host to remove and list in `retired.md`."""
 
 
 class Proposed(_Outcome):
@@ -305,13 +319,17 @@ def _dream(
     candidates' order, and its template suggestion, if it made one."""
     before = _tree_state(tree)
     standing = read_proposals(tree)
+    retirements = _Retirements(tree, before, now.date())
 
     def require_bounds() -> None:
+        after = _tree_state(tree)
         outside = [
             path
-            for path in _changed(before, _tree_state(tree))
-            if path.partition("/")[0] not in PAGE_FOLDERS and path != PROPOSALS
+            for path in _changed(before, after)
+            if path.partition("/")[0] not in PAGE_FOLDERS and path not in (PROPOSALS, RETIRED)
         ]
+        if retirements.changed_by_session(after):
+            outside = sorted([*outside, RETIRED])
         if outside:
             raise LibrarianRunError(
                 f"the dreaming session changed {', '.join(outside)}, outside the pages; "
@@ -322,11 +340,17 @@ def _dream(
     judged: dict[str | None, Outcome] = {}
 
     def report_problems(attempt: SessionResult) -> Sequence[str]:
-        # The bounds held, so everything changed in a folder is a page; a page merged away is
-        # gone by now, and gone is changed.
-        changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
+        retirements.undo()
         asked = read_proposals(tree)
         problems = _proposal_problems(standing, asked, caps)
+        try:
+            reported = _reported(attempt.final_message)
+        except InvalidOutcomesError as error:
+            return (*error.problems, *problems)
+        problems += retirements.carry_out(reported)
+        # The bounds held, so everything changed in a folder is a page; a page merged away or
+        # retired is gone by now, and gone is changed.
+        changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
         try:
             outcomes = read_outcomes(
                 attempt.final_message,
@@ -337,7 +361,10 @@ def _dream(
             )
         except InvalidOutcomesError as error:
             return (*error.problems, *problems)
-        claimed = {page for o in outcomes if isinstance(o, Applied) for page in o.pages}
+        applied = [o for o in outcomes if isinstance(o, Applied)]
+        claimed = {page for o in applied for page in o.pages}
+        # A retired page left out of `pages` is a problem to resume for, above; it is claimed.
+        claimed |= {f"{f}/{slug}.md" for o in applied for slug in o.retired for f in PAGE_FOLDERS}
         unclaimed = [path for path in changed if path not in claimed]
         if unclaimed:
             raise LibrarianRunError(
@@ -357,7 +384,9 @@ def _dream(
         Phase.DREAMING,
         dreaming_prompt(offered, runner.paths)
         + "\n"
-        + proposals_prompt(standing, caps, runner.paths),
+        + proposals_prompt(standing, caps, runner.paths)
+        + "\n"
+        + retired_prompt(read_retired(tree), runner.paths),
         require_bounds,
         lambda finding: _in_pages(finding) or finding.path == PROPOSALS,
         tree,
@@ -375,6 +404,135 @@ def _dream(
         tuple(judged[candidate.id] for candidate in offered),
         suggestion if isinstance(suggestion, Proposed) else None,
     )
+
+
+class _Retirements:
+    """The host's side of the retirements a dreaming session reports
+    (`pa_core.librarian.retirement`): removing each retired page, and keeping `retired.md`.
+
+    The session's file tools can't remove a file, so it retires a page as it merges one away,
+    by writing it with nothing in it, and an applied outcome names its slug as retired. Only
+    an emptied page whose slug an outcome names goes; any other emptied file stays for lint
+    to fail, as after a merge.
+
+    The host does this after each of the session's attempts, before lint, so that lint sees
+    the wiki as it would be committed: a link to a slug the run retires is good at once. Each
+    attempt first undoes what was done for the one before, so what is committed follows from
+    the wiki as the session left it and the outcomes of its last message, and from nothing an
+    earlier message said.
+    """
+
+    def __init__(self, tree: Path, before: Mapping[str, tuple[str, ...]], today: date) -> None:
+        """Over the wiki at `tree`, whose state as last committed is `before` (`_tree_state`),
+        for a run told the day is `today`."""
+        self._tree, self._before, self._today = tree, before, today
+        self._was = pages(tree)
+        """The pages as last committed."""
+        is_file = before.get(RETIRED, ("",))[0] == "file"
+        self._listed = (tree / RETIRED).read_bytes() if is_file else None
+        """`retired.md` as last committed, when it was a file."""
+        self._left = before.get(RETIRED)
+        """`retired.md`'s state as the host last left it."""
+        self._removed: list[Path] = []
+        """The emptied pages the host removed for the last attempt."""
+
+    def changed_by_session(self, after: Mapping[str, tuple[str, ...]]) -> bool:
+        """Whether `retired.md` in `after`, the wiki's state as an attempt left it, isn't as the
+        host left it: the file is the host's, and no session may write it."""
+        return after.get(RETIRED) != self._left
+
+    def undo(self) -> None:
+        """Puts the wiki back as the session left it: each page removed for the last attempt
+        is an emptied file again, unless the session has written it back, and `retired.md`
+        is as last committed."""
+        for file in self._removed:
+            if not file.exists():
+                file.write_bytes(b"")
+        self._removed.clear()
+        if self._listed is not None:
+            (self._tree / RETIRED).write_bytes(self._listed)
+        elif RETIRED not in self._before:
+            (self._tree / RETIRED).unlink(missing_ok=True)
+        self._left = self._before.get(RETIRED)
+
+    def carry_out(self, reported: Sequence[Outcome]) -> list[str]:
+        """Removes the pages the `reported` outcomes retire, brings `retired.md` up to date
+        with them, and returns what's wrong with the retirements the host can't carry out.
+
+        A retirement can't be carried out when its slug had no page as last committed, when
+        the page still has content, and when the page held an open loop that no page holds
+        now, open or closed: a loop is never dropped with its page, though it may move to the
+        page it belongs on. The page of such a retirement stays as the session left it. A
+        retired page its outcome doesn't name among its `pages` goes, and is a problem too.
+        """
+        problems: list[str] = []
+        retiring: list[str] = []
+        carried = [set(loop.citations) for page in pages(self._tree) for loop in page.loops]
+        for outcome in reported:
+            if not isinstance(outcome, Applied):
+                continue
+            for slug in outcome.retired:
+                found = self._retire(slug, carried)
+                if isinstance(found, str):
+                    problems.append(f"{outcome.candidate} retires `{slug}`, {found}")
+                    continue
+                retiring.append(slug)
+                for path in found:
+                    if path not in outcome.pages:
+                        problems.append(
+                            f"{outcome.candidate} retires `{slug}`, but doesn't name {path} "
+                            "among its `pages`: an applied outcome names every page changed "
+                            "for it, a retired one included"
+                        )
+        update_retired(self._tree, today=self._today, retiring=retiring)
+        self._left = _tree_state(self._tree).get(RETIRED)
+        return problems
+
+    def _retire(self, slug: str, carried: Sequence[set[str]]) -> list[str] | str:
+        """Removes the emptied pages of `slug`, and returns their paths; or, when the
+        retirement can't be carried out, why not. `carried` is the opening citations of each
+        loop the wiki's pages hold now."""
+        paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in self._before]
+        if not paths:
+            return (
+                "which had no page when this run started: `retired` lists the slug of each "
+                "page you emptied to retire it"
+            )
+        emptied = [path for path in paths if not _has_content(self._tree / path)]
+        if not emptied:
+            return (
+                f"but {paths[0]} still has content: retire a page by writing it with no "
+                "content at all, and the host removes it"
+            )
+        for page in self._was:
+            for line in _open_loop_lines(page) if page.path in emptied else ():
+                if not any(set(citations(line)) <= held for held in carried):
+                    return (
+                        f"but {page.path} held an open loop that is now on no page: `{line}`. "
+                        "A page with an open loop is never retired: write the page back as it "
+                        "was and propose or dismiss the candidate, or move the loop to the "
+                        "page it belongs on"
+                    )
+        for path in emptied:
+            file = self._tree / path
+            if file.is_file():
+                file.unlink()
+                self._removed.append(file)
+        return emptied
+
+
+def _has_content(file: Path) -> bool:
+    return file.is_file() and bool(file.read_bytes().strip())
+
+
+def _open_loop_lines(page: Page) -> list[str]:
+    """The lines of `page`'s open loops, as written."""
+    section = page.section(OPEN_LOOPS)
+    return [
+        line
+        for _, line in (section.lines if section else ())
+        if (loop := parse_loop(line)) is not None and loop.is_open
+    ]
 
 
 def _added(standing: Sequence[Proposal], asked: Sequence[Proposal]) -> list[Proposal]:
@@ -450,6 +608,30 @@ _NO_OUTCOMES = (
 )
 
 
+def _reported(message: str | None) -> tuple[Outcome, ...]:
+    """The outcomes a dreaming session's final `message` carries, in its last fenced `json`
+    block (or as the whole message), as reported: in the outcomes' shape, and checked against
+    nothing else. Raises InvalidOutcomesError when it carries none, or they aren't in that
+    shape."""
+    text = (message or "").strip()
+    blocks = _FENCED_JSON.findall(text)
+    if not blocks and not text.startswith("{"):
+        raise InvalidOutcomesError([_NO_OUTCOMES])
+    try:
+        return Outcomes.model_validate(json.loads(blocks[-1] if blocks else text)).outcomes
+    except json.JSONDecodeError as error:
+        raise InvalidOutcomesError(
+            [f"your final message's outcomes aren't JSON: {error}"]
+        ) from error
+    except ValidationError as error:
+        raise InvalidOutcomesError(
+            [
+                f"{'.'.join(str(part) for part in found['loc']) or 'the outcomes'}: {found['msg']}"
+                for found in error.errors()
+            ]
+        ) from error
+
+
 def read_outcomes(
     message: str | None,
     offered: Sequence[Candidate],
@@ -470,23 +652,7 @@ def read_outcomes(
     outcome names an open proposal, the suggestion one of its own that the session added; and
     every proposal the session added is named.
     """
-    text = (message or "").strip()
-    blocks = _FENCED_JSON.findall(text)
-    if not blocks and not text.startswith("{"):
-        raise InvalidOutcomesError([_NO_OUTCOMES])
-    try:
-        outcomes = Outcomes.model_validate(json.loads(blocks[-1] if blocks else text)).outcomes
-    except json.JSONDecodeError as error:
-        raise InvalidOutcomesError(
-            [f"your final message's outcomes aren't JSON: {error}"]
-        ) from error
-    except ValidationError as error:
-        raise InvalidOutcomesError(
-            [
-                f"{'.'.join(str(part) for part in found['loc']) or 'the outcomes'}: {found['msg']}"
-                for found in error.errors()
-            ]
-        ) from error
+    outcomes = _reported(message)
     problems: list[str] = []
     given = Counter(outcome.candidate for outcome in outcomes if outcome.candidate is not None)
     for candidate in offered:
@@ -610,6 +776,24 @@ def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: Se
         f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
         "already in the file.\n\n"
         f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
+    )
+
+
+RETIRED_PROMPT_HEADING = "## Retired slugs"
+
+
+def retired_prompt(retired: Mapping[str, date], paths: SessionPaths) -> str:
+    """The retired slugs as a section of the dreaming session's prompt, under
+    `RETIRED_PROMPT_HEADING`: each of `retired` with the day it was retired, as a JSON block."""
+    listed = [{"slug": slug, "retired": day.isoformat()} for slug, day in retired.items()]
+    return (
+        f"{RETIRED_PROMPT_HEADING}\n\n"
+        "The slugs whose pages earlier dreaming runs retired, each with the day it was "
+        f"retired: what `{paths.wiki / RETIRED}` lists. A link to one is good, and it has no "
+        "page on purpose: don't create one unless a candidate is about its slug. To retire a "
+        "page in this run, follow CLAUDE.md: empty the page, and name its slug in your "
+        f"outcome. Never write `{RETIRED}` yourself: the host keeps it.\n\n"
+        f"```json\n{_json(listed)}\n```\n"
     )
 
 

@@ -44,7 +44,7 @@ from pa_home.config import (
     load_time_zone,
     require_outside_repository,
 )
-from pa_home.cut import take_cut
+from pa_home.cut import load_cut, take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
@@ -245,10 +245,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Observe the episodes captured since the last run into the wiki, and fold them "
         "into pages.",
     )
-    librarian_commands.add_parser(
+    dream = librarian_commands.add_parser(
         "dream",
         help="Review the whole wiki once: judge the candidate problems the host flags, fix "
-        "what L0 settles, and commit.",
+        "what L0 settles, and commit. With TARGET, review a copy instead of the data root's "
+        "wiki, at the copy's as-of time.",
+    )
+    dream.add_argument(
+        "target",
+        type=Path,
+        nargs="?",
+        help="A copy to dream instead of the data root's wiki: a directory holding a copy of "
+        f"a replay target's wiki/ and {RUN_LOG} (an eval wiki), with --corpus, or a copy of a "
+        "cut's wiki as wiki/, with --cut. Its git directory (wiki.git/) is made beside it "
+        f"and kept, and the run is appended to its {RUN_LOG}.",
+    )
+    dream.add_argument(
+        "--cut",
+        type=Path,
+        metavar="DIR",
+        help="With TARGET, a copy of this cut's wiki (`pa cut`): dream it over the cut's L0, "
+        "at the cut's as-of time. The copy holds the owner's data, so it is refused inside "
+        "the repository: keep it under the data root.",
+    )
+    dream.add_argument(
+        "--corpus",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="With TARGET, a copy of a replay target: the raw payloads it was replayed over "
+        "(one directory per source, as in the inbox), ingested into a throwaway data root. "
+        "Repeat for a corpus in several directories. The copy's as-of time is the end of the "
+        "replay's last run.",
     )
     replay = librarian_commands.add_parser(
         "replay",
@@ -338,6 +367,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 window_start=args.window_start,
                 resume=args.resume,
             )
+            return 0
+        if (
+            args.command == "librarian"
+            and args.librarian_command == "dream"
+            and (args.target or args.corpus or args.cut)
+        ):
+            # Before the data root is loaded: a copy over a corpus needs none.
+            _dream_copy(args.target, args.corpus, args.cut)
             return 0
         if args.command == "gmail" and args.gmail_command == "auth":
             _gmail_auth(args.port)
@@ -731,6 +768,53 @@ def _dream(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian dream"))
         return
+    _report_dreaming(outcome, "librarian dream")
+
+
+def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> None:
+    """Dream the copy in `target`, of a replay target replayed over `corpus` or of the wiki
+    of the cut in `cut`: no data root is loaded, and none is locked."""
+    if target is None:
+        option = "--corpus" if corpus else "--cut"
+        raise PaError(
+            f"{option} goes with a TARGET, the copy to dream: without one, pa librarian dream "
+            "reviews the data root's wiki"
+        )
+    if bool(corpus) == (cut is not None):
+        raise PaError(
+            "a copy is dreamed over the L0 its wiki was built over: give --corpus DIR or "
+            "--cut DIR with TARGET, one or the other"
+        )
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    target = target.expanduser().resolve()
+    taken = None
+    if cut is not None:
+        reason = (
+            "A cut and a copy of its wiki hold the owner's data, so they must live outside "
+            "the repository: keep the copy under the data root."
+        )
+        require_outside_repository(target, "The copy of the cut's wiki", reason)
+        cut = cut.expanduser().resolve()
+        require_outside_repository(cut, "--cut", reason)
+        taken = load_cut(cut)
+    try:
+        outcome = librarian.dream_copy(
+            target,
+            corpus=[directory.expanduser().resolve() for directory in corpus],
+            cut=taken,
+            owner=owner,
+            time_zone=time_zone,
+            config=config,
+        )
+    except LibrarianRunError as error:
+        if taken is None:
+            raise
+        # A failed run's error quotes pages, and a cut's copy is the owner's data, dreamed by
+        # a session that reads counts and exit codes only: it says where the run failed, and
+        # the error stays in the copy's run log, under the data root.
+        raise PaError(
+            f"{librarian.run_failure_reason(error)}; its error is in {target / RUN_LOG}"
+        ) from None
     _report_dreaming(outcome, "librarian dream")
 
 

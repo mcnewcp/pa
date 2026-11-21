@@ -14,7 +14,9 @@ A candidate is one of two things:
   - a stale page, which observations have linked on enough days since it was last updated;
   - a status that disagrees with its loops: a page that says its matter is over (a settled
     or dormant topic, an inactive person or organization) while one of its loops is open;
-  - a quiet page: an active one that no observation has linked for a long time.
+  - a quiet page: an active one that no observation has linked for a long time;
+  - an unengaged page: a person's or an organization's that the owner has never had a hand in
+    (`pa_core.librarian.engagement`), which dreaming may retire.
 
 They are offered in a fixed order of kinds (`ORDER`), which matters because a run is offered
 only so many (`CANDIDATE_CAP`, unless configured) and the rest wait for the next run:
@@ -26,6 +28,8 @@ only so many (`CANDIDATE_CAP`, unless configured) and the rest wait for the next
 3. Lint's warnings, in lint's order.
 4. Quiet pages. Whether one may be marked dormant or inactive depends on its loops, which are
    judged before it, and leaving one for the next run costs only the index's order.
+5. Unengaged pages. Whether one may be retired depends on its loops and on whether it is
+   another page's duplicate, all judged before it.
 
 Days after the run's own date never count. Day logs exist for them wherever a calendar event
 is booked ahead, and what hasn't happened yet has left no page behind.
@@ -57,7 +61,9 @@ from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
 from pa_core.librarian.wiki import (
     ACTIVE,
     DAYS,
+    ORGANIZATION,
     PAGE_FOLDERS,
+    PERSON,
     Page,
     linked_days,
     open_proposals,
@@ -85,6 +91,8 @@ class CandidateKind(StrEnum):
     NEEDS_LOOKUP = "needs-lookup"
     QUIET = "quiet"
     """An active page no observation has linked for a long time."""
+    UNENGAGED = "unengaged"
+    """A person's or an organization's page the owner has never engaged with."""
 
 
 @dataclass(frozen=True)
@@ -211,14 +219,15 @@ def candidates(
     The ids follow from the wiki and the history alone, so the same wiki on the same day
     offers the same candidates under the same ids.
     """
-    warnings = lint(tree, l0=l0, owner=owner, thresholds=thresholds).warnings
+    report = lint(tree, l0=l0, owner=owner, thresholds=thresholds)
     found = pages(tree)
     linked = _linked_days(tree, thresholds.today)
     flagged = [
         *_stale(found, linked, thresholds),
         *_status_mismatches(found),
-        *(_of_warning(warning) for warning in warnings),
+        *(_of_warning(warning) for warning in report.warnings),
         *_quiet(found, linked, thresholds),
+        *_unengaged(found, report.engaged_days),
     ]
     held = _held_back(history, {proposal.id for proposal in open_proposals(tree)})
     # The sort is stable: within a row of `ORDER`, candidates stay as they were found.
@@ -241,6 +250,7 @@ ORDER: tuple[tuple[CandidateKind, ...], ...] = (
     (CandidateKind.SLUG_WITHOUT_PAGE,),
     (CandidateKind.NEEDS_LOOKUP,),
     (CandidateKind.QUIET,),
+    (CandidateKind.UNENGAGED,),
 )
 """The fixed order the kinds are offered in, one row per place: what a capped run reaches
 first. The module's docstring gives the reasons. A new kind is a row here."""
@@ -413,6 +423,22 @@ def _quiet(
                 path=page.path,
                 message="a quiet page: it is active, and no observation has linked "
                 f"[[{page.slug}]] since {days[-1]}, {_count(quiet, 'day')} ago",
+            )
+
+
+def _unengaged(pages: Sequence[Page], engaged: Collection[str]) -> Iterator[Candidate]:
+    """A person's or an organization's page whose slug isn't among the `engaged`: no
+    observation linking it cites an episode that is the owner's own doing. A topic is never
+    one: it gets its page at the threshold, engaged or not."""
+    for page in pages:
+        if page.page_type in (PERSON, ORGANIZATION) and page.slug not in engaged:
+            yield Candidate(
+                id=_UNNUMBERED,
+                kind=CandidateKind.UNENGAGED,
+                pages=(page.path,),
+                path=page.path,
+                message=f"an unengaged page: no observation linking [[{page.slug}]] cites an "
+                "episode the owner sent, wrote, organized, or attends",
             )
 
 

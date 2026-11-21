@@ -2,21 +2,26 @@
 
 An error fails the run. The rules so far:
 
-- **Layout.** Nothing but `index.md`, the root files (`proposals.md`), and Markdown files
-  directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic links,
-  subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded as
-  instructions or run as code (ADR-0007).
+- **Layout.** Nothing but `index.md`, the root files (`proposals.md` and `retired.md`), and
+  Markdown files directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic
+  links, subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded
+  as instructions or run as code (ADR-0007).
   A day log is named for its day (`YYYY-MM-DD.md`), a page for its slug (`<slug>.md`).
 - **Day logs** hold only observation lines (and blank lines).
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields
   and valid values; the type's sections, in order, with only a `# <title>` before them;
   well-formed decision and loop lines in Decisions and Open loops; a citation on every other
-  line; and no template `<placeholder>` left in its summary, aliases, or title.
+  line; and no template `<placeholder>` left in its summary, aliases, or title. No page is
+  named for a file at the wiki's top level (`index`, `proposals`, `retired`), which a link by
+  that name goes to.
 - **Citations** name episodes that are in L0.
 - **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
   nothing in them but well-formed proposal lines, open ones under Open and answered ones under
-  Answered. No two share an id; a proposal's text is short and holds no URL; and every link of
-  an open proposal goes to a page.
+  Answered. No two share an id; a proposal's text is short and holds no URL; every link of
+  an open proposal goes to a page, or to a retired slug; and an answered proposal's last
+  citation is one of the owner's chat exchanges, so nothing but the owner's word closes one.
+- **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once, after an
+  optional title.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
   lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
@@ -30,7 +35,8 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
 - **Duplicate candidates**: pages sharing an alias, a page with an alias that's another page's
   slug or name, or pages with near-identical slugs.
 - **Slugs without pages**: linked on enough days to reach the page threshold, and engaged
-  (`engagement.py`), but with no page.
+  (`engagement.py`), but with no page. A retired slug isn't one until the owner engages with
+  it again (`retirement.py`).
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
 Each rule is a function over the wiki's files that yields findings; add a rule by writing one
@@ -47,10 +53,11 @@ from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
-from pa_core.envelope import Envelope
+from pa_core.envelope import Envelope, Kind
 from pa_core.librarian.engagement import engaged_days, engagers
 from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.links import alias_targets
+from pa_core.librarian.retirement import standing
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -69,6 +76,8 @@ from pa_core.librarian.wiki import (
     PROPOSAL_FORMAT,
     PROPOSAL_TEXT_LIMIT,
     PROPOSALS,
+    RETIRED,
+    RETIREMENT_FORMAT,
     ROOT_FILES,
     FieldValue,
     Page,
@@ -84,7 +93,9 @@ from pa_core.librarian.wiki import (
     parse_loop,
     parse_observation,
     parse_proposal,
+    parse_retirement,
     read_page,
+    read_retired,
     slugify,
 )
 from pa_core.owner import Owner
@@ -149,12 +160,15 @@ class L0Metadata:
     engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
     """For each episode that is someone's own doing, the addresses it's the doing of, in
     lowercase (`engagers` in `engagement.py`): what engagement is read from."""
+    chats: frozenset[str] = frozenset()
+    """The episodes that are chat exchanges with the assistant."""
 
     @classmethod
     def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
         ids: set[str] = set()
         addresses: set[str] = set()
         doers: dict[str, frozenset[str]] = {}
+        chats: set[str] = set()
         for envelope in envelopes:
             ids.add(envelope.episode_id)
             addresses.update(
@@ -162,7 +176,18 @@ class L0Metadata:
             )
             if who := engagers(envelope):
                 doers[envelope.episode_id] = who
-        return cls(frozenset(ids), frozenset(addresses), doers)
+            if envelope.kind is Kind.CHAT:
+                chats.add(envelope.episode_id)
+        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(chats))
+
+    def owner_chats(self, owner: Owner) -> frozenset[str]:
+        """The chat exchanges `owner` took part in: where the owner's own word is."""
+        mine = {address.strip().lower() for address in owner.email_addresses}
+        return frozenset(
+            episode
+            for episode in self.chats
+            if not self.engagers.get(episode, frozenset()).isdisjoint(mine)
+        )
 
     @property
     def domains(self) -> frozenset[str]:
@@ -222,7 +247,8 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
     for file in files:
         for rule in _RULES:
             errors.extend(rule(file, l0))
-    errors.extend(_proposals(files, tree))
+    errors.extend(_proposals(files, tree, l0, owner))
+    errors.extend(_retired(files))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
     engaged = engaged_days(tree, l0, owner)
@@ -230,7 +256,9 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         *_orphans(files, found),
         *_aging_loops(found, thresholds),
         *_duplicate_candidates(found),
-        *_slugs_without_pages(tree, found, thresholds, engaged),
+        *_slugs_without_pages(
+            tree, found, thresholds, engaged, standing(read_retired(tree), engaged)
+        ),
         *_needs_lookup(files),
     ]
     return LintReport(errors=tuple(errors), warnings=tuple(warnings), engaged_days=engaged)
@@ -314,6 +342,13 @@ def _pages(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     folder = file.path.partition("/")[0]
     if folder not in PAGE_TYPES:
         return
+    slug = file.path.rpartition("/")[2].removesuffix(".md")
+    if f"{slug}.md" in (INDEX, *ROOT_FILES):
+        yield Finding(
+            file.path,
+            f"a page can't be named `{slug}`: {slug}.md is a file at the wiki's top level, and "
+            f"[[{slug}]] links it",
+        )
     try:
         page = read_page(file.path, "\n".join(file.lines))
     except PageFormatError as error:
@@ -473,20 +508,28 @@ _URL = re.compile(
 """A web address, or anything a reader's app would turn into one."""
 
 
-def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
+def _proposals(
+    files: Sequence[WikiFile], tree: Path, l0: L0Metadata, owner: Owner
+) -> Iterator[Finding]:
     """`proposals.md` follows its schema: the two sections, in order, with only a `# <title>`
     before them, and in them only proposal lines, each in its section, with its own id, short
-    plain text, and, while it's open, links that go to pages.
+    plain text, and, while it's open, links that go to pages. An answered one cites one of
+    `owner`'s chat exchanges last: only the owner's word closes a proposal.
 
     A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
     paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
-    the host is about to rewrite to its page's (`links.py`). An answered proposal is history:
+    the host is about to rewrite to its page's (`links.py`), or a retired slug (`retired.md`
+    lists it): the page a proposal is about may be retired while it waits for its answer. An
+    answered proposal is history:
     its links stay as written, whatever became of the pages.
     """
     file = next((file for file in files if file.path == PROPOSALS), None)
     if file is None:
         return
     resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
+    # A retired slug's link stays good: the proposal may be what brings its page back.
+    resolvable |= read_retired(tree).keys()
+    owners_word = l0.owner_chats(owner)
     expected = (OPEN, ANSWERED)
     headings: list[tuple[int, str]] = []
     titled = False
@@ -554,6 +597,16 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
                     "the pages it is about",
                     number,
                 )
+        # A citation that isn't in L0 at all is the citations rule's to report.
+        last = proposal.citations[-1]
+        if not proposal.is_open and last in l0.episode_ids and last not in owners_word:
+            yield Finding(
+                PROPOSALS,
+                f"{name} is answered, but its last citation, {last}, isn't one of the owner's "
+                "chat exchanges: only the owner's answer in chat resolves a proposal, cited "
+                "last",
+                number,
+            )
     if tuple(name for _, name in headings) != expected:
         yield Finding(
             PROPOSALS,
@@ -561,6 +614,38 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
             f"that order; got {', '.join(f'`## {name}`' for _, name in headings) or 'none'}",
             headings[0][0] if headings else None,
         )
+
+
+def _retired(files: Sequence[WikiFile]) -> Iterator[Finding]:
+    """`retired.md` holds only retirement lines, each slug once, after an optional
+    `# <title>` line. The host writes it (`retirement.py`), so this fails only a file someone
+    else changed."""
+    file = next((file for file in files if file.path == RETIRED), None)
+    first: dict[str, int] = {}
+    """The line each slug is first listed on."""
+    titled = False
+    for number, line in enumerate(file.lines if file else (), start=1):
+        if not line.strip():
+            continue
+        if line.startswith("# ") and not titled and not first:
+            titled = True
+            continue
+        retirement = parse_retirement(line)
+        if retirement is None:
+            yield Finding(
+                RETIRED,
+                f"malformed retirement: expected `{RETIREMENT_FORMAT}`, got {line!r}",
+                number,
+            )
+        elif retirement.slug in first:
+            yield Finding(
+                RETIRED,
+                f"{retirement.slug} is already listed, on line {first[retirement.slug]}: a "
+                "retired slug is listed once",
+                number,
+            )
+        else:
+            first[retirement.slug] = number
 
 
 # Warnings
@@ -684,17 +769,22 @@ def _nearly(first: str, second: str) -> bool:
 
 
 def _slugs_without_pages(
-    tree: Path, pages: Sequence[Page], thresholds: Thresholds, engaged: Collection[str]
+    tree: Path,
+    pages: Sequence[Page],
+    thresholds: Thresholds,
+    engaged: Collection[str],
+    retired: Collection[str],
 ) -> Iterator[Finding]:
     """A slug the owner has engaged with, linked on enough days to need a page, that has none.
 
     An unengaged slug is left alone: a person the owner never engaged with gets no page at
     the threshold, and before a slug has a page nothing here tells a person's from an
-    organization's.
+    organization's. So is one of the `retired`, the slugs whose retirement stands
+    (`retirement.py`): dreaming cleared its page, and the owner hasn't engaged with it since.
     """
     with_pages = {page.slug for page in pages}
     for slug, days in sorted(linked_days(tree).items()):
-        if slug not in engaged:
+        if slug not in engaged or slug in retired:
             continue
         if len(days) >= thresholds.page_threshold and slug not in with_pages:
             yield Finding(
