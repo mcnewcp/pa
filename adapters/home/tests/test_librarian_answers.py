@@ -699,3 +699,91 @@ def test_a_consolidation_cant_start_the_proposals_file(data_root: Path, capsys, 
     assert ONLY_BY_RESOLVING in error
     assert PROPOSALS not in wiki_files(data_root)
     assert commit_messages(data_root) == history
+
+
+def split() -> list[dict]:
+    """What consolidation does to the pages to apply a no to P1: both pages say they are two
+    people, citing the owner."""
+    note = f"## Notes\nNot the same person as the other Dave, by the owner's word [ep:{ANSWER}].\n"
+    written = pages()
+    return [
+        {"write": path, "text": written[path].replace("## Notes\n", note)} for path in (DAVID, DAVE)
+    ]
+
+
+# How the owner's answer resolves an open proposal of each kind: the proposal, what the owner
+# said, how the line says it was answered, and what consolidation does to the pages.
+ANSWERS = {
+    "a change accepted": (proposal(), "On P1: yes, same person.", "accepted", merged()),
+    "a change declined": (proposal(), "On P1: no, they are two people.", "declined", split()),
+    "a question answered": (
+        proposal(text="Did [[david-kim]] get the room list?", kind="question"),
+        "On P1: he did, he wrote back on Monday.",
+        "answered",
+        [],
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", ANSWERS, ids=list(ANSWERS))
+def test_a_proposal_is_resolved_in_its_kinds_words_and_stays_in_the_file(
+    data_root: Path, kind: str
+):
+    asked, said, how, applied = ANSWERS[kind]
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(asked)})
+    ingest(data_root, answer(said))
+    resolved = answered(asked, how, ANSWER)
+    script(data_root, consolidation=[*applied, resolving(resolved)])
+
+    assert run_librarian() == 0
+
+    kept = wiki_files(data_root)[PROPOSALS].splitlines()
+    assert f"· {how} {TODAY} " in kept[kept.index("## Answered") + 2]
+    # A declined proposal is kept like any other, so dreaming can see it was asked, and the id
+    # it took is never given out again.
+    assert [line.split(" · ")[0] for line in kept if line.startswith("- ")] == [
+        "- [x] P2",
+        "- [x] P1",
+    ]
+
+
+LAPSED = "Close these 2 loops on [[wedding]] as lapsed? Nothing has come since."
+
+
+def test_an_accepted_proposal_to_close_lapsed_loops_closes_them_citing_the_owners_answer(
+    data_root: Path,
+):
+    stale = (loop("the room list", 40), loop("the menu", 40))
+    run_with_pages(data_root, pages(*stale))
+    asked = proposal(text=LAPSED)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(asked)})
+    ingest(data_root, answer("On P1: yes, close them both."))
+    # A lapsed loop is a closed loop: checked, with the day and the owner's answer.
+    closed = pages(
+        *[line.replace("- [ ]", "- [x]") + f" · closed {TODAY} [ep:{ANSWER}]" for line in stale]
+    )[TOPIC]
+    script(
+        data_root,
+        consolidation=[
+            {"write": TOPIC, "text": closed},
+            resolving(answered(asked, "accepted", ANSWER)),
+        ],
+    )
+
+    # Until the owner answers, lint warns about both loops.
+    assert commit_messages(data_root)[0].count("a loop open 40 days") == 2
+
+    assert run_librarian() == 0
+
+    assert len(sessions(data_root, "consolidation")) == 2  # no resume: the lines pass lint
+    files = wiki_files(data_root)
+    loops = [line for line in files[TOPIC].splitlines() if "→ me" in line]
+    assert len(loops) == 2
+    assert all(
+        line.startswith("- [x] ") and line.endswith(f"· closed {TODAY} [ep:{ANSWER}]")
+        for line in loops
+    )
+    assert f"· accepted {TODAY} [ep:{HOTEL}] [ep:{ANSWER}]" in files[PROPOSALS]
+    # Closed, they are no longer lint's to warn about.
+    assert "a loop open" not in commit_messages(data_root)[0]
