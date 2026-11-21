@@ -44,5 +44,5 @@ those under `## Open` are waiting for an answer (`index.md` opens with how many)
   librarian resolves the proposal from this exchange alone, so your sentence has to stand on
   its own: an answer of "yes" or "the second one" means nothing without it. When you can't tell
   which proposal an answer is for, ask before restating.
-- **A proposal is a question, never evidence.** Never cite a proposal or answer from one: open
-  the episodes it cites, and cite those.
+- **A proposal is a question, never evidence.** Never cite a proposal, and take nothing it
+  says as fact: open the episodes it cites, and cite those.
