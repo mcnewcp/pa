@@ -85,6 +85,117 @@ def test_a_librarian_command_is_passed_through_with_its_sessions_in_the_vm(
     assert "PA_LIBRARIAN_COMMAND" not in env
 
 
+REAL_OWNER = "PA_OWNER_NAME='Riley Real'\nPA_OWNER_EMAILS=riley@example.org\n"
+"""The data root's owner.env, for an instance whose owner isn't the corpus's (and is as
+made up as the corpus's is)."""
+FICTIONAL_OWNER = (
+    "PA_OWNER_NAME='Argus McNevans'\nPA_OWNER_EMAILS=argus@example.com\n"
+    "PA_TIME_ZONE=America/Chicago\n"
+)
+CORPUS = ("--corpus", "evals/corpus/payloads")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("dream", "/srv/replays/argus-dreamed", *CORPUS),
+        ("replay", "/srv/replays/argus", "--corpus=evals/corpus/payloads", "--as-of", "2026-10-14"),
+    ],
+    ids=lambda args: args[0],
+)
+def test_a_corpus_is_run_as_the_owner_named_for_it_in_place_of_the_data_roots(
+    home: Path, tmp_path: Path, args: tuple[str, ...]
+):
+    (home / ".local" / "share" / "pa-home" / "owner.env").write_text(
+        REAL_OWNER + "PA_OWNER_OTHER_NAMES=Ri\nPA_TIME_ZONE=Europe/Lisbon\n"
+    )
+    fictional = tmp_path / "argus.env"
+    fictional.write_text(FICTIONAL_OWNER)
+
+    call = run_script(home, tmp_path, *args, env={"PA_LIBRARIAN_OWNER_ENV": str(fictional)})
+
+    assert call["argv"] == ["run", "--project", str(REPO), "pa", "librarian", *args]
+    env = call["env"]
+    assert (env["PA_OWNER_NAME"], env["PA_OWNER_EMAILS"]) == (
+        "Argus McNevans",
+        "argus@example.com",
+    )
+    assert env["PA_TIME_ZONE"] == "America/Chicago"
+    # Nothing of the data root's owner reaches the run: not even what the file leaves out.
+    assert "PA_OWNER_OTHER_NAMES" not in env
+    assert env["PA_LIBRARIAN_SANDBOX"] == str(DEPLOY / "librarian-sandbox.sh")
+
+
+@pytest.mark.parametrize("eval_set", ["eval_set.json", "eval_set-scale.json"])
+def test_the_frozen_corporas_owner_file_names_the_owner_their_eval_sets_ask_as(
+    home: Path, tmp_path: Path, eval_set: str
+):
+    corpus = REPO / "evals" / "corpus"
+    asked = json.loads((corpus / eval_set).read_text())
+
+    call = run_script(
+        home,
+        tmp_path,
+        "dream",
+        "/srv/replays/dreamed",
+        *CORPUS,
+        env={"PA_LIBRARIAN_OWNER_ENV": str(corpus / "owner.env")},
+    )
+
+    env = call["env"]
+    assert env["PA_OWNER_NAME"] == asked["owner"]["name"]
+    assert env["PA_OWNER_EMAILS"].split(",") == asked["owner"]["email_addresses"]
+    assert env["PA_OWNER_OTHER_NAMES"].split(",") == asked["owner"]["other_names"]
+    # The zone the sets' as-of time is written in: 20:00 on a day Chicago is at -05:00.
+    assert env["PA_TIME_ZONE"] == "America/Chicago"
+    assert asked["as_of"].endswith("-05:00")
+
+
+def librarian_sh(home: Path, tmp_path: Path, *args: str, env: dict[str, str]):
+    """Runs librarian.sh with no `uv` to reach: for a command it must refuse."""
+    return subprocess.run(
+        ["bash", str(DEPLOY / "librarian.sh"), *args],
+        capture_output=True,
+        text=True,
+        env={"HOME": str(home), "USER": "owner", "PATH": "/usr/bin:/bin", **env},
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("run",),
+        ("dream",),
+        ("dream", "/srv/replays/cut-dreamed", "--cut", "/srv/cuts/20261118T202737Z"),
+        ("replay", "/srv/replays/rebuilt"),
+        ("seed", "evals/wikis/scale/665463df6ee7"),
+    ],
+    ids=lambda args: " ".join(args[:2]),
+)
+def test_the_data_roots_own_l0_and_wiki_are_never_run_as_another_owner(
+    home: Path, tmp_path: Path, args: tuple[str, ...]
+):
+    fictional = tmp_path / "argus.env"
+    fictional.write_text(FICTIONAL_OWNER)
+
+    result = librarian_sh(home, tmp_path, *args, env={"PA_LIBRARIAN_OWNER_ENV": str(fictional)})
+
+    assert result.returncode != 0
+    assert "PA_LIBRARIAN_OWNER_ENV goes with --corpus" in result.stderr
+
+
+def test_an_owner_file_that_isnt_there_stops_the_run(home: Path, tmp_path: Path):
+    missing = tmp_path / "nobody.env"
+
+    result = librarian_sh(
+        home, tmp_path, "dream", "/srv/t", *CORPUS, env={"PA_LIBRARIAN_OWNER_ENV": str(missing)}
+    )
+
+    assert result.returncode != 0
+    assert f"{missing} is missing" in result.stderr
+
+
 def test_the_scripts_usage_and_the_readme_name_every_librarian_command():
     usage = (DEPLOY / "librarian.sh").read_text().split("set -euo pipefail")[0]
     readme = (DEPLOY / "README.md").read_text()

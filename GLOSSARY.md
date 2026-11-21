@@ -223,7 +223,7 @@ What the assistant is given besides L0's files in an eval run: nothing (files al
 _Avoid_: Mode, variant, arm
 
 **Eval wiki**:
-The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, or of a cut's wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it and the one that dreamed it.
 _Avoid_: Test wiki, fixture wiki
 
 **Cut**:
