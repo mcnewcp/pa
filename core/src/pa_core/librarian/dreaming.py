@@ -49,6 +49,7 @@ from pa_core.librarian.lint import (
     Thresholds,
     lint,
 )
+from pa_core.librarian.retirement import update_retired
 from pa_core.librarian.run import (
     CURSOR_FIELD,
     LOOP_AGE_DAYS,
@@ -76,9 +77,14 @@ from pa_core.librarian.run import (
 from pa_core.librarian.wiki import (
     INDEX,
     OPEN,
+    OPEN_LOOPS,
     PAGE_FOLDERS,
     PROPOSALS,
+    Page,
     Proposal,
+    citations,
+    pages,
+    parse_loop,
     read_proposals,
 )
 from pa_core.owner import Owner
@@ -96,8 +102,11 @@ class Applied(_Outcome):
 
     outcome: Literal["applied"]
     pages: tuple[str, ...]
-    """Every page it changed for this candidate, relative to the wiki; a page merged away
-    included."""
+    """Every page it changed for this candidate, relative to the wiki; a page merged away or
+    retired included."""
+    retired: tuple[str, ...] = ()
+    """The slugs of the pages it retired (`pa_core.librarian.retirement`): each one a page
+    the session emptied, for the host to remove and list in `retired.md`."""
 
 
 class Proposed(_Outcome):
@@ -235,6 +244,8 @@ def run_dreaming(
             offered, tree, runner, now, linter, committed, proposal_caps
         )
         sessions.append((Phase.DREAMING, result))
+        retiring = [slug for o in outcomes if isinstance(o, Applied) for slug in o.retired]
+        update_retired(tree, today=thresholds.today, retiring=retiring)
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
@@ -275,7 +286,7 @@ def _dream(
 ) -> tuple[SessionResult, tuple[Outcome, ...], Proposed | None]:
     """Runs the dreaming session over `offered`, and returns its result, its outcomes, in the
     candidates' order, and its template suggestion, if it made one."""
-    before = _tree_state(tree)
+    before, was = _tree_state(tree), pages(tree)
     standing = read_proposals(tree)
 
     def require_bounds() -> None:
@@ -294,11 +305,16 @@ def _dream(
     judged: dict[str | None, Outcome] = {}
 
     def report_problems(attempt: SessionResult) -> Sequence[str]:
-        # The bounds held, so everything changed in a folder is a page; a page merged away is
-        # gone by now, and gone is changed.
-        changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
         asked = read_proposals(tree)
         problems = _proposal_problems(standing, asked, caps)
+        try:
+            reported = _reported(attempt.final_message)
+        except InvalidOutcomesError as error:
+            return (*error.problems, *problems)
+        problems += _retire(reported, was, before, tree)
+        # The bounds held, so everything changed in a folder is a page; a page merged away or
+        # retired is gone by now, and gone is changed.
+        changed = [path for path in _changed(before, _tree_state(tree)) if "/" in path]
         try:
             outcomes = read_outcomes(
                 attempt.final_message,
@@ -347,6 +363,74 @@ def _dream(
         tuple(judged[candidate.id] for candidate in offered),
         suggestion if isinstance(suggestion, Proposed) else None,
     )
+
+
+def _retire(
+    reported: Sequence[Outcome], was: Sequence[Page], before: Collection[str], tree: Path
+) -> list[str]:
+    """Removes the pages a dreaming session retired, and returns what's wrong with the
+    retirements its `reported` outcomes claim that the host can't carry out.
+
+    The session's file tools can't remove a file, so it retires a page as it merges one away,
+    by writing it with nothing in it, and an applied outcome names its slug as retired. Only
+    an emptied page whose slug an outcome names goes; any other emptied file stays for lint
+    to fail, as after a merge.
+
+    `was` is the wiki's pages and `before` its paths, as last committed. A retirement can't
+    be carried out when its slug had no page then, when the page still has content, and when
+    the page held an open loop that no page holds now, open or closed: a loop is never
+    dropped with its page, though it may move to the page it belongs on. The page of such a
+    retirement stays as the session left it.
+    """
+    problems: list[str] = []
+    carried = [set(loop.citations) for page in pages(tree) for loop in page.loops]
+    for outcome in reported:
+        for slug in outcome.retired if isinstance(outcome, Applied) else ():
+            name = outcome.candidate
+            paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in before]
+            emptied = [path for path in paths if not _has_content(tree / path)]
+            if not paths:
+                problems.append(
+                    f"{name} retires `{slug}`, which had no page when this run started: "
+                    "`retired` lists the slug of each page you emptied to retire it"
+                )
+            elif not emptied:
+                problems.append(
+                    f"{name} retires `{slug}`, but {paths[0]} still has content: retire a page "
+                    "by writing it with no content at all, and the host removes it"
+                )
+            dropped = [
+                (page.path, line)
+                for page in was
+                if page.path in emptied
+                for line in _open_loop_lines(page)
+                if not any(set(citations(line)) <= held for held in carried)
+            ]
+            for path, line in dropped:
+                problems.append(
+                    f"{name} retires `{slug}`, but {path} held an open loop that is now on no "
+                    f"page: `{line}`. A page with an open loop is never retired: write the page "
+                    "back as it was and propose or dismiss the candidate, or move the loop to "
+                    "the page it belongs on"
+                )
+            if not dropped:
+                for path in emptied:
+                    (tree / path).unlink(missing_ok=True)
+    return problems
+
+
+def _has_content(file: Path) -> bool:
+    return file.is_file() and bool(file.read_bytes().strip())
+
+
+def _open_loop_lines(page: Page) -> list[str]:
+    """The lines of `page`'s open loops, as written."""
+    section = page.section(OPEN_LOOPS)
+    return [
+        line
+        for _, line in (section.lines if section else ())
+        if (loop := parse_loop(line)) is not None and loop.is_open
+    ]
 
 
 def _added(standing: Sequence[Proposal], asked: Sequence[Proposal]) -> list[Proposal]:
@@ -422,6 +506,30 @@ _NO_OUTCOMES = (
 )
 
 
+def _reported(message: str | None) -> tuple[Outcome, ...]:
+    """The outcomes a dreaming session's final `message` carries, in its last fenced `json`
+    block (or as the whole message), as reported: in the outcomes' shape, and checked against
+    nothing else. Raises InvalidOutcomesError when it carries none, or they aren't in that
+    shape."""
+    text = (message or "").strip()
+    blocks = _FENCED_JSON.findall(text)
+    if not blocks and not text.startswith("{"):
+        raise InvalidOutcomesError([_NO_OUTCOMES])
+    try:
+        return Outcomes.model_validate(json.loads(blocks[-1] if blocks else text)).outcomes
+    except json.JSONDecodeError as error:
+        raise InvalidOutcomesError(
+            [f"your final message's outcomes aren't JSON: {error}"]
+        ) from error
+    except ValidationError as error:
+        raise InvalidOutcomesError(
+            [
+                f"{'.'.join(str(part) for part in found['loc']) or 'the outcomes'}: {found['msg']}"
+                for found in error.errors()
+            ]
+        ) from error
+
+
 def read_outcomes(
     message: str | None,
     offered: Sequence[Candidate],
@@ -442,23 +550,7 @@ def read_outcomes(
     outcome names an open proposal, the suggestion one of its own that the session added; and
     every proposal the session added is named.
     """
-    text = (message or "").strip()
-    blocks = _FENCED_JSON.findall(text)
-    if not blocks and not text.startswith("{"):
-        raise InvalidOutcomesError([_NO_OUTCOMES])
-    try:
-        outcomes = Outcomes.model_validate(json.loads(blocks[-1] if blocks else text)).outcomes
-    except json.JSONDecodeError as error:
-        raise InvalidOutcomesError(
-            [f"your final message's outcomes aren't JSON: {error}"]
-        ) from error
-    except ValidationError as error:
-        raise InvalidOutcomesError(
-            [
-                f"{'.'.join(str(part) for part in found['loc']) or 'the outcomes'}: {found['msg']}"
-                for found in error.errors()
-            ]
-        ) from error
+    outcomes = _reported(message)
     problems: list[str] = []
     given = Counter(outcome.candidate for outcome in outcomes if outcome.candidate is not None)
     for candidate in offered:

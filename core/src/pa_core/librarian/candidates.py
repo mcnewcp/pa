@@ -14,7 +14,9 @@ A candidate is one of two things:
   - a stale page, which observations have linked on enough days since it was last updated;
   - a status that disagrees with its loops: a page that says its matter is over (a settled
     or dormant topic, an inactive person or organization) while one of its loops is open;
-  - a quiet page: an active one that no observation has linked for a long time.
+  - a quiet page: an active one that no observation has linked for a long time;
+  - an unengaged page: a person's or an organization's that the owner has never had a hand in
+    (`pa_core.librarian.engagement`), which dreaming may retire.
 
 They are offered in a fixed order of kinds, which matters once a run offers only so many:
 
@@ -25,6 +27,8 @@ They are offered in a fixed order of kinds, which matters once a run offers only
 3. Lint's warnings, in lint's order.
 4. Quiet pages. Whether one may be marked dormant or inactive depends on its loops, which are
    judged before it, and leaving one for the next run costs only the index's order.
+5. Unengaged pages. Whether one may be retired depends on its loops and on whether it is
+   another page's duplicate, all judged before it.
 
 Days after the run's own date never count. Day logs exist for them wherever a calendar event
 is booked ahead, and what hasn't happened yet has left no page behind.
@@ -33,14 +37,22 @@ is booked ahead, and what hasn't happened yet has left no page behind.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
 from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
-from pa_core.librarian.wiki import ACTIVE, DAYS, Page, linked_days, pages
+from pa_core.librarian.wiki import (
+    ACTIVE,
+    DAYS,
+    ORGANIZATION,
+    PERSON,
+    Page,
+    linked_days,
+    pages,
+)
 from pa_core.owner import Owner
 
 
@@ -64,6 +76,8 @@ class CandidateKind(StrEnum):
     NEEDS_LOOKUP = "needs-lookup"
     QUIET = "quiet"
     """An active page no observation has linked for a long time."""
+    UNENGAGED = "unengaged"
+    """A person's or an organization's page the owner has never engaged with."""
 
 
 @dataclass(frozen=True)
@@ -125,20 +139,21 @@ def candidates(
     tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds
 ) -> tuple[Candidate, ...]:
     """The candidates to offer a dreaming run over the wiki at `tree`, in order: the stale
-    pages, the statuses that disagree with their loops, every lint warning, then the quiet
-    pages, measured against `l0`'s metadata and `thresholds` for `owner`.
+    pages, the statuses that disagree with their loops, every lint warning, the quiet pages,
+    then the unengaged pages, measured against `l0`'s metadata and `thresholds` for `owner`.
 
     The ids follow from the wiki alone, so the same wiki on the same day offers the same
     candidates under the same ids.
     """
-    warnings = lint(tree, l0=l0, owner=owner, thresholds=thresholds).warnings
+    report = lint(tree, l0=l0, owner=owner, thresholds=thresholds)
     found = pages(tree)
     linked = _linked_days(tree, thresholds.today)
     offered = [
         *_stale(found, linked, thresholds),
         *_status_mismatches(found),
-        *(_of_warning(warning) for warning in warnings),
+        *(_of_warning(warning) for warning in report.warnings),
         *_quiet(found, linked, thresholds),
+        *_unengaged(found, report.engaged_days),
     ]
     return tuple(
         replace(candidate, id=f"c{number:02d}") for number, candidate in enumerate(offered, start=1)
@@ -237,6 +252,22 @@ def _quiet(
                 path=page.path,
                 message="a quiet page: it is active, and no observation has linked "
                 f"[[{page.slug}]] since {days[-1]}, {_count(quiet, 'day')} ago",
+            )
+
+
+def _unengaged(pages: Sequence[Page], engaged: Collection[str]) -> Iterator[Candidate]:
+    """A person's or an organization's page whose slug isn't among the `engaged`: no
+    observation linking it cites an episode that is the owner's own doing. A topic is never
+    one: it gets its page at the threshold, engaged or not."""
+    for page in pages:
+        if page.page_type in (PERSON, ORGANIZATION) and page.slug not in engaged:
+            yield Candidate(
+                id=_UNNUMBERED,
+                kind=CandidateKind.UNENGAGED,
+                pages=(page.path,),
+                path=page.path,
+                message=f"an unengaged page: no observation linking [[{page.slug}]] cites an "
+                "episode the owner sent, wrote, organized, or attends",
             )
 
 

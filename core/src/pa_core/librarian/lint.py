@@ -2,10 +2,10 @@
 
 An error fails the run. The rules so far:
 
-- **Layout.** Nothing but `index.md`, the root files (`proposals.md`), and Markdown files
-  directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic links,
-  subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded as
-  instructions or run as code (ADR-0007).
+- **Layout.** Nothing but `index.md`, the root files (`proposals.md` and `retired.md`), and
+  Markdown files directly in `days/`, `people/`, `orgs/`, and `topics/`: no dotfiles, symbolic
+  links, subdirectories, other files, or any `CLAUDE.md`, so nothing in the wiki can be loaded
+  as instructions or run as code (ADR-0007).
   A day log is named for its day (`YYYY-MM-DD.md`), a page for its slug (`<slug>.md`).
 - **Day logs** hold only observation lines (and blank lines).
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields
@@ -17,6 +17,7 @@ An error fails the run. The rules so far:
   nothing in them but well-formed proposal lines, open ones under Open and answered ones under
   Answered. No two share an id; a proposal's text is short and holds no URL; and every link of
   an open proposal goes to a page.
+- **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
   lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
@@ -69,6 +70,8 @@ from pa_core.librarian.wiki import (
     PROPOSAL_FORMAT,
     PROPOSAL_TEXT_LIMIT,
     PROPOSALS,
+    RETIRED,
+    RETIREMENT_FORMAT,
     ROOT_FILES,
     FieldValue,
     Page,
@@ -84,6 +87,7 @@ from pa_core.librarian.wiki import (
     parse_loop,
     parse_observation,
     parse_proposal,
+    parse_retirement,
     read_page,
     slugify,
 )
@@ -223,6 +227,7 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         for rule in _RULES:
             errors.extend(rule(file, l0))
     errors.extend(_proposals(files, tree))
+    errors.extend(_retired(files))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
     engaged = engaged_days(tree, l0, owner)
@@ -561,6 +566,38 @@ def _proposals(files: Sequence[WikiFile], tree: Path) -> Iterator[Finding]:
             f"that order; got {', '.join(f'`## {name}`' for _, name in headings) or 'none'}",
             headings[0][0] if headings else None,
         )
+
+
+def _retired(files: Sequence[WikiFile]) -> Iterator[Finding]:
+    """`retired.md` holds only retirement lines, each slug once, after an optional
+    `# <title>` line. The host writes it (`retirement.py`), so this fails only a file someone
+    else changed."""
+    file = next((file for file in files if file.path == RETIRED), None)
+    first: dict[str, int] = {}
+    """The line each slug is first listed on."""
+    titled = False
+    for number, line in enumerate(file.lines if file else (), start=1):
+        if not line.strip():
+            continue
+        if line.startswith("# ") and not titled and not first:
+            titled = True
+            continue
+        retirement = parse_retirement(line)
+        if retirement is None:
+            yield Finding(
+                RETIRED,
+                f"malformed retirement: expected `{RETIREMENT_FORMAT}`, got {line!r}",
+                number,
+            )
+        elif retirement.slug in first:
+            yield Finding(
+                RETIRED,
+                f"{retirement.slug} is already listed, on line {first[retirement.slug]}: a "
+                "retired slug is listed once",
+                number,
+            )
+        else:
+            first[retirement.slug] = number
 
 
 # Warnings

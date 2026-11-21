@@ -252,8 +252,9 @@ def pages(*loops: str) -> dict[str, str]:
     }
 
 
-LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["dave", "wedding"]}
-"""The slugs the stand-in's observations link, by the episode's subject."""
+LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["dave", "david-kim", "wedding"]}
+"""The slugs the stand-in's observations link, by the episode's subject. The owner sent the
+room list, so both of David Kim's pages are engaged, and neither is an unengaged candidate."""
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:

@@ -2,7 +2,8 @@
 
 The wiki is `index.md`, four folders of Markdown, `days/` (day logs, `YYYY-MM-DD.md`) and
 `people/`, `orgs/` and `topics/` (pages, `<slug>.md`), and the root files: `proposals.md`, what
-the librarian asks the owner (spec #140). Nothing else may exist in it.
+the librarian asks the owner, and `retired.md`, the slugs whose pages dreaming cleared (spec
+#140). Nothing else may exist in it.
 """
 
 from __future__ import annotations
@@ -23,7 +24,10 @@ INDEX = "index.md"
 """The generated index, at the wiki's top level."""
 PROPOSALS = "proposals.md"
 """The proposals: what the librarian asks the owner, open and answered."""
-ROOT_FILES = (PROPOSALS,)
+RETIRED = "retired.md"
+"""The retired slugs: each slug whose page dreaming cleared, with the day it was retired. The
+host writes it; no session does."""
+ROOT_FILES = (PROPOSALS, RETIRED)
 """The files at the wiki's top level beside the index, each with a line format of its own."""
 DAYS = "days"
 """The folder of day logs."""
@@ -665,3 +669,44 @@ def open_proposals(tree: Path) -> tuple[Proposal, ...]:
     """The proposals the owner hasn't answered yet, in the wiki at `tree`, in the file's
     order."""
     return tuple(proposal for proposal in read_proposals(tree) if proposal.is_open)
+
+
+# Retired slugs
+
+_RETIREMENT = re.compile(rf"- (?P<slug>{SLUG.pattern}) · retired (?P<day>{_DATE})")
+RETIREMENT_FORMAT = "- <slug> · retired YYYY-MM-DD"
+
+
+@dataclass(frozen=True)
+class Retirement:
+    """One line of `retired.md`: a slug whose page dreaming cleared, and the day it did."""
+
+    slug: str
+    day: date
+    """The day of the dreaming run that retired it, as the run was told it."""
+
+    @property
+    def line(self) -> str:
+        """Its line in `retired.md`, exactly as `parse_retirement` reads it."""
+        return f"- {self.slug} · retired {self.day.isoformat()}"
+
+
+def parse_retirement(line: str) -> Retirement | None:
+    """The retirement `line` holds, or None if it isn't one in the schema's format."""
+    match = _RETIREMENT.fullmatch(line)
+    day = _date(match["day"]) if match else None
+    return Retirement(match["slug"], day) if match and day else None
+
+
+def read_retired(tree: Path) -> dict[str, date]:
+    """Each retired slug in `retired.md` of the wiki at `tree`, with the day it was retired, in
+    the file's order; none when the wiki has no such file. Lint reports every other line."""
+    file = tree / RETIRED
+    if not file.is_file() or file.is_symlink():
+        return {}
+    retired: dict[str, date] = {}
+    for line in file.read_text(encoding="utf-8", errors="replace").splitlines():
+        retirement = parse_retirement(line)
+        if retirement is not None:
+            retired.setdefault(retirement.slug, retirement.day)
+    return retired
