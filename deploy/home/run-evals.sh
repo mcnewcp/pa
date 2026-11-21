@@ -15,8 +15,11 @@
 # A run over a cut (--cut DIR --eval-set FILE, both under the data root; `pa cut` makes the cut)
 # pushes the cut into the VM once, and reuses the VM's copy on every later run over it. The eval
 # set is pushed each run, replacing the last. The run directory stays out of the VM's checkout,
-# and comes back under the data root ($PA_EVALS/runs/, or $PA_EVAL_RUNS_DIR). The cut, the set,
-# and the run directory are refused inside this checkout, so nothing real is ever committed.
+# and comes back under the data root ($PA_EVALS/runs/, or $PA_EVAL_RUNS_DIR). With --wiki DIR, a
+# files-plus-wiki run over a cut asks with a dreamed copy of the cut's wiki in place of the cut's
+# own (`librarian.sh dream DIR --cut CUT` leaves one in DIR, under $PA_REPLAYS), pushed as an eval
+# wiki is. The cut, the set, the run directory, and that copy are refused inside this checkout,
+# so nothing real is ever committed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -56,6 +59,8 @@ if [[ -n $cut ]]; then
   require_private cut "$cut"
   require_private "eval set" "$eval_set"
   require_private "runs directory" "$runs_dir"
+  # With a cut, --wiki is a dreamed copy of the cut's wiki: the owner's data, as the cut is.
+  [[ -z $wiki ]] || require_private "dreamed copy of the cut's wiki" "$wiki"
   vm_cut=$PA_VM_EVAL_CUTS/$(cut_name "$cut")
   [[ -f $eval_set ]] || die "eval set not found: $eval_set"
   args+=(--cut "$vm_cut" --eval-set "$PA_VM_EVAL_SET" --runs-dir "$PA_VM_EVAL_RUNS")

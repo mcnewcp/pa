@@ -771,14 +771,24 @@ def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> No
         cut = cut.expanduser().resolve()
         require_outside_repository(cut, "--cut", reason)
         taken = load_cut(cut)
-    outcome = librarian.dream_copy(
-        target,
-        corpus=[directory.expanduser().resolve() for directory in corpus],
-        cut=taken,
-        owner=owner,
-        time_zone=time_zone,
-        config=config,
-    )
+    try:
+        outcome = librarian.dream_copy(
+            target,
+            corpus=[directory.expanduser().resolve() for directory in corpus],
+            cut=taken,
+            owner=owner,
+            time_zone=time_zone,
+            config=config,
+        )
+    except LibrarianRunError as error:
+        if taken is None:
+            raise
+        # A failed run's error quotes pages, and a cut's copy is the owner's data, dreamed by
+        # a session that reads counts and exit codes only: it says where the run failed, and
+        # the error stays in the copy's run log, under the data root.
+        raise PaError(
+            f"{librarian.run_failure_reason(error)}; its error is in {target / RUN_LOG}"
+        ) from None
     _report_dreaming(outcome, "librarian dream")
 
 

@@ -3,10 +3,11 @@ wired to its home adapters.
 
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
-the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
-renders the librarian project as committed (the project its librarian version names) into a
-temporary directory, the sessions' working directory, and runs the sessions with the configured
-command.
+the data root's L0 or a corpus ingested into a throwaway data root. A dreaming run reviews the
+data root's wiki (`dream`), or a copy of a replay target or of a cut's wiki, laid out as a
+replay's target is (`dream_copy`). Each run (each replay) renders the librarian project as
+committed (the project its librarian version names) into a temporary directory, the sessions'
+working directory, and runs the sessions with the configured command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 

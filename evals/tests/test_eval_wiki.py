@@ -1,6 +1,7 @@
 """Eval wikis: a replay's final tree and run log, read for the librarian version that built it."""
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -179,6 +180,15 @@ def test_a_run_log_that_mixes_anything_else_is_refused(tmp_path, change, reason)
 
     with pytest.raises(EvalWikiError, match=reason):
         load_eval_wiki(directory)
+
+
+def test_the_glossary_says_what_a_dreamed_eval_wiki_is():
+    glossary = (WORKSPACE / "GLOSSARY.md").read_text()
+    entry = re.search(r"^\*\*Eval wiki\*\*:\n(.*?)\n_Avoid_: ", glossary, re.M | re.S)
+
+    assert entry is not None
+    for said in ("A dreamed eval wiki", "a cut's wiki", "as-of time", "the one that dreamed it"):
+        assert said in entry[1], said
 
 
 def test_eval_wikis_are_kept_in_the_evals_tree_by_corpus_and_librarian_version():

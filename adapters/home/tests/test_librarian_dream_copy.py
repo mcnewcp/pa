@@ -631,6 +631,30 @@ def test_a_copy_dreamed_as_of_one_cut_isnt_dreamed_again_as_of_another(data_root
     assert tree_state(target) == before
 
 
+def test_a_failed_dreaming_run_of_a_cuts_copy_is_reported_without_content(data_root: Path, capsys):
+    """A cut's copy is the owner's data, and the session that dreams it reads counts and exit
+    codes only: a run's error quotes pages, so it stays in the copy's run log."""
+    cut = cut_of_a_live_wiki(data_root)
+    target = copy_of_the_cuts_wiki(cut, data_root)
+    undreamed = tree_state(target / "wiki")
+    # It retitles Dave's page, which no outcome claims: the run fails, naming the page.
+    retitled = PAGES[PERSON].replace("# David Kim", "# Dave Kim")
+    script(data_root, dreaming=[{"write": PERSON, "text": retitled}, {"outcomes": [DISMISSED]}])
+    capsys.readouterr()
+
+    assert dream(target, "--cut", cut.path) == 1
+
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err == (
+        "pa: the run failed in its dreaming session and was discarded; "
+        f"its error is in {target / 'run-log.jsonl'}\n"
+    )
+    [failed] = run_log(target)
+    assert failed["status"] == "failed" and PERSON in failed["error"]
+    assert tree_state(target / "wiki") == undreamed
+
+
 def test_dreaming_a_copy_takes_a_corpus_or_a_cut_not_both(data_root: Path, corpus: Path, capsys):
     cut = cut_of_a_live_wiki(data_root)
     target = copy_of_the_cuts_wiki(cut, data_root)
