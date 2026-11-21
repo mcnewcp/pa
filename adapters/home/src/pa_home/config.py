@@ -12,10 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pa_core.envelope import Source
 from pa_core.errors import PaError
-from pa_core.librarian.candidates import CANDIDATE_CAP
-from pa_core.librarian.dreaming import PROPOSAL_CAPS, ProposalCaps
-from pa_core.librarian.lint import QUIET_DAYS, STALE_LATER_DAYS
-from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
+from pa_core.librarian.dreaming import DREAMING_SETTINGS, DreamingSettings, ProposalCaps
 from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
 from pa_core.librarian.wiki import TREE as WIKI_TREE
 from pa_core.owner import Owner
@@ -113,6 +110,13 @@ class DataRoot:
         return self.path / "evals"
 
     @property
+    def run_errors(self) -> Path:
+        """Where the whole error of the last failed librarian run, and of the last failed
+        dreaming run, is kept for the owner (`pa_home.librarian`): it quotes pages, so no
+        command prints it."""
+        return self.path / "run-errors"
+
+    @property
     def replays(self) -> Path:
         """Where replays build their wikis (`pa librarian replay`), each beside its run log."""
         return self.path / "replays"
@@ -133,6 +137,10 @@ class DataRoot:
         return self.path / "pa.lock"
 
 
+DREAMING_INTERVAL_DAYS = 7
+"""How many days apart the nightly job's dreaming runs are, unless configured otherwise."""
+
+
 @dataclass(frozen=True)
 class LibrarianConfig:
     """How the librarian's sessions run."""
@@ -149,22 +157,23 @@ class LibrarianConfig:
     """The command that sets up the sandbox the sessions run in, such as the librarian's VM, for
     a run or a replay, and takes it down afterwards (`pa_home.librarian`). None runs the
     sessions on the host."""
-    page_threshold: int = PAGE_THRESHOLD
-    """The distinct days a slug must be linked on in the day logs before it gets a page."""
-    loop_age_days: int = LOOP_AGE_DAYS
-    """How long a loop may stay open before lint warns about it."""
-    stale_later_days: int = STALE_LATER_DAYS
-    """The distinct days a page is linked on after its last update before dreaming is offered
-    it as stale."""
-    quiet_days: int = QUIET_DAYS
-    """How long an active page may go unlinked before dreaming is offered it as quiet."""
-    candidate_cap: int = CANDIDATE_CAP
-    """The most candidates a dreaming run is offered; the rest wait for the next run."""
-    proposal_caps: ProposalCaps = PROPOSAL_CAPS
-    """The most proposals a dreaming run may add, and the most that may be open at once."""
-    dreaming_interval_days: int = 7
+    dreaming: DreamingSettings = DREAMING_SETTINGS
+    """What a dreaming run goes by: the thresholds its candidates are measured against, the
+    cap on them, and the caps on its proposals. A librarian run's lint goes by the first two
+    of its thresholds (`page_threshold`, `loop_age_days`)."""
+    dreaming_interval_days: int = DREAMING_INTERVAL_DAYS
     """How many days apart the nightly job's dreaming runs are; 0 turns the step off. A run by
     hand (`pa librarian dream`) doesn't ask."""
+
+    @property
+    def page_threshold(self) -> int:
+        """The distinct days a slug must be linked on in the day logs before it gets a page."""
+        return self.dreaming.page_threshold
+
+    @property
+    def loop_age_days(self) -> int:
+        """How long a loop may stay open before lint warns about it."""
+        return self.dreaming.loop_age_days
 
 
 @dataclass(frozen=True)
@@ -313,6 +322,7 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
     configured too.
     """
     default = LibrarianConfig()
+    unset = default.dreaming
     command = environ.get(LIBRARIAN_COMMAND_VAR, "").strip()
     sandbox = environ.get(LIBRARIAN_SANDBOX_VAR, "").strip()
     sandbox_command = tuple(shlex.split(sandbox)) if sandbox else None
@@ -329,21 +339,25 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         timeout_seconds=_positive(environ, LIBRARIAN_TIMEOUT_VAR, default.timeout_seconds),
         command=session_command,
         sandbox=sandbox_command,
-        page_threshold=_positive_integer(
-            environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
-        ),
-        loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, default.loop_age_days),
-        stale_later_days=_positive_integer(
-            environ, LIBRARIAN_STALE_LATER_DAYS_VAR, default.stale_later_days
-        ),
-        quiet_days=_positive_integer(environ, LIBRARIAN_QUIET_DAYS_VAR, default.quiet_days),
-        candidate_cap=_positive_integer(
-            environ, LIBRARIAN_CANDIDATE_CAP_VAR, default.candidate_cap
-        ),
-        proposal_caps=ProposalCaps(
-            new=_positive_integer(environ, LIBRARIAN_NEW_PROPOSALS_VAR, default.proposal_caps.new),
-            open=_positive_integer(
-                environ, LIBRARIAN_OPEN_PROPOSALS_VAR, default.proposal_caps.open
+        dreaming=DreamingSettings(
+            page_threshold=_positive_integer(
+                environ, LIBRARIAN_PAGE_THRESHOLD_VAR, unset.page_threshold
+            ),
+            loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, unset.loop_age_days),
+            stale_later_days=_positive_integer(
+                environ, LIBRARIAN_STALE_LATER_DAYS_VAR, unset.stale_later_days
+            ),
+            quiet_days=_positive_integer(environ, LIBRARIAN_QUIET_DAYS_VAR, unset.quiet_days),
+            candidate_cap=_positive_integer(
+                environ, LIBRARIAN_CANDIDATE_CAP_VAR, unset.candidate_cap
+            ),
+            proposal_caps=ProposalCaps(
+                new=_positive_integer(
+                    environ, LIBRARIAN_NEW_PROPOSALS_VAR, unset.proposal_caps.new
+                ),
+                open=_positive_integer(
+                    environ, LIBRARIAN_OPEN_PROPOSALS_VAR, unset.proposal_caps.open
+                ),
             ),
         ),
         dreaming_interval_days=_whole_number(

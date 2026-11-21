@@ -9,8 +9,9 @@ succeeded.
 once a week, which fixes what L0 settles and asks the owner the rest as proposals. It gives
 when it ran (`at`), whether it succeeded (`succeeded`) and, if not, why (its `reason`), what it
 cost (`cost_usd`, in US dollars), how many candidate problems it judged (`candidates`), how
-many of those it `applied`, `proposed` and `dismissed` (`outcomes`), and how many more it left
-alone because an earlier run had dismissed them or already asked the owner (`held_back`).
+many of those it `applied`, `proposed` and `dismissed` (`outcomes`), how many more it left
+alone because an earlier run had dismissed them or already asked the owner (`held_back`), and
+how many it left for the next run because a run judges only so many (`left_over`).
 `wiki.open_proposals` is how many proposals are waiting for the owner's answer.
 
 When the owner asks whether the wiki is being reviewed, how the last review went, or how much

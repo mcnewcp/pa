@@ -169,8 +169,8 @@ question names nothing private, since it will be looked up on the web.
 
 `proposals.md` holds what the librarian asks the owner: what L0 can't settle and the owner
 can. A wiki the librarian has asked nothing has no such file. The file has an optional
-`# <title>` line and exactly two sections, in order, each holding proposal lines and nothing
-else:
+title line, exactly `# Proposals`, and exactly two sections, in order, each holding proposal
+lines and nothing else:
 
 ```
 # Proposals
@@ -192,8 +192,9 @@ else:
   highest in the file, answered proposals included.
 - The kind is `change` (a change the owner can accept or decline) or `question` (something
   only the owner knows).
-- `<text>` is one short question in plain words: at most 200 characters, with no URL and no
-  ` · `. It links the pages it is about, and every link of an open proposal goes to a page.
+- `<text>` is one short question in plain words: at most 200 characters (a link
+  `[[slug|name]]` counts as `[[name]]`), with no URL, no
+  bare hostname (`example.com`), no email address, and no ` · `. It links the pages it is about, and every link of an open proposal goes to a page.
 - The citations are the episodes that raise the question.
 
 **Answered proposal:** the owner answers in chat, and the line moves under `## Answered`,

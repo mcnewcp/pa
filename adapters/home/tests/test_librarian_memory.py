@@ -3,7 +3,7 @@ stand-in `claude` (the conftest at the repository root says what it does and how
 
 The memory is the wiki's git history: each dreaming commit lists its candidates with their
 outcomes. These tests run `pa librarian dream` and `pa librarian run` over a temporary data
-root, change the wiki and its history between runs (a nightly run, a commit by hand, a real
+root, change the wiki and its history between runs (a librarian run, a commit by hand, a real
 `git revert`), and assert on what the next session is offered.
 """
 
@@ -17,8 +17,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pa_core.librarian.candidates import ORDER, CandidateKind
+from pa_core.librarian.candidates import ORDER
 from pa_core.librarian.dreaming import DreamingOutcome, last_dreaming_at
+from pa_core.librarian.kinds import CandidateKind
 from pa_home import librarian
 from pa_home.cli import main
 from pa_home.config import DataRoot, load_librarian_config, load_owner, load_time_zone
@@ -246,7 +247,7 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "we
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email and a later one sending the room list, whose
+    """One librarian run over the hotel email and a later one sending the room list, whose
     consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
@@ -325,7 +326,7 @@ def test_a_dismissed_candidate_isnt_offered_by_the_next_run(data_root: Path, cap
 
 
 def night(data_root: Path, subject: str, written: dict[str, str]) -> None:
-    """A later nightly run over one new email about `subject`, whose consolidation writes
+    """A later librarian run over one new email about `subject`, whose consolidation writes
     `written`."""
     ingest(
         data_root,
@@ -399,12 +400,12 @@ def proposals_file(*opened: str, answered: tuple[str, ...] = ()) -> str:
 
 
 def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
-    """Commits `files` into the wiki under the last run's message, as a nightly run that
+    """Commits `files` into the wiki under the last run's message, as a librarian run that
     applied the owner's answer would have left them."""
     repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
     for path, text in files.items():
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def test_a_candidate_isnt_offered_while_a_proposal_about_it_is_open(data_root: Path):
@@ -420,7 +421,7 @@ def test_a_candidate_isnt_offered_while_a_proposal_about_it_is_open(data_root: P
     assert dream() == 0
     assert offered(data_root) == [[ORPHAN]]
 
-    # The owner answers in chat, and a nightly run marks the proposal answered. Nothing links
+    # The owner answers in chat, and a librarian run marks the proposal answered. Nothing links
     # the page yet, so it is a candidate again.
     ingest(data_root, {"assistant_chat/answer.json": CHAT.read_bytes()})
     script(data_root)
@@ -563,7 +564,7 @@ def new_episodes(data_root: Path) -> list[str]:
     return [episode["subject"] for episode in sessions(data_root, "observation")[-1]["episodes"]]
 
 
-def test_a_reverted_dreaming_commit_leaves_the_cursor_and_version_of_the_last_nightly_run(
+def test_a_reverted_dreaming_commit_leaves_the_cursor_and_version_of_the_last_librarian_run(
     data_root: Path,
 ):
     run_with_pages(data_root, pages(loop(opened=40)))
@@ -580,7 +581,7 @@ def test_a_reverted_dreaming_commit_leaves_the_cursor_and_version_of_the_last_ni
         last_run["Librarian-Version"],
         last_run["Cursor"],
     )
-    # The next nightly run offers only what was captured since the last one.
+    # The next librarian run offers only what was captured since the last one.
     night(data_root, "Gift", {})
     assert new_episodes(data_root) == ["Gift"]
 
@@ -589,7 +590,7 @@ IN_AUSTIN = pages()[TOPIC].replace("on Oct 24.", "on Oct 24, in Austin.")
 """The wedding's page as a later night leaves it."""
 
 
-def test_after_a_nightly_runs_commit_is_reverted_that_nights_episodes_are_offered_again(
+def test_after_a_librarian_runs_commit_is_reverted_that_nights_episodes_are_offered_again(
     data_root: Path,
 ):
     run_with_pages(data_root)
@@ -606,6 +607,31 @@ def test_after_a_nightly_runs_commit_is_reverted_that_nights_episodes_are_offere
     )
     # So the next run takes the reverted night's episode again, with what came after it, and
     # nothing from before.
+    night(data_root, "Menu", {})
+    assert sorted(new_episodes(data_root)) == ["Gift", "Menu"]
+
+
+def test_reverting_a_librarian_commit_under_a_dreaming_commit_offers_its_episodes_again(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages(loop(opened=40)))
+    first_night = fields(commit_messages(data_root)[0])
+    night(data_root, "Gift", {})
+    # That night's dreaming run sits on its librarian run, and carries its cursor forward.
+    script(data_root, dreaming=dismissing(2))
+    assert dream() == 0
+    dreamed = fields(commit_messages(data_root)[0])
+    assert "Dreaming-At" in dreamed
+    assert dreamed["Cursor"] != first_night["Cursor"]
+
+    revert(data_root, "HEAD~1")
+
+    # The cursor is the newest librarian run's that stands, never one a dreaming commit
+    # carried forward from a run since reverted.
+    assert cut_wiki(data_root, datetime.now(UTC)) == (
+        first_night["Librarian-Version"],
+        first_night["Cursor"],
+    )
     night(data_root, "Menu", {})
     assert sorted(new_episodes(data_root)) == ["Gift", "Menu"]
 
@@ -735,7 +761,7 @@ def test_the_last_dreaming_run_that_stands_is_read_from_the_wikis_history(data_r
     dream_at(data_root, first)
     assert last_dreaming_at(repository) == first
 
-    # A nightly run after it changes nothing, and neither does a dreaming run with nothing to
+    # A librarian run after it changes nothing, and neither does a dreaming run with nothing to
     # judge, which commits nothing.
     night(data_root, "Gift", {})
     assert dream_at(data_root, first + timedelta(days=7)).commit is None

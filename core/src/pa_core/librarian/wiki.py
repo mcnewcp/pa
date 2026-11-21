@@ -420,6 +420,18 @@ class Page:
         return value if isinstance(value, str) else ""
 
     @property
+    def is_active(self) -> bool:
+        """Whether its `status` says it's live."""
+        return self.fields.get("status") == ACTIVE
+
+    @property
+    def updated(self) -> date | None:
+        """The day it says it last changed; None when it doesn't say, or what it says is no
+        date (lint reports that)."""
+        value = self.fields.get("updated")
+        return _date(value) if isinstance(value, str) else None
+
+    @property
     def aliases(self) -> tuple[str, ...]:
         value = self.fields.get("aliases", ())
         return value if isinstance(value, tuple) else ()
@@ -553,14 +565,17 @@ def pages(tree: Path) -> list[Page]:
 
 # Proposals
 
+PROPOSALS_TITLE = "# Proposals"
+"""The one line `proposals.md` may hold before its sections."""
 OPEN, ANSWERED = "Open", "Answered"
 """The sections of `proposals.md` (`## <name>`), in order."""
 PROPOSAL_KINDS = {"change": ("accepted", "declined"), "question": ("answered",)}
 """Each kind of proposal, and how one of that kind can be answered: a proposed change is
 accepted or declined, and a question is answered."""
 PROPOSAL_TEXT_LIMIT = 200
-"""The most characters a proposal's text may have: a proposal is a short question in the
-librarian's own words, never a paragraph of someone else's."""
+"""The most characters a proposal's text may have, as the owner reads it (`Proposal.length`):
+a proposal is a short question in the librarian's own words, never a paragraph of someone
+else's."""
 _PROPOSAL = re.compile(
     rf"- \[(?P<mark>[ x])\] (?P<id>P[1-9][0-9]*) · (?P<kind>{'|'.join(PROPOSAL_KINDS)}) · "
     rf"(?P<text>\S.*?) · proposed (?P<proposed>{_DATE})"
@@ -610,6 +625,17 @@ class Proposal:
     def links(self) -> tuple[str, ...]:
         """The slugs its text links, in order."""
         return tuple(links(self.text))
+
+    @property
+    def length(self) -> int:
+        """How long its text is as the owner reads it: a piped link, `[[slug|shown]]`, counts
+        as the name it shows, `[[shown]]`.
+
+        So the host's rewrite of a link to an alias (`links.py`), which keeps the name the
+        link was written with, never lengthens a proposal: one that passed lint still passes
+        after a merge of a page it links, in a line no session may change.
+        """
+        return len(LINK.sub(lambda link: f"[[{link['shown'] or link['slug']}]]", self.text))
 
     @property
     def line(self) -> str:

@@ -18,7 +18,7 @@ threshold, whatever its reference count, and lint doesn't warn that it has no pa
 on the retirement day itself counts: a dreaming run is over early in its day, and what the
 owner writes later that day is observed under the same date.
 
-A retired slug gets a page again as any slug does, in a nightly run or a dreaming one: once it
+A retired slug gets a page again as any slug does, in a librarian run or a dreaming one: once it
 is engaged since its retirement and at the threshold, when a loop or decision names it, or
 when the owner asks for it. Whichever run finds it with a page again drops it from the list.
 """
@@ -36,7 +36,7 @@ TITLE = "Retired"
 """The title the host gives `retired.md` when it starts the file."""
 
 
-def standing(
+def still_retired(
     retired: Mapping[str, date], engaged_days: Mapping[str, Sequence[date]]
 ) -> frozenset[str]:
     """The slugs among `retired` (each with the day it was retired) that stay retired: those

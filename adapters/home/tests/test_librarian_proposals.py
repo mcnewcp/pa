@@ -2,7 +2,7 @@
 
 Whole runs of `pa librarian dream` and `pa librarian run` over a temporary data root, through
 the stand-in `claude` (the conftest at the repository root says what it does and how it's
-scripted). Each test builds a wiki with a nightly run, scripts the dreaming session's writes
+scripted). Each test builds a wiki with a librarian run, scripts the dreaming session's writes
 and the outcomes its final message reports, and asserts on the wiki, its git history, and what
 the session was given: the stand-in records the open proposals listed under the prompt's
 `## Open proposals` heading as `proposals`.
@@ -126,6 +126,13 @@ def run_librarian() -> int:
 
 def dream() -> int:
     return main(["librarian", "dream"])
+
+
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
 
 
 def git(data_root: Path, *args: str) -> str:
@@ -261,7 +268,7 @@ room list, so both of David Kim's pages are engaged, and neither is an unengaged
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email, a later one sending the room list, and a chat
+    """One librarian run over the hotel email, a later one sending the room list, and a chat
     exchange, whose consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
@@ -355,7 +362,7 @@ def test_a_dreaming_run_that_proposes_commits_the_proposal_and_its_outcome_names
     assert recorded["Dreaming-Proposed"] == "1"
     assert (recorded["Dreaming-Applied"], recorded["Dreaming-Dismissed"]) == ("0", "0")
     assert "judged 1 candidates (0 applied, 1 proposed, 0 dismissed)" in capsys.readouterr().out
-    # The next nightly run commits over the proposal, and leaves it as it is.
+    # The next librarian run commits over the proposal, and leaves it as it is.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -380,7 +387,7 @@ def test_a_proposed_outcome_naming_a_proposal_that_isnt_in_the_file_fails_the_ru
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
     told = "c01 names P1, which isn't an open proposal in proposals.md"
     assert told in attempts[1]["prompt"]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert told in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -454,6 +461,10 @@ LINT_ERRORS = {
         proposals_file(proposal(text=padded(201))),
         f"{PROPOSALS}:4: P1's text is 201 characters, more than the 200 a proposal may have",
     ),
+    "a link shown under a name that takes it over 200 characters": (
+        proposals_file(proposal(text=padded(200).replace("[[dave]]", "[[dave|Davey]]"))),
+        f"{PROPOSALS}:4: P1's text is 201 characters, more than the 200 a proposal may have",
+    ),
     "a URL": (
         proposals_file(proposal(text=QUESTION + " See https://dave.example/rsvp")),
         f"{PROPOSALS}:4: P1's text holds a URL (https://dave.example/rsvp)",
@@ -465,6 +476,18 @@ LINT_ERRORS = {
     "a host and a path": (
         proposals_file(proposal(text=QUESTION + " See dave.example/rsvp")),
         f"{PROPOSALS}:4: P1's text holds a URL (dave.example/rsvp)",
+    ),
+    "a bare hostname": (
+        proposals_file(proposal(text=QUESTION + " See dave.example")),
+        f"{PROPOSALS}:4: P1's text holds a URL (dave.example)",
+    ),
+    "a hostname and a query": (
+        proposals_file(proposal(text=QUESTION + " See dave.example?rsvp=1")),
+        f"{PROPOSALS}:4: P1's text holds a URL (dave.example)",
+    ),
+    "an email address": (
+        proposals_file(proposal(text=QUESTION + " Write to rsvp@dave.example")),
+        f"{PROPOSALS}:4: P1's text holds a URL (rsvp@dave.example)",
     ),
     "a Markdown link": (
         proposals_file(proposal(text="Are [[dave]] and [David](dave) the same person?")),
@@ -486,6 +509,14 @@ LINT_ERRORS = {
     "another section": (
         proposals_file(proposal()) + "\n## Declined\n",
         f"{PROPOSALS}:3: wrong sections",
+    ),
+    "a title of its own": (
+        proposals_file(proposal()).replace("# Proposals\n", "# Answer at dave.example\n"),
+        f"{PROPOSALS}:1: its title is `# Proposals`, and nothing else",
+    ),
+    "a title that says more": (
+        proposals_file(proposal()).replace("# Proposals\n", "# Proposals, due Friday\n"),
+        f"{PROPOSALS}:1: its title is `# Proposals`, and nothing else",
     ),
     "text before the sections": (
         proposals_file(proposal()).replace("# Proposals\n", "# Proposals\nAnswer in chat.\n"),
@@ -561,7 +592,7 @@ def test_a_lint_error_left_in_the_proposals_after_two_resumes_discards_the_run(
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the dreaming session left 1 lint errors after 2 resumes" in error
     assert told in error
     assert len(sessions(data_root, "dreaming")) == 3
@@ -576,7 +607,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     for path, text in files.items():
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def test_every_proposal_a_run_adds_is_named_by_an_outcome(data_root: Path):
@@ -909,6 +940,55 @@ def test_the_cap_on_new_proposals_follows_the_configuration(
     assert wiki_files(data_root)[PROPOSALS] == proposals_file(*questions(1))
 
 
+NO_ROOM = {"candidate": "c02", "outcome": "dismissed", "no_room": True}
+"""The outcome of a candidate the session would have proposed, in a run with no room left."""
+
+
+def test_a_candidate_set_aside_for_lack_of_room_is_offered_again_by_the_next_run(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("PA_LIBRARIAN_NEW_PROPOSALS", "1")
+    # Two candidates the session would propose: the aging loop, then the duplicate.
+    run_with_pages(data_root, aging_loops(1))
+    script(data_root, dreaming=[proposing(*questions(1)), reporting(proposed(), NO_ROOM)])
+
+    assert dream() == 0
+
+    [started] = sessions(data_root, "dreaming")
+    assert 'with `"no_room": true`' in started["prompt"]
+    # It counts as dismissed, and its line says why.
+    message = commit_messages(data_root)[0]
+    assert fields(message)["Dreaming-Dismissed"] == "1"
+    [listed] = [line for line in message.splitlines() if line.startswith("- c02 ")]
+    assert listed.endswith(" · dismissed: no room")
+    # The next run is offered it again, and not the loop, whose proposal is still open.
+    script(data_root, dreaming=[reporting(DISMISSED)])
+    assert dream() == 0
+    [again] = sessions(data_root, "dreaming")[-1]["candidates"]
+    assert (again["id"], again["kind"]) == ("c01", "duplicate")
+    # Dismissed as not worth asking, it is held back like any dismissal.
+    assert dream() == 0
+    assert len(sessions(data_root, "dreaming")) == 2
+
+
+def test_a_dismissal_for_lack_of_room_is_refused_while_the_run_has_room(data_root: Path):
+    run_with_pages(data_root, aging_loops(1))
+    script(
+        data_root,
+        dreaming=[reporting(DISMISSED, NO_ROOM)],
+        dreaming_resume=[reporting(DISMISSED, {**NO_ROOM, "no_room": False})],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        "c02 is dismissed for lack of room, but this run may still add 5 proposals"
+        in resumed["prompt"]
+    )
+    assert "dismissed: no room" not in commit_messages(data_root)[0]
+
+
 ANSWERED_FIFTEENTH = ANSWERED_LINE.replace("P2 ·", "P15 ·")
 
 
@@ -975,7 +1055,7 @@ def test_a_cap_lowered_below_what_is_open_fails_no_run_that_adds_nothing(
     monkeypatch.setenv("PA_LIBRARIAN_OPEN_PROPOSALS", "2")
     script(data_root, dreaming=[reporting(DISMISSED)])
 
-    # The owner's answers reach the wiki through the nightly run, so it must still commit.
+    # The owner's answers reach the wiki through the librarian run, so it must still commit.
     assert dream() == 0
     ingest(
         data_root,
@@ -997,6 +1077,15 @@ WELL_FORMED = {
         proposal(text="Are [[dave|Dave]] and [[david-kim|David]] the same person?")
     ),
     "text of exactly 200 characters": proposals_file(proposal(text=padded(200))),
+    "200 characters as the owner reads them, behind a piped link": proposals_file(
+        proposal(text=padded(200).replace("[[david-kim]]", "[[david-kim|david-kim]]"))
+    ),
+    "prose with abbreviations and figures": proposals_file(
+        proposal(
+            text="Is [[dave]] (a.k.a. D.K., i.e. the best man) due at 9 a.m. on Oct. 9, e.g. "
+            "for the U.S. trip, at $1.5k vs. the 2.5 quoted? No..."
+        )
+    ),
     "several citations": proposals_file(proposal(cites=f"[ep:{HOTEL}] [ep:{HOTEL}]")),
     "no link at all": proposals_file(proposal(text="Who is the Dave that sent the room list?")),
     "answered proposals below it": proposals_file(
@@ -1109,6 +1198,34 @@ def test_after_a_merge_an_open_proposals_link_to_the_alias_goes_to_the_page(data
     )
 
 
+def test_a_proposal_at_the_length_cap_survives_the_merge_of_a_page_it_links(data_root: Path):
+    written = pages()
+    run_with_pages(data_root, written)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal(text=padded(200)))})
+    merged = written[DAVID].replace(
+        "## Notes\n", f"## Notes\nGoes by Dave, who sent the room list [ep:{HOTEL}].\n"
+    )
+    script(
+        data_root,
+        dreaming=[
+            {"write": DAVE, "text": ""},
+            {"write": DAVID, "text": merged},
+            reporting({"candidate": "c01", "outcome": "applied", "pages": [DAVE, DAVID]}),
+        ],
+    )
+
+    assert dream() == 0
+
+    # The host's rewrite made the line longer, and the proposal no longer: a link counts as
+    # the name it shows, which the rewrite keeps.
+    asked = padded(200).replace("[[dave]]", "[[david-kim|dave]]")
+    assert len(asked) > 200
+    assert wiki_files(data_root)[PROPOSALS] == proposals_file(proposal(text=asked))
+    # The next run still finds a wiki it can commit to.
+    script(data_root, dreaming=[reporting(DISMISSED)])
+    assert dream() == 0
+
+
 def index_opening(data_root: Path) -> list[str]:
     """The index's lines down to its first section."""
     lines = wiki_files(data_root)["index.md"].splitlines()
@@ -1144,7 +1261,7 @@ def test_the_index_counts_only_the_proposals_the_owner_hasnt_answered(data_root:
     )
     script(data_root)
 
-    # The host regenerates the index on a nightly run too.
+    # The host regenerates the index on a librarian run too.
     assert run_librarian() == 0
 
     assert index_opening(data_root) == ["# Index", "", "Open proposals: 0", ""]

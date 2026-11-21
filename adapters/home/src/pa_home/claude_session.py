@@ -13,7 +13,11 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path, PurePath
 
-from pa_core.librarian.run import Phase, SessionPaths, SessionResult
+from pa_core.librarian.session import (
+    Phase,
+    SessionPaths,
+    SessionResult,
+)
 from pa_home.claude_cli import (
     ClaudeCliError,
     ClaudeCliTimeoutError,

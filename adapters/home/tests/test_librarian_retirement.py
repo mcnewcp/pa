@@ -2,7 +2,7 @@
 
 Whole runs of `pa librarian dream` and `pa librarian run` over a temporary data root, through
 the stand-in `claude` (the conftest at the repository root says what it does and how it's
-scripted). Each test builds a wiki with a nightly run (`run_with_pages`), scripts the sessions'
+scripted). Each test builds a wiki with a librarian run (`run_with_pages`), scripts the sessions'
 writes and the outcomes a dreaming session reports, and asserts on the wiki, its git history,
 and what the sessions were given.
 
@@ -144,6 +144,13 @@ def dream() -> int:
     return main(["librarian", "dream"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -254,7 +261,7 @@ def listing(days: int = 11, message_id: str = "listing-0001@lakeview.example") -
 def run_with_pages(
     data_root: Path, written: dict[str, str] | None = None, links: dict[str, list[str]] = LINKS
 ) -> None:
-    """One nightly run over mail from David Kim, the owner's reply to him, and mail from Nina
+    """One librarian run over mail from David Kim, the owner's reply to him, and mail from Nina
     Park, whose observations link `links` and whose consolidation writes `written` (`pages()`
     unless given)."""
     ingest(
@@ -406,7 +413,7 @@ def test_an_emptied_page_that_no_outcome_names_as_retired_fails_the_run(data_roo
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -506,7 +513,7 @@ def test_a_page_with_an_open_loop_is_never_retired(data_root: Path, capsys):
     told = f"c01 retires `nina-park`, but {NINA} held an open loop that is now on no page: `{ASK}`"
     assert told in attempts[1]["prompt"]
     assert "A page with an open loop is never retired" in attempts[1]["prompt"]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert told in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -536,7 +543,7 @@ def test_a_page_whose_open_loop_moved_to_another_page_may_be_retired(data_root: 
 
 
 def gift() -> dict[str, bytes]:
-    """One more email from David Kim, sent yesterday, for the next nightly run to take."""
+    """One more email from David Kim, sent yesterday, for the next librarian run to take."""
     sent_yesterday = mailed(1, "08:00")
     return {
         "gmail/gift.eml": email(
@@ -567,7 +574,7 @@ def test_retired_md_is_the_hosts_and_a_session_that_writes_it_fails_the_run(
 
     assert run() != 0
 
-    assert f"the {phase} session changed retired.md, outside the pages" in capsys.readouterr().err
+    assert f"the {phase} session changed retired.md, outside the pages" in run_error(data_root)
     # Out of bounds, the session isn't resumed.
     assert "--resume" not in sessions(data_root)[-1]["argv"]
     assert tree_state(data_root / "wiki") == before
@@ -580,7 +587,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     for path, text in files.items():
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 SHIPPING = f"- shipping-updates · retired {days_ago(30)}"
@@ -627,7 +634,7 @@ def test_lint_checks_every_line_of_retired_md(data_root: Path, capsys, problem: 
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the wiki has 1 lint errors" in error
     assert finding in error
     # The host left the file for a person to put right.
@@ -654,7 +661,7 @@ def reference_counts(session: dict) -> dict[str, dict]:
     return {count["slug"]: count for count in session["inputs"][1]}
 
 
-def test_the_next_nightly_run_is_told_a_retired_slug_is_retired_and_not_at_the_threshold(
+def test_the_next_librarian_run_is_told_a_retired_slug_is_retired_and_not_at_the_threshold(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("PA_LIBRARIAN_PAGE_THRESHOLD", "2")
@@ -772,7 +779,7 @@ def test_a_link_to_a_retired_slug_lints_clean(data_root: Path):
     assert files[LAKEVIEW] == agency
     assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
     assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
-    # The next nightly run lints the same wiki, and commits.
+    # The next librarian run lints the same wiki, and commits.
     ingest(data_root, gift())
     script(data_root)
     assert run_librarian() == 0
@@ -815,7 +822,7 @@ def test_a_retirement_a_resumed_session_no_longer_reports_leaves_its_emptied_pag
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
@@ -833,7 +840,7 @@ def test_the_hosts_own_writes_to_retired_md_are_never_blamed_on_a_resumed_sessio
     assert dream() != 0
 
     assert len(sessions(data_root, "dreaming")) == 3
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "retired.md" not in error
 
@@ -956,7 +963,7 @@ def test_a_page_cant_take_the_name_of_a_file_at_the_wikis_top_level(
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert (
         f"topics/{name}.md: a page can't be named `{name}`: {name}.md is a file at the wiki's "
         f"top level, and [[{name}]] links it"

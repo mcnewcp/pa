@@ -11,7 +11,8 @@ the wiki.
 For each question:
 
 1. Start from `index.md`, which lists every page with a one-line summary, and read the pages
-   the question bears on.
+   the question bears on. It opens with how many proposals are open. When it says proposals
+   are open, read `proposals.md` too: one of them may bear on the question.
 2. Widen your searches of L0 with what those pages give you: every alias, email address and
    mail domain on them, beside the names in the question.
 3. Then open the episodes the pages cite and the ones your searches find, and answer from

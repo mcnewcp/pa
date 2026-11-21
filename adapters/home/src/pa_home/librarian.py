@@ -35,9 +35,11 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
+from pa_core.atomic import write_atomically
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
+from pa_core.librarian import dreaming
 from pa_core.librarian.dream_copy import (
     DreamCopyError,
     cut_source,
@@ -45,7 +47,7 @@ from pa_core.librarian.dream_copy import (
     run_copy_dreaming,
 )
 from pa_core.librarian.dreaming import (
-    OUTCOMES,
+    CandidateCounts,
     DreamingOutcome,
     last_dreaming_at,
     run_dreaming,
@@ -53,15 +55,17 @@ from pa_core.librarian.dreaming import (
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
-    LibrarianRunError,
-    Phase,
     RunOutcome,
-    SessionPaths,
-    SessionResult,
     WikiSeedError,
     last_cursor,
     run_librarian,
     seed_wiki,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+    Phase,
+    SessionPaths,
+    SessionResult,
 )
 from pa_core.librarian.version import librarian_version
 from pa_core.librarian.wiki import open_proposals
@@ -127,13 +131,14 @@ def run(
         failed = LibrarianRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record_run(data_root, repository, failed, now)
+        _record(data_root, repository, now, failed)
+        _keep_error(data_root.run_errors / RUN_ERROR, error, started)
         raise
     warnings = None if outcome.batch is None else len(outcome.warnings)
     succeeded = LibrarianRun(
         at=started, succeeded=True, cost_usd=_cost(outcome.sessions), warnings=warnings
     )
-    _record_run(data_root, repository, succeeded, now)
+    _record(data_root, repository, now, succeeded)
     return outcome
 
 
@@ -152,7 +157,7 @@ def dream(
     run's sessions run in, with the same model, effort, turn limit, and timeout.
 
     Whatever happens, the run is recorded in the status as the last dreaming run, in counts
-    and a failure's reason without content, beside the nightly run's own record. A run that
+    and a failure's reason without content, beside the librarian run's own record. A run that
     found nothing to judge is recorded too: the review happened. The caller holds the data
     root's lock, as for `run`.
     """
@@ -168,30 +173,47 @@ def dream(
                 runner=runner,
                 librarian=_librarian(config, files),
                 now=started.astimezone(time_zone),
-                page_threshold=config.page_threshold,
-                loop_age_days=config.loop_age_days,
-                stale_later_days=config.stale_later_days,
-                quiet_days=config.quiet_days,
-                candidate_cap=config.candidate_cap,
-                proposal_caps=config.proposal_caps,
+                settings=config.dreaming,
             )
     except Exception as error:
         sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
         failed = DreamingRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record(data_root, repository, now, last_dreaming=failed)
+        _record(data_root, repository, now, failed)
+        _keep_error(data_root.run_errors / DREAMING_ERROR, error, started)
         raise
     succeeded = DreamingRun(
         at=started,
         succeeded=True,
         cost_usd=_cost(outcome.sessions),
         candidates=len(outcome.candidates),
-        outcomes={name: outcome.count(name) for name in OUTCOMES},
+        outcomes=outcome.counts,
         held_back=outcome.held_back,
+        left_over=outcome.left_over,
     )
-    _record(data_root, repository, now, last_dreaming=succeeded)
+    _record(data_root, repository, now, succeeded)
     return outcome
+
+
+def count_candidates(
+    data_root: DataRoot,
+    *,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> CandidateCounts:
+    """Counts what a dreaming run at `now` would find in the data root's wiki, as `dream`
+    would flag it, without running a session, committing, or recording anything. The caller
+    holds the data root's lock, so no run is part way through the wiki."""
+    return dreaming.count_candidates(
+        store=FilesystemL0(data_root.l0),
+        owner=owner,
+        repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
+        now=now().astimezone(time_zone),
+        settings=config.dreaming,
+    )
 
 
 def dreaming_due(
@@ -290,12 +312,7 @@ def dream_copy(
                 librarian=_librarian(config, files),
                 run_log=layout.run_log,
                 source=source,
-                page_threshold=config.page_threshold,
-                loop_age_days=config.loop_age_days,
-                stale_later_days=config.stale_later_days,
-                quiet_days=config.quiet_days,
-                candidate_cap=config.candidate_cap,
-                proposal_caps=config.proposal_caps,
+                settings=config.dreaming,
             )
 
 
@@ -306,36 +323,27 @@ def record_run_not_made(
     held back or one with no configuration, with `reason`, which must hold no content."""
     at = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), now)
-
-
-def _record_run(
-    data_root: DataRoot,
-    repository: GitWikiRepository,
-    run: LibrarianRun,
-    now: Callable[[], datetime],
-) -> None:
-    """Writes `run` into the status as the wiki's last run."""
-    _record(data_root, repository, now, last_run=run)
+    _record(data_root, repository, now, LibrarianRun(at=at, succeeded=False, reason=reason))
 
 
 def _record(
     data_root: DataRoot,
     repository: GitWikiRepository,
     now: Callable[[], datetime],
-    **ran: LibrarianRun | DreamingRun,
+    run: LibrarianRun | DreamingRun,
 ) -> None:
-    """Writes into the status's part for the wiki the run that just ended (as `last_run` or
-    `last_dreaming`), with what the wiki as last committed says: the time it is current through
-    and how many proposals are open. Everything else there stands, so a nightly run keeps the
-    last dreaming run's record, and a dreaming run the nightly run's."""
+    """Writes into the status's part for the wiki the `run` that just ended (a librarian run
+    as its `last_run`, a dreaming run as its `last_dreaming`), with what the wiki as last
+    committed says: the time it is current through and how many proposals are open. Everything
+    else there stands, so a librarian run keeps the last dreaming run's record, and a dreaming
+    run the librarian run's."""
     cursor = last_cursor(repository)
     status = read_status(data_root.status)
     wiki = status.wiki.model_copy(
         update={
             "current_through": None if cursor is None else cursor.captured_at,
             "open_proposals": len(open_proposals(repository.tree)),
-            **ran,
+            "last_run" if isinstance(run, LibrarianRun) else "last_dreaming": run,
         }
     )
     write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=now())
@@ -347,6 +355,23 @@ def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
     if any(cost is None for cost in costs):
         return None
     return sum(cost for cost in costs if cost is not None)
+
+
+RUN_ERROR = "librarian-run.txt"
+"""The file, in the data root's `run_errors`, holding the last failed librarian run's error."""
+DREAMING_ERROR = "dreaming-run.txt"
+"""The same for the last failed dreaming run."""
+
+
+def _keep_error(file: Path, error: Exception, at: datetime) -> None:
+    """Keeps a failed run's whole `error` in `file`, readable by the owner alone, in place of
+    the last one kept there. A run's error quotes pages, lint findings, and what the session
+    said, so it is the owner's to read, under the data root: a command prints only where the
+    run failed (`run_failure_reason`). Any other error quotes none, and is printed whole."""
+    if not isinstance(error, LibrarianRunError):
+        return
+    file.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(file, f"{at.isoformat()}\n{error}\n".encode(), mode=0o600)
 
 
 def run_failure_reason(error: Exception) -> str:

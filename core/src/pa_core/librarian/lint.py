@@ -15,11 +15,12 @@ An error fails the run. The rules so far:
   named for a file at the wiki's top level (`index`, `proposals`, `retired`), which a link by
   that name goes to.
 - **Citations** name episodes that are in L0.
-- **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
-  nothing in them but well-formed proposal lines, open ones under Open and answered ones under
-  Answered. No two share an id; a proposal's text is short and holds no URL; every link of
-  an open proposal goes to a page, or to a retired slug; and an answered proposal's last
-  citation is one of the owner's chat exchanges, so nothing but the owner's word closes one.
+- **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, after
+  at most its title, `# Proposals`, and nothing in them but well-formed proposal lines, open
+  ones under Open and answered ones under Answered. No two share an id; a proposal's text is
+  short and holds no URL; every link of an open proposal goes to a page, or to a retired
+  slug; and an answered proposal's last citation is one of the owner's chat exchanges, so
+  nothing but the owner's word closes one.
 - **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once, after an
   optional title.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
@@ -39,8 +40,10 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
   it again (`retirement.py`).
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
-Each rule is a function over the wiki's files that yields findings; add a rule by writing one
-and listing it in `_RULES` (rules about the layout itself live in `_layout`).
+Each rule is a function over one of the wiki's files that yields findings; add a rule by
+writing one and listing it in `_RULES` (rules about the layout itself live in `_layout`). The
+proposals' rule and the identifiers' are called on their own, since each needs more than its
+file: the pages, the retired slugs, and the owner.
 """
 
 from __future__ import annotations
@@ -50,14 +53,14 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
-from enum import StrEnum
 from pathlib import Path
 
-from pa_core.envelope import Envelope, Kind
-from pa_core.librarian.engagement import engaged_days, engagers
+from pa_core.librarian.engagement import engaged_days
 from pa_core.librarian.identity import is_automated_mailbox
+from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.links import alias_targets
-from pa_core.librarian.retirement import standing
+from pa_core.librarian.metadata import L0Metadata
+from pa_core.librarian.retirement import still_retired
 from pa_core.librarian.wiki import (
     ANSWERED,
     DAYS,
@@ -76,6 +79,7 @@ from pa_core.librarian.wiki import (
     PROPOSAL_FORMAT,
     PROPOSAL_TEXT_LIMIT,
     PROPOSALS,
+    PROPOSALS_TITLE,
     RETIRED,
     RETIREMENT_FORMAT,
     ROOT_FILES,
@@ -101,19 +105,6 @@ from pa_core.librarian.wiki import (
 from pa_core.owner import Owner
 
 
-class WarningKind(StrEnum):
-    """What a warning is about. Dreaming judges each warning as a candidate of its kind
-    (`pa_core.librarian.candidates`)."""
-
-    ORPHAN = "orphan"
-    LOOP_PAST_DUE = "loop-past-due"
-    LOOP_AGING = "loop-aging"
-    """A loop open longer than the loop age, and not past due."""
-    DUPLICATE = "duplicate"
-    SLUG_WITHOUT_PAGE = "slug-without-page"
-    NEEDS_LOOKUP = "needs-lookup"
-
-
 @dataclass(frozen=True)
 class Finding:
     """One problem lint found, where it is in the wiki."""
@@ -123,8 +114,9 @@ class Finding:
     message: str
     line: int | None = None
     """The line, counting from 1, when the problem is on one."""
-    kind: WarningKind | None = None
-    """A warning's kind; an error has none."""
+    kind: CandidateKind | None = None
+    """A warning's kind, which is the kind of candidate dreaming judges it as
+    (`pa_core.librarian.candidates`); an error has none."""
     pages: tuple[str, ...] = ()
     """The pages a warning is about, relative to the wiki: both pages of a duplicate."""
     episodes: tuple[str, ...] = ()
@@ -147,52 +139,6 @@ class LintReport:
     engaged_days: Mapping[str, Sequence[date]] = field(default_factory=dict)
     """For each slug the owner has engaged with, the days that show it (`engaged_days` in
     `engagement.py`): what the warnings went by, for whoever tells a session the same."""
-
-
-@dataclass(frozen=True)
-class L0Metadata:
-    """What lint checks the wiki's evidence and identifiers against: L0's episodes and the
-    addresses of their participants, every episode included, even those never offered."""
-
-    episode_ids: frozenset[str]
-    addresses: frozenset[str]
-    """Every participant's address, in lowercase."""
-    engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    """For each episode that is someone's own doing, the addresses it's the doing of, in
-    lowercase (`engagers` in `engagement.py`): what engagement is read from."""
-    chats: frozenset[str] = frozenset()
-    """The episodes that are chat exchanges with the assistant."""
-
-    @classmethod
-    def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
-        ids: set[str] = set()
-        addresses: set[str] = set()
-        doers: dict[str, frozenset[str]] = {}
-        chats: set[str] = set()
-        for envelope in envelopes:
-            ids.add(envelope.episode_id)
-            addresses.update(
-                p.identifier.strip().lower() for p in envelope.participants if "@" in p.identifier
-            )
-            if who := engagers(envelope):
-                doers[envelope.episode_id] = who
-            if envelope.kind is Kind.CHAT:
-                chats.add(envelope.episode_id)
-        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(chats))
-
-    def owner_chats(self, owner: Owner) -> frozenset[str]:
-        """The chat exchanges `owner` took part in: where the owner's own word is."""
-        mine = {address.strip().lower() for address in owner.email_addresses}
-        return frozenset(
-            episode
-            for episode in self.chats
-            if not self.engagers.get(episode, frozenset()).isdisjoint(mine)
-        )
-
-    @property
-    def domains(self) -> frozenset[str]:
-        """The mail domain of every address, as seen (subdomains included)."""
-        return frozenset(a.rpartition("@")[2] for a in self.addresses)
 
 
 @dataclass(frozen=True)
@@ -248,7 +194,6 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         for rule in _RULES:
             errors.extend(rule(file, l0))
     errors.extend(_proposals(files, tree, l0, owner))
-    errors.extend(_retired(files))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
     engaged = engaged_days(tree, l0, owner)
@@ -257,7 +202,7 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
         *_aging_loops(found, thresholds),
         *_duplicate_candidates(found),
         *_slugs_without_pages(
-            tree, found, thresholds, engaged, standing(read_retired(tree), engaged)
+            tree, found, thresholds, engaged, still_retired(read_retired(tree), engaged)
         ),
         *_needs_lookup(files),
     ]
@@ -453,7 +398,7 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterato
     """A page's addresses and domains are in L0's metadata, none is on two pages, none of
     its addresses is the owner's, and a person's aren't all automated mailboxes."""
     known = {PERSON: l0.addresses, ORGANIZATION: l0.domains}
-    owners = {address.strip().lower() for address in owner.email_addresses}
+    owners = owner.addresses
     listed: dict[tuple[str, str], str] = {}
     """The page listing each identifier first, by its field and its lowercase form."""
     for page in pages:
@@ -502,19 +447,26 @@ _URL = re.compile(
     r"|\bwww\.\S+"
     r"|\bmailto:\S+"
     r"|\]\(\S*"  # a Markdown link's target
-    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/\S+",  # a host and a path
+    r"|[^\s@]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"  # an email address
+    # A bare hostname, with its path if it has one: a dotted name ending in letters.
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b(?:/\S*)?",
     re.IGNORECASE,
 )
-"""A web address, or anything a reader's app would turn into one."""
+"""A web address, or anything a reader's app would turn into one: a chat client on a phone
+links a bare hostname and an email address. A slug holds no dot, so no link to a page is one.
+An abbreviation (`e.g.`, `a.m.`, `U.S.`) and a figure (`2.5`) aren't either: a hostname's last
+part is two letters or more. Prose that leaves out the space after a full stop is taken for
+one, which costs its session a resume."""
 
 
 def _proposals(
     files: Sequence[WikiFile], tree: Path, l0: L0Metadata, owner: Owner
 ) -> Iterator[Finding]:
-    """`proposals.md` follows its schema: the two sections, in order, with only a `# <title>`
-    before them, and in them only proposal lines, each in its section, with its own id, short
-    plain text, and, while it's open, links that go to pages. An answered one cites one of
-    `owner`'s chat exchanges last: only the owner's word closes a proposal.
+    """`proposals.md` follows its schema, every line of it: the two sections, in order, with
+    only its fixed title before them, and in them only proposal lines, each in its section,
+    with its own id, short plain text, and, while it's open, links that go to pages. An
+    answered one cites one of `owner`'s chat exchanges last: only the owner's word closes a
+    proposal.
 
     A proposal reaches the owner in the librarian's voice, so its text can't carry a link or a
     paragraph of someone else's. A link goes to a page when its slug is a page's, or an alias
@@ -529,7 +481,7 @@ def _proposals(
     resolvable = {page.slug for page in pages(tree)} | alias_targets(tree).keys()
     # A retired slug's link stays good: the proposal may be what brings its page back.
     resolvable |= read_retired(tree).keys()
-    owners_word = l0.owner_chats(owner)
+    owners_word = l0.owner_exchanges(owner)
     expected = (OPEN, ANSWERED)
     headings: list[tuple[int, str]] = []
     titled = False
@@ -545,8 +497,15 @@ def _proposals(
             if titled or not line.startswith("# "):
                 yield Finding(
                     PROPOSALS,
-                    "text before its first section: only a `# <title>` line may come before "
-                    f"the sections, got {line!r}",
+                    f"text before its first section: only its title, `{PROPOSALS_TITLE}`, may "
+                    f"come before the sections, got {line!r}",
+                    number,
+                )
+            elif line.rstrip() != PROPOSALS_TITLE:
+                # The owner reads the file whole, so no line of it is free text.
+                yield Finding(
+                    PROPOSALS,
+                    f"its title is `{PROPOSALS_TITLE}`, and nothing else, got {line!r}",
                     number,
                 )
             titled = True
@@ -575,10 +534,10 @@ def _proposals(
                 number,
             )
         first.setdefault(name, number)
-        if len(proposal.text) > PROPOSAL_TEXT_LIMIT:
+        if proposal.length > PROPOSAL_TEXT_LIMIT:
             yield Finding(
                 PROPOSALS,
-                f"{name}'s text is {len(proposal.text)} characters, more than the "
+                f"{name}'s text is {proposal.length} characters, more than the "
                 f"{PROPOSAL_TEXT_LIMIT} a proposal may have: ask one short question",
                 number,
             )
@@ -616,15 +575,16 @@ def _proposals(
         )
 
 
-def _retired(files: Sequence[WikiFile]) -> Iterator[Finding]:
+def _retired(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     """`retired.md` holds only retirement lines, each slug once, after an optional
     `# <title>` line. The host writes it (`retirement.py`), so this fails only a file someone
     else changed."""
-    file = next((file for file in files if file.path == RETIRED), None)
+    if file.path != RETIRED:
+        return
     first: dict[str, int] = {}
     """The line each slug is first listed on."""
     titled = False
-    for number, line in enumerate(file.lines if file else (), start=1):
+    for number, line in enumerate(file.lines, start=1):
         if not line.strip():
             continue
         if line.startswith("# ") and not titled and not first:
@@ -665,7 +625,7 @@ def _orphans(files: Sequence[WikiFile], pages: Sequence[Page]) -> Iterator[Findi
             yield Finding(
                 page.path,
                 f"an orphan page: nothing in the wiki links [[{page.slug}]]",
-                kind=WarningKind.ORPHAN,
+                kind=CandidateKind.ORPHAN,
                 pages=(page.path,),
             )
 
@@ -685,7 +645,7 @@ def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Find
                     page.path,
                     f"a loop past due: due {loop.due}, {late} days ago",
                     number,
-                    kind=WarningKind.LOOP_PAST_DUE,
+                    kind=CandidateKind.LOOP_PAST_DUE,
                     pages=(page.path,),
                     episodes=loop.citations,
                 )
@@ -695,7 +655,7 @@ def _aging_loops(pages: Sequence[Page], thresholds: Thresholds) -> Iterator[Find
                     f"a loop open {age} days, more than {thresholds.loop_age_days}: is it "
                     "settled, or still owed?",
                     number,
-                    kind=WarningKind.LOOP_AGING,
+                    kind=CandidateKind.LOOP_AGING,
                     pages=(page.path,),
                     episodes=loop.citations,
                 )
@@ -713,7 +673,7 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: it shares the alias {alias} with {first}",
-                    kind=WarningKind.DUPLICATE,
+                    kind=CandidateKind.DUPLICATE,
                     pages=(page.path, first),
                 )
     by_slug = {page.slug: page for page in pages}
@@ -725,7 +685,7 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: its alias {alias} is the slug of {named.path}",
-                    kind=WarningKind.DUPLICATE,
+                    kind=CandidateKind.DUPLICATE,
                     pages=(page.path, named.path),
                 )
                 continue
@@ -734,7 +694,7 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: its alias {alias} is the name of {named.path}",
-                    kind=WarningKind.DUPLICATE,
+                    kind=CandidateKind.DUPLICATE,
                     pages=(page.path, named.path),
                 )
     for index, page in enumerate(pages):
@@ -743,7 +703,7 @@ def _duplicate_candidates(pages: Sequence[Page]) -> Iterator[Finding]:
                 yield Finding(
                     page.path,
                     f"a duplicate candidate: its slug is nearly {other.path}'s",
-                    kind=WarningKind.DUPLICATE,
+                    kind=CandidateKind.DUPLICATE,
                     pages=(page.path, other.path),
                 )
 
@@ -791,7 +751,7 @@ def _slugs_without_pages(
                 f"{DAYS}/{days[-1].isoformat()}.md",
                 f"`{slug}` is linked on {len(days)} days, reaching the page threshold of "
                 f"{thresholds.page_threshold}, but has no page",
-                kind=WarningKind.SLUG_WITHOUT_PAGE,
+                kind=CandidateKind.SLUG_WITHOUT_PAGE,
                 slug=slug,
             )
 
@@ -807,7 +767,7 @@ def _needs_lookup(files: Sequence[WikiFile]) -> Iterator[Finding]:
                     file.path,
                     f"needs lookup: {match['question']}",
                     number,
-                    kind=WarningKind.NEEDS_LOOKUP,
+                    kind=CandidateKind.NEEDS_LOOKUP,
                     pages=() if file.is_day_log else (file.path,),
                 )
 
@@ -820,4 +780,4 @@ def _is_date(text: str) -> bool:
     return len(text) == 10
 
 
-_RULES: tuple[Rule, ...] = (_observations, _pages, _cited_episodes_exist)
+_RULES: tuple[Rule, ...] = (_observations, _pages, _cited_episodes_exist, _retired)

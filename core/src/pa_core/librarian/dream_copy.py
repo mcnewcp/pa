@@ -22,37 +22,37 @@ is appended to the copy's run log (`pa_core.librarian.replay.DreamingLogEntry`).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, tzinfo
+from datetime import datetime, tzinfo
 from pathlib import Path
 
 from pa_core.errors import PaError
 from pa_core.l0 import L0Store
-from pa_core.librarian.candidates import CANDIDATE_CAP
 from pa_core.librarian.dreaming import (
-    OUTCOMES,
-    PROPOSAL_CAPS,
+    DREAMING_SETTINGS,
     DreamingOutcome,
-    ProposalCaps,
+    DreamingSettings,
     run_dreaming,
 )
-from pa_core.librarian.lint import QUIET_DAYS, STALE_LATER_DAYS
 from pa_core.librarian.replay import (
     DreamingLogEntry,
     RunHistory,
-    RunLogSession,
     append_to_run_log,
+    logged_sessions,
+    run_cost,
     run_history,
 )
 from pa_core.librarian.run import (
     CURSOR_FIELD,
-    LOOP_AGE_DAYS,
-    PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
+    WikiRepository,
+    standing_runs,
+)
+from pa_core.librarian.session import (
     LibrarianRunError,
     SessionRunner,
-    WikiRepository,
-    last_run_fields,
+    fields_paragraph,
+    utc,
 )
 from pa_core.owner import Owner
 
@@ -87,7 +87,7 @@ def replayed_source(run_log: Path) -> CopySource:
         )
     last = history.replays[-1]
     source = CopySource(as_of=last.occurred_to, librarian_version=last.librarian_version)
-    _require_dreamed_as_of(history, source, run_log)
+    _require_dreamed_as(history, source, run_log)
     return source
 
 
@@ -110,20 +110,28 @@ def cut_source(
                 f"{run_log} has a replay's runs: it is the run log of a copy of a replay "
                 "target, not of a cut's wiki"
             )
-        _require_dreamed_as_of(history, source, run_log)
+        _require_dreamed_as(history, source, run_log)
     return source
 
 
-def _require_dreamed_as_of(history: RunHistory, source: CopySource, run_log: Path) -> None:
-    """Refuses a copy whose earlier dreaming runs were told another time than `source`'s
-    as-of time: one wiki is dreamed as of one time."""
-    for entry in history.dreams:
-        if entry.as_of != source.as_of:
-            raise DreamCopyError(
-                f"{run_log} has a dreaming run as of {entry.as_of.astimezone(UTC).isoformat()}, "
-                f"and this one would be as of {source.as_of.astimezone(UTC).isoformat()}: the "
-                "copy is of another wiki than the one it's being dreamed as"
-            )
+def _require_dreamed_as(history: RunHistory, source: CopySource, run_log: Path) -> None:
+    """Refuses a copy whose earlier dreaming runs weren't of `source`'s wiki
+    (`RunHistory.dreamed_otherwise`): one wiki is dreamed as of one time."""
+    other = history.dreamed_otherwise(
+        as_of=source.as_of, librarian_version=source.librarian_version
+    )
+    if other is None:
+        return
+    not_this = "the copy is of another wiki than the one it's being dreamed as"
+    if other.as_of != source.as_of:
+        raise DreamCopyError(
+            f"{run_log} has a dreaming run as of {utc(other.as_of)}, "
+            f"and this one would be as of {utc(source.as_of)}: {not_this}"
+        )
+    raise DreamCopyError(
+        f"{run_log} has a dreaming run of a wiki built by librarian version "
+        f"{other.librarian_version}, not {source.librarian_version}: {not_this}"
+    )
 
 
 COPY_AS_OF_FIELD = "Copy-As-Of"
@@ -140,18 +148,13 @@ def run_copy_dreaming(
     librarian: Librarian,
     run_log: Path,
     source: CopySource,
-    page_threshold: int = PAGE_THRESHOLD,
-    loop_age_days: int = LOOP_AGE_DAYS,
-    stale_later_days: int = STALE_LATER_DAYS,
-    quiet_days: int = QUIET_DAYS,
-    proposal_caps: ProposalCaps = PROPOSAL_CAPS,
-    candidate_cap: int = CANDIDATE_CAP,
+    settings: DreamingSettings = DREAMING_SETTINGS,
 ) -> DreamingOutcome:
     """Runs dreaming once over the copy in `repository`, a copy of `source`, at its as-of
     time in `time_zone`, and appends the run to `run_log`.
 
-    `store` is the L0 the copy's wiki was built over. The thresholds and caps are a dreaming
-    run's, and so is its memory: the copy's own earlier dreaming runs, all as of the same
+    `store` is the L0 the copy's wiki was built over. The `settings` are a dreaming run's,
+    and so is its memory: the copy's own earlier dreaming runs, all as of the same
     time, so what one dismissed is held back from the next, and what the cap left over is
     offered. With no candidates it logs nothing. Raises LibrarianRunError when the run fails,
     after logging it; the copy is then as last committed.
@@ -165,12 +168,7 @@ def run_copy_dreaming(
             runner=runner,
             librarian=librarian,
             now=source.as_of.astimezone(time_zone),
-            page_threshold=page_threshold,
-            loop_age_days=loop_age_days,
-            stale_later_days=stale_later_days,
-            quiet_days=quiet_days,
-            proposal_caps=proposal_caps,
-            candidate_cap=candidate_cap,
+            settings=settings,
         )
     except LibrarianRunError as error:
         append_to_run_log(run_log, _entry(source, librarian, error=error))
@@ -183,14 +181,14 @@ def run_copy_dreaming(
 def _start(repository: WikiRepository, source: CopySource) -> None:
     """Commits the copy's tree as it is, unless its history already says where it's from: a
     dreaming run starts by restoring the last commit, which must hold the copy."""
-    if last_run_fields(repository):
+    if standing_runs(repository):
         return
     fields = [
         (CURSOR_FIELD, source.cursor),
         (VERSION_FIELD, source.librarian_version),
-        (COPY_AS_OF_FIELD, source.as_of.astimezone(UTC).isoformat()),
+        (COPY_AS_OF_FIELD, utc(source.as_of)),
     ]
-    listed = "\n".join(f"{key}: {value}" for key, value in fields if value is not None)
+    listed = fields_paragraph((key, value) for key, value in fields if value is not None)
     repository.commit(f"Start the copy to dream\n\n{listed}\n")
 
 
@@ -204,13 +202,6 @@ def _entry(
     """The run log's entry for a dreaming run of a copy of `source`: committed with `outcome`,
     or failed with `error`."""
     sessions = outcome.sessions if outcome else error.sessions if error else ()
-    costs = [result.cost_usd for _, result in sessions]
-    known = [cost for cost in costs if cost is not None]
-    if outcome is not None:
-        cost = None if None in costs else round(sum(known), 6)
-    else:
-        # What a failed run cost is what its sessions reported, never a made-up zero.
-        cost = round(sum(known), 6) if known else None
     return DreamingLogEntry(
         run="dreaming",
         status="committed" if outcome else "failed",
@@ -220,19 +211,10 @@ def _entry(
         dreaming_version=librarian.version,
         model=librarian.model,
         effort=librarian.effort,
-        sessions=tuple(
-            RunLogSession(
-                phase=phase,
-                session_id=result.session_id,
-                cost_usd=result.cost_usd,
-                turns=result.turns,
-                resumes=result.resumes,
-            )
-            for phase, result in sessions
-        ),
-        cost_usd=cost,
+        sessions=logged_sessions(sessions),
+        cost_usd=run_cost(sessions, committed=outcome is not None),
         candidates=len(outcome.candidates) if outcome else None,
-        outcomes={name: outcome.count(name) for name in OUTCOMES} if outcome else None,
+        outcomes=outcome.counts if outcome else None,
         lint_warnings=len(outcome.warnings) if outcome else None,
         error=str(error) if error else None,
     )

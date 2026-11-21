@@ -1,5 +1,5 @@
 """The proposal-answer fixture (spec #140, stories 40 to 43, 49 to 52, and 90): the owner asks
-what the PA needs, answers a proposal in chat, and the next nightly run applies the answer.
+what the PA needs, answers a proposal in chat, and the next librarian run applies the answer.
 
 It is a data root with a starting wiki and one stage of payloads, in
 `fixtures/proposal-answer/`:
@@ -40,7 +40,8 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.batch import production_batch
-from pa_core.librarian.lint import L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.run import RunOutcome, last_cursor
 from pa_core.librarian.wiki import (
     PROPOSALS,
@@ -238,7 +239,7 @@ def test_the_run_after_the_owners_exchanges_takes_exactly_them(tmp_path: Path):
     assert [e.owner_turns for e in batch.episodes] == [(ASKING,), (ANSWERING,)]
     assert {e.day for e in batch.episodes} == {date(2026, 11, 14)}
     # Both are the owner's chat exchanges, which is what lint lets answer a proposal.
-    assert _l0(tmp_path).owner_chats(OWNER) == {ids["asked"], ids["answered"]}
+    assert _l0(tmp_path).owner_exchanges(OWNER) == {ids["asked"], ids["answered"]}
 
 
 def test_the_checks_find_everything_the_answer_must_do_missing_from_the_starting_wiki(

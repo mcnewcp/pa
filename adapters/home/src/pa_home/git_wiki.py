@@ -52,9 +52,6 @@ class GitWikiRepository:
     def tree(self) -> Path:
         return self._tree
 
-    def last_commit_message(self) -> str | None:
-        return self._git("log", "-1", "--format=%B")
-
     def commits(self) -> tuple[Commit, ...]:
         # Git ends each commit with a NUL, which no message can hold.
         logged = self._git("log", "-z", "--format=%H%n%B")

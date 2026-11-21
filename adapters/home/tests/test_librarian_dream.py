@@ -1,7 +1,7 @@
 """`pa librarian dream`: whole dreaming runs over a temporary data root, through the stand-in
 `claude` (the conftest at the repository root says what it does and how it's scripted).
 
-Each test builds a wiki with a nightly run (`run_with_pages`), scripts the dreaming session's
+Each test builds a wiki with a librarian run (`run_with_pages`), scripts the dreaming session's
 edits and the outcomes its final message reports, and runs the command. The tests assert on the
 wiki, its git history, and what the session was given: the stand-in records the candidates
 listed under the prompt's `## Candidates` heading as `candidates`.
@@ -20,8 +20,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pa_core.librarian.candidates import CandidateKind
 from pa_core.librarian.dreaming import OUTCOMES, Applied, Dismissed, Outcomes, Proposed
+from pa_core.librarian.kinds import CandidateKind
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.cut import take_cut
@@ -126,6 +126,13 @@ def run_librarian() -> int:
 
 def dream() -> int:
     return main(["librarian", "dream"])
+
+
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
 
 
 def git(data_root: Path, *args: str) -> str:
@@ -239,7 +246,7 @@ def linked(day: str, *slugs: str) -> dict:
 def run_with_pages(
     data_root: Path, pages: dict[str, str] | None = None, logged: Sequence[dict] = ()
 ) -> str:
-    """One nightly run over the hotel email and a later one sending the room list, whose
+    """One librarian run over the hotel email and a later one sending the room list, whose
     observation also logs `logged` (`linked` actions) and whose consolidation writes `pages`
     (the wedding pages unless given). Returns the later email's episode id."""
     ingest(
@@ -328,7 +335,7 @@ def test_a_dreaming_commit_carries_the_cursor_and_version_forward(data_root: Pat
     assert cut.manifest.wiki.commit == git(data_root, "rev-parse", "HEAD").strip()
     assert cut.manifest.wiki.librarian_version == last_run["Librarian-Version"]
     assert cut.manifest.wiki.cursor == last_run["Cursor"]
-    # The next nightly run offers only what was captured since.
+    # The next librarian run offers only what was captured since.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -719,7 +726,7 @@ def test_outcomes_still_invalid_after_two_resumes_fail_the_run_and_leave_the_wik
 
     attempts = sessions(data_root, "dreaming")
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "after 2 resumes" in error
     assert tree_state(data_root / "wiki") == before
@@ -790,13 +797,20 @@ def test_a_failed_dreaming_run_leaves_the_wiki_at_its_last_commit(
 
     assert dream() != 0
 
-    error = capsys.readouterr().err
+    # The command says where the run failed, and nothing a page or the session said: the
+    # whole error is kept under the data root, for the owner.
+    kept = data_root / "run-errors" / "dreaming-run.txt"
+    assert capsys.readouterr().err == (
+        f"pa: the run failed in its dreaming session and was discarded; its error is in {kept}\n"
+    )
+    error = run_error(data_root)
     assert reason in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert kept.stat().st_mode & 0o777 == 0o600
     assert len(sessions(data_root, "dreaming")) == attempts
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
-    # The next nightly run carries on from the same cursor.
+    # The next librarian run carries on from the same cursor.
     ingest(
         data_root,
         {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
@@ -913,11 +927,11 @@ def test_an_emptied_page_no_merge_explains_fails_the_dreaming_run(data_root: Pat
 
     assert dream() != 0
 
-    assert f"{TOPIC}:1: bad frontmatter" in capsys.readouterr().err
+    assert f"{TOPIC}:1: bad frontmatter" in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
 
 
-def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
+def test_the_dreaming_session_gets_the_librarian_sessions_tools_and_settings(
     data_root: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("PA_LIBRARIAN_MAX_TURNS", "40")
@@ -938,8 +952,8 @@ def test_the_dreaming_session_gets_the_nightly_sessions_tools_and_settings(
         str(data_root / "wiki"),
     ]
     assert Path(flag(argv, "--settings")).is_relative_to(session["cwd"])
-    # Everything a nightly session is started with, but its own prompt, rendered project, and
-    # "now".
+    # Everything a librarian run's session is started with, but its own prompt, rendered
+    # project, and "now".
     assert session["settings"] == nightly["settings"]
     assert session["claude_md"] == nightly["claude_md"]
     assert "\n## Dreaming\n" in session["claude_md"] and "Argus McNevans" in session["claude_md"]

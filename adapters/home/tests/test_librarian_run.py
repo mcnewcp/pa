@@ -130,6 +130,13 @@ def run_librarian() -> int:
     return main(["librarian", "run"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -376,7 +383,14 @@ def test_a_failed_run_leaves_the_wiki_as_last_committed_and_the_cursor_where_it_
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    # The command says where the run failed, and nothing a page or the session said: the
+    # whole error is kept under the data root, for the owner.
+    kept = data_root / "run-errors" / "librarian-run.txt"
+    assert capsys.readouterr().err == (
+        f"pa: the run failed in its observation session and was discarded; its error is in {kept}\n"
+    )
+    assert reason in run_error(data_root)
+    assert kept.stat().st_mode & 0o777 == 0o600
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     # The episode is still new for the next run.
@@ -1065,7 +1079,7 @@ def test_a_consolidation_out_of_bounds_or_failing_lint_fails_the_run(
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    assert reason in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     # The episode is still new for the next run.
@@ -1420,9 +1434,9 @@ def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
     # The first run's two sessions, then this run's: no third resume.
     assert len(sessions(data_root)) == 2 + (3 if phase == "observation" else 4)
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "lint errors after 2 resumes" in error
-    assert worse.get("append", worse.get("write")) in error
+    assert str(worse.get("append", worse.get("write"))) in error
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     script(data_root)
@@ -1718,7 +1732,7 @@ def test_an_emptied_file_no_merge_explains_is_left_for_lint_and_fails_the_run(
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    assert reason in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
 
@@ -1738,7 +1752,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     for path, text in files.items():
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 NEW_EPISODES = {
@@ -1819,7 +1833,7 @@ def test_a_run_failing_only_on_errors_already_committed_says_so(
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "all of them already in the wiki's last commit" in error
     assert next(iter(files)) in error
     # Observation is never resumed over them; consolidation only over the pages it can fix.
@@ -1837,7 +1851,7 @@ def test_a_run_failing_on_its_own_errors_doesnt_blame_the_last_commit(data_root:
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "malformed decision" in error
     assert "already in the wiki's last commit" not in error
 
@@ -2750,7 +2764,7 @@ def test_a_person_page_whose_only_addresses_are_automated_mailboxes_fails_the_ru
 
     if fails:
         assert code != 0
-        error = capsys.readouterr().err
+        error = run_error(data_root)
         assert f"{PERSON}:1: `emails` lists only automated mailboxes ({listed})" in error
         assert "never gets a person page" in error
         assert wiki_files(data_root) == {}

@@ -60,7 +60,7 @@ cut's wiki holds dreaming runs alone.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
@@ -78,13 +78,16 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
+    RunOutcome,
+    WikiRepository,
+    last_standing_fields,
+    run_librarian,
+)
+from pa_core.librarian.session import (
     LibrarianRunError,
     Phase,
-    RunOutcome,
+    SessionResult,
     SessionRunner,
-    WikiRepository,
-    last_run_fields,
-    run_librarian,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
 from pa_core.owner import Owner
@@ -225,6 +228,17 @@ class RunHistory:
         committed, so the wiki is as the replay (or the cut) left it."""
         committed = [entry for entry in self.dreams if entry.status == "committed"]
         return committed[-1].dreaming_version if committed else None
+
+    def dreamed_otherwise(
+        self, *, as_of: datetime, librarian_version: str | None
+    ) -> DreamingLogEntry | None:
+        """The first dreaming run that isn't of the wiki told `as_of` as now and built by
+        `librarian_version`, or None when every one is. One wiki is dreamed as of one time,
+        so a log with such a run is another wiki's."""
+        for entry in self.dreams:
+            if entry.as_of != as_of or entry.librarian_version != librarian_version:
+                return entry
+        return None
 
 
 def run_history(path: Path) -> RunHistory:
@@ -377,8 +391,9 @@ def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
 
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
-    """Where the last committed replay run's window ended, or None in a fresh wiki."""
-    fields = last_run_fields(repository)
+    """Where the last committed replay run's window ended, or None in a fresh wiki. The
+    wiki's last run must be a replay's: a wiki that was dreamed since isn't replayed on."""
+    fields = last_standing_fields(repository)
     if OCCURRED_TO_FIELD not in fields:
         if fields:
             raise ReplayError(
@@ -448,13 +463,6 @@ def _entry(
     `error`."""
     assert batch.window is not None
     sessions = outcome.sessions if outcome else error.sessions if error else ()
-    costs = [result.cost_usd for _, result in sessions]
-    known = [cost for cost in costs if cost is not None]
-    if outcome is not None:
-        cost = None if None in costs else round(sum(known), 6)
-    else:
-        # What a failed run cost is what its sessions reported, never a made-up zero.
-        cost = round(sum(known), 6) if known else None
     return RunLogEntry(
         status="committed" if outcome else "failed",
         commit=outcome.commit if outcome else None,
@@ -466,20 +474,39 @@ def _entry(
         librarian_version=librarian.version,
         model=librarian.model,
         effort=librarian.effort,
-        sessions=tuple(
-            RunLogSession(
-                phase=phase,
-                session_id=result.session_id,
-                cost_usd=result.cost_usd,
-                turns=result.turns,
-                resumes=result.resumes,
-            )
-            for phase, result in sessions
-        ),
-        cost_usd=cost,
+        sessions=logged_sessions(sessions),
+        cost_usd=run_cost(sessions, committed=outcome is not None),
         lint_warnings=len(outcome.warnings) if outcome else None,
         error=str(error) if error else None,
     )
+
+
+def logged_sessions(
+    sessions: Sequence[tuple[Phase, SessionResult]],
+) -> tuple[RunLogSession, ...]:
+    """A run's `sessions` as a run log entry lists them, in order."""
+    return tuple(
+        RunLogSession(
+            phase=phase,
+            session_id=result.session_id,
+            cost_usd=result.cost_usd,
+            turns=result.turns,
+            resumes=result.resumes,
+        )
+        for phase, result in sessions
+    )
+
+
+def run_cost(sessions: Sequence[tuple[Phase, SessionResult]], *, committed: bool) -> float | None:
+    """What a run log entry says a run of `sessions` cost: a `committed` run's total, or None
+    if a session didn't report its cost; a failed run's total of the costs that were reported,
+    or None if none was. What a failed run cost is what its sessions reported, never a made-up
+    zero."""
+    costs = [result.cost_usd for _, result in sessions]
+    known = [cost for cost in costs if cost is not None]
+    if committed:
+        return None if None in costs else round(sum(known), 6)
+    return round(sum(known), 6) if known else None
 
 
 def append_to_run_log(run_log: Path, entry: RunLogEntry | DreamingLogEntry) -> None:

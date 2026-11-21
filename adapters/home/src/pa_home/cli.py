@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -13,9 +13,14 @@ from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
-from pa_core.librarian.dreaming import OUTCOMES, DreamingOutcome
+from pa_core.librarian.dreaming import DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
-from pa_core.librarian.run import LibrarianRunError, RunOutcome
+from pa_core.librarian.run import (
+    RunOutcome,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+)
 from pa_core.renormalize import renormalize
 from pa_core.status import DreamingRun, Failure, read_status
 from pa_home import librarian
@@ -29,8 +34,10 @@ from pa_home.collectors.calendar_server import CalDavServer, CalendarServer
 from pa_home.collectors.gmail import GmailClient, GmailCollector, count_by_category
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
+    DREAMING_INTERVAL_DAYS,
     GMAIL_CLIENT_VAR,
     GMAIL_TOKEN_VAR,
+    LIBRARIAN_DREAMING_INTERVAL_VAR,
     CaptureConfig,
     ConfigError,
     DataRoot,
@@ -154,7 +161,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
         "reconciliation, then the librarian run, then a dreaming run when one is due "
-        "(every PA_LIBRARIAN_DREAMING_INTERVAL_DAYS days, 7 unless set; 0 for never), then the "
+        f"(every {LIBRARIAN_DREAMING_INTERVAL_VAR} days, {DREAMING_INTERVAL_DAYS} unless set; "
+        "0 for never), then the "
         "backup, each recorded in the status. A step that fails doesn't stop the next. Skips "
         "if another job holds the lock.",
     )
@@ -259,6 +267,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"a replay target's wiki/ and {RUN_LOG} (an eval wiki), with --corpus, or a copy of a "
         "cut's wiki as wiki/, with --cut. Its git directory (wiki.git/) is made beside it "
         f"and kept, and the run is appended to its {RUN_LOG}.",
+    )
+    dream.add_argument(
+        "--count",
+        action="store_true",
+        help="Run nothing: count what a run over the data root's wiki would find now. Prints "
+        "counts only: the candidates flagged, by kind; how many a run would be offered, how "
+        "many are held back, and how many are over the cap; and the unengaged people and "
+        "organization pages with no open loop.",
     )
     dream.add_argument(
         "--cut",
@@ -373,6 +389,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             and args.librarian_command == "dream"
             and (args.target or args.corpus or args.cut)
         ):
+            if args.count:
+                raise PaError(
+                    "--count counts the data root's wiki: give it without a TARGET, --corpus, "
+                    "or --cut"
+                )
             # Before the data root is loaded: a copy over a corpus needs none.
             _dream_copy(args.target, args.corpus, args.cut)
             return 0
@@ -416,7 +437,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             with data_root_lock(data_root):
                 _seed(data_root, args.eval_wiki, args.captured_through)
         elif args.command == "librarian" and args.librarian_command == "dream":
-            _dream(data_root)
+            if args.count:
+                _count_candidates(data_root)
+            else:
+                _dream(data_root)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -668,8 +692,8 @@ def _print_status(data_root: DataRoot) -> None:
     print(f"wiki: current through {moment(status.wiki.current_through)}; last run {last_run}")
     dreamed = status.wiki.last_dreaming
     print(f"dreaming: last run {'never' if dreamed is None else _dreamed(dreamed, moment)}")
-    asked = status.wiki.open_proposals
-    print(f"proposals: {'not counted yet' if asked is None else f'{asked} open'}")
+    waiting = status.wiki.open_proposals
+    print(f"proposals: {'not counted yet' if waiting is None else f'{waiting} open'}")
     print(
         f"backup: last success {moment(status.backup.last_success)}; "
         f"last failure {failure(status.backup.last_failure)}"
@@ -694,11 +718,17 @@ def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
     held_back = f", {run.held_back} held back" if run.held_back else ""
     if not run.candidates:
         return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
-    counts = ", ".join(f"{count} {outcome}" for outcome, count in run.outcomes.items())
+    counts = _counts_text(run.outcomes)
+    left_over = f", {run.left_over} over the cap" if run.left_over else ""
     return (
         f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
-        f"{held_back}"
+        f"{held_back}{left_over}"
     )
+
+
+def _counts_text(counts: Mapping[str, int]) -> str:
+    """A dreaming run's count per outcome, as a run's report and `pa status` both show it."""
+    return ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
@@ -745,7 +775,16 @@ def _run_librarian(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian"))
         return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.RUN_ERROR) from None
     _report_run(outcome, "librarian")
+
+
+def _failed_run(error: LibrarianRunError, kept: Path) -> PaError:
+    """What a failed run over the data root prints: where it failed, and that its error is in
+    `kept`. The error quotes pages and lint findings, which no command prints (CLAUDE.md, Real
+    content): `pa_home.librarian` keeps it under the data root, for the owner."""
+    return PaError(f"{librarian.run_failure_reason(error)}; its error is in {kept}")
 
 
 def _report_run(outcome: RunOutcome, name: str) -> None:
@@ -768,7 +807,37 @@ def _dream(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian dream"))
         return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.DREAMING_ERROR) from None
     _report_dreaming(outcome, "librarian dream")
+
+
+def _count_candidates(data_root: DataRoot) -> None:
+    """Print what a dreaming run over the data root's wiki would find now: counts, never
+    content."""
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    name = "librarian dream"
+    try:
+        with data_root_lock(data_root):
+            counts = librarian.count_candidates(
+                data_root, owner=owner, time_zone=time_zone, config=config
+            )
+    except LockHeld:
+        print(skipped(name))
+        return
+    kinds = ", ".join(f"{count} {kind}" for kind, count in counts.flagged.items())
+    print(
+        f"{name}: {sum(counts.flagged.values())} candidates flagged{f' ({kinds})' if kinds else ''}"
+    )
+    print(
+        f"{name}: a run now would be offered {counts.offered}, with {counts.held_back} held "
+        f"back and {counts.left_over} over the cap of {counts.cap}"
+    )
+    people, organizations = counts.unengaged_without_loops.values()
+    print(
+        f"{name}: {people + organizations} unengaged pages with no open loop ({people} people, "
+        f"{organizations} organizations)"
+    )
 
 
 def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> None:
@@ -826,10 +895,11 @@ def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
     if outcome.commit is None:
         print(f"{name}: no candidates in the wiki")
         return
-    counts = ", ".join(f"{outcome.count(o)} {o}" for o in OUTCOMES)
+    counts = _counts_text(outcome.counts)
+    left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
     print(
         f"{name}: judged {len(outcome.candidates)} candidates ({counts}); "
-        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings{left_over}"
     )
 
 

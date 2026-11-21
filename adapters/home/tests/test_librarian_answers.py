@@ -1,8 +1,8 @@
-"""The owner answers a proposal, and the next nightly run applies the answer (#144).
+"""The owner answers a proposal, and the next librarian run applies the answer (#144).
 
 Whole runs of `pa librarian run` over a temporary data root, through the stand-in `claude` (the
 conftest at the repository root says what it does and how it's scripted). Each test builds a
-wiki with a nightly run, plants the proposals an earlier dreaming run would have left, delivers
+wiki with a librarian run, plants the proposals an earlier dreaming run would have left, delivers
 the owner's answer as a chat exchange, scripts what consolidation writes, and asserts on the
 wiki, its git history, and what the session was given: the stand-in records the open proposals
 listed under the prompt's `## Open proposals` heading as `proposals`.
@@ -142,6 +142,13 @@ def run_librarian() -> int:
     return main(["librarian", "run"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -270,7 +277,7 @@ EARLIER_CHAT = chat_id("earlier-answer")
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email, a later one sending the room list, and a chat in
+    """One librarian run over the hotel email, a later one sending the room list, and a chat in
     which the owner answered an earlier proposal; its consolidation writes `written` (`pages()`
     unless given)."""
     ingest(
@@ -343,7 +350,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     for path, text in files.items():
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def gift() -> dict[str, bytes]:
@@ -479,6 +486,60 @@ def test_a_run_whose_batch_holds_the_owners_answer_commits_the_proposal_as_answe
     assert sessions(data_root, "consolidation")[-1]["proposals"] is None
 
 
+def engaged(data_root: Path, slug: str) -> bool:
+    """Whether the last consolidation session was told the owner has engaged with `slug`."""
+    [reference] = [
+        reference
+        for reference in sessions(data_root, "consolidation")[-1]["inputs"][1]
+        if reference["slug"] == slug
+    ]
+    return reference["engaged"]
+
+
+CLOSE = proposal(text="Close the reply [[david-kim]] asked for, as no longer owed?")
+
+
+def said_of_david(exchange: str) -> dict:
+    """The stand-in's action observing what the owner said of David Kim in `exchange`."""
+    line = f"- me said what to do about [[david-kim]] [ep:{exchange}]\n"
+    return {"append": f"days/{TODAY}.md", "text": line}
+
+
+def test_the_owners_answer_to_a_proposal_doesnt_engage_the_page_it_is_about(data_root: Path):
+    # David Kim only ever wrote to the owner, so his page is unengaged.
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(CLOSE)})
+    ingest(data_root, answer("On P1: yes, close it."))
+    script(
+        data_root,
+        observation=[{"observe": True, "links": LINKS}, said_of_david(ANSWER)],
+        consolidation=[resolving(answered(CLOSE, "accepted", ANSWER))],
+    )
+    assert run_librarian() == 0
+
+    ingest(data_root, gift())
+    script(data_root)
+    assert run_librarian() == 0
+
+    # Saying yes to closing his loop is the owner's word on a proposal, not the owner's hand
+    # in David Kim: his page is still unengaged, so a dreaming run can still retire it.
+    assert not engaged(data_root, "david-kim")
+
+
+def test_an_exchange_that_answers_no_proposal_engages_what_it_links(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(CLOSE)})
+    ingest(data_root, answer("Not sure about P1. David is a friend, though: keep his page."))
+    script(data_root, observation=[{"observe": True, "links": LINKS}, said_of_david(ANSWER)])
+    assert run_librarian() == 0
+
+    ingest(data_root, gift())
+    script(data_root)
+    assert run_librarian() == 0
+
+    assert engaged(data_root, "david-kim")
+
+
 INVITED = proposal(3, "Is [[dave]] invited to the wedding?", kind="question")
 """A second open proposal, which the owner's answer says nothing about."""
 NEW = proposal(4, "Is [[wedding]] still on Oct 24?", kind="question")
@@ -566,7 +627,7 @@ def test_a_consolidation_that_changes_the_proposals_other_than_by_resolving_one_
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the consolidation session changed proposals.md" in error
     assert reason in error
     assert ONLY_BY_RESOLVING in error
@@ -654,10 +715,60 @@ def test_a_proposal_resolved_without_the_owners_chat_after_two_resumes_discards_
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "the consolidation session left 1 lint errors after 2 resumes" in error
     assert "isn't one of the owner's chat exchanges" in error
     assert len(sessions(data_root, "consolidation")) == 4
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
+NOT_THIS_BATCHS = (
+    f"{PROPOSALS}:7: P1 is newly answered, but its last citation, {EARLIER_CHAT}, isn't one of "
+    "the owner's exchanges in this run's batch"
+)
+"""What the host says of a proposal resolved from an exchange an earlier run already took."""
+
+
+def test_a_proposal_resolved_from_an_exchange_of_an_earlier_batch_resumes_the_session(
+    data_root: Path,
+):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})
+    ingest(data_root, answer())
+    # The earlier exchange is the owner's, and answered another proposal weeks ago.
+    stale = resolving(answered(proposal(), "accepted", EARLIER_CHAT))
+    script(
+        data_root,
+        consolidation=[*merged(), stale],
+        consolidation_resume=[resolving(ACCEPTED)],
+    )
+
+    assert run_librarian() == 0
+
+    started, resumed = sessions(data_root, "consolidation")[-2:]
+    assert "--resume" not in started["argv"]
+    assert flag(resumed["argv"], "--resume") == "session-1"
+    assert NOT_THIS_BATCHS in resumed["prompt"]
+    assert f"[ep:{HOTEL}] [ep:{ANSWER}]" in wiki_files(data_root)[PROPOSALS]
+    # The proposal that exchange did answer, in its own batch, stands as it was.
+    assert EARLIER in wiki_files(data_root)[PROPOSALS]
+
+
+def test_a_night_without_the_owners_answer_resolves_no_proposal(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal())})
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    # Mail came, and no exchange: a session swayed by it has no answer of this batch to cite.
+    ingest(data_root, gift())
+    attempt = [resolving(answered(proposal(), "accepted", EARLIER_CHAT))]
+    script(data_root, consolidation=attempt, consolidation_resume=attempt)
+
+    assert run_librarian() != 0
+
+    error = run_error(data_root)
+    assert "the consolidation session left 1 lint errors after 2 resumes" in error
+    assert NOT_THIS_BATCHS in error
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
 
@@ -696,7 +807,7 @@ def test_a_consolidation_cant_start_the_proposals_file(data_root: Path, capsys, 
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert reason in error
     assert ONLY_BY_RESOLVING in error
     assert PROPOSALS not in wiki_files(data_root)

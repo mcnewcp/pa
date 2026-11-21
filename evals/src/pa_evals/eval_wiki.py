@@ -114,17 +114,17 @@ def dreamed_cut_wiki(cut: Cut, directory: Path) -> EvalWiki:
     if history.dreaming_version is None:
         raise EvalWikiError(f"{run_log} has no committed dreaming run: {not_a_copy}")
     built_by = cut.manifest.wiki.librarian_version
-    for entry in history.dreams:
-        if entry.as_of != cut.as_of:
-            raise EvalWikiError(
-                f"{run_log} has a dreaming run as of {entry.as_of.isoformat()}, not the cut's "
-                f"as-of time ({cut.as_of.isoformat()}): {not_a_copy}"
-            )
-        if entry.librarian_version != built_by:
-            raise EvalWikiError(
-                f"{run_log} has a dreaming run of a wiki built by librarian version "
-                f"{entry.librarian_version}, not {built_by}, which the cut names: {not_a_copy}"
-            )
+    other = history.dreamed_otherwise(as_of=cut.as_of, librarian_version=built_by)
+    if other is not None and other.as_of != cut.as_of:
+        raise EvalWikiError(
+            f"{run_log} has a dreaming run as of {other.as_of.isoformat()}, not the cut's "
+            f"as-of time ({cut.as_of.isoformat()}): {not_a_copy}"
+        )
+    if other is not None:
+        raise EvalWikiError(
+            f"{run_log} has a dreaming run of a wiki built by librarian version "
+            f"{other.librarian_version}, not {built_by}, which the cut names: {not_a_copy}"
+        )
     return EvalWiki(tree, built_by or UNNAMED_VERSION, history.dreaming_version)
 
 

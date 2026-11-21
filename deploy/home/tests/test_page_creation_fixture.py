@@ -43,7 +43,8 @@ from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.batch import cursor_through, production_batch
 from pa_core.librarian.identity import identity_table
 from pa_core.librarian.index import write_index
-from pa_core.librarian.lint import L0Metadata, LintReport, Thresholds, lint
+from pa_core.librarian.lint import LintReport, Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.run import CURSOR_FIELD, RunOutcome, last_cursor
 from pa_core.librarian.wiki import PERSON, Page, citations, day_logs, links, pages, slugify
 from pa_core.owner import Owner

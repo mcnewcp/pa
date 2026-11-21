@@ -486,7 +486,7 @@ def orphan(data_root: Path, vault: Path, tmp_path: Path, monkeypatch: pytest.Mon
     repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
     (data_root / "wiki" / "topics").mkdir(exist_ok=True)
     (data_root / "wiki" / "topics" / "kitchen.md").write_text(kitchen_page(episode["id"]))
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
     monkeypatch.delenv(INTERVAL)
     return episode["id"]
 

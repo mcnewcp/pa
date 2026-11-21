@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,12 @@ class Owner:
             raise ValueError("an owner needs at least one email address")
         lowered = tuple(address.lower() for address in self.email_addresses)
         object.__setattr__(self, "email_addresses", lowered)
+
+    @cached_property
+    def addresses(self) -> frozenset[str]:
+        """The owner's email addresses as a set, in lowercase: what a participant's address
+        is looked up in."""
+        return frozenset(address.strip().lower() for address in self.email_addresses)
 
     @property
     def identifier(self) -> str:

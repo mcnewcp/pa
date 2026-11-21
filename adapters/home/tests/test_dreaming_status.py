@@ -8,6 +8,7 @@ record. The status holds counts and reasons only.
 """
 
 import json
+import subprocess
 import textwrap
 from datetime import datetime, time, timedelta
 from email.utils import format_datetime
@@ -114,6 +115,17 @@ def sessions(data_root: Path, phase: str) -> list[dict]:
     return [record for record in records if record["phase"] == phase]
 
 
+def commit_messages(data_root: Path) -> list[str]:
+    """Every commit's message, newest first."""
+    logged = subprocess.run(
+        ["git", f"--git-dir={data_root / 'wiki.git'}", "log", "--format=%B%x00"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [message.strip() for message in logged.split("\0") if message.strip()]
+
+
 def run_librarian() -> int:
     return main(["librarian", "run"])
 
@@ -216,7 +228,7 @@ LINKS = {"Hotel block": ["david-kim", "wedding"], "Room list": ["david-kim", "we
 
 
 def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> None:
-    """One nightly run over the hotel email and a later one sending the room list, whose
+    """One librarian run over the hotel email and a later one sending the room list, whose
     consolidation writes `written` (`pages()` unless given)."""
     ingest(
         data_root,
@@ -243,7 +255,7 @@ def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> No
 
 
 def night(data_root: Path, subject: str = "Gift") -> None:
-    """A later nightly run over one new email about `subject`, which changes no page."""
+    """A later librarian run over one new email about `subject`, which changes no page."""
     ingest(
         data_root,
         {
@@ -290,10 +302,11 @@ def test_a_dreaming_run_is_recorded_in_the_status_in_counts(data_root: Path):
         candidates=2,
         outcomes={"applied": 0, "proposed": 1, "dismissed": 1},
         held_back=0,
+        left_over=0,
     )
     wiki = status(data_root).wiki
     assert wiki.open_proposals == 1
-    # The nightly run's own record stands, and the wiki is current through where it was.
+    # The librarian run's own record stands, and the wiki is current through where it was.
     assert nightly.last_run is not None and nightly.current_through is not None
     assert (wiki.last_run, wiki.current_through) == (nightly.last_run, nightly.current_through)
 
@@ -319,7 +332,7 @@ def test_pa_status_shows_the_dreaming_run_and_the_open_proposals_without_content
         assert value not in output.out + output.err + recorded, value
 
 
-def test_a_nightly_run_keeps_the_dreaming_record(data_root: Path):
+def test_a_librarian_run_keeps_the_dreaming_record(data_root: Path):
     run_with_pages(data_root, pages(loop()))
     script(data_root, dreaming=JUDGING)
     assert dream() == 0
@@ -375,7 +388,7 @@ def plant(data_root: Path, files: dict[str, str]) -> None:
     repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
     for path, text in files.items():
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 def test_a_run_with_no_candidates_is_recorded_as_a_review_that_judged_nothing(
@@ -414,6 +427,118 @@ def test_a_run_whose_candidates_are_all_held_back_says_so_and_is_recorded(
         "librarian dream: nothing to judge; every candidate is held back (2)"
         in capsys.readouterr().out
     )
+
+
+def bare(page_type: str, name: str, identifiers: str, loop: str = "") -> str:
+    """A page of `page_type` for `name` that holds nothing but, perhaps, one `loop`."""
+    return (
+        textwrap.dedent(
+            f"""\
+        ---
+        type: {page_type}
+        aliases: []
+        status: active
+        summary: Wrote once.
+        updated: {ROOM_LIST_DAY}
+        {identifiers}: []
+        ---
+        # {name}
+
+        ## Current state
+        Wrote once [ep:{HOTEL}].
+
+        ## Open loops
+        """
+        )
+        + (f"{loop}\n" if loop else "")
+        + "\n## Notes\n"
+    )
+
+
+NINA, PARCEL_POST, SAM = "people/nina-park.md", "orgs/parcel-post.md", "people/sam-lee.md"
+
+
+def strangers() -> dict[str, str]:
+    """The wedding's pages, and three more the owner never had a hand in: a person with no
+    loop, an organization that owes something, and a person the wedding's loop names. With
+    the kitchen, three orphans (Sam Lee is linked by the loop) and three unengaged pages."""
+    opened = days_ago(1)
+    return {
+        **pages(f"- [ ] [[sam-lee]] → me: the deposit · asked {opened} [ep:{HOTEL}]"),
+        NINA: bare("person", "Nina Park", "emails"),
+        PARCEL_POST: bare(
+            "organization",
+            "Parcel Post",
+            "domains",
+            f"- [ ] [[parcel-post]] → me: the tracking number · promised {opened} [ep:{HOTEL}]",
+        ),
+        SAM: bare("person", "Sam Lee", "emails"),
+    }
+
+
+def counted(capsys: pytest.CaptureFixture[str]) -> list[str]:
+    """What `pa librarian dream --count` prints."""
+    capsys.readouterr()
+    assert main(["librarian", "dream", "--count"]) == 0
+    output = capsys.readouterr()
+    for value in ("nina", "parcel", "sam", "kitchen", "wedding", "david", "Hotel", HOTEL):
+        assert value not in output.out + output.err, value
+    return output.out.splitlines()
+
+
+def test_the_count_says_what_a_run_would_find_in_counts_alone_and_runs_nothing(
+    data_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    run_with_pages(data_root, strangers())
+    history = commit_messages(data_root)
+    recorded = (data_root / "status" / "status.json").read_text()
+
+    assert counted(capsys) == [
+        "librarian dream: 6 candidates flagged (3 orphan, 3 unengaged)",
+        "librarian dream: a run now would be offered 6, with 0 held back and 0 over the cap of 30",
+        # Nina Park alone: Parcel Post holds a loop, and the wedding's loop names Sam Lee.
+        "librarian dream: 1 unengaged pages with no open loop (1 people, 0 organizations)",
+    ]
+    # No session ran, nothing was committed, and the status wasn't touched.
+    assert sessions(data_root, "dreaming") == []
+    assert commit_messages(data_root) == history
+    assert (data_root / "status" / "status.json").read_text() == recorded
+
+
+def test_a_run_cut_by_the_cap_says_how_many_candidates_it_left_over(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("PA_LIBRARIAN_CANDIDATE_CAP", "4")
+    run_with_pages(data_root, strangers())
+    assert counted(capsys)[1] == (
+        "librarian dream: a run now would be offered 4, with 0 held back and 2 over the cap of 4"
+    )
+    dismissing = [{"candidate": f"c0{number}", "outcome": "dismissed"} for number in (1, 2, 3, 4)]
+    script(data_root, dreaming=[{"outcomes": dismissing}])
+
+    assert dream() == 0
+
+    assert "judged 4 candidates (0 applied, 0 proposed, 4 dismissed)" in capsys.readouterr().out
+    run = dreaming(data_root)
+    assert (run.candidates, run.held_back, run.left_over) == (4, 0, 2)
+    assert main(["status"]) == 0
+    lines = dict(line.split(": ", 1) for line in capsys.readouterr().out.splitlines())
+    assert lines["dreaming"].endswith(
+        "judged 4 candidates (0 applied, 0 proposed, 4 dismissed), 2 over the cap"
+    )
+    # What the run dismissed is held back, and what it left over is offered next.
+    assert counted(capsys)[:2] == [
+        "librarian dream: 6 candidates flagged (3 orphan, 3 unengaged)",
+        "librarian dream: a run now would be offered 2, with 4 held back and 0 over the cap of 4",
+    ]
+
+
+def test_the_count_is_of_the_data_roots_wiki_alone(
+    data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    assert main(["librarian", "dream", str(tmp_path / "copy"), "--count"]) == 1
+
+    assert "--count counts the data root's wiki" in capsys.readouterr().err
 
 
 def test_the_open_proposal_count_follows_the_wiki_at_every_run(data_root: Path):

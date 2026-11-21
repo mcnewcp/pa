@@ -403,6 +403,22 @@ def test_a_second_dreaming_run_of_a_copy_carries_on_from_the_first(data_root: Pa
     ]
 
 
+def test_a_replay_target_that_was_dreamed_isnt_replayed_on(data_root: Path, corpus: Path, capsys):
+    # Dreamed in place: the dreaming commit sits on the replay's last run, in its history.
+    target = replayed(data_root, corpus)
+    script(data_root, dreaming=[{"outcomes": [DISMISSED]}])
+    assert dream(target, "--corpus", corpus) == 0
+    before = tree_state(target)
+    capsys.readouterr()
+
+    resume = ["librarian", "replay", str(target), "--corpus", str(corpus), "--resume"]
+    assert main([*resume, "--as-of", "2026-10-21T20:00"]) == 1
+
+    # The cursor is still the replay's, but the wiki's last run isn't one a replay carries on.
+    assert "isn't a replay's run, so a replay can't resume it" in capsys.readouterr().err
+    assert tree_state(target) == before
+
+
 KITCHEN = textwrap.dedent(
     f"""\
     ---
@@ -676,7 +692,7 @@ CUT_AS_OF = datetime.fromisoformat(AS_OF_UTC)
 
 
 def cut_of_a_live_wiki(data_root: Path) -> Cut:
-    """A cut of a data root whose wiki a nightly run built from the wedding's mail, captured
+    """A cut of a data root whose wiki a librarian run built from the wedding's mail, captured
     before the cut's as-of time."""
     root = DataRoot(data_root)
     for name, payload in MAIL.items():

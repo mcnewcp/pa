@@ -151,7 +151,7 @@ The second phase of every librarian run: folding that run's new observations int
 _Avoid_: Dreaming, compaction
 
 **Engagement**:
-The owner's own hand in a person, organization, or topic: an observation linking it cites an episode the owner sent, wrote, organized, or attends. A person gets a page only once engaged; being written to is not engagement.
+The owner's own hand in a person, organization, or topic: an observation linking it cites an episode the owner sent, wrote, organized, or attends. A person gets a page only once engaged; being written to is not engagement, and neither is the exchange in which the owner answers a proposal.
 _Avoid_: Interaction, activity, relevance
 
 **Replay**:

@@ -102,6 +102,9 @@ class DreamingRun(_Model):
     held_back: int | None = None
     """How many candidates the wiki had that the run didn't offer, because an earlier run
     dismissed them or a proposal about them is still open. None for a failed run."""
+    left_over: int | None = None
+    """How many more the run didn't offer because of the cap on a run's candidates: they wait
+    for the next run. None for a failed run, and in a record written before it was kept."""
 
 
 class WikiStatus(_Model):
