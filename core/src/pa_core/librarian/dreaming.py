@@ -62,10 +62,10 @@ from pa_core.librarian.lint import (
     QUIET_DAYS,
     STALE_LATER_DAYS,
     Finding,
-    L0Metadata,
     Thresholds,
     lint,
 )
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.retirement import update_retired
 from pa_core.librarian.run import (
     CURSOR_FIELD,

@@ -53,11 +53,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from pa_core.envelope import Envelope, Kind
-from pa_core.librarian.engagement import engaged_days, engagers
+from pa_core.librarian.engagement import engaged_days
 from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.links import alias_targets
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.retirement import standing
 from pa_core.librarian.wiki import (
     ANSWERED,
@@ -137,52 +137,6 @@ class LintReport:
     engaged_days: Mapping[str, Sequence[date]] = field(default_factory=dict)
     """For each slug the owner has engaged with, the days that show it (`engaged_days` in
     `engagement.py`): what the warnings went by, for whoever tells a session the same."""
-
-
-@dataclass(frozen=True)
-class L0Metadata:
-    """What lint checks the wiki's evidence and identifiers against: L0's episodes and the
-    addresses of their participants, every episode included, even those never offered."""
-
-    episode_ids: frozenset[str]
-    addresses: frozenset[str]
-    """Every participant's address, in lowercase."""
-    engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    """For each episode that is someone's own doing, the addresses it's the doing of, in
-    lowercase (`engagers` in `engagement.py`): what engagement is read from."""
-    exchanges: frozenset[str] = frozenset()
-    """The episodes that are chat exchanges with the assistant."""
-
-    @classmethod
-    def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
-        ids: set[str] = set()
-        addresses: set[str] = set()
-        doers: dict[str, frozenset[str]] = {}
-        exchanges: set[str] = set()
-        for envelope in envelopes:
-            ids.add(envelope.episode_id)
-            addresses.update(
-                p.identifier.strip().lower() for p in envelope.participants if "@" in p.identifier
-            )
-            if who := engagers(envelope):
-                doers[envelope.episode_id] = who
-            if envelope.kind is Kind.CHAT:
-                exchanges.add(envelope.episode_id)
-        return cls(frozenset(ids), frozenset(addresses), doers, frozenset(exchanges))
-
-    def owner_exchanges(self, owner: Owner) -> frozenset[str]:
-        """The chat exchanges `owner` took part in: where the owner's own word is."""
-        mine = {address.strip().lower() for address in owner.email_addresses}
-        return frozenset(
-            episode
-            for episode in self.exchanges
-            if not self.engagers.get(episode, frozenset()).isdisjoint(mine)
-        )
-
-    @property
-    def domains(self) -> frozenset[str]:
-        """The mail domain of every address, as seen (subdomains included)."""
-        return frozenset(a.rpartition("@")[2] for a in self.addresses)
 
 
 @dataclass(frozen=True)
@@ -443,7 +397,7 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterato
     """A page's addresses and domains are in L0's metadata, none is on two pages, none of
     its addresses is the owner's, and a person's aren't all automated mailboxes."""
     known = {PERSON: l0.addresses, ORGANIZATION: l0.domains}
-    owners = {address.strip().lower() for address in owner.email_addresses}
+    owners = owner.addresses
     listed: dict[tuple[str, str], str] = {}
     """The page listing each identifier first, by its field and its lowercase form."""
     for page in pages:

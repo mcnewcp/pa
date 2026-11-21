@@ -40,7 +40,8 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.batch import production_batch
-from pa_core.librarian.lint import L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.run import RunOutcome, last_cursor
 from pa_core.librarian.wiki import (
     PROPOSALS,

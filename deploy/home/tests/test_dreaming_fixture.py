@@ -71,7 +71,8 @@ from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.librarian.candidates import Candidate, Identity, candidates
 from pa_core.librarian.dreaming import Applied, DreamingOutcome, Outcome, Proposed
 from pa_core.librarian.kinds import CandidateKind
-from pa_core.librarian.lint import STALE_LATER_DAYS, L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import STALE_LATER_DAYS, Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD, LibrarianRunError
 from pa_core.librarian.version import librarian_version
 from pa_core.librarian.wiki import (

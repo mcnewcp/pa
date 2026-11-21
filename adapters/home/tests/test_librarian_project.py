@@ -12,7 +12,8 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from pa_core.librarian.lint import L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.wiki import (
     PAGE_TYPES,
     parse_decision,

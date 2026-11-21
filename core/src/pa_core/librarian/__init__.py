@@ -3,6 +3,8 @@
 - `wiki`: the wiki model: its layout, slugs, links, citations, and line formats.
 - `batch`: which episodes a run offers the librarian, each with its day.
 - `identity`: the identity table, who's who by address, from L0's metadata.
+- `metadata`: L0's metadata, which the host checks the wiki against: the episodes, their
+  participants' addresses, and whose doing each is.
 - `engagement`: which slugs the owner has had a hand in, from L0's metadata.
 - `kinds`: the kinds of candidate, which lint's warnings and dreaming's candidates share.
 - `lint`: what may be committed to the wiki.

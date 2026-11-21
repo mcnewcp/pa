@@ -63,7 +63,8 @@ from pathlib import Path
 
 from pa_core.librarian.engagement import engaged_days
 from pa_core.librarian.kinds import CandidateKind
-from pa_core.librarian.lint import Finding, L0Metadata, Thresholds, lint
+from pa_core.librarian.lint import Finding, Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.wiki import (
     DAYS,
     ORGANIZATION,

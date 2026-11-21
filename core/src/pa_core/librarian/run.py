@@ -63,7 +63,8 @@ from pa_core.librarian.batch import (
 from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
-from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
+from pa_core.librarian.lint import Finding, LintReport, Thresholds, lint
+from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.retirement import standing, update_retired
 from pa_core.librarian.wiki import (
     ANSWERED,
