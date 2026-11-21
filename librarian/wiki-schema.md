@@ -192,7 +192,8 @@ lines and nothing else:
   highest in the file, answered proposals included.
 - The kind is `change` (a change the owner can accept or decline) or `question` (something
   only the owner knows).
-- `<text>` is one short question in plain words: at most 200 characters, with no URL, no
+- `<text>` is one short question in plain words: at most 200 characters (a link
+  `[[slug|name]]` counts as `[[name]]`), with no URL, no
   bare hostname (`example.com`), no email address, and no ` · `. It links the pages it is about, and every link of an open proposal goes to a page.
 - The citations are the episodes that raise the question.
 

@@ -591,10 +591,10 @@ def _proposals(
                 number,
             )
         first.setdefault(name, number)
-        if len(proposal.text) > PROPOSAL_TEXT_LIMIT:
+        if proposal.length > PROPOSAL_TEXT_LIMIT:
             yield Finding(
                 PROPOSALS,
-                f"{name}'s text is {len(proposal.text)} characters, more than the "
+                f"{name}'s text is {proposal.length} characters, more than the "
                 f"{PROPOSAL_TEXT_LIMIT} a proposal may have: ask one short question",
                 number,
             )

@@ -461,6 +461,10 @@ LINT_ERRORS = {
         proposals_file(proposal(text=padded(201))),
         f"{PROPOSALS}:4: P1's text is 201 characters, more than the 200 a proposal may have",
     ),
+    "a link shown under a name that takes it over 200 characters": (
+        proposals_file(proposal(text=padded(200).replace("[[dave]]", "[[dave|Davey]]"))),
+        f"{PROPOSALS}:4: P1's text is 201 characters, more than the 200 a proposal may have",
+    ),
     "a URL": (
         proposals_file(proposal(text=QUESTION + " See https://dave.example/rsvp")),
         f"{PROPOSALS}:4: P1's text holds a URL (https://dave.example/rsvp)",
@@ -1024,6 +1028,9 @@ WELL_FORMED = {
         proposal(text="Are [[dave|Dave]] and [[david-kim|David]] the same person?")
     ),
     "text of exactly 200 characters": proposals_file(proposal(text=padded(200))),
+    "200 characters as the owner reads them, behind a piped link": proposals_file(
+        proposal(text=padded(200).replace("[[david-kim]]", "[[david-kim|david-kim]]"))
+    ),
     "prose with abbreviations and figures": proposals_file(
         proposal(
             text="Is [[dave]] (a.k.a. D.K., i.e. the best man) due at 9 a.m. on Oct. 9, e.g. "
@@ -1140,6 +1147,34 @@ def test_after_a_merge_an_open_proposals_link_to_the_alias_goes_to_the_page(data
     assert files[PROPOSALS] == proposals_file(
         proposal(text="Are [[david-kim|dave]] and [[david-kim]] the same person?")
     )
+
+
+def test_a_proposal_at_the_length_cap_survives_the_merge_of_a_page_it_links(data_root: Path):
+    written = pages()
+    run_with_pages(data_root, written)
+    commit_by_hand(data_root, {PROPOSALS: proposals_file(proposal(text=padded(200)))})
+    merged = written[DAVID].replace(
+        "## Notes\n", f"## Notes\nGoes by Dave, who sent the room list [ep:{HOTEL}].\n"
+    )
+    script(
+        data_root,
+        dreaming=[
+            {"write": DAVE, "text": ""},
+            {"write": DAVID, "text": merged},
+            reporting({"candidate": "c01", "outcome": "applied", "pages": [DAVE, DAVID]}),
+        ],
+    )
+
+    assert dream() == 0
+
+    # The host's rewrite made the line longer, and the proposal no longer: a link counts as
+    # the name it shows, which the rewrite keeps.
+    asked = padded(200).replace("[[dave]]", "[[david-kim|dave]]")
+    assert len(asked) > 200
+    assert wiki_files(data_root)[PROPOSALS] == proposals_file(proposal(text=asked))
+    # The next run still finds a wiki it can commit to.
+    script(data_root, dreaming=[reporting(DISMISSED)])
+    assert dream() == 0
 
 
 def index_opening(data_root: Path) -> list[str]:
