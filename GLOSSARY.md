@@ -150,6 +150,10 @@ _Avoid_: Fact, note, entry
 The second phase of every librarian run: folding that run's new observations into pages, and creating pages for the people, organizations, and topics that have come up often enough to need one.
 _Avoid_: Dreaming, compaction
 
+**Engagement**:
+The owner's own hand in a person, organization, or topic: an observation linking it cites an episode the owner sent, wrote, organized, or attends. A person gets a page only once engaged; being written to is not engagement.
+_Avoid_: Interaction, activity, relevance
+
 **Replay**:
 Rebuilding a wiki from scratch by running L0 through the librarian a week of occurrence at a time, each week one run told its end as now. It is the rebuild for recovery, and it builds each eval wiki.
 _Avoid_: Rebuild run, backfill
