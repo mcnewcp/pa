@@ -3,6 +3,19 @@
 It lives here, above the four test roots (`pyproject.toml`'s `testpaths`), because the tests of
 the home adapter, the eval harness, and the deploy scripts all run librarian sessions through
 it, and test modules can't import each other (`--import-mode=importlib`).
+
+The stand-in plays one session. It appends what it was given to `sessions.jsonl` beside it,
+follows the script for its phase in `script.json` beside it, and prints what
+`claude -p --output-format json` prints. `adapters/home/tests/test_librarian_run.py` describes
+the record and the actions a nightly session uses. For dreaming it also:
+
+- records the candidates listed under the prompt's `## Candidates` heading, as `candidates`;
+- takes `{"outcomes": [<outcome>, ...]}`: end the session with those outcomes in its final
+  message, as a fenced `json` block after a line of prose;
+- takes `{"final": <text>}`: end the session with exactly that final message.
+
+Without either its final message is `Done.`. The script's key is the phase (`dreaming`), or
+`<phase>_resume` for a resumed session (`dreaming_resume`), which every resume follows.
 """
 
 from __future__ import annotations
@@ -16,8 +29,8 @@ import pytest
 
 
 def write_stand_in_claude(directory: Path) -> Path:
-    """The stand-in `claude` (adapters/home/tests/test_librarian_run.py says what it does), in
-    `directory`, which also holds its log (`sessions.jsonl`) and its script (`script.json`)."""
+    """The stand-in `claude` (the module docstring says what it does), in `directory`, which
+    also holds its log (`sessions.jsonl`) and its script (`script.json`)."""
     script = directory / "claude"
     script.write_text(
         f"#!{sys.executable}\n"
@@ -44,6 +57,8 @@ def write_stand_in_claude(directory: Path) -> Path:
             warnings = json.loads(found[1]) if found else None
             found = re.search(r"^## Lint errors$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
             errors = json.loads(found[1]) if found else None
+            found = re.search(r"^## Candidates$.*?^```json\\n(.*?)^```$", prompt, re.M | re.S)
+            candidates = json.loads(found[1]) if found else None
             phase_inputs = prompt[:table.start()] if table else prompt
             inputs = [json.loads(block) for block in
                       re.findall(r"^```json\\n(.*?)^```$", phase_inputs, re.M | re.S)]
@@ -53,7 +68,8 @@ def write_stand_in_claude(directory: Path) -> Path:
                     "phase": phase, "argv": argv, "prompt": prompt, "cwd": os.getcwd(),
                     "claude_md": claude_md.read_text() if claude_md.exists() else None,
                     "settings": settings, "episodes": episodes, "identity": identity,
-                    "warnings": warnings, "errors": errors, "inputs": inputs,
+                    "warnings": warnings, "errors": errors, "candidates": candidates,
+                    "inputs": inputs,
                 }) + "\\n")
             script = json.loads(SCRIPT.read_text()) if SCRIPT.exists() else {}
 
@@ -63,6 +79,7 @@ def write_stand_in_claude(directory: Path) -> Path:
                 with target.open(mode) as file:
                     file.write(text)
 
+            final = "Done."
             default = {"observation": [{"observe": True}]}
             # A resumed session follows `<phase>_resume`; a new one, `<phase>`.
             key = f"{phase}_resume" if "--resume" in argv else phase
@@ -87,6 +104,11 @@ def write_stand_in_claude(directory: Path) -> Path:
                     (wiki / action["symlink"]).symlink_to(action["to"])
                 elif "mkdir" in action:
                     (wiki / action["mkdir"]).mkdir(parents=True, exist_ok=True)
+                elif "final" in action:
+                    final = action["final"]
+                elif "outcomes" in action:
+                    reported = json.dumps({"outcomes": action["outcomes"]}, indent=2)
+                    final = f"Every candidate is judged.\\n\\n```json\\n{reported}\\n```"
                 elif "sleep" in action:
                     time.sleep(action["sleep"])
                 elif "fail" in action:
@@ -94,7 +116,7 @@ def write_stand_in_claude(directory: Path) -> Path:
                                       "is_error": True, "result": action["fail"]}))
                     sys.exit(1)
             print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                              "result": "Done.", "session_id": "session-1",
+                              "result": final, "session_id": "session-1",
                               "total_cost_usd": 0.0421, "num_turns": 6,
                               "duration_ms": 18250}))
             """
