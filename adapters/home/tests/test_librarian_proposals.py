@@ -12,7 +12,8 @@ import json
 import os
 import subprocess
 import textwrap
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from email.utils import format_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,7 +22,27 @@ import pytest
 from pa_home.cli import main
 from pa_home.git_wiki import GitWikiRepository
 
-# Sent late on 30 Sep in Chicago, which is already 1 Oct in UTC.
+CHICAGO = ZoneInfo("America/Chicago")
+"""The owner's time zone."""
+
+
+def days_ago(days: int) -> str:
+    """The date `days` days before today in the owner's time zone; runs are told the clock."""
+    return (datetime.now(CHICAGO).date() - timedelta(days=days)).isoformat()
+
+
+def mailed(days: int, clock: str) -> str:
+    """An email's `Date`: `clock` in the owner's time zone, `days` days before today."""
+    moment = datetime.combine(
+        datetime.now(CHICAGO).date() - timedelta(days=days), time.fromisoformat(clock), CHICAGO
+    )
+    return format_datetime(moment)
+
+
+# The wiki's mail is dated by the clock, as the runs are: a page's age is measured from today,
+# and one nothing has linked for 90 days is a candidate.
+ROOM_LIST_DAY = days_ago(10)
+"""The day the later email of `run_with_pages` is logged on, and its pages were updated."""
 HOTEL = "gmail_9ff7394d0df8584d"
 """The id of the episode `email()` makes by default."""
 
@@ -29,14 +50,16 @@ HOTEL = "gmail_9ff7394d0df8584d"
 def email(
     *,
     message_id: str = "wedding-0001@example.net",
-    date: str = "Wed, 30 Sep 2026 21:30:00 -0500",
+    labels: str = "Inbox",
+    # Sent late in Chicago, which is already the next day in UTC.
+    date: str = mailed(12, "21:30"),
     sender: str = "David Kim <dkim@example.net>",
     to: str = "Argus McNevans <argus@example.com>",
     subject: str = "Hotel block",
     body: str = "The hotel block closes on Oct 9.",
 ) -> bytes:
     return (
-        "X-Gmail-Labels: Inbox\r\n"
+        f"X-Gmail-Labels: {labels}\r\n"
         f"Message-ID: <{message_id}>\r\n"
         f"Date: {date}\r\n"
         f"From: {sender}\r\n"
@@ -144,11 +167,6 @@ def tree_state(directory: Path) -> dict[str, object]:
     return state
 
 
-def days_ago(days: int) -> str:
-    """The date `days` days before today in the owner's time zone; runs are told the clock."""
-    return (datetime.now(ZoneInfo("America/Chicago")).date() - timedelta(days=days)).isoformat()
-
-
 def flag(argv: list[str], name: str) -> str:
     return argv[argv.index(name) + 1]
 
@@ -175,7 +193,7 @@ def pages(*loops: str) -> dict[str, str]:
             aliases: [Dave]
             status: active
             summary: Old friend, getting married on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             emails: [dkim@example.net]
             ---
             # David Kim
@@ -195,7 +213,7 @@ def pages(*loops: str) -> dict[str, str]:
             aliases: []
             status: active
             summary: Dave, who sent the room list.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             emails: []
             ---
             # Dave
@@ -215,7 +233,7 @@ def pages(*loops: str) -> dict[str, str]:
             aliases: [Dave's wedding]
             status: active
             summary: Dave's wedding on Oct 24.
-            updated: 2026-10-02
+            updated: {ROOM_LIST_DAY}
             ---
             # Wedding
 
@@ -245,7 +263,8 @@ def run_with_pages(data_root: Path, written: dict[str, str] | None = None) -> No
             "gmail/hotel.eml": email(),
             "gmail/room-list.eml": email(
                 message_id="wedding-0002@example.net",
-                date="Fri, 2 Oct 2026 09:00:00 -0500",
+                labels="Sent",
+                date=mailed(10, "09:00"),
                 sender="Argus McNevans <argus@example.com>",
                 to="David Kim <dkim@example.net>",
                 subject="Room list",
@@ -1016,7 +1035,7 @@ KITCHEN_PAGE = textwrap.dedent(
     aliases: []
     status: active
     summary: The kitchen remodel.
-    updated: 2026-10-02
+    updated: {ROOM_LIST_DAY}
     ---
     # Kitchen
 

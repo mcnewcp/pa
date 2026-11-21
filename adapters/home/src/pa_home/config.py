@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pa_core.envelope import Source
 from pa_core.errors import PaError
 from pa_core.librarian.dreaming import PROPOSAL_CAPS, ProposalCaps
+from pa_core.librarian.lint import QUIET_DAYS, STALE_LATER_DAYS
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
 from pa_core.librarian.wiki import GIT_DIR as WIKI_GIT_DIR
 from pa_core.librarian.wiki import TREE as WIKI_TREE
@@ -33,6 +34,8 @@ LIBRARIAN_COMMAND_VAR = "PA_LIBRARIAN_COMMAND"
 LIBRARIAN_SANDBOX_VAR = "PA_LIBRARIAN_SANDBOX"
 LIBRARIAN_PAGE_THRESHOLD_VAR = "PA_LIBRARIAN_PAGE_THRESHOLD"
 LIBRARIAN_LOOP_AGE_VAR = "PA_LIBRARIAN_LOOP_AGE_DAYS"
+LIBRARIAN_STALE_LATER_DAYS_VAR = "PA_LIBRARIAN_STALE_LATER_DAYS"
+LIBRARIAN_QUIET_DAYS_VAR = "PA_LIBRARIAN_QUIET_DAYS"
 # Dreaming's proposals: the most a run may add, and the most that may be open at once.
 LIBRARIAN_NEW_PROPOSALS_VAR = "PA_LIBRARIAN_NEW_PROPOSALS"
 LIBRARIAN_OPEN_PROPOSALS_VAR = "PA_LIBRARIAN_OPEN_PROPOSALS"
@@ -145,6 +148,11 @@ class LibrarianConfig:
     """The distinct days a slug must be linked on in the day logs before it gets a page."""
     loop_age_days: int = LOOP_AGE_DAYS
     """How long a loop may stay open before lint warns about it."""
+    stale_later_days: int = STALE_LATER_DAYS
+    """The distinct days a page is linked on after its last update before dreaming is offered
+    it as stale."""
+    quiet_days: int = QUIET_DAYS
+    """How long an active page may go unlinked before dreaming is offered it as quiet."""
     proposal_caps: ProposalCaps = PROPOSAL_CAPS
     """The most proposals a dreaming run may add, and the most that may be open at once."""
 
@@ -315,6 +323,10 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
             environ, LIBRARIAN_PAGE_THRESHOLD_VAR, default.page_threshold
         ),
         loop_age_days=_positive_integer(environ, LIBRARIAN_LOOP_AGE_VAR, default.loop_age_days),
+        stale_later_days=_positive_integer(
+            environ, LIBRARIAN_STALE_LATER_DAYS_VAR, default.stale_later_days
+        ),
+        quiet_days=_positive_integer(environ, LIBRARIAN_QUIET_DAYS_VAR, default.quiet_days),
         proposal_caps=ProposalCaps(
             new=_positive_integer(environ, LIBRARIAN_NEW_PROPOSALS_VAR, default.proposal_caps.new),
             open=_positive_integer(
