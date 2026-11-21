@@ -465,6 +465,7 @@ The suite skips the tests that call a real model unless asked, since they cost m
 ```sh
 PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_page_creation_fixture.py # the page-creation fixture in pa-librarian
 ```
 
 The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
@@ -473,6 +474,15 @@ The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the ow
 2. After new mail and a note from both Chris Lees and from Okie. The test checks that the split still holds and the merge too.
 
 The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost: the two runs come to about $1 on Opus 5.5 at medium effort.
+
+The page-creation fixture (`deploy/home/tests/fixtures/page-creation/`) is one night that would clutter the wiki, over a wiki an earlier rule already cluttered. It seeds a data root with a starting wiki in which a no-reply mailbox has a person page holding an open loop, which lint now fails, so the run can't commit until its consolidation merges that page away. The night is three more days of delivery updates from the mailbox, three requests for a call from a salesman the owner never engaged with, a shop's request about an order the owner placed, and a friend the owner wrote to. The test makes one real librarian run, with a fixed "now", and checks that:
+
+- the mailbox's person page is gone, its loop is on an organization's or a topic's page, and no link to its slug is left without a page;
+- the salesman has no person page and his request opened no loop;
+- the shop's request is an open loop;
+- the friend has a page and a loop.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PAGE_CREATION_DIR`).
 
 ## Evals in the VM
 

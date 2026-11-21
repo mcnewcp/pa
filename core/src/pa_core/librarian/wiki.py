@@ -32,6 +32,8 @@ CURRENT_STATE, DECISIONS, OPEN_LOOPS, NOTES = "Current state", "Decisions", "Ope
 """The sections a page can have (`## <name>`). Current state and Notes are free-form."""
 FIELDS = ("type", "aliases", "status", "summary", "updated")
 """The frontmatter every page has."""
+ACTIVE = "active"
+"""The `status` of a page that's live, whatever its type."""
 
 
 @dataclass(frozen=True)

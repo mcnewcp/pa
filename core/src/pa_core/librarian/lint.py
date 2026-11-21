@@ -19,7 +19,8 @@ An error fails the run. The rules so far:
   an open proposal goes to a page.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
-  lists one of the owner's configured addresses (the owner is `me`).
+  lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
+  aren't all automated mailboxes (`identity.py`): a machine never gets a person page.
 
 A warning doesn't fail the run; it's recorded with it, and handed to the next consolidation:
 
@@ -28,7 +29,8 @@ A warning doesn't fail the run; it's recorded with it, and handed to the next co
   configured otherwise).
 - **Duplicate candidates**: pages sharing an alias, a page with an alias that's another page's
   slug or name, or pages with near-identical slugs.
-- **Slugs without pages**: linked on enough days to reach the page threshold, but with no page.
+- **Slugs without pages**: linked on enough days to reach the page threshold, and engaged
+  (`engagement.py`), but with no page.
 - **"Needs lookup" markers** for outside information, until the research worker exists.
 
 Each rule is a function over the wiki's files that yields findings; add a rule by writing one
@@ -39,13 +41,15 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
 from pa_core.envelope import Envelope
+from pa_core.librarian.engagement import engaged_days, engagers
+from pa_core.librarian.identity import is_automated_mailbox
 from pa_core.librarian.links import alias_targets
 from pa_core.librarian.wiki import (
     ANSWERED,
@@ -129,6 +133,9 @@ class LintReport:
     """Problems that fail the run."""
     warnings: tuple[Finding, ...] = ()
     """Problems that don't: recorded with the run, and handed to the next consolidation."""
+    engaged_days: Mapping[str, Sequence[date]] = field(default_factory=dict)
+    """For each slug the owner has engaged with, the days that show it (`engaged_days` in
+    `engagement.py`): what the warnings went by, for whoever tells a session the same."""
 
 
 @dataclass(frozen=True)
@@ -139,17 +146,23 @@ class L0Metadata:
     episode_ids: frozenset[str]
     addresses: frozenset[str]
     """Every participant's address, in lowercase."""
+    engagers: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    """For each episode that is someone's own doing, the addresses it's the doing of, in
+    lowercase (`engagers` in `engagement.py`): what engagement is read from."""
 
     @classmethod
     def of(cls, envelopes: Iterable[Envelope]) -> L0Metadata:
         ids: set[str] = set()
         addresses: set[str] = set()
+        doers: dict[str, frozenset[str]] = {}
         for envelope in envelopes:
             ids.add(envelope.episode_id)
             addresses.update(
                 p.identifier.strip().lower() for p in envelope.participants if "@" in p.identifier
             )
-        return cls(frozenset(ids), frozenset(addresses))
+            if who := engagers(envelope):
+                doers[envelope.episode_id] = who
+        return cls(frozenset(ids), frozenset(addresses), doers)
 
     @property
     def domains(self) -> frozenset[str]:
@@ -197,14 +210,15 @@ def lint(tree: Path, *, l0: L0Metadata, owner: Owner, thresholds: Thresholds) ->
     errors.extend(_proposals(files, tree))
     found = pages(tree)
     errors.extend(_identifiers(found, l0, owner))
+    engaged = engaged_days(tree, l0, owner)
     warnings = [
         *_orphans(files, found),
         *_aging_loops(found, thresholds),
         *_duplicate_candidates(found),
-        *_slugs_without_pages(tree, found, thresholds),
+        *_slugs_without_pages(tree, found, thresholds, engaged),
         *_needs_lookup(files),
     ]
-    return LintReport(errors=tuple(errors), warnings=tuple(warnings))
+    return LintReport(errors=tuple(errors), warnings=tuple(warnings), engaged_days=engaged)
 
 
 _NOT_IN_LAYOUT = (
@@ -386,8 +400,8 @@ def _section_lines(page: Page) -> Iterator[Finding]:
 
 
 def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterator[Finding]:
-    """A page's addresses and domains are in L0's metadata, none is on two pages, and none of
-    its addresses is the owner's."""
+    """A page's addresses and domains are in L0's metadata, none is on two pages, none of
+    its addresses is the owner's, and a person's aren't all automated mailboxes."""
     known = {PERSON: l0.addresses, ORGANIZATION: l0.domains}
     owners = {address.strip().lower() for address in owner.email_addresses}
     listed: dict[tuple[str, str], str] = {}
@@ -419,6 +433,18 @@ def _identifiers(pages: Iterable[Page], l0: L0Metadata, owner: Owner) -> Iterato
                     "belongs on one page",
                     1,
                 )
+        if (
+            page_type is PERSON
+            and page.identifiers
+            and all(is_automated_mailbox(value) for value in page.identifiers)
+        ):
+            yield Finding(
+                page.path,
+                f"`{key}` lists only automated mailboxes ({', '.join(page.identifiers)}): an "
+                "automated mailbox never gets a person page; what it sends belongs on its "
+                "organization's page or its topic's",
+                1,
+            )
 
 
 _URL = re.compile(
@@ -642,11 +668,18 @@ def _nearly(first: str, second: str) -> bool:
 
 
 def _slugs_without_pages(
-    tree: Path, pages: Sequence[Page], thresholds: Thresholds
+    tree: Path, pages: Sequence[Page], thresholds: Thresholds, engaged: Collection[str]
 ) -> Iterator[Finding]:
-    """A slug linked on enough days to need a page that has none."""
+    """A slug the owner has engaged with, linked on enough days to need a page, that has none.
+
+    An unengaged slug is left alone: a person the owner never engaged with gets no page at
+    the threshold, and before a slug has a page nothing here tells a person's from an
+    organization's.
+    """
     with_pages = {page.slug for page in pages}
     for slug, days in sorted(linked_days(tree).items()):
+        if slug not in engaged:
+            continue
         if len(days) >= thresholds.page_threshold and slug not in with_pages:
             yield Finding(
                 f"{DAYS}/{days[-1].isoformat()}.md",

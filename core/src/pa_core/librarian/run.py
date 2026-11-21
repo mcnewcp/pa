@@ -425,6 +425,7 @@ def _consolidate(
         consolidation_prompt(
             observations,
             reference_counts(tree),
+            report.engaged_days,
             page_threshold,
             {page.slug: page.path for page in pages(tree)},
             runner.paths,
@@ -657,12 +658,14 @@ def observation_prompt(batch: Batch, paths: SessionPaths) -> str:
 def consolidation_prompt(
     observations: Sequence[NewObservation],
     counts: Mapping[str, int],
+    engaged_days: Mapping[str, Sequence[date]],
     page_threshold: int,
     page_paths: Mapping[str, str],
     paths: SessionPaths,
 ) -> str:
     """What the consolidation session is asked: the run's new observations, then the
-    reference counts (with each slug's page, if it has one), each as a JSON block."""
+    reference counts (with each slug's page, if it has one, and whether the owner has engaged
+    with it, by `engaged_days`), each as a JSON block."""
     new = [{"day": o.day.isoformat(), "line": o.line} for o in observations]
     folders = [f"`{paths.wiki / folder}`" for folder in PAGE_FOLDERS]
     references: list[dict[str, object]] = []
@@ -671,6 +674,7 @@ def consolidation_prompt(
             "slug": slug,
             "days": days,
             "reaches_threshold": days >= page_threshold,
+            "engaged": slug in engaged_days,
         }
         if slug in page_paths:
             reference["page"] = page_paths[slug]
@@ -684,9 +688,12 @@ def consolidation_prompt(
         f"```json\n{_json(new)}\n```\n\n"
         "These are the reference counts: for each slug linked in the day logs, the number of "
         "distinct days it's linked on, over all day logs, and its `page` (relative to the wiki) "
-        "if it has one. A slug with no page gets one once it "
+        "if it has one. `engaged` says whether the owner has engaged with the slug: whether an "
+        "observation linking it cites an episode the owner sent, wrote, organized, or attends. "
+        "A slug with no page gets one once it "
         f"reaches {page_threshold} days (`reaches_threshold`), or as soon as it appears in a "
-        "decision or loop line.\n\n"
+        "decision or loop line. A person gets a page at the threshold only when `engaged`; an "
+        "organization or a topic gets one either way.\n\n"
         f"```json\n{_json(references)}\n```\n"
     )
 
@@ -737,7 +744,10 @@ def identity_prompt(identities: IdentityTable) -> str:
         f"by its group's suggested slug. The owner is `{identities.owner.slug}`, and only at "
         "the owner's addresses: a group marked `uses_owner_name` is someone else using the "
         "owner's name. Mail listed under `forged` claims to be from the owner but was not sent "
-        "from the owner's mailbox: it is not the owner speaking. Nicknames that appear only in "
+        "from the owner's mailbox: it is not the owner speaking. A group marked `automated` is "
+        "a mailbox no person writes from (no-reply, notifications, and the like): it never "
+        "gets a person page, and what it sends belongs to its organization or its topic. "
+        "Nicknames that appear only in "
         "the episodes' text are not in the table; read the episodes for them.\n\n"
         f"```json\n{table}\n```\n"
     )
