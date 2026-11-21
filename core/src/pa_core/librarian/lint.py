@@ -11,13 +11,16 @@ An error fails the run. The rules so far:
 - **Pages** follow their type's schema (`wiki.py`): frontmatter with exactly the type's fields
   and valid values; the type's sections, in order, with only a `# <title>` before them;
   well-formed decision and loop lines in Decisions and Open loops; a citation on every other
-  line; and no template `<placeholder>` left in its summary, aliases, or title.
+  line; and no template `<placeholder>` left in its summary, aliases, or title. No page is
+  named for a file at the wiki's top level (`index`, `proposals`, `retired`), which a link by
+  that name goes to.
 - **Citations** name episodes that are in L0.
 - **Proposals.** `proposals.md` holds its two sections, `## Open` and `## Answered`, and
   nothing in them but well-formed proposal lines, open ones under Open and answered ones under
   Answered. No two share an id; a proposal's text is short and holds no URL; and every link of
-  an open proposal goes to a page.
-- **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once.
+  an open proposal goes to a page, or to a retired slug.
+- **Retired slugs.** `retired.md` holds nothing but retirement lines, each slug once, after an
+  optional title.
 - **Identifiers.** A person page's `emails` and an organization page's `domains` are in L0's
   metadata (any episode's participants), no address or domain is on two pages, and no page
   lists one of the owner's configured addresses (the owner is `me`). A person page's addresses
@@ -324,6 +327,13 @@ def _pages(file: WikiFile, l0: L0Metadata) -> Iterator[Finding]:
     folder = file.path.partition("/")[0]
     if folder not in PAGE_TYPES:
         return
+    slug = file.path.rpartition("/")[2].removesuffix(".md")
+    if f"{slug}.md" in (INDEX, *ROOT_FILES):
+        yield Finding(
+            file.path,
+            f"a page can't be named `{slug}`: {slug}.md is a file at the wiki's top level, and "
+            f"[[{slug}]] links it",
+        )
     try:
         page = read_page(file.path, "\n".join(file.lines))
     except PageFormatError as error:

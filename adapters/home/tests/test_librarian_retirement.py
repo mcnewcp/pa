@@ -13,7 +13,6 @@ for Nina Park, a realtor who wrote to the owner once and never heard back.
 import json
 import os
 import subprocess
-import textwrap
 from collections.abc import Sequence
 from datetime import datetime, time, timedelta
 from email.utils import format_datetime
@@ -698,11 +697,6 @@ def test_lint_gives_no_slug_without_page_warning_for_a_retired_slug(
         "retired": True,
     }
     assert fields(commit_messages(data_root)[0])["Lint-Warnings"] == "0"
-    # And the next dreaming run is offered Nina's page alone, not his slug.
-    script(data_root, dreaming=[reporting(dismissed())])
-    assert dream() == 0
-    offered = sessions(data_root, "dreaming")[-1]["candidates"]
-    assert [(c["kind"], c["pages"]) for c in offered] == [("unengaged", [NINA])]
 
 
 PROPOSALS = "proposals.md"
@@ -789,3 +783,171 @@ def test_a_retirement_a_resumed_session_no_longer_reports_leaves_its_emptied_pag
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
+
+
+def test_the_hosts_own_writes_to_retired_md_are_never_blamed_on_a_resumed_session(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    # Her page is retired, with no outcome for the agency's, so the host has listed her when
+    # it resumes the session. Resumed, the session reports nothing, twice.
+    script(data_root, dreaming=[EMPTIED, reporting(retiring())])
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    assert len(sessions(data_root, "dreaming")) == 3
+    error = capsys.readouterr().err
+    assert "holds no outcomes" in error
+    assert "retired.md" not in error
+
+
+def retire_nina_at_the_threshold(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Builds the wiki with Nina linked on two days, the page threshold, and retires her
+    page."""
+    monkeypatch.setenv("PA_LIBRARIAN_PAGE_THRESHOLD", "2")
+    ingest(data_root, {"gmail/listing-2.eml": listing(9, "listing-0002@lakeview.example")})
+    run_with_pages(data_root)
+    script(data_root, dreaming=[EMPTIED, reporting(retiring())])
+    assert dream() == 0
+    assert wiki_files(data_root)[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+
+
+def viewing(days: int) -> dict[str, bytes]:
+    """The owner's reply to Nina, sent `days` days ago."""
+    to = "Nina Park <nina@lakeview.example>"
+    return {"gmail/viewing.eml": sent("Viewing", days, "listing-0003@example.com", to=to)}
+
+
+def test_a_retired_slug_the_owner_then_engages_with_is_at_the_threshold_again(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    retire_nina_at_the_threshold(data_root, monkeypatch)
+    # The owner writes back to her later on the day her page was retired: that counts.
+    ingest(data_root, viewing(0))
+    script(data_root, observation=[{"observe": True, "links": {"Viewing": ["nina-park"]}}])
+
+    assert run_librarian() == 0
+
+    session = sessions(data_root, "consolidation")[-1]
+    assert reference_counts(session)["nina-park"] == {
+        "slug": "nina-park",
+        "days": 3,
+        "reaches_threshold": True,
+        "engaged": True,
+        "retired": True,
+    }
+    # This consolidation wrote her no page, so lint warns again, and she stays on the list.
+    recorded = commit_messages(data_root)[0]
+    assert "`nina-park` is linked on 3 days, reaching the page threshold of 2" in recorded
+    assert wiki_files(data_root)[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+
+
+# What the night after a retirement brings, and what its observation links: each ends with
+# consolidation writing Nina a page again.
+RETURNS = {
+    # At the threshold again, by the reference counts.
+    "the owner engages with the slug": (viewing(0), {"Viewing": ["nina-park"]}),
+    # Below it still: the owner asked for the page, or a loop names her.
+    "consolidation creates the page for another reason": (gift(), {"Gift": ["david-kim"]}),
+}
+
+
+@pytest.mark.parametrize("reason", RETURNS, ids=list(RETURNS))
+def test_once_a_retired_slug_has_a_page_again_the_host_drops_it_from_retired_md(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+):
+    retire_nina_at_the_threshold(data_root, monkeypatch)
+    mail, links = RETURNS[reason]
+    ingest(data_root, mail)
+    script(
+        data_root,
+        observation=[{"observe": True, "links": links}],
+        consolidation=[{"write": NINA, "text": pages()[NINA]}],
+    )
+
+    assert run_librarian() == 0
+
+    files = wiki_files(data_root)
+    assert files[NINA] == pages()[NINA]
+    # She was the only one retired, so the list goes too, in the run's own commit.
+    assert RETIRED not in files
+    changed = git(data_root, "show", "--format=", "--name-only", "HEAD").split()
+    assert {NINA, RETIRED} <= set(changed)
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # The next consolidation is told nothing of a retirement.
+    ingest(data_root, {"gmail/menu.eml": email(message_id="wedding-0009@example.net")})
+    script(data_root)
+    assert run_librarian() == 0
+    assert "retired" not in reference_counts(sessions(data_root, "consolidation")[-1])["nina-park"]
+
+
+def test_a_dreaming_run_that_gives_a_retired_slug_its_page_back_drops_it_from_retired_md(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    retire_nina_at_the_threshold(data_root, monkeypatch)
+    # Another slug was retired a month ago, and stays so.
+    commit_by_hand(data_root, {RETIRED: retired_file(SHIPPING, f"- nina-park · retired {TODAY}")})
+    ingest(data_root, viewing(0))
+    script(data_root, observation=[{"observe": True, "links": {"Viewing": ["nina-park"]}}])
+    assert run_librarian() == 0
+    # Engaged and at the threshold with no page, her slug is a candidate, and dreaming
+    # creates the page.
+    created = {"candidate": "c01", "outcome": "applied", "pages": [NINA]}
+    script(data_root, dreaming=[{"write": NINA, "text": pages()[NINA]}, reporting(created)])
+
+    assert dream() == 0
+
+    [candidate] = sessions(data_root, "dreaming")[-1]["candidates"]
+    assert (candidate["kind"], candidate["slug"]) == ("slug-without-page", "nina-park")
+    files = wiki_files(data_root)
+    assert files[NINA] == pages()[NINA]
+    assert files[RETIRED] == retired_file(SHIPPING)
+    changed = git(data_root, "show", "--format=", "--name-only", "HEAD").split()
+    assert {NINA, RETIRED} <= set(changed)
+
+
+@pytest.mark.parametrize("name", ["index", "proposals", "retired"])
+def test_a_page_cant_take_the_name_of_a_file_at_the_wikis_top_level(
+    data_root: Path, capsys, name: str
+):
+    run_with_pages(data_root)
+    ingest(data_root, gift())
+    # A topic the mail calls by that name: `[[proposals]]` would no longer mean one file.
+    named = {"write": f"topics/{name}.md", "text": page("topic", name.capitalize())}
+    script(data_root, consolidation=[named], consolidation_resume=[])
+    capsys.readouterr()
+
+    assert run_librarian() != 0
+
+    error = capsys.readouterr().err
+    assert (
+        f"topics/{name}.md: a page can't be named `{name}`: {name}.md is a file at the wiki's "
+        f"top level, and [[{name}]] links it"
+    ) in error
+    assert "the consolidation session left 1 lint errors after 2 resumes" in error
+
+
+def test_a_dreaming_session_is_given_the_retired_slugs(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {RETIRED: retired_file(SHIPPING)})
+    script(data_root, dreaming=[reporting(dismissed())])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert "\n## Retired slugs\n" in session["prompt"]
+    # The section's JSON block is the prompt's last.
+    assert session["inputs"][-1] == [{"slug": "shipping-updates", "retired": days_ago(30)}]
+    assert f"`{data_root / 'wiki' / RETIRED}`" in session["prompt"]
+
+
+def test_a_dreaming_session_over_a_wiki_with_nothing_retired_is_told_so(data_root: Path):
+    run_with_pages(data_root)
+    script(data_root, dreaming=[reporting(dismissed())])
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert "\n## Retired slugs\n" in session["prompt"]
+    assert session["inputs"][-1] == []

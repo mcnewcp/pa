@@ -8,7 +8,8 @@ it, and the host removes it after the session if the page it was merged into too
 alias. After each session the host checks
 it stayed in bounds and lints the wiki; a session that leaves lint errors it can fix
 (observation: in the day logs; consolidation: in the pages) is resumed with the findings, at
-most twice. Then the host rewrites links to aliases, regenerates `index.md`,
+most twice. Then the host drops from `retired.md` each retired slug that has a page again,
+rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
 warnings. Nothing with a lint error is ever committed.
 
@@ -54,7 +55,7 @@ from pa_core.librarian.identity import IdentityTable, identity_table
 from pa_core.librarian.index import write_index
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import Finding, L0Metadata, LintReport, Thresholds, lint
-from pa_core.librarian.retirement import standing
+from pa_core.librarian.retirement import standing, update_retired
 from pa_core.librarian.wiki import (
     DAYS,
     INDEX,
@@ -251,6 +252,8 @@ def run_librarian(
                         committed,
                     )
                 )
+        # A retired slug that has a page again is retired no longer.
+        update_retired(tree, today=thresholds.today)
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)

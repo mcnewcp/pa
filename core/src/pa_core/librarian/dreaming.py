@@ -8,14 +8,17 @@ asks), or dismissed. The session reports the outcomes as JSON in its final messa
 
 The run sits beside the nightly run (`pa_core.librarian.run`) and holds the wiki to the same
 bar, with the same parts: the session and its resume loop, lint after the session, the host's
-deterministic steps (removing merged pages, rewriting links to aliases, regenerating
-`index.md`), and one commit, or the wiki back at its last commit if anything fails. It differs
-in what it asks and what it records:
+deterministic steps (removing merged and retired pages, rewriting links to aliases,
+regenerating `index.md`), and one commit, or the wiki back at its last commit if anything
+fails. It differs in what it asks and what it records:
 
-- its prompt carries the candidates and the open proposals;
+- its prompt carries the candidates, the open proposals, and the retired slugs;
 - the session may change only pages and `proposals.md`, and there only add proposals: each one
   named by a proposed outcome, numbered above every id the file has held, and within the caps
   on a run's new proposals and on how many are open at once;
+- the session may retire a page, by emptying it and naming its slug in an applied outcome: the
+  host removes the page and lists the slug in `retired.md`, which only the host writes
+  (`pa_core.librarian.retirement`);
 - its commit carries the librarian's cursor and version forward from the last commit, so the
   next nightly run and a cut still find them there, and records the candidates and outcomes.
 
@@ -87,6 +90,7 @@ from pa_core.librarian.wiki import (
     pages,
     parse_loop,
     read_proposals,
+    read_retired,
 )
 from pa_core.owner import Owner
 
@@ -349,7 +353,9 @@ def _dream(
         Phase.DREAMING,
         dreaming_prompt(offered, runner.paths)
         + "\n"
-        + proposals_prompt(standing, caps, runner.paths),
+        + proposals_prompt(standing, caps, runner.paths)
+        + "\n"
+        + retired_prompt(read_retired(tree), runner.paths),
         require_bounds,
         lambda finding: _in_pages(finding) or finding.path == PROPOSALS,
         tree,
@@ -729,6 +735,24 @@ def proposals_prompt(standing: Sequence[Proposal], caps: ProposalCaps, paths: Se
         f"describes it if the wiki has none. {may} Never change or remove a proposal that is "
         "already in the file.\n\n"
         f"```json\n{_json([proposal.to_json() for proposal in asked])}\n```\n"
+    )
+
+
+RETIRED_PROMPT_HEADING = "## Retired slugs"
+
+
+def retired_prompt(retired: Mapping[str, date], paths: SessionPaths) -> str:
+    """The retired slugs as a section of the dreaming session's prompt, under
+    `RETIRED_PROMPT_HEADING`: each of `retired` with the day it was retired, as a JSON block."""
+    listed = [{"slug": slug, "retired": day.isoformat()} for slug, day in retired.items()]
+    return (
+        f"{RETIRED_PROMPT_HEADING}\n\n"
+        "The slugs whose pages earlier dreaming runs retired, each with the day it was "
+        f"retired: what `{paths.wiki / RETIRED}` lists. A link to one is good, and it has no "
+        "page on purpose: don't create one unless a candidate is about its slug. To retire a "
+        "page in this run, follow CLAUDE.md: empty the page, and name its slug in your "
+        f"outcome. Never write `{RETIRED}` yourself: the host keeps it.\n\n"
+        f"```json\n{_json(listed)}\n```\n"
     )
 
 
