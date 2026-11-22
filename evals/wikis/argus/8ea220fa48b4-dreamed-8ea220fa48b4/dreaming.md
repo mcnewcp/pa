@@ -6,4 +6,4 @@ A copy of `evals/wikis/argus/8ea220fa48b4`, dreamed once on 2026-11-21 by `PA_LI
 - **Cost:** $0.86 over 20 turns, with one resume.
 - **Against the undreamed wiki:** 4 files differ: the two pages, `retired.md`, and `index.md`. No proposal was added.
 - **Lint warnings after the run:** 1.
-- **Scores:** 0.96, 0.96, 0.96 and then 0.96, 1.00, 1.00 over two sets of 3 files-plus-wiki runs at `fe227b3`. `evals/baselines/v0.14/verdict.md` has the analysis, and what the retirement lost.
+- **Scores:** 0.96, 0.96, 0.96 and then 0.96, 1.00, 1.00 over two sets of 3 files-plus-wiki runs at `fe227b3`. `evals/baselines/v0.14/verdict.md` has the analysis. The retired page's facts are all on `people/mara-mcnevans.md`.
