@@ -293,17 +293,21 @@ def failure_analysis(
     compared: Mapping[str, Sequence[RunResults]],
     *,
     columns: Sequence[str] | None = None,
+    before: Sequence[str] = (),
 ) -> str:
     """A private failure analysis under `title`, of the sets of runs `compared`, each by its
     name: every question's outcome in every run of each set, in a column per set (headed by
     `columns`, else by the names), then each answer that wasn't correct, with what its
-    session never opened. It quotes questions and answers: it is kept under the data root."""
+    session never opened. The lines `before` are a section of the caller's, put first. It
+    quotes questions and answers: it is kept under the data root."""
     headed = columns or [name.capitalize() for name in compared]
     lines = [
         title,
         "",
         "Real data: keep this under the data root.",
         "",
+        *before,
+        *([""] if before else []),
         "## Each question, run by run (correct?)",
         "",
         f"| Question | Category | {' | '.join(headed)} | Asked |",

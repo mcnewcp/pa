@@ -7,11 +7,24 @@ turns, and duration are medians over every answer in every run that reports them
 cited episodes opened pools the citations of every answer in every run whose tool calls were
 recorded.
 
-Two sets of runs that were each given one eval wiki, and not the same one, also get a wiki
-comparison (`compare_wikis`): the second wiki against the first, such as a dreamed copy against
-the wiki it was copied from. The second passes when its overall correctness is at least the
-first's and no category drops by more than the run-to-run spread, which is the first wiki's
-own in that category (`CategoryDrop.spread`).
+Two sets of runs that were each given one eval wiki, and not the same one, and asked the same
+questions, also get a wiki comparison (`compare_wikis`): the second wiki against the first,
+such as a dreamed copy against the wiki it was copied from. It is judged against a noise floor
+(#156):
+
+- **A question's score** on a wiki is the share of that wiki's runs that got it right.
+- **The drop** is the mean over questions of the first wiki's score minus the second's:
+  overall, for each tier, and for each category.
+- **The noise floor** is how far the first wiki falls from itself: the largest drop between
+  any two halves of its own runs. A half is as many runs as the second wiki was asked, so the
+  first is asked twice as many. Every pair of halves that share no run is tried, each way
+  round; where the first wiki was asked more than twice the second's runs, each pair leaves
+  the rest out. Where it was asked fewer than twice, there is no floor, and the comparison
+  isn't judged.
+- **The second wiki passes** when the drop is no larger than the noise floor, overall and in
+  every tier. An eval set without tiers is judged overall and in every category instead.
+- **A tier or category of fewer than `FEW_QUESTIONS` questions** counts like any other, and
+  the report marks it: one answer moves its drop a long way.
 """
 
 from __future__ import annotations
@@ -19,6 +32,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import combinations
+from math import comb
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -134,6 +149,12 @@ def correctness(runs: Sequence[RunResults], category: str) -> Spread | None:
     return Spread.over(scores) if scores else None
 
 
+def tier_correctness(runs: Sequence[RunResults], tier: int) -> Spread | None:
+    """Correctness on `tier` over the runs that asked it, or None if none did."""
+    scores = [run.tiers[tier].correctness for run in runs if tier in run.tiers]
+    return Spread.over(scores) if scores else None
+
+
 def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str:
     """The comparison report for each configuration's runs, the first being the reference."""
     if not configurations or not all(configurations.values()):
@@ -176,6 +197,23 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         cells = [format_spread(spreads[label]) for label in labels]
         cells += [format_difference(spreads[reference], spreads[other]) for other in others]
         lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
+
+    tiers = sorted({tier for runs in configurations.values() for run in runs for tier in run.tiers})
+    if tiers:
+        lines += [
+            "",
+            "## Correctness by tier",
+            "",
+            "The same questions by their tier in the eval set, read as the categories are.",
+            "",
+            f"| Tier | {' | '.join(header)} |",
+            f"|---|{'---|' * len(header)}",
+        ]
+    for tier in tiers:
+        spreads = {label: tier_correctness(runs, tier) for label, runs in configurations.items()}
+        cells = [format_spread(spreads[label]) for label in labels]
+        cells += [format_difference(spreads[reference], spreads[other]) for other in others]
+        lines.append(f"| {tier} | {' | '.join(cells)} |")
 
     if len(labels) == 2:
         comparison = compare_wikis(configurations[labels[0]], configurations[labels[1]])
@@ -220,65 +258,112 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
 
 EPSILON = 1e-9
 """What two means of the same scores can differ by, from the order they were added in."""
+FEW_QUESTIONS = 5
+"""A tier or category with fewer questions than this is marked (few) in a wiki comparison: it
+counts like any other, but a single answer moves its drop a long way."""
 
 
 @dataclass(frozen=True)
-class CategoryDrop:
-    """One category's correctness (or OVERALL's) on two wikis."""
+class QuestionScore:
+    """One question's score on each of two wikis: the share of that wiki's runs that got it
+    right."""
 
+    id: str
     category: str
-    first: Spread
-    second: Spread
+    tier: int | None
+    first: float
+    second: float
+
+    @property
+    def fall(self) -> float:
+        return self.first - self.second
+
+
+@dataclass(frozen=True)
+class Drop:
+    """A group of questions on two wikis: all of them (OVERALL), one tier's, or one
+    category's."""
+
+    group: str
+    questions: int
+    first: float
+    """The mean over its questions of the first wiki's score."""
+    second: float
+    floor: float | None
+    """The noise floor the drop is judged against: the largest drop between any two halves of
+    the first wiki's own runs. None where the first wiki was asked too few runs to have one."""
 
     @property
     def drop(self) -> float:
-        """How far the second wiki's mean is below the first's; 0 when it isn't."""
-        return max(0.0, self.first.mean - self.second.mean)
+        """The mean over its questions of the first wiki's score minus the second's: negative
+        when the second wiki did better."""
+        return self.first - self.second
 
     @property
-    def spread(self) -> float:
-        """The run-to-run spread a drop is measured against: the first wiki's own in this
-        category, from its lowest run to its highest.
-
-        The second wiki's spread excuses nothing: a wiki that made a category unreliable
-        would widen its own allowance. A single run has no spread, so any drop is too far.
-        """
-        return self.first.width
+    def within_floor(self) -> bool | None:
+        """Whether the drop is no larger than the noise floor, or None without a floor."""
+        return None if self.floor is None else self.drop <= self.floor + EPSILON
 
     @property
-    def within_spread(self) -> bool:
-        return self.drop <= self.spread + EPSILON
+    def few(self) -> bool:
+        return self.questions < FEW_QUESTIONS
 
 
 @dataclass(frozen=True)
 class WikiComparison:
     """Whether a second eval wiki does as well as a first, over runs given each."""
 
-    overall: CategoryDrop
-    categories: tuple[CategoryDrop, ...]
-    """Every category both sets of runs asked."""
+    overall: Drop
+    tiers: tuple[Drop, ...]
+    """Each tier, lowest first; empty for an eval set without tiers."""
+    categories: tuple[Drop, ...]
+    questions: tuple[QuestionScore, ...]
+    """Every question's score on each wiki, in eval set order."""
+    runs: tuple[int, int]
+    """How many runs the first wiki was asked, and the second."""
 
     @property
-    def overall_holds(self) -> bool:
-        """Whether overall correctness on the second wiki is at least the first's."""
-        return self.overall.second.mean >= self.overall.first.mean - EPSILON
+    def deciding(self) -> tuple[Drop, ...]:
+        """The groups that decide beside OVERALL: the tiers of a tiered eval set, and the
+        categories of one without tiers."""
+        return self.tiers or self.categories
 
     @property
-    def dropped(self) -> tuple[CategoryDrop, ...]:
-        """The categories that dropped by more than the spread."""
-        return tuple(category for category in self.categories if not category.within_spread)
+    def pairs(self) -> int:
+        """How many pairs of halves the noise floor was taken over, a pair counted once for
+        both ways round."""
+        asked, half = self.runs
+        return comb(asked, half) * comb(asked - half, half) // 2
 
     @property
-    def passed(self) -> bool:
-        return self.overall_holds and not self.dropped
+    def beyond(self) -> tuple[Drop, ...]:
+        """The deciding groups, OVERALL first, whose drop is larger than the noise floor."""
+        return tuple(g for g in (self.overall, *self.deciding) if g.within_floor is False)
+
+    @property
+    def passed(self) -> bool | None:
+        """Whether the drop is no larger than the noise floor, overall and in every tier (or
+        category, without tiers). None where there is no floor to judge by."""
+        return None if self.overall.floor is None else not self.beyond
+
+    @property
+    def fell(self) -> tuple[QuestionScore, ...]:
+        """The questions whose score is lower on the second wiki, the furthest fall first."""
+        fallen = [question for question in self.questions if question.fall > EPSILON]
+        return tuple(sorted(fallen, key=lambda question: -question.fall))
 
 
 def compare_wikis(
     first: Sequence[RunResults], second: Sequence[RunResults]
 ) -> WikiComparison | None:
-    """The second runs' eval wiki against the first's, or None unless each set of runs was
-    given one eval wiki throughout, and not the same one: a wiki is named by the librarian
-    version that built it and the one that dreamed it."""
+    """The second runs' eval wiki against the first's, by the noise-floor rule (see the
+    module's docstring).
+
+    None unless each set of runs was given one eval wiki throughout, and not the same one (a
+    wiki is named by the librarian version that built it and the one that dreamed it), and
+    every run asked the same questions. Where the first wiki was asked fewer than twice the
+    second's runs there is no noise floor: every `Drop.floor` is None, and so is `passed`.
+    """
     if not all(run.wiki is not None for run in (*first, *second)):
         return None
     given = [
@@ -287,62 +372,181 @@ def compare_wikis(
     ]
     if any(len(wikis) != 1 for wikis in given) or given[0] == given[1]:
         return None
-    drops: list[CategoryDrop] = []
-    for category in [*_categories([first, second]), OVERALL]:
-        was, now = correctness(first, category), correctness(second, category)
-        if was is not None and now is not None:
-            drops.append(CategoryDrop(category, was, now))
-    return WikiComparison(overall=drops[-1], categories=tuple(drops[:-1]))
+    asked = first[0].questions
+    if not asked or not same_questions([*first, *second]):
+        return None
+
+    right = [[_right(run, asked) for run in runs] for runs in (first, second)]
+    groups: dict[str, list[int]] = {OVERALL: list(range(len(asked)))}
+    for tier in sorted({q.tier for q in asked if q.tier is not None}):
+        groups[f"Tier {tier}"] = [n for n, q in enumerate(asked) if q.tier == tier]
+    tiers = len(groups) - 1
+    for category in dict.fromkeys(q.category for q in asked):
+        groups[category] = [n for n, q in enumerate(asked) if q.category == category]
+    half = len(second)
+    floors = _noise_floors(right[0], groups, half) if len(first) >= 2 * half else None
+
+    drops = [
+        Drop(
+            group,
+            len(members),
+            first=_score(right[0], members),
+            second=_score(right[1], members),
+            floor=None if floors is None else floors[group],
+        )
+        for group, members in groups.items()
+    ]
+    return WikiComparison(
+        overall=drops[0],
+        tiers=tuple(drops[1 : 1 + tiers]),
+        categories=tuple(drops[1 + tiers :]),
+        questions=tuple(
+            QuestionScore(q.id, q.category, q.tier, _score(right[0], [n]), _score(right[1], [n]))
+            for n, q in enumerate(asked)
+        ),
+        runs=(len(first), len(second)),
+    )
+
+
+def same_questions(runs: Sequence[RunResults]) -> bool:
+    """Whether every run asked the same questions."""
+    return len({frozenset(q.id for q in run.questions) for run in runs}) == 1
+
+
+def _right(run: RunResults, asked: Sequence[QuestionResult]) -> list[bool]:
+    """Whether the run got each of the questions `asked` right, in their order."""
+    correct = {q.id: q.correct is True for q in run.questions}
+    return [correct[q.id] for q in asked]
+
+
+def _score(right: Sequence[Sequence[bool]], members: Sequence[int]) -> float:
+    """The mean over the questions `members` of their score: the share of the runs (`right`,
+    each run's questions) that got each right."""
+    return sum(run[n] for run in right for n in members) / (len(right) * len(members))
+
+
+def _noise_floors(
+    right: Sequence[Sequence[bool]], groups: Mapping[str, Sequence[int]], half: int
+) -> dict[str, float]:
+    """Each group's noise floor: the largest drop between any two halves of one wiki's runs
+    (`right`, each run's questions). A half is `half` runs, and every pair of halves that
+    share no run is tried, each way round; runs beyond the two halves sit that pair out."""
+    correct = {
+        group: [sum(run[n] for n in members) for run in right] for group, members in groups.items()
+    }
+    floors = dict.fromkeys(groups, 0.0)
+    runs = range(len(right))
+    for one in combinations(runs, half):
+        for other in combinations([run for run in runs if run not in one], half):
+            for group, per_run in correct.items():
+                gap = sum(per_run[run] for run in one) - sum(per_run[run] for run in other)
+                floors[group] = max(floors[group], gap / (half * len(groups[group])))
+    return floors
 
 
 def wiki_comparison_section(first: str, second: str, comparison: WikiComparison) -> list[str]:
     """The wiki comparison's section of a report, as its lines: `second`'s wiki against
     `first`'s, each named as the report names it. Numbers only."""
     first, second = table_cell(first), table_cell(second)
+    asked, half = comparison.runs
+    kind = "tier" if comparison.tiers else "category"
+    judged = (comparison.overall, *comparison.deciding)
+    floor = f"- **The noise floor** is the largest drop between any two halves of {first}'s own "
+    if comparison.passed is None:
+        floor += (
+            f"runs, a half being as many runs as {second} was asked. There is none here: it "
+            f"needs {first} asked at least twice as many runs as {second}, and it was asked "
+            f"{asked} against {half}."
+        )
+    else:
+        left = f", each leaving {asked - 2 * half} of them out" if asked > 2 * half else ""
+        floor += (
+            f"runs. A half is {_count(half, 'run')}, as many as {second} was asked, and every "
+            "pair of halves that share no run is tried, each way round: "
+            f"{_count(comparison.pairs, 'pair')} from its {asked} runs{left}."
+        )
     lines = [
         "## Wiki against wiki",
         "",
         f"Both sets of runs were given an eval wiki, and not the same one: this is {second}'s "
-        f"against {first}'s. It passes when its overall correctness is at least {first}'s, and "
-        "no category drops by more than the run-to-run spread. The spread is the one "
-        f"{first}'s own runs show in that category, from the lowest to the highest: {second}'s "
-        "spread excuses nothing, and a single run has none, so any drop from it is too far.",
+        f"against {first}'s, over the {_count(len(comparison.questions), 'question')} every "
+        "run asked.",
         "",
-        f"| Category | {first} | {second} | Drop | Spread | Within it |",
-        "|---|---|---|---|---|---|",
+        "- **A question's score** on a wiki is the share of that wiki's runs that got it right.",
+        f"- **The drop** is the mean over questions of {first}'s score minus {second}'s, so a "
+        "rise is negative.",
+        floor,
+        "- **It passes** when the drop is no larger than the noise floor, overall and in every "
+        f"{kind}.",
     ]
-    for category in comparison.categories:
+    if any(group.few for group in judged):
         lines.append(
-            f"| {table_cell(category.category)} | {format_spread(category.first)} | "
-            f"{format_spread(category.second)} | {_drop(category)} | {category.spread:.2f} | "
-            f"{'yes' if category.within_spread else 'no'} |"
+            f"- **(few)** marks fewer than {FEW_QUESTIONS} questions. Such a {kind} counts like "
+            f"any other, but one of {second}'s answers moves its drop by "
+            f"{1 / ((FEW_QUESTIONS - 1) * half):.3f} or more, so its result says little by "
+            "itself."
         )
-    overall = comparison.overall
     lines += [
-        f"| {OVERALL} | {format_spread(overall.first)} | {format_spread(overall.second)} | "
-        f"{_drop(overall)} | n/a | {'yes' if comparison.overall_holds else 'no'} |",
         "",
+        f"| | Questions | {first} | {second} | Drop | Noise floor | Within it |",
+        "|---|---|---|---|---|---|---|",
     ]
+    for group in judged:
+        within = {None: "n/a", True: "yes", False: "no"}[group.within_floor]
+        few = " (few)" if group.few else ""
+        lines.append(
+            f"| {table_cell(group.group)} | {group.questions}{few} | {_cells(group)} | {within} |"
+        )
+    lines.append("")
     if comparison.passed:
+        overall = comparison.overall
         lines.append(
-            f"**Passes**: overall correctness is {overall.second.mean:.2f}, at least "
-            f"{overall.first.mean:.2f}, and no category drops by more than the spread."
+            "**Passes**: the drop is no larger than the noise floor, overall "
+            f"({_thousandths(overall.drop)} against {_thousandths(overall.floor)}) and in every "
+            f"{kind}."
         )
-    if not comparison.overall_holds:
+    if comparison.passed is None:
+        lines.append("**Not judged**: without a noise floor, a drop can't be told from noise.")
+    for group in comparison.beyond:
         lines.append(
-            f"**Fails**: overall correctness is {overall.second.mean:.2f}, below "
-            f"{overall.first.mean:.2f}."
+            f"**Fails**: {group.group[0].lower()}{group.group[1:]} drops by "
+            f"{_thousandths(group.drop)}, more than the noise floor of "
+            f"{_thousandths(group.floor)}."
         )
-    for category in comparison.dropped:
-        lines.append(
-            f"**Fails**: {category.category} drops by {category.drop:.2f}, more than the "
-            f"spread of {category.spread:.2f}."
-        )
+    if comparison.tiers:
+        lines += [
+            "",
+            "### By category",
+            "",
+            "The same drop and noise floor by category. The eval set has tiers, so its "
+            "categories decide nothing.",
+            "",
+            f"| Category | Questions | {first} | {second} | Drop | Noise floor |",
+            "|---|---|---|---|---|---|",
+        ]
+        lines += [
+            f"| {table_cell(group.group)} | {group.questions} | {_cells(group)} |"
+            for group in comparison.categories
+        ]
     return lines
 
 
-def _drop(category: CategoryDrop) -> str:
-    return f"{category.drop:.2f}" if category.drop > EPSILON else "none"
+def _cells(group: Drop) -> str:
+    """A group's score on each wiki, its drop, and its noise floor, as table cells."""
+    return (
+        f"{group.first:.2f} | {group.second:.2f} | {_thousandths(group.drop)} | "
+        f"{_thousandths(group.floor)}"
+    )
+
+
+def _thousandths(value: float | None) -> str:
+    """A drop or a noise floor to three decimals, since one answer of 50 questions over 3
+    runs moves it by less than 0.01; n/a where there is none."""
+    return "n/a" if value is None else f"{round(value, 3) + 0.0:.3f}"
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
 def _categories(configurations: Iterable[Sequence[RunResults]]) -> list[str]:

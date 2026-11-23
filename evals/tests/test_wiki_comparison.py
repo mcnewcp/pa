@@ -1,7 +1,7 @@
 """`pa-eval compare-wikis`: one eval wiki against another over a cut, as a public report of
 numbers and a private failure analysis (#140, the real-data comparison)."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,11 +30,16 @@ UNDREAMED_WIKI = WikiResult(librarian_version=BUILT)
 DREAMED_WIKI = WikiResult(librarian_version=BUILT, dreaming_version=DREAMED)
 
 
-def answer(question_id: str, category: Category, *, correct: bool) -> QuestionResult:
+CATEGORIES: dict[str, Category] = {"r01": "open_loops"}
+"""Each question's category, where it isn't single-fact recall."""
+
+
+def answer(question_id: str, *, correct: bool, tier: int | None = None) -> QuestionResult:
     """An answer citing one of its two evidence episodes, the other never opened."""
     return QuestionResult(
         id=question_id,
-        category=category,
+        category=CATEGORIES.get(question_id, "single_fact_recall"),
+        tier=tier,
         question=QUESTION,
         as_of=AS_OF,
         expected_answer=EXPECTED,
@@ -57,18 +62,22 @@ def answer(question_id: str, category: Category, *, correct: bool) -> QuestionRe
 
 def runs(
     wiki: WikiResult | None,
-    correct: Sequence[bool],
+    correct: Sequence[bool] | Mapping[str, Sequence[bool]],
     *,
+    tiers: Mapping[str, int] | None = None,
     configuration: str = "files-plus-wiki",
     cut: CutResult | None = CUT,
 ) -> list[RunResults]:
-    """One run per entry of `correct`, each of two questions: r01 answered `correct[n]` in run
-    n, r02 always right."""
+    """One run per entry of `correct`, each of two questions: r01 (open loops) answered
+    `correct[n]` in run n, r02 (single-fact recall) always right. Or, given each question's
+    outcomes run by run, a run of those questions, each in the tier `tiers` gives it."""
+    if not isinstance(correct, Mapping):
+        correct = {"r01": correct, "r02": [True] * len(correct)}
     made = []
-    for right in correct:
+    for number in range(len(next(iter(correct.values())))):
         questions = [
-            answer("r01", "open_loops", correct=right),
-            answer("r02", "single_fact_recall", correct=True),
+            answer(question_id, correct=right[number], tier=(tiers or {}).get(question_id))
+            for question_id, right in correct.items()
         ]
         made.append(
             RunResults(
@@ -78,11 +87,21 @@ def runs(
                 as_of=AS_OF,
                 cut=cut,
                 overall=Scores.over(questions),
-                categories={q.category: Scores.over([q]) for q in questions},
+                categories={
+                    q.category: Scores.over([a for a in questions if a.category == q.category])
+                    for q in questions
+                },
+                tiers={
+                    tier: Scores.over([q for q in questions if q.tier == tier])
+                    for tier in sorted({q.tier for q in questions if q.tier is not None})
+                },
                 questions=questions,
             )
         )
     return made
+
+
+Y, N = True, False
 
 
 def compare(
@@ -90,10 +109,12 @@ def compare(
     first: Sequence[RunResults],
     second: Sequence[RunResults],
     *,
+    first_again: Sequence[RunResults] = (),
     paths: dict[str, Path] | None = None,
 ) -> tuple[int, str, str]:
     """Run `pa-eval compare-wikis`, returning its exit code, the public report, and the
-    private analysis. `paths` gives options a path in place of the usual one."""
+    private analysis. `first_again` is a second run directory for `--first`; `paths` gives
+    options a path in place of the usual one."""
     real = tmp_path / "data-root" / "evals"
     options = {
         "--first": real / "runs" / "first",
@@ -101,21 +122,31 @@ def compare(
         "--public": tmp_path / "comparison.md",
         "--private": real / "comparison-private.md",
     }
-    for option, written in (("--first", first), ("--second", second)):
-        for number, run in enumerate(written, start=1):
-            (options[option] / f"run-{number}").mkdir(parents=True)
-            (options[option] / f"run-{number}" / "results.json").write_text(run.model_dump_json())
+    again = real / "runs" / "first-again"
+    for run_dir, written in ((options["--first"], first), (options["--second"], second)):
+        lay_runs(run_dir, written)
+    lay_runs(again, first_again)
     options.update(paths or {})
-    code = main(["compare-wikis", *(str(item) for option in options.items() for item in option)])
+    args = [str(item) for option in options.items() for item in option]
+    if first_again:
+        args.insert(2, str(again))
+    code = main(["compare-wikis", *args])
     read = lambda path: path.read_text() if path.exists() else ""  # noqa: E731
     return code, read(options["--public"]), read(options["--private"])
+
+
+def lay_runs(run_dir: Path, written: Sequence[RunResults]) -> None:
+    """Write runs into a run directory as `pa-eval run --runs N` lays them."""
+    for number, run in enumerate(written, start=1):
+        (run_dir / f"run-{number}").mkdir(parents=True)
+        (run_dir / f"run-{number}" / "results.json").write_text(run.model_dump_json())
 
 
 def test_the_public_comparison_holds_numbers_only_and_says_whether_the_second_wiki_passes(
     tmp_path: Path,
 ):
     code, public, _ = compare(
-        tmp_path, runs(UNDREAMED_WIKI, [True, False, True]), runs(DREAMED_WIKI, [True] * 3)
+        tmp_path, runs(UNDREAMED_WIKI, [Y, N, Y, Y, Y, Y]), runs(DREAMED_WIKI, [Y, Y, Y])
     )
 
     assert code == 0
@@ -125,34 +156,233 @@ def test_the_public_comparison_holds_numbers_only_and_says_whether_the_second_wi
     assert f"librarian version {BUILT}, dreamed by librarian version {DREAMED}" in public
     assert "taken 2026-11-18 20:27 UTC, 1616 episodes" in public
     assert "59b9ce244da8" not in public
-    assert "the undreamed wiki 3, the dreamed wiki 3" in public
-    # Each category on both wikis, then whether the dreamed one holds up.
+    assert "the undreamed wiki 6, the dreamed wiki 3" in public
+    # The drop and the noise floor, overall and for each category of a set without tiers.
+    # r01 is right in 5 of the undreamed wiki's 6 runs and all 3 of the dreamed wiki's, so it
+    # rises by 0.167, and by half that over both questions. Whichever half of the undreamed
+    # wiki's runs holds the wrong one scores 2 of 3 on it against the other half's 3 of 3.
     assert (
-        "| open_loops | 0.67 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | none | 1.00 | yes |" in public
-    )
-    assert "**Passes**: overall correctness is 1.00, at least 0.83" in public
+        "| | Questions | the undreamed wiki | the dreamed wiki | Drop | Noise floor | Within it |"
+    ) in public
+    assert "| Overall | 2 (few) | 0.92 | 1.00 | -0.083 | 0.167 | yes |" in public
+    assert "| open_loops | 1 (few) | 0.83 | 1.00 | -0.167 | 0.333 | yes |" in public
+    assert "| single_fact_recall | 1 (few) | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
+    assert (
+        "**Passes**: the drop is no larger than the noise floor, overall (-0.083 against "
+        "0.167) and in every category."
+    ) in public
+    assert "**Fails**" not in public
     assert "| Evidence recall | 0.50 (0.50 to 0.50) | 0.50 (0.50 to 0.50) |" in public
 
 
-def test_a_second_wiki_that_does_worse_fails_the_comparison(tmp_path: Path):
+def test_a_drop_larger_than_the_noise_floor_fails_the_comparison(tmp_path: Path):
+    # The undreamed wiki's runs never differ, so its floor is 0 and any drop is beyond it.
     code, public, _ = compare(
-        tmp_path, runs(UNDREAMED_WIKI, [True] * 3), runs(DREAMED_WIKI, [True, False, False])
+        tmp_path, runs(UNDREAMED_WIKI, [Y] * 6), runs(DREAMED_WIKI, [Y, N, N])
     )
 
     assert code == 0
-    assert "**Fails**: overall correctness is 0.67, below 1.00." in public
-    assert "**Fails**: open_loops drops by 0.67, more than the spread of 0.00." in public
+    assert "| Overall | 2 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
+    assert "| open_loops | 1 (few) | 1.00 | 0.33 | 0.667 | 0.000 | no |" in public
+    assert "**Fails**: overall drops by 0.333, more than the noise floor of 0.000." in public
+    assert "**Fails**: open_loops drops by 0.667, more than the noise floor of 0.000." in public
     assert "**Passes**" not in public
+
+
+def test_a_drop_inside_the_noise_floor_passes_the_comparison(tmp_path: Path):
+    # r01 falls from 5 of 6 to 2 of 3, by 0.167: no further than the undreamed wiki's own
+    # halves fall from each other, 0.333 (3 of 3 against 2 of 3).
+    code, public, _ = compare(
+        tmp_path, runs(UNDREAMED_WIKI, [Y, N, Y, Y, Y, Y]), runs(DREAMED_WIKI, [Y, Y, N])
+    )
+
+    assert code == 0
+    assert "| Overall | 2 (few) | 0.92 | 0.83 | 0.083 | 0.167 | yes |" in public
+    assert "| open_loops | 1 (few) | 0.83 | 0.67 | 0.167 | 0.333 | yes |" in public
+    assert (
+        "**Passes**: the drop is no larger than the noise floor, overall (0.083 against "
+        "0.167) and in every category."
+    ) in public
+    assert "**Fails**" not in public
+
+
+def test_a_tier_that_drops_by_more_than_its_noise_floor_fails_though_overall_holds(
+    tmp_path: Path,
+):
+    # r01 (tier 1) falls from 6 of 6 to 2 of 3 and r02 (tier 0) rises from 4 of 6 to 3 of 3,
+    # so overall is level. The undreamed wiki's halves differ only on r02: 1 of 3 against 3 of 3.
+    tiers = {"r01": 1, "r02": 0}
+    code, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [N, N, Y, Y, Y, Y]}, tiers=tiers),
+        runs(DREAMED_WIKI, {"r01": [Y, Y, N], "r02": [Y, Y, Y]}, tiers=tiers),
+    )
+
+    assert code == 0
+    assert "overall and in every tier." in public
+    assert "| Overall | 2 (few) | 0.83 | 0.83 | 0.000 | 0.333 | yes |" in public
+    assert "| Tier 0 | 1 (few) | 0.67 | 1.00 | -0.333 | 0.667 | yes |" in public
+    assert "| Tier 1 | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
+    assert "**Fails**: tier 1 drops by 0.333, more than the noise floor of 0.000." in public
+    assert "**Fails**: overall" not in public and "**Passes**" not in public
+
+
+def test_with_tiers_the_categories_are_reported_beside_them_and_decide_nothing(tmp_path: Path):
+    # Open loops, which is r01 alone, falls by 0.333 with no floor to fall within. Its tier
+    # holds r02 as well, and falls no further than the undreamed wiki's own halves.
+    tiers = {"r01": 0, "r02": 0}
+    code, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [N, N, Y, Y, Y, Y]}, tiers=tiers),
+        runs(DREAMED_WIKI, {"r01": [Y, Y, N], "r02": [Y, Y, Y]}, tiers=tiers),
+    )
+
+    assert code == 0
+    assert "| Tier 0 | 2 (few) | 0.83 | 0.83 | 0.000 | 0.333 | yes |" in public
+    by_category = public[public.index("### By category") :].split("\n## ")[0]
+    assert "its categories decide nothing" in by_category
+    assert (
+        "| Category | Questions | the undreamed wiki | the dreamed wiki | Drop | Noise floor |"
+        in (by_category)
+    )
+    assert "| open_loops | 1 | 1.00 | 0.67 | 0.333 | 0.000 |" in by_category
+    assert "| single_fact_recall | 1 | 0.67 | 1.00 | -0.333 | 0.667 |" in by_category
+    assert (
+        "**Passes**: the drop is no larger than the noise floor, overall (0.000 against "
+        "0.333) and in every tier."
+    ) in public
+    assert "**Fails**" not in public
+
+
+def test_the_report_says_how_the_first_wikis_runs_were_halved(tmp_path: Path):
+    _, public, _ = compare(
+        tmp_path, runs(UNDREAMED_WIKI, [Y, N, Y, Y, Y, Y]), runs(DREAMED_WIKI, [Y, Y, N])
+    )
+
+    # 6 runs make 20 choices of 3, and each pair of halves is two of them.
+    assert (
+        "A half is 3 runs, as many as the dreamed wiki was asked, and every pair of halves that "
+        "share no run is tried, each way round: 10 pairs from its 6 runs."
+    ) in public
+
+
+def test_a_first_wiki_asked_more_than_twice_the_seconds_runs_leaves_the_rest_out_of_each_pair(
+    tmp_path: Path,
+):
+    # r01 is right in 6 of 7 runs, then 2 of 3. A half is still 3 runs: 35 choices of 3 from
+    # 7, each with 4 choices of 3 from the 4 runs left, every pair counted twice.
+    _, public, _ = compare(
+        tmp_path, runs(UNDREAMED_WIKI, [Y, N, Y, Y, Y, Y, Y]), runs(DREAMED_WIKI, [Y, Y, N])
+    )
+
+    assert "the undreamed wiki 7, the dreamed wiki 3" in public
+    assert "A half is 3 runs, as many as the dreamed wiki was asked" in public
+    assert "70 pairs from its 7 runs, each leaving 1 of them out." in public
+    assert "| Overall | 2 (few) | 0.93 | 0.83 | 0.095 | 0.167 | yes |" in public
+    assert "| open_loops | 1 (few) | 0.86 | 0.67 | 0.190 | 0.333 | yes |" in public
+
+
+def test_a_tier_of_fewer_than_five_questions_is_marked_and_still_counts(tmp_path: Path):
+    tiers = {"r01": 1, "r02": 0, "r03": 0, "r04": 0, "r05": 0, "r06": 0}
+    _, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {question: [Y] * 6 for question in tiers}, tiers=tiers),
+        runs(DREAMED_WIKI, {**{q: [Y] * 3 for q in tiers}, "r01": [Y, Y, N]}, tiers=tiers),
+    )
+
+    # One answer of the dreamed wiki's 3 runs on 4 questions is 1/12 of that tier's score.
+    assert (
+        "- **(few)** marks fewer than 5 questions. Such a tier counts like any other, but one "
+        "of the dreamed wiki's answers moves its drop by 0.083 or more, so its result says "
+        "little by itself."
+    ) in public
+    assert "| Overall | 6 | 1.00 | 0.94 | 0.056 | 0.000 | no |" in public
+    assert "| Tier 0 | 5 | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
+    assert "| Tier 1 | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
+    assert "**Fails**: tier 1 drops by 0.333, more than the noise floor of 0.000." in public
+
+
+def test_a_set_with_five_questions_in_every_group_marks_nothing(tmp_path: Path):
+    questions = ("r02", "r03", "r04", "r05", "r06")
+    _, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {question: [Y] * 6 for question in questions}),
+        runs(DREAMED_WIKI, {question: [Y] * 3 for question in questions}),
+    )
+
+    assert "| single_fact_recall | 5 | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
+    assert "(few)" not in public
+
+
+def test_a_wikis_runs_can_come_from_several_run_directories(tmp_path: Path):
+    # The undreamed wiki's 6 runs, asked 3 at a time.
+    code, public, private = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, [Y, N, Y]),
+        runs(DREAMED_WIKI, [Y, Y, N]),
+        first_again=runs(UNDREAMED_WIKI, [Y, Y, Y]),
+    )
+
+    assert code == 0
+    assert "the undreamed wiki 6, the dreamed wiki 3" in public
+    assert "| Overall | 2 (few) | 0.92 | 0.83 | 0.083 | 0.167 | yes |" in public
+    # Numbered in the order the directories were given.
+    assert "| r01 | open_loops | yes, no, yes, yes, yes, yes | yes, yes, no |" in private
+
+
+def test_a_run_directory_given_twice_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    first = tmp_path / "data-root" / "evals" / "runs" / "first"
+
+    code, public, private = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, [Y] * 3),
+        runs(DREAMED_WIKI, [Y] * 3),
+        paths={"--second": first},
+    )
+
+    assert code == 1
+    assert "each run directory can be given only once" in capsys.readouterr().err
+    assert (public, private) == ("", "")
+
+
+def test_the_private_analysis_lists_the_questions_whose_score_fell(tmp_path: Path):
+    tiers = {"r01": 1, "r02": 0, "r03": 2}
+    _, public, private = compare(
+        tmp_path,
+        runs(
+            UNDREAMED_WIKI,
+            {"r01": [Y] * 6, "r02": [N, N, Y, Y, Y, Y], "r03": [Y] * 6},
+            tiers=tiers,
+        ),
+        runs(DREAMED_WIKI, {"r01": [Y, Y, N], "r02": [Y] * 3, "r03": [N] * 3}, tiers=tiers),
+    )
+
+    fell = private[private.index("## The questions whose score fell") :].split("\n## ")[0]
+    assert "| Question | Category | Tier | The undreamed wiki | The dreamed wiki | Fall |" in fell
+    # The furthest fall first; r02 rose, so it isn't listed.
+    assert fell.index("| r03 | single_fact_recall | 2 | 1.00 | 0.00 | 1.00 |") < fell.index(
+        "| r01 | open_loops | 1 | 1.00 | 0.67 | 0.33 |"
+    )
+    assert "r02" not in fell
+    assert "whose score fell" not in public
+
+
+def test_the_private_analysis_says_when_no_questions_score_fell(tmp_path: Path):
+    _, _, private = compare(
+        tmp_path, runs(UNDREAMED_WIKI, [Y, N, Y, Y, Y, Y]), runs(DREAMED_WIKI, [Y] * 3)
+    )
+
+    fell = private[private.index("## The questions whose score fell") :].split("\n## ")[0]
+    assert "None fell." in fell
+    assert "| r01 |" not in fell
 
 
 def test_the_private_analysis_holds_each_question_run_by_run_and_each_failed_answer(
     tmp_path: Path,
 ):
-    _, _, private = compare(
-        tmp_path, runs(UNDREAMED_WIKI, [True] * 3), runs(DREAMED_WIKI, [True, False, True])
-    )
+    _, _, private = compare(tmp_path, runs(UNDREAMED_WIKI, [Y] * 6), runs(DREAMED_WIKI, [Y, N, Y]))
 
-    assert "| r01 | open_loops | yes, yes, yes | yes, no, yes |" in private
+    assert "| r01 | open_loops | yes, yes, yes, yes, yes, yes | yes, no, yes |" in private
     assert "## the dreamed wiki, run 2: r01 (open_loops)" in private
     for text in (QUESTION, EXPECTED, ANSWER, REASONING):
         assert text in private
@@ -169,8 +399,8 @@ def test_real_data_inside_the_repository_is_refused(
 
     code, public, _ = compare(
         tmp_path,
-        runs(UNDREAMED_WIKI, [True] * 3),
-        runs(DREAMED_WIKI, [True] * 3),
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3),
         paths={option: inside},
     )
 
@@ -181,34 +411,45 @@ def test_real_data_inside_the_repository_is_refused(
 
 REFUSED = {
     "fewer than three runs": (
-        runs(UNDREAMED_WIKI, [True] * 3),
-        runs(DREAMED_WIKI, [True] * 2),
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 2),
         "--second holds 2 runs; a comparison needs 3 runs of each wiki",
     ),
     "runs without a wiki": (
-        runs(None, [True] * 3, configuration="files-alone"),
-        runs(DREAMED_WIKI, [True] * 3),
+        runs(None, [Y] * 6, configuration="files-alone"),
+        runs(DREAMED_WIKI, [Y] * 3),
         "--first holds runs of files-alone, not files-plus-wiki",
     ),
     "the same wiki twice": (
-        runs(DREAMED_WIKI, [True] * 3),
-        runs(DREAMED_WIKI, [True] * 3),
+        runs(DREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3),
         "both sets of runs were given the same eval wiki",
     ),
     "a set given two wikis": (
-        [*runs(UNDREAMED_WIKI, [True] * 2), *runs(DREAMED_WIKI, [True])],
-        runs(DREAMED_WIKI, [True] * 3),
+        [*runs(UNDREAMED_WIKI, [Y] * 5), *runs(DREAMED_WIKI, [Y])],
+        runs(DREAMED_WIKI, [Y] * 3),
         "--first holds runs given more than one eval wiki",
     ),
     "runs over a corpus": (
-        runs(UNDREAMED_WIKI, [True] * 3, cut=None),
-        runs(DREAMED_WIKI, [True] * 3),
+        runs(UNDREAMED_WIKI, [Y] * 6, cut=None),
+        runs(DREAMED_WIKI, [Y] * 3),
         "--first holds a run that wasn't asked over a cut",
     ),
     "two cuts": (
-        runs(UNDREAMED_WIKI, [True] * 3),
-        runs(DREAMED_WIKI, [True] * 3, cut=CUT.model_copy(update={"name": "20261119T000000Z"})),
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3, cut=CUT.model_copy(update={"name": "20261119T000000Z"})),
         "the runs weren't all asked over the same cut",
+    ),
+    "too few runs for a noise floor": (
+        runs(UNDREAMED_WIKI, [Y] * 5),
+        runs(DREAMED_WIKI, [Y] * 3),
+        "the first wiki was asked 5 runs and the second 3; a noise floor needs the first asked "
+        "at least twice as many as the second, 6 runs",
+    ),
+    "runs that asked different questions": (
+        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [Y] * 6}),
+        runs(DREAMED_WIKI, {"r01": [Y] * 3, "r03": [Y] * 3}),
+        "the runs didn't all ask the same questions",
     ),
 }
 

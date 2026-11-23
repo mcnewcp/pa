@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from pa_evals.eval_set import Category
+from pa_evals.eval_set import Category, Tier
 
 
 class ToolCallResult(BaseModel):
@@ -33,6 +33,9 @@ class QuestionResult(BaseModel):
 
     id: str
     category: Category
+    tier: Tier | None = None
+    """The question's tier; None for a question without one, and in results written before
+    tiers."""
     question: str
     as_of: datetime
     expected_answer: str
@@ -174,6 +177,9 @@ class RunResults(BaseModel):
     overall: Scores
     categories: dict[Category, Scores]
     """Scores per category, in the order categories first appear in the eval set."""
+    tiers: dict[Tier, Scores] = {}
+    """Scores per tier, lowest first, over the questions that have one; empty for an eval set
+    without tiers, and in results written before them."""
     questions: list[QuestionResult]
     """Per-question results, in eval set order."""
 

@@ -140,6 +140,10 @@ def run_eval(
         cut=_cut_result(corpus) if isinstance(corpus, Cut) else None,
         overall=Scores.over(questions),
         categories={name: Scores.over(results) for name, results in categories.items()},
+        tiers={
+            tier: Scores.over([q for q in questions if q.tier == tier])
+            for tier in sorted({q.tier for q in questions if q.tier is not None})
+        },
         questions=questions,
     )
 
@@ -160,6 +164,7 @@ def _ask(
     result = QuestionResult(
         id=question.id,
         category=question.category,
+        tier=question.tier,
         question=question.question,
         as_of=as_of,
         expected_answer=question.expected_answer,
