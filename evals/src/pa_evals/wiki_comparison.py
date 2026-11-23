@@ -2,13 +2,15 @@
 such as the cut's own wiki and a dreamed copy of it.
 
 Like the real-data verdict (`pa_evals.verdict`), it comes in two parts. The public report,
-which can be committed, holds numbers only: correctness by category on each wiki with its
-spread, whether the second wiki passes (`pa_evals.comparison.compare_wikis`), evidence recall,
-citation validity, and cost. Nothing from the real-data eval set reaches it, and it names the
-live wiki, never its commit. The private analysis, kept under the data root, holds every
-question's outcome in every run and each failed answer, with what its session never opened.
+which can be committed, holds numbers only: the second wiki's drop from the first and the noise
+floor it is judged against, overall, by tier and by category, whether it passes
+(`pa_evals.comparison.compare_wikis`), evidence recall, citation validity, and cost. Nothing
+from the real-data eval set reaches it, and it names the live wiki, never its commit. The
+private analysis, kept under the data root, holds the questions whose score fell, every
+question's outcome in every run, and each failed answer, with what its session never opened.
 
-Each wiki is asked over at least `MIN_RUNS` runs, so that a drop can be told from noise.
+Each wiki is asked over at least `MIN_RUNS` runs, and the first over at least twice as many as
+the second: the noise floor is taken between halves of the first wiki's own runs.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from pa_evals.comparison import (
     answers,
     compare_wikis,
     format_spread,
+    same_questions,
     wiki_comparison_section,
 )
 from pa_evals.report import format_cost, format_score, format_turns
@@ -89,15 +92,26 @@ def check_wiki_runs(name: str, runs: Sequence[RunResults]) -> None:
 
 def wiki_runs(first: Sequence[RunResults], second: Sequence[RunResults]) -> WikiRuns:
     """The two sets of runs as a comparison of `second`'s eval wiki against `first`'s, each
-    set already checked (`check_wiki_runs`). Refused unless they were asked over the same
-    cut, and given different wikis."""
+    set already checked (`check_wiki_runs`). Refused unless they were asked the same
+    questions over the same cut, and given different wikis, the first over at least twice as
+    many runs as the second."""
     cuts = sorted({run.cut.name for run in (*first, *second) if run.cut is not None})
     if len(cuts) != 1:
         raise ComparisonError(f"the runs weren't all asked over the same cut ({', '.join(cuts)})")
+    if not same_questions([*first, *second]):
+        raise ComparisonError(
+            "the runs didn't all ask the same questions: a comparison is question by question"
+        )
     comparison = compare_wikis(first, second)
     if comparison is None:
         raise ComparisonError(
             "both sets of runs were given the same eval wiki: a comparison is of two wikis"
+        )
+    if comparison.passed is None:
+        raise ComparisonError(
+            f"the first wiki was asked {len(first)} runs and the second {len(second)}; a noise "
+            "floor needs the first asked at least twice as many as the second, "
+            f"{2 * len(second)} runs"
         )
     return WikiRuns(first, second, comparison)
 
@@ -161,8 +175,30 @@ def render_public(runs: WikiRuns) -> str:
 
 
 def render_private(runs: WikiRuns) -> str:
-    """The private analysis: every question's outcome in every run on each wiki, and each
-    failed answer."""
+    """The private analysis: the questions whose score fell, every question's outcome in
+    every run on each wiki, and each failed answer."""
+    first, second = (label.capitalize() for label in runs.labels)
+    fell = [
+        "## The questions whose score fell",
+        "",
+        "A question's score on a wiki is the share of that wiki's runs that got it right. "
+        f"These are lower on {runs.labels[1]}, the furthest fall first.",
+        "",
+    ]
+    if runs.comparison.fell:
+        fell += [
+            f"| Question | Category | Tier | {first} | {second} | Fall |",
+            "|---|---|---|---|---|---|",
+        ]
+        fell += [
+            f"| {q.id} | {q.category} | {'-' if q.tier is None else q.tier} | {q.first:.2f} | "
+            f"{q.second:.2f} | {q.fall:.2f} |"
+            for q in runs.comparison.fell
+        ]
+    else:
+        fell.append("None fell.")
     return failure_analysis(
-        "# Wiki against wiki on real data, private: the failure analysis", runs.by_label()
+        "# Wiki against wiki on real data, private: the failure analysis",
+        runs.by_label(),
+        before=fell,
     )

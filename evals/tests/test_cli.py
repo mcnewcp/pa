@@ -447,6 +447,7 @@ def repeated_scripts(tmp_path: Path, name: str, deadline: list[bool], canary: li
                     {"answer": "Oct 9.", "cost_usd": 0.1, "turns": 4, "duration_ms": 10000},
                     {"answer": "Oct 8.", "cost_usd": 0.2, "turns": 8, "duration_ms": 30000},
                     {"answer": "Oct 9.", "cost_usd": 0.3, "turns": 12, "duration_ms": 50000},
+                    *[{"answer": "Oct 9.", "cost_usd": 0.1, "turns": 4, "duration_ms": 10000}] * 3,
                 ][: len(deadline)],
                 "day-of-week": "It's Saturday.",
             }
@@ -754,15 +755,15 @@ def test_a_run_with_a_dreamed_eval_wiki_records_both_of_its_versions(tmp_path, s
 
 
 def two_wikis(tmp_path: Path, undreamed: dict[str, list[bool]], dreamed: dict[str, list[bool]]):
-    """Three files-plus-wiki runs with the fixture's eval wiki, then three with its dreamed
-    copy, each given whether its two questions are right, run by run. Returns the two run
-    directories."""
+    """Files-plus-wiki runs with the fixture's eval wiki, then with its dreamed copy, each
+    given whether its two questions are right, run by run. Returns the two run directories."""
     for name, wiki, right in (
         ("undreamed", FILES_PLUS_WIKI, undreamed),
         ("dreamed", dreamed_eval_wiki(tmp_path), dreamed),
     ):
         scripts = repeated_scripts(tmp_path, name, right["deadline"], right["canary"])
-        assert pa_eval_run(tmp_path / name, scripts, "--runs", "3", *wiki) == 0
+        runs = str(len(right["deadline"]))
+        assert pa_eval_run(tmp_path / name, scripts, "--runs", runs, *wiki) == 0
     [first] = (tmp_path / "undreamed").iterdir()
     [second] = (tmp_path / "dreamed").iterdir()
     return first, second
@@ -771,13 +772,11 @@ def two_wikis(tmp_path: Path, undreamed: dict[str, list[bool]], dreamed: dict[st
 Y, N = True, False
 
 
-def test_compare_puts_two_wikis_side_by_side_by_category_and_says_whether_the_second_passes(
-    tmp_path, capsys
-):
+def test_compare_puts_two_wikis_side_by_side_and_says_whether_the_second_passes(tmp_path, capsys):
     first, second = two_wikis(
         tmp_path,
-        undreamed={"deadline": [Y, N, Y], "canary": [N, N, Y]},
-        dreamed={"deadline": [Y, N, N], "canary": [Y, Y, Y]},
+        undreamed={"deadline": [Y, N, Y, Y, Y, Y], "canary": [Y] * 6},
+        dreamed={"deadline": [Y, Y, N], "canary": [Y] * 3},
     )
     capsys.readouterr()
 
@@ -786,33 +785,51 @@ def test_compare_puts_two_wikis_side_by_side_by_category_and_says_whether_the_se
     comparison = capsys.readouterr().out
     # Each side names its wiki: the version that built it, and the one that dreamed it.
     assert (
-        f"- {first}: 3 runs (configuration files-plus-wiki; "
+        f"- {first}: 6 runs (configuration files-plus-wiki; "
         "wiki librarian version 0123456789ab)\n"
         f"- {second}: 3 runs (configuration files-plus-wiki; "
         "wiki librarian version 0123456789ab, dreamed by librarian version ba9876543210)\n"
     ) in comparison
     wikis = comparison[comparison.index("## Wiki against wiki") :].split("\n## ")[0]
-    assert f"| Category | {first} | {second} | Drop | Spread | Within it |" in wikis
-    # Down by 0.33, where the first wiki's own runs spread from 0 to 1.
+    assert f"this is {second}'s against {first}'s, over the 2 questions every run asked." in wikis
+    assert f"| | Questions | {first} | {second} | Drop | Noise floor | Within it |" in wikis
+    # The deadline falls from 5 of 6 to 2 of 3, by 0.167, where the first wiki's own halves
+    # fall 0.333 from each other: 3 of 3 against 2 of 3.
+    assert "| single_fact_recall | 1 (few) | 0.83 | 0.67 | 0.167 | 0.333 | yes |" in wikis
+    assert "| canary | 1 (few) | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in wikis
+    assert "| Overall | 2 (few) | 0.92 | 0.83 | 0.083 | 0.167 | yes |" in wikis
     assert (
-        "| single_fact_recall | 0.67 (0.00 to 1.00) | 0.33 (0.00 to 1.00) | 0.33 | 1.00 | yes |"
-    ) in wikis
-    assert "| canary | 0.33 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | none | 1.00 | yes |" in wikis
-    assert "| Overall | 0.50 (0.00 to 1.00) | 0.67 (0.50 to 1.00) |" in wikis
-    assert (
-        "**Passes**: overall correctness is 0.67, at least 0.50, and no category drops by "
-        "more than the spread."
+        "**Passes**: the drop is no larger than the noise floor, overall (0.083 against "
+        "0.167) and in every category."
     ) in wikis
 
 
-def test_a_category_that_drops_by_more_than_the_first_wikis_own_spread_fails_the_second(
-    tmp_path, capsys
-):
-    # The dreamed wiki's runs spread from 0 to 1, which excuses nothing.
+def test_a_drop_larger_than_the_first_wikis_noise_floor_fails_the_second(tmp_path, capsys):
+    # The first wiki's runs never differ, so its floor is 0. The second's do, which excuses
+    # nothing.
     first, second = two_wikis(
         tmp_path,
-        undreamed={"deadline": [Y, Y, Y], "canary": [N, N, N]},
-        dreamed={"deadline": [Y, Y, N], "canary": [Y, Y, Y]},
+        undreamed={"deadline": [Y] * 6, "canary": [Y] * 6},
+        dreamed={"deadline": [Y, Y, N], "canary": [Y] * 3},
+    )
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert "| single_fact_recall | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in comparison
+    assert "**Fails**: overall drops by 0.167, more than the noise floor of 0.000." in comparison
+    assert (
+        "**Fails**: single_fact_recall drops by 0.333, more than the noise floor of 0.000."
+    ) in comparison
+    assert "**Passes**" not in comparison
+
+
+def test_two_wikis_arent_judged_when_the_first_has_too_few_runs_for_a_noise_floor(tmp_path, capsys):
+    first, second = two_wikis(
+        tmp_path,
+        undreamed={"deadline": [Y, N, Y], "canary": [Y] * 3},
+        dreamed={"deadline": [Y, N, N], "canary": [Y] * 3},
     )
     capsys.readouterr()
 
@@ -820,31 +837,12 @@ def test_a_category_that_drops_by_more_than_the_first_wikis_own_spread_fails_the
 
     comparison = capsys.readouterr().out
     assert (
-        "| single_fact_recall | 1.00 (1.00 to 1.00) | 0.67 (0.00 to 1.00) | 0.33 | 0.00 | no |"
+        f"There is none here: it needs {first} asked at least twice as many runs as {second}, "
+        "and it was asked 3 against 3."
     ) in comparison
-    assert "| Overall | 0.50 (0.50 to 0.50) | 0.83 (0.50 to 1.00) |" in comparison
-    assert (
-        "**Fails**: single_fact_recall drops by 0.33, more than the spread of 0.00."
-    ) in comparison
-    assert "**Passes**" not in comparison
-
-
-def test_overall_correctness_below_the_first_wikis_fails_the_second(tmp_path, capsys):
-    first, second = two_wikis(
-        tmp_path,
-        undreamed={"deadline": [Y, N, Y], "canary": [Y, N, Y]},
-        dreamed={"deadline": [Y, N, N], "canary": [Y, N, N]},
-    )
-    capsys.readouterr()
-
-    assert main(["compare", str(first), str(second)]) == 0
-
-    comparison = capsys.readouterr().out
-    assert (
-        "| canary | 0.67 (0.00 to 1.00) | 0.33 (0.00 to 1.00) | 0.33 | 1.00 | yes |" in comparison
-    )
-    assert "**Fails**: overall correctness is 0.33, below 0.67." in comparison
-    assert "**Passes**" not in comparison
+    assert "| single_fact_recall | 1 (few) | 0.67 | 0.33 | 0.333 | n/a | n/a |" in comparison
+    assert "**Not judged**: without a noise floor, a drop can't be told from noise." in comparison
+    assert "**Passes**" not in comparison and "**Fails**" not in comparison
 
 
 def test_run_sets_that_dont_differ_in_their_wiki_get_no_wiki_comparison(tmp_path, capsys):

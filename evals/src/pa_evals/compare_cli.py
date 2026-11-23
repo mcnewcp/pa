@@ -36,20 +36,27 @@ def add_compare_wikis_command(commands: Any) -> None:
         description="Compare files plus wiki over the same cut with two eval wikis, the second "
         "against the first (such as a dreamed copy of the cut's wiki against the cut's own), "
         "and write the public report (numbers only) and the private one (the failure analysis, "
-        "refused inside the repository). Each wiki needs at least 3 runs.",
+        "refused inside the repository). The second wiki passes when its drop from the first "
+        "is no larger than the noise floor, overall and in every tier of the eval set (every "
+        "category, for a set without tiers): the largest drop between any two halves of the "
+        "first wiki's own runs. So each wiki needs at least 3 runs, and the first at least "
+        "twice as many as the second. A wiki's runs may be in several run directories.",
     )
-    compare.add_argument("--first", type=Path, required=True, metavar="RUN_DIR")
-    compare.add_argument("--second", type=Path, required=True, metavar="RUN_DIR")
+    compare.add_argument("--first", type=Path, required=True, nargs="+", metavar="RUN_DIR")
+    compare.add_argument("--second", type=Path, required=True, nargs="+", metavar="RUN_DIR")
     compare.add_argument("--public", type=Path, required=True, metavar="PATH")
     compare.add_argument("--private", type=Path, required=True, metavar="PATH")
     compare.set_defaults(handler=_compare_wikis)
 
 
 def _compare_wikis(args: argparse.Namespace) -> int:
-    first_dir = require_private(args.first, "--first")
-    second_dir = require_private(args.second, "--second")
+    first_dirs = [require_private(run_dir, "--first") for run_dir in args.first]
+    second_dirs = [require_private(run_dir, "--second") for run_dir in args.second]
     private = require_private(args.private, "--private")
-    first, second = load_runs(first_dir), load_runs(second_dir)
+    if len({*first_dirs, *second_dirs}) != len(first_dirs) + len(second_dirs):
+        raise ComparisonError("each run directory can be given only once")
+    first = [run for run_dir in first_dirs for run in load_runs(run_dir)]
+    second = [run for run_dir in second_dirs for run in load_runs(run_dir)]
     check_wiki_runs("--first", first)
     check_wiki_runs("--second", second)
     runs = wiki_runs(first, second)
