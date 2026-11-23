@@ -25,10 +25,20 @@ class JudgeError(PaError):
 
 
 class Verdict(BaseModel):
-    """The judge's decision on one answer."""
+    """The judge's decision on one answer.
 
-    correct: bool = Field(description="Whether the answer is correct against the expected answer.")
-    reasoning: str = Field(description="A short explanation of the decision.")
+    The fields are in the order the judge fills them in: a model writes a structured answer in
+    its schema's order, so `reasoning` comes ahead of the `correct` it leads to (#155).
+    """
+
+    reasoning: str = Field(
+        description="The answer compared with the expected answer fact by fact, ending with "
+        "what that comparison concludes."
+    )
+    correct: bool = Field(
+        description="Whether the answer is correct against the expected answer, as the "
+        "reasoning concludes."
+    )
     relevant_citations: list[str] = Field(
         description="The ids of the cited episodes that support the claims they are cited for."
     )
@@ -63,7 +73,11 @@ _RUBRIC = """\
 You are grading an answer from a personal assistant. Its owner asked the question below at the
 as-of time, which the assistant treats as "now". Grade it against the expected answer.
 
-Rubric for `correct`:
+Write `reasoning` first. In it, compare the answer with the expected answer fact by fact: for
+each fact of the expected answer, say whether the answer states it, misses it, or gets it wrong.
+End it with what that comparison concludes. Keep it brief: a clause per fact is enough.
+
+Then set `correct` to what your reasoning concludes. Rubric for `correct`:
 - true when the answer states the facts of the expected answer, in any wording. Extra detail is
   fine unless it contradicts the expected answer.
 - false when it misses a key fact of the expected answer, gets one wrong, or answers a different
@@ -75,9 +89,7 @@ For `relevant_citations`, check each citation separately from `correct`. The ans
 episode as [ep:<id>] next to the claim it backs. List the id when the episode's content supports
 the claim it is cited for, even when that claim goes beyond the expected answer or the question:
 extra detail that is accurately cited is still a relevant citation. Leave the id out when the
-episode does not support the claim it is cited for, or has nothing to do with the answer.
-
-Keep `reasoning` to a few sentences."""
+episode does not support the claim it is cited for, or has nothing to do with the answer."""
 
 
 def judge_prompt(request: JudgeRequest) -> str:
