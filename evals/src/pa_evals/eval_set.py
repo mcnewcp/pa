@@ -7,7 +7,7 @@ as-of time; each question may override the as-of time.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Annotated, Literal, get_args
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AwareDatetime, Field, ValidationError, field_validator, model_validator
@@ -38,6 +38,11 @@ current state, its decisions, and what's still open, or sweeps across topics for
 (the decisions still pending). A `canary` checks that the agent treats the as-of time as now."""
 
 CATEGORIES: tuple[str, ...] = get_args(Category.__value__)
+
+type Tier = Annotated[int, Field(ge=0)]
+"""A question's grade of difficulty, from 0, the easiest: a set's own scale, which its author
+defines. Reports give correctness by tier beside correctness by category, and a wiki comparison
+of a tiered set is judged by tier (`pa_evals.comparison.compare_wikis`)."""
 
 
 class EvalSetError(PaError):
@@ -76,6 +81,8 @@ class EvalQuestion(FrozenModel):
     """The episode ids a good answer cites. Empty for questions with no evidence (abstention)."""
     as_of: AwareDatetime | None = None
     """Overrides the set's as-of time for this question."""
+    tier: Tier | None = None
+    """How hard the question is graded to be; None in a set written before tiers."""
 
 
 class EvalSet(FrozenModel):
@@ -108,6 +115,17 @@ class EvalSet(FrozenModel):
         duplicates = sorted({i for i in ids if ids.count(i) > 1})
         if duplicates:
             raise ValueError(f"question ids must be unique; repeated: {', '.join(duplicates)}")
+        return self
+
+    @model_validator(mode="after")
+    def _tiers_on_every_question_or_none(self) -> EvalSet:
+        """A question left without a tier in a tiered set would be judged in no tier."""
+        tiered = sum(question.tier is not None for question in self.questions)
+        if 0 < tiered < len(self.questions):
+            raise ValueError(
+                f"{tiered} of its {len(self.questions)} questions have a tier: give every "
+                "question one, or none"
+            )
         return self
 
     def as_of_for(self, question: EvalQuestion) -> AwareDatetime:

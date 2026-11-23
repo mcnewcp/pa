@@ -99,6 +99,9 @@ def render_report(results: RunResults) -> str:
         "|---|---|---|---|---|---|",
     ]
     lines += [f"| {_cell(name)} | {_score_cells(s)} |" for name, s in results.categories.items()]
+    if results.tiers:
+        lines += ["", "## By tier", "", f"| Tier | {_SCORE_COLUMNS} |", "|---|---|---|---|---|---|"]
+        lines += [f"| {tier} | {_score_cells(s)} |" for tier, s in results.tiers.items()]
     lines += [
         "",
         "## Efficiency by category",

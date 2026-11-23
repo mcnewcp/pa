@@ -134,6 +134,12 @@ def correctness(runs: Sequence[RunResults], category: str) -> Spread | None:
     return Spread.over(scores) if scores else None
 
 
+def tier_correctness(runs: Sequence[RunResults], tier: int) -> Spread | None:
+    """Correctness on `tier` over the runs that asked it, or None if none did."""
+    scores = [run.tiers[tier].correctness for run in runs if tier in run.tiers]
+    return Spread.over(scores) if scores else None
+
+
 def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str:
     """The comparison report for each configuration's runs, the first being the reference."""
     if not configurations or not all(configurations.values()):
@@ -176,6 +182,23 @@ def render_comparison(configurations: Mapping[str, Sequence[RunResults]]) -> str
         cells = [format_spread(spreads[label]) for label in labels]
         cells += [format_difference(spreads[reference], spreads[other]) for other in others]
         lines.append(f"| {table_cell(category)} | {' | '.join(cells)} |")
+
+    tiers = sorted({tier for runs in configurations.values() for run in runs for tier in run.tiers})
+    if tiers:
+        lines += [
+            "",
+            "## Correctness by tier",
+            "",
+            "The same questions by their tier in the eval set, read as the categories are.",
+            "",
+            f"| Tier | {' | '.join(header)} |",
+            f"|---|{'---|' * len(header)}",
+        ]
+    for tier in tiers:
+        spreads = {label: tier_correctness(runs, tier) for label, runs in configurations.items()}
+        cells = [format_spread(spreads[label]) for label in labels]
+        cells += [format_difference(spreads[reference], spreads[other]) for other in others]
+        lines.append(f"| {tier} | {' | '.join(cells)} |")
 
     if len(labels) == 2:
         comparison = compare_wikis(configurations[labels[0]], configurations[labels[1]])

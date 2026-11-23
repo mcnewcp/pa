@@ -155,6 +155,78 @@ def test_compare_shows_where_things_stand_beside_a_baseline_that_never_asked_it(
     assert "| where_things_stand | n/a | 0.00 (0.00 to 0.00) | n/a |" in comparison
 
 
+TIERS = {
+    "hotel-block-deadline": 0,
+    "swim-lessons-plan": 2,
+    "who-asked-about-hotel": 2,
+    "swim-instructor": 0,
+    "day-of-week": 1,
+}
+
+
+def tiered_eval_set(tmp_path: Path, tiers: dict[str, int] = TIERS) -> Path:
+    """The fixture eval set with a tier on each question `tiers` names."""
+    data = json.loads(EVAL_SET.read_text())
+    for question in data["questions"]:
+        if question["id"] in tiers:
+            question["tier"] = tiers[question["id"]]
+    eval_set = tmp_path / "tiered_eval_set.json"
+    eval_set.write_text(json.dumps(data))
+    return eval_set
+
+
+def test_a_questions_tier_is_carried_into_the_results_and_scored_by_tier_in_the_report(
+    tmp_path, scripts
+):
+    runs = tmp_path / "runs"
+    eval_set = tiered_eval_set(tmp_path)
+
+    args = ["run", "--corpus", str(CORPUS), "--eval-set", str(eval_set), "--runs-dir", str(runs)]
+    assert main([*args, *scripts]) == 0
+
+    [run_dir] = runs.iterdir()
+    results = json.loads((run_dir / "results.json").read_text())
+    assert {q["id"]: q["tier"] for q in results["questions"]} == TIERS
+    # In tier order, whatever order the set asks them in.
+    assert list(results["tiers"]) == ["0", "1", "2"]
+    assert results["tiers"]["2"]["questions"] == 2
+    assert results["tiers"]["2"]["correctness"] == 0.0
+    report = (run_dir / "report.md").read_text()
+    by_tier = report[report.index("## By tier") :].split("\n## ")[0]
+    assert "| Tier | Questions | Failed | Correctness | Evidence recall | Citation validity |" in (
+        by_tier
+    )
+    assert "| 0 | 2 | 0 | 1.00 | 1.00 | 1.00 |" in by_tier
+    assert "| 1 | 1 | 0 | 1.00 | n/a | n/a |" in by_tier
+    assert "| 2 | 2 | 1 | 0.00 | 0.25 | 0.50 |" in by_tier
+    # Beside the categories, which it leaves as they were.
+    assert "| cross_channel_synthesis | 1 | 0 | 0.00 | 0.50 | 0.50 |" in report
+
+
+def test_an_eval_set_without_tiers_reports_as_before(tmp_path, scripts):
+    runs = tmp_path / "runs"
+
+    assert pa_eval_run(runs, scripts) == 0
+
+    [run_dir] = runs.iterdir()
+    results = RunResults.model_validate_json((run_dir / "results.json").read_text())
+    assert results.tiers == {}
+    assert {q.tier for q in results.questions} == {None}
+    assert "tier" not in (run_dir / "report.md").read_text().lower()
+
+
+def test_an_eval_set_with_a_tier_on_only_some_questions_is_refused(tmp_path, scripts, capsys):
+    eval_set = tiered_eval_set(tmp_path, {"hotel-block-deadline": 0, "day-of-week": 1})
+    args = ["run", "--corpus", str(CORPUS), "--eval-set", str(eval_set)]
+
+    assert main([*args, "--runs-dir", str(tmp_path / "runs"), *scripts]) == 1
+
+    assert "2 of its 5 questions have a tier: give every question one, or none" in (
+        capsys.readouterr().err
+    )
+    assert not (tmp_path / "runs").exists()
+
+
 def test_two_runs_over_the_same_inputs_write_identical_outputs(tmp_path, scripts):
     runs = tmp_path / "runs"
 
@@ -453,6 +525,36 @@ def test_compare_marks_only_the_differences_larger_than_the_spread(tmp_path, cap
     assert "| canary | 1.00 (1.00 to 1.00) | 0.00 (0.00 to 0.00) | -1.00 (counts) |" in (comparison)
     assert "| Overall | 0.83 (0.50 to 1.00) | 0.50 (0.50 to 0.50) | -0.33 |" in comparison
     assert f"- {first}: 3 runs (configuration files-alone)" in comparison
+    assert "by tier" not in comparison
+
+
+def test_compare_gives_correctness_by_tier_beside_correctness_by_category(tmp_path, capsys):
+    eval_set = ("--eval-set", str(tiered_eval_set(tmp_path)))
+    pa_eval_run(
+        tmp_path / "a",
+        repeated_scripts(tmp_path, "a", [True, False, True], [True, True, True]),
+        *("--runs", "3", *eval_set),
+    )
+    pa_eval_run(
+        tmp_path / "b",
+        repeated_scripts(tmp_path, "b", [True, True, True], [False, False, False]),
+        *("--runs", "3", *eval_set),
+    )
+    [first] = (tmp_path / "a").iterdir()
+    [second] = (tmp_path / "b").iterdir()
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    by_tier = comparison[comparison.index("## Correctness by tier") :].split("\n## ")[0]
+    assert f"| Tier | {first} | {second} | {second} vs {first} |" in by_tier
+    assert "| 0 | 0.67 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | +0.33 |" in by_tier
+    assert "| 1 | 1.00 (1.00 to 1.00) | 0.00 (0.00 to 0.00) | -1.00 (counts) |" in by_tier
+    assert "| Overall |" not in by_tier
+    assert "| single_fact_recall | 0.67 (0.00 to 1.00) | 1.00 (1.00 to 1.00) | +0.33 |" in (
+        comparison
+    )
 
 
 def test_the_committed_baselines_load_in_a_comparison_without_efficiency_figures(capsys):
