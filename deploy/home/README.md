@@ -590,10 +590,12 @@ deploy/home/librarian.sh dream <replays>/<name> --cut <data root>/cuts/<as-of>
 deploy/home/run-evals.sh --agent claude --judge model --cut <data root>/cuts/<as-of> \
   --eval-set <data root>/evals/<set>.json --runs 3 --configuration files-plus-wiki --wiki <replays>/<name>
 
-uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by category, with a pass or fail
+# The wiki the copy was made from is asked twice the copy's runs (--runs 6 against --runs 3): the comparison's noise floor.
+uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by tier and category, with a pass or fail
 
 # Over a cut: the same comparison as two files, numbers for the repository and the failure analysis under the data root.
-uv run pa-eval compare-wikis --first <runs with the cut's wiki> --second <runs with its dreamed copy> \
+uv run pa-eval compare-wikis --first <runs with the cut's wiki> [<more of them> ...] \
+  --second <runs with its dreamed copy> [<more of them> ...] \
   --public <a path in this checkout>.md --private <data root>/evals/<name>-private.md
 ```
 
@@ -602,8 +604,14 @@ uv run pa-eval compare-wikis --first <runs with the cut's wiki> --second <runs w
 - **The session is told the copy's as-of time** as now: the end of the replay's last run, or the moment the cut was taken.
 - **The eval run** names both versions in its report: the librarian that built the wiki, and the one that dreamed it. It refuses a run log that mixes anything else, and over a cut it refuses a copy that wasn't dreamed as of that cut. Its injection checks cover `proposals.md`.
 - **A copy of a cut's wiki is the owner's data**, as the cut is: `pa librarian dream`, `run-evals.sh`, and `pa-eval run` refuse it inside this checkout, and a development session never prints it or its run log.
-- **Over a cut, `pa-eval compare-wikis`** writes the comparison as `pa-eval verdict` writes the verdict: a public report of numbers only (correctness by category on each wiki, the pass or fail, recall, citations, cost), and a private analysis of every question run by run with each failed answer. It needs 3 runs of files plus wiki with each wiki over the same cut, and refuses the run directories and the private file inside this checkout. It prints only whether the second wiki passes and the two paths.
-- **The comparison passes** when overall correctness with the second wiki is at least the first's, and no category drops by more than the run-to-run spread: the spread of the first wiki's own runs in that category, lowest to highest. The second wiki's spread excuses nothing.
+- **Over a cut, `pa-eval compare-wikis`** writes the comparison as `pa-eval verdict` writes the verdict: a public report of numbers only (the drop and the noise floor overall, by tier and by category, the pass or fail, recall, citations, cost), and a private analysis of the questions whose score fell, every question run by run, and each failed answer. It needs files plus wiki over the same cut and the same questions: at least 3 runs with the second wiki, and at least twice as many with the first. A wiki's runs may be in several run directories. It refuses the run directories and the private file inside this checkout. It prints only whether the second wiki passes and the two paths.
+- **The comparison passes** when the second wiki's drop is no larger than the noise floor, overall and in every tier of the eval set. A set without tiers is judged overall and in every category instead; with tiers, the categories are reported and decide nothing.
+  - **A question's score** on a wiki is the share of that wiki's runs that got it right.
+  - **The drop** is the mean over questions of the first wiki's score minus the second's.
+  - **The noise floor** is the largest drop between any two halves of the first wiki's own runs: how far that wiki falls from itself. A half is as many runs as the second wiki was asked. Every pair of halves that share no run is tried, each way round, and runs beyond twice the second's sit each pair out.
+  - **Too few runs:** with the first wiki asked fewer than twice the second's runs there is no floor. `compare-wikis` refuses, and `compare` reports the drop as not judged.
+  - **A tier with fewer than 5 questions** counts like any other, and the report marks it (few): one answer moves its drop a long way.
+- **A question's tier** is an optional whole number from 0 in the eval set (`"tier": 3`), on every question or none. A run's report and `pa-eval compare` give correctness by tier beside correctness by category.
 
 ### Drafting the real-data eval set
 

@@ -215,8 +215,16 @@ The hand-written description of the synthetic corpus's people, storylines, and d
 _Avoid_: Scenario, script
 
 **Eval set**:
-The fixed questions, with expected answers and required evidence episodes, that each milestone is scored against.
+The fixed questions, with expected answers and required evidence episodes, that each milestone is scored against. A set may grade its questions into tiers.
 _Avoid_: Test suite, benchmark
+
+**Tier**:
+A question's grade of difficulty in an eval set: a whole number from 0, the easiest, on a scale the set defines. A set gives every question a tier or none. Reports give correctness by tier beside correctness by category.
+_Avoid_: Level, difficulty, bucket
+
+**Noise floor**:
+How far an eval wiki's score falls from itself: the largest drop between any two halves of its own runs, a half being as many runs as the wiki compared against it was asked. A second eval wiki, such as a dreamed one, passes its comparison with the first when its drop is no larger than the first's noise floor, overall and in every tier.
+_Avoid_: Run-to-run spread (that's a score's lowest run to its highest, which a difference between eval configurations is read against), margin, tolerance
 
 **Eval configuration**:
 What the assistant is given besides L0's files in an eval run: nothing (files alone), or the wiki (files plus wiki).
