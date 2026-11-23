@@ -195,7 +195,7 @@ def _scripted_judge_options(run: argparse.ArgumentParser) -> None:
         "--verdicts",
         type=Path,
         help="For --judge scripted: JSON of question id to verdict "
-        "(correct, reasoning, relevant_citations).",
+        "(reasoning, correct, relevant_citations).",
     )
 
 
