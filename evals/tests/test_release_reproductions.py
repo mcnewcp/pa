@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -27,6 +28,7 @@ import pytest
 from pa_core.catalog import open_catalog
 from pa_core.ingest import ingest
 from pa_core.owner import Owner
+from pa_evals.cli import main
 from pa_evals.eval_set import load_eval_set
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
@@ -311,13 +313,19 @@ def test_a_clean_reproduction_is_released_beside_the_findings_resolved_and_untes
         "{ep:gmail/order.eml}", cited
     )
     assert "[[pru-tanager]]" in (released / "wiki" / "index.md").read_text()
-    # It is marked untested, and the release is on record with its counts.
+    # It is marked untested, and the release is on record with its counts and with the episode
+    # each payload ingests to, which is what its questions and its wiki were resolved to.
     assert json.loads((released / "reproduction.json").read_text()) == {
         "finding": "f1",
         "tested": False,
         "payloads": 3,
         "wiki_files": 2,
         "questions": 2,
+        "episodes": {
+            "gmail/order.eml": ids["Your marmalade order"],
+            "icloud_calendar/pickup.ics": ids["Pick up the marmalade"],
+            "obsidian/2026-09-21.md": ids["## Pantry"],
+        },
     }
     record = json.loads((desk.released / "release.json").read_text())
     assert (record["reproductions"], record["payloads"]) == (1, 3)
@@ -385,6 +393,314 @@ def test_a_released_reproduction_runs_through_the_existing_commands_as_it_is(
     assert by_id["marmalade-ships"]["cited"] == ships.evidence
     assert results["overall"]["evidence_recall"] == 0.5
     assert results["overall"]["citation_validity"] == 1.0
+
+
+# After an edit. A development session copies a released reproduction, renames or trims what
+# reads like a real matter, and resolves it again (`pa-eval reproduction resolve`), since an
+# edited payload is another episode. The command reads only what was released, so what it
+# prints may say what it found.
+
+
+@pytest.fixture
+def copied(tmp_path: Path, desk, leave, reproduction) -> Path:
+    """A development session's copy of the clean reproduction, as it was released."""
+    desk.diagnose(leave(reproduction))
+    assert desk.release().code == 0
+    return shutil.copytree(desk.released / "reproductions" / "f1", tmp_path / "copied")
+
+
+@pytest.fixture
+def resolve(capsys: pytest.CaptureFixture[str]) -> Callable[[Path], tuple[int, str, str]]:
+    """Runs `pa-eval reproduction resolve` over a directory: its exit code, and what it
+    printed."""
+
+    def run(directory: Path) -> tuple[int, str, str]:
+        capsys.readouterr()
+        code = main(["reproduction", "resolve", str(directory)])
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err
+
+    return run
+
+
+def test_a_reproduction_edited_after_its_release_is_resolved_again(
+    tmp_path: Path, copied: Path, resolve
+):
+    before = ingested(copied / "payloads", tmp_path / "before")
+    (copied / "payloads" / "gmail" / "order.eml").write_text(
+        ORDER.replace("order-1@", "jam-1@").replace("two boxes", "three crates")
+    )
+    (copied / "payloads" / "obsidian" / "2026-09-21.md").write_text(
+        NOTE.replace("Pru says it ships Friday", "It ships at the end of the week")
+    )
+
+    code, out, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    after = ingested(copied / "payloads", tmp_path / "after")
+    assert after["Your marmalade order"] != before["Your marmalade order"]
+    assert after["## Pantry"] != before["## Pantry"]
+    assert after["Pick up the marmalade"] == before["Pick up the marmalade"]
+    # The questions name the episodes the payloads ingest to now, and so does the wiki.
+    eval_set = load_eval_set(copied / "eval_set.json")
+    assert [question.evidence for question in eval_set.questions] == [
+        [after["Your marmalade order"]],
+        [after["## Pantry"], after["Pick up the marmalade"]],
+    ]
+    cited = f"[ep:{after['Your marmalade order']}]"
+    assert (copied / "wiki" / "days" / "2026-09-21.md").read_text() == DAY.replace(
+        "{ep:gmail/order.eml}", cited
+    )
+    assert (copied / "wiki" / "people" / "pru-tanager.md").read_text() == PERSON.replace(
+        "{ep:gmail/order.eml}", cited
+    )
+    assert json.loads((copied / "reproduction.json").read_text()) == {
+        "finding": "f1",
+        "tested": False,
+        "payloads": 3,
+        "wiki_files": 2,
+        "questions": 2,
+        "episodes": {
+            "gmail/order.eml": after["Your marmalade order"],
+            "icloud_calendar/pickup.ics": after["Pick up the marmalade"],
+            "obsidian/2026-09-21.md": after["## Pantry"],
+        },
+    }
+    assert out.splitlines() == [
+        "reproduction: f1, resolved again",
+        "payloads: 3 (2 with a new episode id)",
+        "questions: 2",
+        "wiki files: 2",
+    ]
+
+
+def files_in(top: Path) -> dict[str, bytes]:
+    return {path: (top / path).read_bytes() for path in files_under(top)}
+
+
+def test_resolving_a_reproduction_nobody_edited_changes_nothing(copied: Path, resolve):
+    released = files_in(copied)
+
+    code, out, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    assert files_in(copied) == released
+    assert "payloads: 3 (0 with a new episode id)\n" in out
+
+
+def test_a_payload_whose_file_was_renamed_is_still_the_episode_it_was(
+    tmp_path: Path, copied: Path, resolve
+):
+    released = files_in(copied)
+    (copied / "payloads" / "gmail" / "order.eml").rename(copied / "payloads" / "gmail" / "jam.eml")
+
+    code, _, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    # Nothing ingests to another episode, so the questions and the wiki stand as they were.
+    for path in ("eval_set.json", "wiki/days/2026-09-21.md", "wiki/people/pru-tanager.md"):
+        assert (copied / path).read_bytes() == released[path]
+    ids = ingested(copied / "payloads", tmp_path)
+    record = json.loads((copied / "reproduction.json").read_text())
+    assert record["episodes"] == {
+        "gmail/jam.eml": ids["Your marmalade order"],
+        "icloud_calendar/pickup.ics": ids["Pick up the marmalade"],
+        "obsidian/2026-09-21.md": ids["## Pantry"],
+    }
+
+
+def test_a_trimmed_reproduction_is_resolved_with_what_it_still_holds(copied: Path, resolve):
+    (copied / "payloads" / "icloud_calendar" / "pickup.ics").unlink()
+    (copied / "payloads" / "obsidian" / "2026-09-21.md").unlink()
+    eval_set = json.loads((copied / "eval_set.json").read_text())
+    eval_set["questions"] = eval_set["questions"][:1]
+    (copied / "eval_set.json").write_text(json.dumps(eval_set))
+    (copied / "wiki" / "people" / "pru-tanager.md").unlink()
+
+    code, out, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    record = json.loads((copied / "reproduction.json").read_text())
+    assert (record["payloads"], record["questions"], record["wiki_files"]) == (1, 1, 1)
+    assert list(record["episodes"]) == ["gmail/order.eml"]
+    assert load_eval_set(copied / "eval_set.json").questions[0].evidence == [
+        record["episodes"]["gmail/order.eml"]
+    ]
+    # The index is the wiki's as it is now.
+    assert "pru-tanager" not in (copied / "wiki" / "index.md").read_text()
+    assert out.splitlines()[1:] == [
+        "payloads: 1 (0 with a new episode id)",
+        "questions: 1",
+        "wiki files: 1",
+    ]
+
+
+def test_a_question_left_naming_a_payload_that_was_removed_is_refused(copied: Path, resolve):
+    (copied / "payloads" / "icloud_calendar" / "pickup.ics").unlink()
+    edited = files_in(copied)
+
+    code, out, err = resolve(copied)
+
+    assert (code, out) == (1, "")
+    assert err.splitlines() == [
+        "eval_set.json: questions.1.evidence: names an episode that none of the payloads is: "
+        "its payload was removed, or renamed and edited at once",
+        f"pa-eval: {copied} isn't resolved again, and is left as it was (1 problem)",
+    ]
+    assert files_in(copied) == edited
+
+
+def test_a_wiki_left_citing_an_episode_that_is_no_payload_is_refused(copied: Path, resolve):
+    day = copied / "wiki" / "days" / "2026-09-21.md"
+    day.write_text(day.read_text() + "- [[pru-tanager]] sent a second jar [ep:gmail_abcdef]\n")
+    edited = files_in(copied)
+
+    code, out, err = resolve(copied)
+
+    assert (code, out) == (1, "")
+    assert err.splitlines() == [
+        "wiki/days/2026-09-21.md:2: cites an episode that none of the payloads is: its payload "
+        "was removed, or renamed and edited at once",
+        f"pa-eval: {copied} isn't resolved again, and is left as it was (1 problem)",
+    ]
+    assert files_in(copied) == edited
+
+
+OUT_OF_FORM = {
+    "a payload that quarantines": (
+        "payloads/gmail/order.eml",
+        ORDER.replace("Message-ID: <order-1@mail.larder.example>\n", ""),
+        "payloads/gmail/order.eml: quarantined: email has no Message-ID header",
+    ),
+    "a wiki that fails lint": (
+        "wiki/days/2026-09-21.md",
+        "- The jam order ships Friday {ep:gmail/order.eml}\n",
+        "wiki/days/2026-09-21.md:1: ",
+    ),
+    "questions that aren't an eval set": (
+        "eval_set.json",
+        json.dumps({**QUESTIONS, "time_zone": "Larder/Pantry"}),
+        "eval_set.json: time_zone: ",
+    ),
+    "evidence that names a file that is no payload": (
+        "eval_set.json",
+        json.dumps(QUESTIONS).replace("gmail/order.eml", "gmail/jam.eml"),
+        "eval_set.json: questions.0.evidence: 'gmail/jam.eml' isn't a payload of the reproduction",
+    ),
+    "an expectation of two lines": (
+        "expectation.md",
+        "It should say Friday.\nIt says it doesn't know.\n",
+        "expectation.md: 2 lines",
+    ),
+    "a file that isn't a reproduction's": (
+        "notes.md",
+        "Renamed the larder.\n",
+        "notes.md: an unexpected file",
+    ),
+    "a payload of no source": (
+        "payloads/larder/order.eml",
+        ORDER,
+        "payloads/larder: an unexpected directory",
+    ),
+}
+
+
+@pytest.mark.parametrize(("path", "text", "said"), OUT_OF_FORM.values(), ids=OUT_OF_FORM.keys())
+def test_an_edit_that_leaves_a_reproduction_out_of_form_is_refused_and_says_where(
+    copied: Path, resolve, path: str, text: str, said: str
+):
+    (copied / path).parent.mkdir(exist_ok=True)
+    (copied / path).write_text(text)
+    edited = files_in(copied)
+
+    code, out, err = resolve(copied)
+
+    assert (code, out) == (1, "")
+    [problem, summary] = err.splitlines()
+    assert problem.startswith(said)
+    assert summary == f"pa-eval: {copied} isn't resolved again, and is left as it was (1 problem)"
+    assert files_in(copied) == edited
+
+
+def test_evidence_and_citations_written_by_payload_file_are_resolved_too(
+    tmp_path: Path, copied: Path, resolve
+):
+    eval_set = json.loads((copied / "eval_set.json").read_text())
+    eval_set["questions"][0]["evidence"] = ["gmail/order.eml", "obsidian/2026-09-21.md"]
+    (copied / "eval_set.json").write_text(json.dumps(eval_set))
+    day = copied / "wiki" / "days" / "2026-09-21.md"
+    day.write_text(day.read_text() + "- [[pru-tanager]] sells it {ep:obsidian/2026-09-21.md}\n")
+
+    code, _, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    ids = ingested(copied / "payloads", tmp_path)
+    assert load_eval_set(copied / "eval_set.json").questions[0].evidence == [
+        ids["Your marmalade order"],
+        ids["## Pantry"],
+    ]
+    assert day.read_text().endswith(f"sells it [ep:{ids['## Pantry']}]\n")
+
+
+def test_a_link_in_an_edited_reproduction_is_refused_and_never_written_through(
+    tmp_path: Path, copied: Path, resolve
+):
+    day = copied / "wiki" / "days" / "2026-09-21.md"
+    elsewhere = tmp_path / "elsewhere.md"
+    elsewhere.write_text(day.read_text())
+    day.unlink()
+    day.symlink_to(elsewhere)
+    kept = elsewhere.read_text()
+
+    code, _, err = resolve(copied)
+
+    assert code == 1
+    assert err.splitlines()[0] == "wiki/days/2026-09-21.md: a link in place of a file"
+    assert day.is_symlink()
+    assert elsewhere.read_text() == kept
+
+
+def test_a_reproduction_whose_wiki_pages_were_all_removed_keeps_no_index(copied: Path, resolve):
+    shutil.rmtree(copied / "wiki" / "days")
+    shutil.rmtree(copied / "wiki" / "people")
+
+    code, out, err = resolve(copied)
+
+    assert (code, err) == (0, "")
+    assert files_under(copied / "wiki") == []
+    assert "wiki files: 0\n" in out
+
+
+NOT_RELEASED = {
+    "a reproduction as a session left it": lambda directory: [
+        (directory / "reproduction.json").unlink(),
+        (directory / "eval_set.json").rename(directory / "questions.json"),
+    ],
+    "a record that isn't one": lambda directory: (directory / "reproduction.json").write_text(
+        '{"finding": "f1"}'
+    ),
+    "a record for no finding": lambda directory: (directory / "reproduction.json").write_text(
+        (directory / "reproduction.json").read_text().replace('"f1"', '"../gooseberry"')
+    ),
+    "a directory that isn't there": shutil.rmtree,
+}
+
+
+@pytest.mark.parametrize("change", NOT_RELEASED.values(), ids=NOT_RELEASED.keys())
+def test_a_directory_that_isnt_a_released_reproduction_is_refused(
+    copied: Path, resolve, change: Callable[[Path], object]
+):
+    change(copied)
+    changed = files_in(copied) if copied.exists() else None
+
+    code, out, err = resolve(copied)
+
+    assert (code, out) == (1, "")
+    assert err == (
+        f"pa-eval: {copied} isn't a released reproduction: it has no reproduction.json that "
+        "says which finding it is for and which episode each payload was\n"
+    )
+    assert (files_in(copied) if copied.exists() else None) == changed
 
 
 # The shape and the caps. `gooseberry` marks what a test plants itself.

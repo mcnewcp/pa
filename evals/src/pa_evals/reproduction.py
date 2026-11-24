@@ -23,11 +23,16 @@ As it is released, beside the findings:
         eval_set.json                 the questions, their evidence resolved to episode ids
         payloads/<source>/<file>      as they were left
         wiki/                         its citations resolved to episode ids, with its index
-        reproduction.json             the record that it is untested (`ReproductionRecord`)
+        reproduction.json             the record that it is untested, and of the episode each
+                                      payload ingests to (`ReproductionRecord`)
 
 A payload's episode id is the one ingest gives it for the synthetic corpus's fictional owner
 (`FICTIONAL_OWNER`), whose every reproduction is. So a released reproduction runs as it stands:
 `pa-eval run --corpus payloads --eval-set eval_set.json`.
+
+A development session renames or trims a released reproduction before it commits it, and an
+edited payload can ingest to another episode. `resolve_again` puts the questions and the wiki
+right after such an edit (`pa-eval reproduction resolve`).
 
 What is here is for whoever holds a session's output to it:
 
@@ -48,6 +53,7 @@ from __future__ import annotations
 
 import functools
 import re
+import shutil
 import stat
 import tempfile
 from collections.abc import Collection, Iterator, Mapping
@@ -59,13 +65,22 @@ from pydantic import ValidationError
 
 from pa_core.catalog import open_catalog
 from pa_core.envelope import Envelope, Source
+from pa_core.errors import PaError
 from pa_core.ingest import inbox_normalizer, ingest
 from pa_core.l0 import QuarantineRecord
 from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import Thresholds, lint
 from pa_core.librarian.metadata import L0Metadata
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
-from pa_core.librarian.wiki import DAYS, FOLDERS, INDEX, ROOT_FILES, day_of, is_page_name
+from pa_core.librarian.wiki import (
+    CITATION,
+    DAYS,
+    FOLDERS,
+    INDEX,
+    ROOT_FILES,
+    day_of,
+    is_page_name,
+)
 from pa_core.normalizers import payload_extension
 from pa_core.owner import Owner
 from pa_evals.eval_set import CATEGORIES, EvalSet
@@ -148,6 +163,10 @@ class ReproductionRecord(FrozenModel):
     payloads: int
     wiki_files: int
     questions: int
+    episodes: dict[str, str]
+    """The episode each payload ingests to, by the payload's inbox name: what the questions'
+    evidence and the wiki's citations were resolved to. An edit to a payload can change its
+    episode's id, and this is what tells `resolve_again` which payload an id was."""
 
 
 @dataclass(frozen=True)
@@ -202,6 +221,7 @@ class Tried:
             payloads=len(self.reproduction.payloads),
             wiki_files=len(self.reproduction.wiki),
             questions=0 if self.eval_set is None else len(self.eval_set.questions),
+            episodes={name: envelope.episode_id for name, envelope in self.envelopes.items()},
         )
 
     @functools.cached_property
@@ -472,7 +492,7 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
     asked, unread = _questions(reproduction)
     unsaid += unread
     as_of = datetime.now(UTC) if asked is None else asked.as_of
-    envelopes = _envelopes(reproduction, owner, as_of)
+    envelopes = _envelopes(reproduction.payloads, owner, as_of)
     ids = {name: envelope.episode_id for name, envelope in envelopes.items()}
     wiki, uncited = _cited(reproduction, ids)
     unsaid += uncited
@@ -539,11 +559,11 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
     )
 
 
-def _envelopes(reproduction: Reproduction, owner: Owner, as_of: datetime) -> dict[str, Envelope]:
+def _envelopes(payloads: Mapping[str, bytes], owner: Owner, as_of: datetime) -> dict[str, Envelope]:
     """Each payload that can be an episode, as the envelope ingest makes of it for `owner`.
     A payload's episode id is its envelope's, whenever it is captured."""
     envelopes: dict[str, Envelope] = {}
-    for name, raw in reproduction.payloads.items():
+    for name, raw in payloads.items():
         try:
             envelopes[name] = inbox_normalizer(PurePosixPath(name), owner)(raw, captured_at=as_of)
         except Exception:
@@ -680,3 +700,183 @@ def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Pa
         said = " ".join(words(text))
         if said and f" {said} " not in lines:
             yield Passage(f"{file}: {what}, as ingest reads it", text)
+
+
+# After an edit: a released reproduction, resolved again.
+
+
+class UnresolvedError(PaError):
+    """A directory that can't be resolved again as a released reproduction. Its message says
+    how much is wrong; `flaws` says what and where, in the reproduction's own words."""
+
+    def __init__(self, message: str, flaws: tuple[Flaw, ...] = ()) -> None:
+        super().__init__(message)
+        self.flaws = flaws
+
+
+@dataclass(frozen=True)
+class ResolvedAgain:
+    """A released reproduction after `resolve_again`."""
+
+    record: ReproductionRecord
+    renewed: int
+    """How many of its payloads ingest to another episode than its record said before."""
+
+
+def resolve_again(directory: Path) -> ResolvedAgain:
+    """Resolve the released reproduction in `directory` again, in place, after an edit.
+
+    A development session renames or trims a released reproduction before it commits it, and
+    an edited payload can ingest to another episode, whose id the questions and the wiki don't
+    name. So the directory is put back in the form a session leaves, where a payload is named
+    by its file, held to everything a session's is short of the case (its shape, and whatever
+    trying it out finds), and written again as a release writes it.
+
+    An episode id is the payload's that ingests to it now, or else the payload's that the
+    record says it was. Evidence and citations that name a payload by its file, as a session
+    writes them, are resolved too. Raises UnresolvedError, and leaves the directory as it was,
+    when anything is wrong with it.
+    """
+    was = _record(directory)
+    with tempfile.TemporaryDirectory(prefix="pa-reproduction-") as scratch:
+        output = Path(scratch)
+        flaws = _as_left(directory, output / REPRODUCTIONS / was.finding, was)
+        flaws += shape_flaws(output)
+        tried = None
+        if not flaws:
+            [reproduction] = read_reproductions(output)
+            tried = try_out(reproduction)
+            flaws += tried.flaws
+    if tried is None or flaws:
+        raise UnresolvedError(
+            f"{directory} isn't resolved again, and is left as it was "
+            f"({len(flaws)} problem{'' if len(flaws) == 1 else 's'})",
+            tuple(Flaw(_as_released(flaw.where, was.finding), flaw.what) for flaw in flaws),
+        )
+    tried.write(directory)
+    if tried.index is None:
+        (directory / WIKI / INDEX).unlink(missing_ok=True)
+    record = tried.record
+    renewed = sum(was.episodes.get(name) != episode for name, episode in record.episodes.items())
+    return ResolvedAgain(record, renewed)
+
+
+def _record(directory: Path) -> ReproductionRecord:
+    """The record of the released reproduction in `directory`."""
+    try:
+        record = ReproductionRecord.model_validate_json((directory / RECORD).read_bytes())
+    except (OSError, ValidationError):
+        record = None
+    if record is None or not _FINDING.fullmatch(record.finding):
+        raise UnresolvedError(
+            f"{directory} isn't a released reproduction: it has no {RECORD} that says which "
+            "finding it is for and which episode each payload was"
+        )
+    return record
+
+
+_NO_PAYLOAD = (
+    "an episode that none of the payloads is: its payload was removed, or renamed and edited "
+    "at once"
+)
+
+
+def _as_released(where: str, finding: str) -> str:
+    """A place in a reproduction as a session leaves it, from the session's output, as the
+    place it is in the released one, from its own directory."""
+    place = where.removeprefix(f"{REPRODUCTIONS}/{finding}").removeprefix("/") or "."
+    return EVAL_SET + place.removeprefix(QUESTIONS) if place.startswith(QUESTIONS) else place
+
+
+def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Flaw]:
+    """Write the released reproduction in `released` to `left` in the form a session leaves:
+    each episode id as the file of the payload it is, and no index or record. Returns each
+    place that names an episode none of the payloads is, from the session's output.
+
+    Nothing is read or written through a link, and whatever isn't the text its place takes is
+    copied as it is, for the shape to refuse."""
+
+    def written_by_a_release(directory: str, entries: list[str]) -> set[str]:
+        if Path(directory) == released:
+            return {EVAL_SET, RECORD}.intersection(entries)
+        return {INDEX}.intersection(entries) if Path(directory) == released / WIKI else set()
+
+    shutil.copytree(released, left, symlinks=True, ignore=written_by_a_release)
+    names = _payloads_by_episode(left / PAYLOADS, was)
+    where = f"{REPRODUCTIONS}/{was.finding}"
+    flaws: list[Flaw] = []
+
+    def by_file(field: str, evidence: list[str]) -> list[str]:
+        """`evidence` with each episode id as its payload's file. What names a payload by its
+        file already stands."""
+        if any(named not in names and "/" not in named for named in evidence):
+            flaws.append(Flaw(f"{where}/{QUESTIONS}", f"{field}: names {_NO_PAYLOAD}"))
+        return [names.get(named, named) for named in evidence]
+
+    questions = released / EVAL_SET
+    if questions.exists(follow_symlinks=False) and _is_file(questions):
+        asked = questions.read_bytes()
+        try:
+            eval_set = EvalSet.model_validate_json(asked)
+        except ValidationError:
+            pass  # Trying it out says what is wrong with them.
+        else:
+            evidence = [
+                by_file(f"questions.{index}.evidence", question.evidence)
+                for index, question in enumerate(eval_set.questions)
+            ]
+            by_payload = eval_set.model_copy(
+                update={
+                    "questions": [
+                        question.model_copy(update={"evidence": named})
+                        for question, named in zip(eval_set.questions, evidence, strict=True)
+                    ],
+                    "adversarial": by_file("adversarial", eval_set.adversarial),
+                }
+            )
+            asked = by_payload.model_dump_json().encode()
+        (left / QUESTIONS).write_bytes(asked)
+    for page in _regular_files(left / WIKI):
+        if page.suffix != ".md" or not _is_text(page):
+            continue
+        lines = page.read_text(encoding="utf-8").splitlines(keepends=True)
+        for number, line in enumerate(lines, start=1):
+            if any(cited not in names for cited in CITATION.findall(line)):
+                place = f"{where}/{page.relative_to(left).as_posix()}:{number}"
+                flaws.append(Flaw(place, f"cites {_NO_PAYLOAD}"))
+        page.write_text(
+            CITATION.sub(
+                lambda cited: f"{{ep:{names[cited[1]]}}}" if cited[1] in names else cited[0],
+                "".join(lines),
+            ),
+            encoding="utf-8",
+        )
+    return flaws
+
+
+def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, str]:
+    """The file of the payload each episode id is, among those in `payloads`: the payload
+    that ingests to it now, or else the one the record says ingested to it, which was edited
+    since."""
+    now = {
+        path.relative_to(payloads).as_posix(): path.read_bytes()
+        for path in _regular_files(payloads)
+    }
+    return {
+        **{episode: name for name, episode in was.episodes.items() if name in now},
+        **{
+            envelope.episode_id: name
+            for name, envelope in _envelopes(now, FICTIONAL_OWNER, datetime.now(UTC)).items()
+        },
+    }
+
+
+def _regular_files(directory: Path) -> Iterator[Path]:
+    """Every regular file under `directory`, through no link."""
+    if not directory.exists(follow_symlinks=False) or not _is_directory(directory):
+        return
+    for entry in sorted(directory.iterdir()):
+        if _is_directory(entry):
+            yield from _regular_files(entry)
+        elif _is_file(entry):
+            yield entry
