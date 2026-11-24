@@ -114,7 +114,7 @@ class DataRoot:
 
     @property
     def evals(self) -> Path:
-        """The private eval directory: real-data eval sets, cuts, runs, and verdicts, which
+        """The private eval directory: real-data eval sets, runs, drafts, and verdicts, which
         never go in the repository."""
         return self.path / "evals"
 
