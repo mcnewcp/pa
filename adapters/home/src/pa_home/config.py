@@ -122,7 +122,8 @@ class DataRoot:
     def diagnoses(self) -> Path:
         """The private diagnoses directory: one directory per diagnosis, holding its referral,
         the session's output (a private analysis and the findings as it left them), and the
-        session's record. It quotes real content, so no command prints any of it."""
+        session's record. It quotes real content, so no command prints any of it. The backup
+        takes it whole (`pa_home.backup`)."""
         return self.path / "diagnoses"
 
     @property
