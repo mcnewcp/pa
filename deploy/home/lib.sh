@@ -231,6 +231,9 @@ PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
 # (a directory each, by name) until it is pulled.
 PA_VM_EVAL_CASE=$PA_VM_EVAL/case
 PA_VM_EVAL_DIAGNOSES=$PA_VM_EVAL/diagnoses
+# Where it pushes what a second pass revises: the output the release check refused (output/) and
+# the check's notes, replaced each revision and gone with the case at the next diagnosis.
+PA_VM_EVAL_REFUSED=$PA_VM_EVAL_CASE/refused
 # The diagnostician's configuration (pa_home.config.load_diagnostician_config), which
 # `pa-eval diagnose` reads where it runs: diagnose.sh carries each one the devbox's environment
 # sets into the VM's.
@@ -318,6 +321,11 @@ PA_EVAL_BIN=${PA_EVAL_BIN:-$REPO_DIR/.venv/bin/pa-eval}
 # output that isn't in form.
 PA_DIAGNOSIS_REFUSED=3
 PA_DIAGNOSIS_FAILED=4
+# The most times diagnose.sh has a refused diagnosis revised (pa_evals.diagnosis.MAX_REVISIONS,
+# which `pa-eval diagnose --revise` holds a diagnosis to itself), and the file in a diagnosis's
+# private directory that holds the release check's notes on a refusal (pa_evals.diagnosis.NOTES).
+PA_DIAGNOSIS_REVISIONS=2
+PA_DIAGNOSIS_NOTES=check-notes.md
 # The librarian VM's managed settings, as the repo has them.
 PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
 # The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.

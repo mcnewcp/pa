@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from pa_evals import release_cli
+from pa_evals import diagnosis, release_cli
 from pa_evals.diagnose_cli import add_diagnose_command
 from pa_evals.diagnosis import NAME
 from pa_evals.history_cli import add_wiki_history_command
@@ -83,26 +83,41 @@ if "-T" in words and words[words.index("-T") - 1] == "mv":
     with open(vm_dirs, "a") as listed:
         listed.write(words[-1] + "\\n")
 if command.startswith("bash -s"):
-    session = json.load(open(os.environ["SESSION"]))
+    # How this session ends: the first of the ways given when it is the first to run, the next
+    # for the one after it, and the last again after that.
+    earlier = [json.load(open(os.path.join(calls, file))) for file in sorted(os.listdir(calls))]
+    ran = [c for c in earlier if c["prog"] == "incus" and c["argv"][-1].startswith("bash -s")]
+    ways = json.load(open(os.environ["SESSION"]))
+    session = ways[min(len(ran) - 1, len(ways) - 1)]
     name = words[words.index("--name") + 1]
+    diagnosis = words[words.index("--out") + 1] + "/" + name
+    # A second pass revises the diagnosis where it is, and keeps the pass it revised by number.
+    revision = len([c for c in ran if "--revise" in shlex.split(c["argv"][-1])])
     if session["leaves"]:
         with open(vm_dirs, "a") as listed:
-            listed.write(words[words.index("--out") + 1] + "/" + name + "\\n")
+            listed.write(diagnosis + (f"/refused/{revision}" if revision else "") + "\\n")
     for path in session["touches"]:
         open(path, "w").write("{}")
-    sys.stdout.write(session["stdout"].replace("{name}", name))
+    said = session["stdout"].replace("{name}", name).replace("{revisions}", str(revision))
+    sys.stdout.write(said)
     sys.stderr.write(session["stderr"].replace("{name}", name))
     sys.exit(session["exit"])
 if argv[:3] == ["file", "pull", "-r"]:
     # What a session leaves, as a pull brings it back: readable by everyone until tightened.
-    target = os.path.join(argv[-1], os.path.basename(argv[-2]))
-    os.makedirs(os.path.join(target, "output"))
+    # With it comes each pass a second pass kept there.
+    source = argv[-2].split("/", 1)[1]
+    target = os.path.join(argv[-1], os.path.basename(source))
     left = ["referral.md", "reply.md", "session.json", "output/analysis.md", "output/findings.json"]
+    for kept in known:
+        if kept.startswith("/" + source + "/refused/"):
+            number = os.path.basename(kept)
+            left += [f"refused/{number}/output/findings.json", f"refused/{number}/check-notes.md"]
     for file in left:
+        os.makedirs(os.path.dirname(os.path.join(target, file)), exist_ok=True)
         with open(os.path.join(target, file), "w") as pulled:
             pulled.write("made up\\n")
         os.chmod(os.path.join(target, file), 0o644)
-    for directory in (os.path.join(target, "output"), target):
+    for directory, _, _ in os.walk(target):
         os.chmod(directory, 0o755)
 """
 
@@ -128,10 +143,19 @@ if argv[0] == "wiki-history":
     print("history: 1 runs")
     print(f"left: {out}")
 if argv[0] == "release":
-    release = json.load(open(os.environ["RELEASE"]))
+    # How this check ends: the first of the ways given when it is the first to run, the next for
+    # the one after it, and the last again after that.
+    earlier = [json.load(open(os.path.join(calls, file))) for file in sorted(os.listdir(calls))]
+    ran = [c for c in earlier if c["prog"] == "pa-eval" and c["argv"][0] == "release"]
+    ways = json.load(open(os.environ["RELEASE"]))
+    release = ways[min(len(ran) - 1, len(ways) - 1)]
     [name] = option("--name")
-    said = release["stdout"].replace("{name}", name)
-    said = said.replace("{diagnoses}", os.environ["PA_DATA_DIR"] + "/diagnoses")
+    diagnoses = os.environ["PA_DATA_DIR"] + "/diagnoses"
+    if release.get("notes"):
+        # A refusal keeps what the check found with the diagnosis.
+        with open(os.path.join(diagnoses, name, "check-notes.md"), "w") as notes:
+            notes.write(release["notes"].replace("{pass}", str(len(ran))))
+    said = release["stdout"].replace("{name}", name).replace("{diagnoses}", diagnoses)
     sys.stdout.write(said.replace("{released}", os.environ["PA_RELEASED_DIR"]))
     sys.stderr.write(release["stderr"])
     sys.exit(release["exit"])
@@ -142,6 +166,7 @@ diagnosis: {name}, over the cut 20261026T120000Z
 case: the cut alone
 session: $2.64, 77 turns
 resumes: 0
+revisions: {revisions}
 left: /srv/pa/eval/diagnoses/{name}
 """
 
@@ -180,12 +205,13 @@ def diagnose(
     tmp_path: Path,
     calls: Path,
     *args: str,
-    session: dict[str, Any] | None = None,
-    release: dict[str, Any] | None = None,
+    session: dict[str, Any] | list[dict[str, Any]] | None = None,
+    release: dict[str, Any] | list[dict[str, Any]] | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Runs diagnose.sh. `session` is how the session's command in the VM ends, and `release`
-    how the devbox's release check does."""
+    how the devbox's release check does. A list of either is how each one ends in turn: the
+    first pass's, then each revision's (the last again, after that)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stand_ins = {
@@ -204,9 +230,11 @@ def diagnose(
         "PA_OWNER_NAME='Argus McNevans'\nPA_OWNER_EMAILS=argus@example.com\n"
     )
     said = {"exit": 0, "stdout": SESSION_SAYS, "stderr": "", "leaves": True, "touches": []}
-    (tmp_path / "session.json").write_text(json.dumps(said | (session or {})))
+    sessions_end = session if isinstance(session, list) else [session or {}]
+    (tmp_path / "session.json").write_text(json.dumps([said | way for way in sessions_end]))
     checked = {"exit": 0, "stdout": RELEASE_SAYS, "stderr": ""}
-    (tmp_path / "release.json").write_text(json.dumps(checked | (release or {})))
+    releases_end = release if isinstance(release, list) else [release or {}]
+    (tmp_path / "release.json").write_text(json.dumps([checked | way for way in releases_end]))
     environ = {
         "HOME": str(tmp_path / "home"),
         "PATH": f"{bin_dir}:/usr/bin:/bin",
@@ -370,15 +398,17 @@ def test_a_diagnosis_runs_in_the_vm_comes_back_private_and_is_released_on_the_de
     ]
     assert ".venv/bin/pa-eval diagnose" in script_of(session)
 
-    # What the session left comes back under the data root, for the owner alone.
+    # What the session left comes back under the data root, for the owner alone: pulled beside
+    # where it goes, among the diagnosis's own files, and moved into place whole.
     assert pull["argv"] == [
         "file",
         "pull",
         "-r",
         f"pa-home{VM_DIAGNOSES}/{name}",
-        f"{private.parent}/",
+        f"{private.parent}/.work-{name}/pulled/",
     ]
     assert private.parent == data_root(tmp_path) / "diagnoses"
+    assert list(private.parent.iterdir()) == [private]
     assert modes(private.parent) == {("directory", 0o700), ("file", 0o600)}
     assert (private / "output" / "analysis.md").is_file()
 
@@ -393,6 +423,7 @@ def test_a_diagnosis_runs_in_the_vm_comes_back_private_and_is_released_on_the_de
         "case: the cut alone\n"
         "session: $2.64, 77 turns\n"
         "resumes: 0\n"
+        "revisions: 0\n"
         f"left: {private}\n"
         f"release: {name}: released\n"
         f"released: {tmp_path / 'released'}/{name}\n"
@@ -681,30 +712,260 @@ def test_a_chat_inbox_that_changed_during_the_session_fails_the_diagnosis(
 REFUSED = 3
 FAILED = 4
 
+REFUSED_CHECKS = CHECKS.replace("names: 0", "names: 2").replace("quotes: 0", "quotes: 1")
 REFUSAL_SAYS = (
     "release: {name}: refused, and nothing is released\n"
-    + CHECKS.replace("names: 0", "names: 2").replace("quotes: 0", "quotes: 1")
+    + REFUSED_CHECKS
     + "notes: {diagnoses}/{name}/check-notes.md\n"
 )
+NOTES = """\
+# The release check's notes, on pass {pass}
+
+## names: 2
+
+- findings.json: f1.mechanism: the name 'nell okafor', which the case holds (Nell Okafor)
+- findings.json: summary: the name 'ridgeline lettings', which the case holds (Ridgeline)
+
+## quotes: 1
+
+- findings.json: f1.suggestion: 6 words in a row: 'the lease at Ridgeline renews in'
+"""
+"""What a refusal's notes hold: what the check found, in words of the made-up case (`SALT`)."""
+REFUSAL = {"exit": REFUSED, "stdout": REFUSAL_SAYS, "notes": NOTES}
+
+VM_REFUSED = f"{VM_CASE}/refused"
 
 
-def test_a_refused_diagnosis_exits_with_a_code_of_its_own_and_stays_private(
+def session_says(name: str, private: Path, *, revisions: int) -> list[str]:
+    """What the script prints of a session that ended well, and of bringing back what it left."""
+    return [
+        f"diagnosis: {name}, over the cut {CUT_NAME}",
+        "case: the cut alone",
+        "session: $2.64, 77 turns",
+        "resumes: 0",
+        f"revisions: {revisions}",
+        f"left: {private}",
+    ]
+
+
+def refusal_says(name: str, private: Path) -> list[str]:
+    return [
+        f"release: {name}: refused, and nothing is released",
+        *REFUSED_CHECKS.splitlines(),
+        f"notes: {private}/check-notes.md",
+    ]
+
+
+def pushes_of_the_refused_pass(calls: Path) -> list[tuple[dict, dict]]:
+    """Each revision's two pushes into the VM: the refused output, and the check's notes."""
+    made = recorded(calls)
+    outputs = [call for call in made if in_vm(call).endswith(f"tar -C {VM_REFUSED} -xf -")]
+    notes = [call for call in made if in_vm(call).endswith(f"cat > {VM_REFUSED}/check-notes.md")]
+    assert len(outputs) == len(notes)
+    return list(zip(outputs, notes, strict=True))
+
+
+def test_a_refused_diagnosis_is_revised_by_the_checks_notes_and_released_once_the_check_passes(
     tmp_path: Path, calls: Path, cut: Path, referral: Path
 ):
-    result = refer(
-        tmp_path, calls, referral, cut, release={"exit": REFUSED, "stdout": REFUSAL_SAYS}
+    result = refer(tmp_path, calls, referral, cut, release=[REFUSAL, {}])
+
+    assert result.returncode == 0, result.stderr
+    [private] = diagnoses(tmp_path)
+    name = private.name
+    # One revision: a second session, and the check run again on what it left.
+    first, revision = sessions(calls)
+    refusal, release = releases(calls)
+    [(push_output, push_notes)] = pushes_of_the_refused_pass(calls)
+    pulls = [call for call in recorded(calls) if call["argv"][:2] == ["file", "pull"]]
+    assert [call["at"] for call in (first, pulls[0], refusal, push_output, push_notes)] == sorted(
+        call["at"] for call in (first, pulls[0], refusal, push_output, push_notes)
     )
+    assert push_notes["at"] < revision["at"] < pulls[1]["at"] < release["at"]
+    assert len(pulls) == 2
+
+    # The refused output and the check's notes go into the VM, which may hold them, on stdin.
+    assert pushed(push_output) == ["output/analysis.md", "output/findings.json"]
+    assert bytes.fromhex(push_notes["stdin"]).decode() == NOTES.replace("{pass}", "1")
+    # The second pass is asked the same referral over the same case, with the VM's copies.
+    assert options_of(revision) == [
+        *options_of(first),
+        *("--revise", f"{VM_REFUSED}/output"),
+        *("--notes", f"{VM_REFUSED}/check-notes.md"),
+    ]
+    revised_as = taken(["diagnose", *options_of(revision)])
+    assert (str(revised_as.revise), str(revised_as.notes)) == (
+        f"{VM_REFUSED}/output",
+        f"{VM_REFUSED}/check-notes.md",
+    )
+    assert revision["argv"][:6] == ["exec", "pa-home", "--", "runuser", "-l", "assistant"]
+    # The check is the same one, over the same case: a retry loosens nothing.
+    assert release["argv"] == refusal["argv"]
+    assert release["env"]["PA_OWNER_NAME"] == "Argus McNevans"
+
+    # What comes back is the diagnosis with every pass in it, for the owner alone.
+    assert (private / "refused" / "1" / "check-notes.md").is_file()
+    assert (private / "output" / "findings.json").is_file()
+    assert modes(private) == PRIVATE
+    assert [path.name for path in private.parent.iterdir()] == [name]
+
+    # It prints each pass's counts, and how many revisions were made: never the notes.
+    assert result.stdout.splitlines() == [
+        *session_says(name, private, revisions=0),
+        *refusal_says(name, private),
+        *session_says(name, private, revisions=1),
+        f"release: {name}: released",
+        f"released: {tmp_path / 'released'}/{name}",
+        "findings: 2 (1 fault, 1 noise)",
+        "reproductions: 1, untested",
+        "payloads: 3",
+        *CHECKS.splitlines(),
+    ]
+    assert "revising the diagnosis" in result.stderr
+    assert not [word for word in SALT if word in result.stdout + result.stderr]
+    assert not [call for call in recorded(calls) if "Okafor" in " ".join(call["argv"])]
+
+
+def test_a_diagnosis_refused_three_times_ends_unreleased_after_exactly_two_revisions(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    result = refer(tmp_path, calls, referral, cut, release=REFUSAL)
 
     assert result.returncode == REFUSED
     [private] = diagnoses(tmp_path)
-    assert modes(private) == PRIVATE
-    # A refusal ends the diagnosis: one session, one check.
-    assert len(sessions(calls)) == len(releases(calls)) == 1
-    assert result.stdout.splitlines()[5:] == [
-        f"release: {private.name}: refused, and nothing is released",
-        *CHECKS.replace("names: 0", "names: 2").replace("quotes: 0", "quotes: 1").splitlines(),
-        f"notes: {private}/check-notes.md",
+    name = private.name
+    # The first pass and two revisions, each one checked, and no more.
+    assert ["--revise" in options_of(session) for session in sessions(calls)] == [False, True, True]
+    assert len(releases(calls)) == 3
+    assert len({json.dumps(release["argv"]) for release in releases(calls)}) == 1
+    # Each revision is given the notes of the check that refused the pass before it.
+    told = [
+        bytes.fromhex(notes["stdin"]).decode() for _, notes in pushes_of_the_refused_pass(calls)
     ]
+    assert told == [NOTES.replace("{pass}", "1"), NOTES.replace("{pass}", "2")]
+    assert result.stdout.splitlines() == [
+        *session_says(name, private, revisions=0),
+        *refusal_says(name, private),
+        *session_says(name, private, revisions=1),
+        *refusal_says(name, private),
+        *session_says(name, private, revisions=2),
+        *refusal_says(name, private),
+    ]
+    assert (
+        f"error: the diagnosis {name} is still refused after 2 revisions, and nothing is released"
+        in result.stderr
+    )
+    assert not (tmp_path / "released").exists()
+    # Every pass stays with the private analysis, the last check's notes among them.
+    assert sorted(path.name for path in (private / "refused").iterdir()) == ["1", "2"]
+    assert (private / "check-notes.md").read_text() == NOTES.replace("{pass}", "3")
+    assert modes(private) == PRIVATE
+    assert not [word for word in SALT if word in result.stdout + result.stderr]
+
+
+def test_a_revision_whose_session_fails_ends_the_diagnosis_with_the_failed_code(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    failure = (
+        "pa-eval: the diagnostician's session ran out of time, so the diagnosis {name} failed. "
+        "What it left, and the whole error, are kept in /srv/pa/eval/diagnoses/{name}\n"
+    )
+
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session=[{}, {"exit": 1, "stdout": "", "stderr": failure}],
+        release=REFUSAL,
+    )
+
+    assert result.returncode == FAILED
+    # What the failed revision left isn't checked, so the refusal stands and nothing is released.
+    assert len(sessions(calls)) == 2
+    assert len(releases(calls)) == 1
+    [private] = diagnoses(tmp_path)
+    assert result.stdout.splitlines() == [
+        *session_says(private.name, private, revisions=0),
+        *refusal_says(private.name, private),
+        f"left: {private}",
+    ]
+    assert "ran out of time" in result.stderr
+    # The refused pass and what the revision left are the owner's to read.
+    assert (private / "refused" / "1" / "check-notes.md").is_file()
+    assert modes(private) == PRIVATE
+
+
+def test_a_revision_that_never_started_leaves_the_refused_diagnosis_as_it_was(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    """A second pass that fails before it touches the diagnosis left nothing to bring back: the
+    devbox's copy, with the check's notes, isn't replaced by the VM's."""
+    unstarted = "pa-eval: the diagnosis read another case than the one given\n"
+
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session=[{}, {"exit": 1, "stdout": "", "stderr": unstarted, "leaves": False}],
+        release=REFUSAL,
+    )
+
+    assert result.returncode == 1
+    assert "read another case" in result.stderr
+    assert "started no session" in result.stderr
+    assert len([call for call in recorded(calls) if call["argv"][:2] == ["file", "pull"]]) == 1
+    assert len(releases(calls)) == 1
+    [private] = diagnoses(tmp_path)
+    assert (private / "check-notes.md").read_text() == NOTES.replace("{pass}", "1")
+    assert not (private / "refused").exists()
+    assert modes(private) == PRIVATE
+
+
+def test_a_chat_inbox_that_changed_during_a_revision_fails_the_diagnosis(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    inbox = data_root(tmp_path) / "inbox" / "assistant_chat"
+
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session=[{}, {"touches": [str(inbox / "exchange.json")]}],
+        release=REFUSAL,
+    )
+
+    assert result.returncode == 1
+    assert f"changed {inbox}" in result.stderr
+    # The revision isn't checked, so it can't be released.
+    assert len(sessions(calls)) == 2
+    assert len(releases(calls)) == 1
+
+
+def test_what_each_pass_let_slip_is_kept_for_the_owner_through_a_revision(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    """The VM's copy of a revised diagnosis takes the place of the devbox's, which alone holds
+    what the commands printed and wasn't shown."""
+    stray = "The lease at Ridgeline renews in March.\n"
+
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session={"stdout": stray + SESSION_SAYS},
+        release=[REFUSAL | {"stderr": SLIPPED}, {}],
+    )
+
+    assert result.returncode == 0, result.stderr
+    [private] = diagnoses(tmp_path)
+    assert (private / "diagnose-output.txt").read_text() == stray + stray
+    assert (private / "release-output.txt").read_text() == SLIPPED
+    assert modes(private) == PRIVATE
+    assert not [word for word in SALT if word in result.stdout + result.stderr]
 
 
 def test_a_failed_session_exits_with_a_code_of_its_own_and_what_it_left_comes_back(
@@ -901,6 +1162,7 @@ def test_what_it_prints_is_counts_and_names_of_checks_and_never_what_the_vms_com
         "case: the cut alone\n"
         "session: $2.64, 77 turns\n"
         "resumes: 0\n"
+        "revisions: 0\n"
         f"left: {private}\n"
         f"release: {name}: released\n"
         f"released: {tmp_path / 'released'}/{name}\n"
@@ -1036,6 +1298,8 @@ def test_a_released_directory_that_a_release_would_refuse_stops_it_before_a_sess
         (["--referral", "{referral}", "--name", "dreamed-drop", "--cut", "{root}"], "isn't a cut"),
         ([*REFERRED, "--out", "{root}/diagnoses"], "drop --out"),
         ([*REFERRED, "--history", "own={root}/history"], "drop --history"),
+        ([*REFERRED, "--revise", "{root}/odd"], "drop --revise"),
+        ([*REFERRED, "--notes={root}/odd/notes.md"], "drop --notes"),
         ([*REFERRED, "--eval-set", "{root}/no-set.json"], "eval set not found"),
         ([*REFERRED, "--runs", "{root}/odd/no-runs"], "--runs takes LABEL=DIR"),
         ([*REFERRED, "--runs", "Own Runs={root}/odd/no-runs"], "a label is lowercase"),
@@ -1106,6 +1370,13 @@ def test_the_scripts_names_are_the_ones_the_commands_it_runs_go_by():
     assert int(refused) == release_cli.REFUSED == REFUSED
     assert int(failed) == FAILED
     assert len({0, 1, REFUSED, FAILED}) == 4
+    # It revises as often as a diagnosis may be revised, by the notes the check leaves.
+    revisions, notes, vm_refused = lib_values(
+        "PA_DIAGNOSIS_REVISIONS", "PA_DIAGNOSIS_NOTES", "PA_VM_EVAL_REFUSED"
+    )
+    assert int(revisions) == diagnosis.MAX_REVISIONS == 2
+    assert notes == diagnosis.NOTES
+    assert vm_refused == VM_REFUSED
     home = Path("/home/owner")
     assert Path(diagnoses_directory) == DataRoot(home / ".local" / "share" / "pa-home").diagnoses
     assert released == config.DEFAULT_RELEASED_DIR.replace("~", str(home))
