@@ -108,6 +108,16 @@ PA_SYNTHETIC_PREFIX=pa-home-synthetic
 # (evals/runs/), and drafts of the real-data eval set with the owner's notes
 # (evals/drafts/<cut>/). The nightly backup takes it whole.
 PA_EVALS=$PA_DATA_ROOT/evals
+# The private diagnoses directory (DataRoot.diagnoses, ADR-0010): a directory per diagnosis,
+# holding its referral, what the diagnostician's session left (the private analysis and the
+# unchecked findings), and the release check's notes. Mode 0700, files 0600. diagnose.sh holds a
+# lock on the directory itself while it runs, so one diagnosis runs at a time.
+PA_DIAGNOSES=$PA_DATA_ROOT/diagnoses
+# Where a diagnosis's checked findings are released for a development session to read
+# (pa_home.config.load_released_directory): outside this checkout and the data root. A leading
+# ~/ is the home directory, as that reads it.
+PA_RELEASED=${PA_RELEASED_DIR:-$HOME/.local/share/pa-released}
+PA_RELEASED=${PA_RELEASED/#\~\//$HOME/}
 # The parts of it the VM sees.
 PA_L0=$PA_DATA_ROOT/l0
 PA_CHAT_INBOX=$PA_DATA_ROOT/inbox/assistant_chat
@@ -176,7 +186,8 @@ PA_RESTIC_CACHE=$HOME/.cache/restic
 # PA_BIN: the venv's own `pa`, since a confined service can't let uv write its cache or the venv.
 PA_CAPTURE_TIMER=pa-capture.timer
 PA_NIGHTLY_TIMER=pa-nightly.timer
-PA_SCHEDULE_UNITS=(pa-capture.service "$PA_CAPTURE_TIMER" pa-nightly.service "$PA_NIGHTLY_TIMER")
+PA_NIGHTLY_SERVICE=pa-nightly.service
+PA_SCHEDULE_UNITS=(pa-capture.service "$PA_CAPTURE_TIMER" "$PA_NIGHTLY_SERVICE" "$PA_NIGHTLY_TIMER")
 PA_SCHEDULE_TIMERS=("$PA_CAPTURE_TIMER" "$PA_NIGHTLY_TIMER")
 PA_NIGHTLY_AT=03:00
 # Dreaming, the librarian's review of the whole wiki, as a step of the nightly job (#148): how
@@ -215,6 +226,18 @@ PA_VM_EVAL_RUNS=$PA_VM_EVAL/runs
 # Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
 # owner's notes a second pass revises.
 PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
+# Where diagnose.sh pushes a case's parts beside its cut (the referral, the eval set, runs, wikis
+# and their histories, earlier analyses), replaced each diagnosis, and where a diagnosis is left
+# (a directory each, by name) until it is pulled.
+PA_VM_EVAL_CASE=$PA_VM_EVAL/case
+PA_VM_EVAL_DIAGNOSES=$PA_VM_EVAL/diagnoses
+# The diagnostician's configuration (pa_home.config.load_diagnostician_config), which
+# `pa-eval diagnose` reads where it runs: diagnose.sh carries each one the devbox's environment
+# sets into the VM's.
+PA_DIAGNOSTICIAN_SETTINGS=(
+  PA_DIAGNOSTICIAN_MODEL PA_DIAGNOSTICIAN_EFFORT PA_DIAGNOSTICIAN_MAX_TURNS
+  PA_DIAGNOSTICIAN_TIMEOUT_SECONDS
+)
 # The policy the assistant can't change (#81, #92), root's and mode 0644: the web, MCP, and the
 # tools that schedule prompts or reach out denied; the file tools kept out of everything but
 # scratch; only its hooks; Bash in Claude Code's sandbox; memory, connectors and updates off.
@@ -286,6 +309,15 @@ DEPLOY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$DEPLOY_DIR/../.." && pwd)
 # The `pa` the schedules run (capture.sh, nightly.sh): this checkout's venv's (uv sync makes it).
 PA_BIN=${PA_BIN:-$REPO_DIR/.venv/bin/pa}
+# The `pa-eval` diagnose.sh runs on the devbox (a wiki's history, the release check): this
+# checkout's venv's too.
+PA_EVAL_BIN=${PA_EVAL_BIN:-$REPO_DIR/.venv/bin/pa-eval}
+# diagnose.sh's exit codes beside 0 (released) and 1 (it couldn't run, or its session changed the
+# chat inbox): the release check refused the diagnosis (`pa-eval release`'s own code for it,
+# pa_evals.release_cli.REFUSED), and its session failed, ran out of time or turns, or left an
+# output that isn't in form.
+PA_DIAGNOSIS_REFUSED=3
+PA_DIAGNOSIS_FAILED=4
 # The librarian VM's managed settings, as the repo has them.
 PA_LIBRARIAN_MANAGED_SETTINGS=$DEPLOY_DIR/librarian/managed-settings.json
 # The assistant VM's managed settings and the sandbox's AppArmor profile, as the repo has them.
@@ -400,6 +432,28 @@ push_file() {
 # inbox_listing lists what's in the VM's inbox directory on the devbox, with sizes and times, so
 # a run can check its sessions captured nothing.
 inbox_listing() { find "$PA_CHAT_INBOX" -mindepth 1 -printf '%P %s %T@\n' | sort; }
+
+# nightly_running: the nightly job is running, so its librarian is spending the usage limit. Its
+# unit says so for a scheduled run (a oneshot is `activating` for as long as its job runs), and
+# the mark the job leaves in the status says so for a run by hand too, for as long as a night
+# can take (pa_core.status.Status.nightly_running). Neither takes the data root's lock.
+nightly_running() {
+  local mark
+  case $(systemctl show "$PA_NIGHTLY_SERVICE" -p ActiveState --value 2>/dev/null || true) in
+    activating | active | deactivating | reloading) return 0 ;;
+  esac
+  [[ -f $PA_STATUS/status.json ]] || return 1
+  mark=$("$REPO_DIR/.venv/bin/python" -c '
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from pa_core.status import read_status
+running = read_status(Path(sys.argv[1])).nightly_running(now=datetime.now(UTC))
+print("running" if running else "idle")
+' "$PA_STATUS/status.json" 2>/dev/null) ||
+    die "$PA_STATUS/status.json couldn't be read, so there's no telling whether the nightly job is running (run uv sync in $REPO_DIR if its venv is missing)"
+  [[ $mark == running ]]
+}
 
 # require_owner_env stops unless the data root has its owner (setup-wizard.sh --owner).
 require_owner_env() {

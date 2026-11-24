@@ -48,6 +48,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
 | `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
+| `diagnose.sh --referral FILE --name NAME --cut DIR [case parts]` | Runs a diagnosis through the VM (ADR-0010): pushes the case (the cut once), has a diagnostician's session answer the referral, brings what it left back to `diagnoses/` under the data root, and runs the release check on the devbox (`pa-eval release`). Exits 0 when the findings are released, 3 when the check refuses them, 4 when the session fails, and 1 otherwise |
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
