@@ -160,6 +160,10 @@ root=$(realpath -m -- "$PA_DATA_ROOT")
 
 [[ -f $referral ]] || die "referral not found: $referral"
 vm_cut=$PA_VM_EVAL_CUTS/$(cut_name "$cut")
+# The live store is never a case, only a cut of it: a manifest doesn't make a data root a cut.
+if is_live_store "$cut" || [[ -e $cut/wiki.git || $(realpath -- "$cut") == "$(realpath -m -- "$PA_DATA_ROOT")" ]]; then
+  die "$cut isn't a cut: it holds what only a live store does. A case is a cut of the store (pa cut takes one), never the store itself"
+fi
 require_owner_env
 
 # A diagnosis is never written over: its name is the time and the short name.
@@ -216,6 +220,10 @@ for value in "${wikis[@]}"; do
   else
     [[ -d $path/wiki.git ]] ||
       die "the wiki under $label ($path) isn't a dreamed copy that has run: it has no wiki.git/"
+    # A data root holds a wiki and its git directory too, and is never a part of a case.
+    if is_live_store "$path" || [[ $(realpath -- "$path") == "$(realpath -m -- "$PA_DATA_ROOT")" ]]; then
+      die "the wiki under $label ($path) is a live store, not a dreamed copy: a case holds a cut of the store and copies of the cut's wiki, never the store itself"
+    fi
     # Its tree only, never the copy's git directory.
     histories+=("$label"$'\n'--copy$'\n'"$path")
     vm_case+=(--wiki "$label=$vm_wiki/wiki")

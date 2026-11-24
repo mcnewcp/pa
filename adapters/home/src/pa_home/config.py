@@ -154,6 +154,18 @@ class DataRoot:
         return self.path / "pa.lock"
 
 
+def is_live_store(path: Path) -> bool:
+    """Whether the directory `path` is laid out as a data root in use is: it holds what a cut
+    of one, and a copy of a cut's wiki, never do. That is an inbox, the lock, the catalog, the
+    capture cycle's state, or a store with its wiki's git directory beside it. A link counts
+    as what it is named for."""
+    root = DataRoot(path)
+    only_live = (root.inbox, root.lock, root.catalog.parent, root.state)
+    return any(part.exists(follow_symlinks=False) for part in only_live) or (
+        root.l0.exists(follow_symlinks=False) and root.wiki_git.exists(follow_symlinks=False)
+    )
+
+
 DREAMING_INTERVAL_DAYS = 7
 """How many days apart the nightly job's dreaming runs are, unless configured otherwise."""
 

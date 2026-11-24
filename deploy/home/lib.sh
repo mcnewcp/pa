@@ -404,6 +404,17 @@ require_private() {
   esac
 }
 
+# is_live_store DIR: DIR is laid out as a data root in use is (pa_home.config.is_live_store): it
+# holds an inbox, the lock, the catalog, the capture cycle's state, or a store with its wiki's
+# git directory beside it. A cut of a store, and a copy of a cut's wiki, hold none of those.
+is_live_store() {
+  local part
+  for part in inbox pa.lock catalog state; do
+    [[ ! -e $1/$part && ! -L $1/$part ]] || return 0
+  done
+  [[ (-e $1/l0 || -L $1/l0) && (-e $1/wiki.git || -L $1/wiki.git) ]]
+}
+
 # cut_name DIR prints the name of the cut in DIR (its as-of time), and stops unless DIR is a cut
 # as `pa cut` makes one.
 cut_name() {

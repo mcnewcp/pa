@@ -227,8 +227,9 @@ def diagnose(
     """Runs diagnose.sh. `session` is how the session's command in the VM ends, and `release`
     how the devbox's release check does. A session's `touches` are files it writes while it
     runs, its `comes_back` what files of the diagnosis hold when they are pulled, by name, and
-    its `links` links it left in the diagnosis, by name, with where each points. A list of either is how each one ends in turn: the
-    first pass's, then each revision's (the last again, after that)."""
+    its `links` links it left in the diagnosis, by name, with where each points. A list of
+    either is how each one ends in turn: the first pass's, then each revision's (the last
+    again, after that)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stand_ins = {
@@ -1338,6 +1339,43 @@ def test_what_the_release_check_let_slip_is_kept_for_the_owner_as_well(
     assert kept.read_text() == SLIPPED
     assert modes(private) == PRIVATE
     assert f"5 lines pa-eval release printed aren't shown: they are kept in {kept}" in result.stderr
+
+
+def live_store(root: Path) -> Path:
+    """A directory laid out as a data root in use is, with its wiki and the wiki's git
+    directory, as a dreamed copy has too."""
+    for directory in ("inbox/assistant_chat", "l0/episodes", "wiki/people", "wiki.git"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+@pytest.mark.parametrize("which", ["the data root", "a store elsewhere"])
+def test_the_live_store_is_never_a_wiki_of_the_case(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path, which: str
+):
+    """A data root holds a wiki and its git directory, as a dreamed copy does. A case holds a
+    cut of the store, and copies of the cut's wiki, never the store."""
+    roots = {"the data root": data_root(tmp_path), "a store elsewhere": tmp_path / "restored"}
+    live = live_store(roots[which])
+
+    result = refer(tmp_path, calls, referral, cut, "--wiki", f"live={live}")
+
+    assert result.returncode == 1
+    assert f"the wiki under live ({live}) is a live store" in result.stderr
+    assert recorded(calls) == []
+    assert diagnoses(tmp_path) == []
+
+
+def test_a_live_store_is_never_the_cut(tmp_path: Path, calls: Path, cut: Path, referral: Path):
+    """A directory named as a cut is and holding a manifest, with what only a live store has."""
+    live_store(cut)
+
+    result = refer(tmp_path, calls, referral, cut)
+
+    assert result.returncode == 1
+    assert f"{cut} isn't a cut" in result.stderr
+    assert recorded(calls) == []
+    assert diagnoses(tmp_path) == []
 
 
 NAMED_CUT = ("--name", "dreamed-drop", "--cut", "{cut}")
