@@ -45,6 +45,7 @@ the session's reply, or of a failed session's error in an exception or in what a
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import stat
@@ -131,6 +132,10 @@ OUTPUT_FILES: Mapping[str, int] = {ANALYSIS: 200_000, FINDINGS: 64_000}
 """What an output holds: each file by name, with the most bytes it may hold. Both are UTF-8
 text, and an output holds nothing else but its reproductions (`pa_evals.reproduction`). The
 caps are constants, not configuration."""
+
+_KEPT = (REFERRAL, REPLY, SESSION, SESSION_ERROR, OUTPUT_PROBLEMS, NOTES, f"{REFUSED}/**")
+"""Everything a diagnosis's directory keeps beside the session's output, as the paths a
+permission rule denies: none of it is the session's to write."""
 
 _PRIVATE_DIRECTORY = 0o700
 _PRIVATE_FILE = 0o600
@@ -260,7 +265,15 @@ def render_diagnostician_project(
 ) -> None:
     """Writes a copy of the diagnostician project to `target`, filled in with where this
     session reads its `case` and the `code` as deployed, and leaves its `output`. `target`
-    must not exist yet, or be empty."""
+    must not exist yet, or be empty.
+
+    The project's settings deny the session's tools what a session has no business writing:
+    the case, to the file tools and to the sandboxed shell (the template's rules), and
+    everything a diagnosis keeps beside its output, to the file tools (`_KEPT`). The case is
+    laid read-only, but it is the session's user's own, in a directory its tools are given.
+    Where managed settings make themselves the only source of permission rules, as the
+    assistant's VM does, the rules here are ignored and the modes are what holds the file
+    tools: ADR-0010 says what that leaves."""
     render_project(
         source,
         target,
@@ -276,6 +289,11 @@ def render_diagnostician_project(
         },
         name="the diagnostician project",
     )
+    settings = json.loads((target / SETTINGS).read_text())
+    # A rule's path is absolute when it starts with two slashes. The output is never denied:
+    # it is the one place the session writes.
+    settings["permissions"]["deny"] += [f"Edit(/{output.parent}/{kept})" for kept in _KEPT]
+    (target / SETTINGS).write_text(json.dumps(settings, indent=2) + "\n")
 
 
 _Name = Annotated[str, StringConstraints(pattern=f"^{NAME.pattern}$")]

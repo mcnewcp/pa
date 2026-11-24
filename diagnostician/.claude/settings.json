@@ -5,13 +5,21 @@
       "WebFetch",
       "mcp__*",
       "Read(~/.claude/.credentials.json)",
-      "Read(~/.claude.json)"
+      "Read(~/.claude.json)",
+      "Edit(/${case}/**)"
     ],
     "additionalDirectories": [
       "${case}",
       "${output}",
       "${code}"
     ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "denyWrite": [
+        "${case}"
+      ]
+    }
   },
   "enableAllProjectMcpServers": false,
   "disableClaudeAiConnectors": true
