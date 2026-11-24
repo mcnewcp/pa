@@ -1,11 +1,12 @@
-"""Reproductions (`pa-eval release`): a diagnosis leaves fictional payloads, wiki pages, and eval
-questions that fail the way the case did, and they reach a development session only with the
-findings, when both pass every rule.
+"""Reproductions: a diagnosis leaves fictional payloads, wiki pages, and eval questions that
+fail the way the case did (`pa-eval diagnose`), and they reach a development session only with
+the findings, when both pass every rule (`pa-eval release`).
 
-Each test makes a diagnosis whose scripted session leaves a reproduction for its first finding,
-then runs the release. The clean reproduction is about a marmalade order from a larder. The
-case's people and sentences stand in for real ones; a test plants one of them in the
-reproduction, and the release is refused.
+Most tests make a diagnosis whose output holds a reproduction for its first finding, then run
+the release. The clean reproduction is about a marmalade order from a larder. The case's people
+and sentences stand in for real ones; a test plants one of them in the reproduction, and the
+release is refused. The last tests run the session itself, as a stand-in `claude` (conftest's
+`claude_stand_in`), which is resumed on a reproduction that isn't in form.
 
 A run of words that is also in the repository passes the check, and so does a dotted name the
 repository holds. This file is in the repository. So the case's sentences are written backwards
@@ -191,6 +192,18 @@ QUESTIONS: dict[str, Any] = {
 }
 
 
+CLEAN_PATHS = (
+    "expectation.md",
+    "questions.json",
+    "payloads/gmail/order.eml",
+    "payloads/obsidian/2026-09-21.md",
+    "payloads/icloud_calendar/pickup.ics",
+    "wiki/people/pru-tanager.md",
+    "wiki/days/2026-09-21.md",
+)
+"""The clean reproduction's files."""
+
+
 @pytest.fixture
 def reproduction() -> dict[str, str]:
     """A clean reproduction's files, by path, as a session leaves them."""
@@ -314,15 +327,6 @@ def test_a_clean_reproduction_is_released_beside_the_findings_resolved_and_untes
     assert files_under(desk.private / "output" / "reproductions") == sorted(
         f"f1/{path}" for path in reproduction
     )
-
-
-def test_a_reproduction_is_kept_for_the_owner_alone(desk, leave, reproduction):
-    private = desk.diagnose(leave(reproduction))
-
-    kept = [private / "output" / "reproductions", *(private / "output/reproductions").rglob("*")]
-    assert len(kept) == 16
-    for path in kept:
-        assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
 
 
 def test_a_release_without_a_reproduction_says_so(desk, leavings):
@@ -1263,3 +1267,135 @@ def test_two_clean_reproductions_are_released_each_for_its_finding(
     for finding in ("f1", "f2"):
         record = (desk.released / "reproductions" / finding / "reproduction.json").read_text()
         assert json.loads(record)["finding"] == finding
+
+
+# The session: a reproduction that isn't in form resumes it (`pa-eval diagnose`).
+
+
+@pytest.fixture
+def diagnose(data_root: DataRoot, cut, referral: Path, pa_eval) -> Callable[..., Any]:
+    def run(*extra: object, agent: str = "claude") -> Any:
+        return pa_eval(
+            *("diagnose", "--referral", referral, "--cut", cut.path, "--name", NAME),
+            *("--out", data_root.diagnoses, "--agent", agent, *extra),
+        )
+
+    return run
+
+
+def test_a_diagnosis_keeps_the_reproduction_its_session_left_for_the_owner_alone(
+    data_root: DataRoot, diagnose, leave, reproduction
+):
+    ran = diagnose("--leaves", leave(reproduction), agent="scripted")
+
+    assert ran.code == 0
+    assert "resumes: 0" in ran.out
+    left = data_root.diagnoses / NAME / "output" / "reproductions"
+    assert files_under(left) == sorted(f"f1/{path}" for path in reproduction)
+    for path in (left, *left.rglob("*")):
+        assert stat.S_IMODE(path.stat().st_mode) == (0o700 if path.is_dir() else 0o600)
+
+
+NOT_IN_FORM: dict[str, tuple[dict[str, str | None], str]] = {
+    "a reproduction over a cap": (
+        {f"payloads/gmail/more-{number}.eml": mail(number) for number in range(38)},
+        "- output/reproductions/f1/payloads: 41 payloads, over the cap of 40",
+    ),
+    "a file a reproduction doesn't hold": (
+        {"gooseberry.txt": "The marmalade order.\n"},
+        "- output/reproductions/f1/gooseberry.txt: an unexpected file",
+    ),
+    "no line of expectation": (
+        {"expectation.md": None},
+        "- output/reproductions/f1/expectation.md: missing",
+    ),
+    "questions that aren't an eval set": (
+        {"questions.json": asked(category="gooseberry")},
+        "- output/reproductions/f1/questions.json: questions.0.category: Input should be ",
+    ),
+    "evidence that names no payload": (
+        {"questions.json": asked(evidence=["gmail/gooseberry.eml"])},
+        "- output/reproductions/f1/questions.json: questions.0.evidence: 'gmail/gooseberry.eml' "
+        "isn't a payload of the reproduction",
+    ),
+    "an owner who isn't the fictional one": (
+        {"questions.json": json.dumps({**QUESTIONS, "owner": {**OWNER, "name": "Goose Berry"}})},
+        "- output/reproductions/f1/questions.json: owner: isn't the synthetic corpus's "
+        "fictional owner",
+    ),
+    "a payload that quarantines": (
+        {"payloads/gmail/order.eml": ORDER.replace("Message-ID", "X-Gooseberry")},
+        "- output/reproductions/f1/payloads/gmail/order.eml: quarantined: email has no "
+        "Message-ID header",
+    ),
+    "a wiki that fails lint": (
+        {"wiki/people/pru-tanager.md": PERSON.replace(" {ep:gmail/order.eml}", "")},
+        "- output/reproductions/f1/wiki/people/pru-tanager.md:12: ",
+    ),
+    "a finding whose reproduction isn't there": (
+        dict.fromkeys(CLEAN_PATHS),
+        "- output/findings.json: f1.reproduction: there is no reproductions/f1",
+    ),
+}
+"""Changes to the clean reproduction's files (None takes one away) that leave it out of form,
+each with what the session is told is wrong."""
+
+
+@pytest.mark.parametrize(("changes", "wrong"), NOT_IN_FORM.values(), ids=NOT_IN_FORM.keys())
+def test_a_reproduction_that_isnt_in_form_resumes_the_session_with_what_is_wrong(
+    data_root: DataRoot,
+    diagnose,
+    leave,
+    reproduction,
+    claude_stand_in,
+    changes: dict[str, str | None],
+    wrong: str,
+):
+    changed = {path: text for path, text in (reproduction | changes).items() if text is not None}
+    stand_in = claude_stand_in({"leaves": leave(changed)}, {"leaves": leave(reproduction)})
+
+    ran = diagnose()
+
+    assert ran.code == 0
+    _, resumed = stand_in.seen()
+    assert "--resume" in resumed["argv"]
+    assert wrong in resumed["prompt"]
+    # What it left the second time is the diagnosis.
+    diagnosis = data_root.diagnoses / NAME
+    assert files_under(diagnosis / "output" / "reproductions") == sorted(
+        f"f1/{path}" for path in reproduction
+    )
+    assert json.loads((diagnosis / "session.json").read_text())["resumes"] == 1
+    assert "resumes: 1" in ran.out
+
+
+def test_a_reproduction_still_out_of_form_after_two_resumes_fails_the_diagnosis(
+    data_root: DataRoot, diagnose, leave, reproduction, claude_stand_in
+):
+    reproduction["payloads/gmail/order.eml"] = ORDER.replace("Message-ID", "X-Gooseberry")
+    stand_in = claude_stand_in({"leaves": leave(reproduction)})
+
+    ran = diagnose()
+
+    assert ran.code == 1
+    assert len(stand_in.seen()) == 3
+    assert "left an output that isn't in form (1 problems), and was resumed 2 times" in ran.err
+    diagnosis = data_root.diagnoses / NAME
+    assert not (diagnosis / "session.json").exists()
+    assert (
+        "quarantined: email has no Message-ID header"
+        in (diagnosis / "output-problems.md").read_text()
+    )
+
+
+def test_a_reproduction_that_holds_something_real_resumes_nothing(
+    data_root: DataRoot, diagnose, leave, reproduction, claude_stand_in
+):
+    # What a reproduction may not say is the release check's to find, where the session isn't.
+    in_a_mail(reproduction, "Ottoline Varga packed it.")
+    stand_in = claude_stand_in({"leaves": leave(reproduction)})
+
+    ran = diagnose()
+
+    assert ran.code == 0
+    assert len(stand_in.seen()) == 1

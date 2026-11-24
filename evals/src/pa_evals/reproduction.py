@@ -29,16 +29,19 @@ A payload's episode id is the one ingest gives it for the synthetic corpus's fic
 (`FICTIONAL_OWNER`), whose every reproduction is. So a released reproduction runs as it stands:
 `pa-eval run --corpus payloads --eval-set eval_set.json`.
 
-Three things here are for whoever holds a session's output to it:
+What is here is for whoever holds a session's output to it:
 
 - `shape_flaws`: what is wrong with the files themselves. Nothing of a reproduction is read
   unless its shape is right;
 - `read_reproductions`, then `try_out`: each reproduction put through what a development
   session will put it through, with what that found wrong (`Tried`);
+- `flaws_in_form`: everything above that can be told without the case, which the session that
+  left a reproduction is resumed to put right (`pa_evals.diagnosis.malformed`);
 - `Tried.write`: the reproduction as it is released.
 
-Everything a reproduction holds is checked before it is released (`pa_evals.release_check`).
-What is wrong with one is private, since it may quote what the session wrote.
+Everything a reproduction holds is checked before it is released (`pa_evals.release_check`),
+against the case too, on the devbox. What is wrong with one is private, since it may quote
+what the session wrote.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ import functools
 import re
 import stat
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -148,7 +151,7 @@ class ReproductionRecord(FrozenModel):
 
 
 @dataclass(frozen=True)
-class Text:
+class FileText:
     """One file of a reproduction, as the pieces of text a release would hand over in it:
     its name, its lines, and, for a payload, what ingest reads out of it."""
 
@@ -187,6 +190,11 @@ class Tried:
     """Each error lint found in the wiki, against the episodes the payloads ingest to."""
 
     @property
+    def flaws(self) -> tuple[Flaw, ...]:
+        """Everything trying it out found wrong with it."""
+        return (*self.unsaid, *self.not_the_owners, *self.quarantined, *self.unlinted)
+
+    @property
     def record(self) -> ReproductionRecord:
         return ReproductionRecord(
             finding=self.reproduction.finding,
@@ -197,7 +205,7 @@ class Tried:
         )
 
     @functools.cached_property
-    def texts(self) -> tuple[Text, ...]:
+    def texts(self) -> tuple[FileText, ...]:
         """Everything a release would hand over, file by file, as text to check.
 
         The wiki is read with its citations resolved, as it is released. The questions are
@@ -206,17 +214,18 @@ class Tried:
         lines don't (a body in another encoding, a name split over a folded line).
         """
         left, where = self.reproduction, self.reproduction.where
-        texts = [Text((Passage(f"{where}/{EXPECTATION}", left.expectation),))]
+        texts = [FileText((Passage(f"{where}/{EXPECTATION}", left.expectation),))]
         if self.asked is not None:
-            texts.append(Text(tuple(_asked(f"{where}/{QUESTIONS}", self.asked))))
+            texts.append(FileText(tuple(_asked(f"{where}/{QUESTIONS}", self.asked))))
         for name, raw in left.payloads.items():
             file, written = f"{where}/{PAYLOADS}/{name}", raw.decode()
             pieces = [*_file(file, written)]
             if name in self.envelopes:
                 pieces += _as_ingest_reads(file, self.envelopes[name], written)
-            texts.append(Text(tuple(pieces), payload=True))
+            texts.append(FileText(tuple(pieces), payload=True))
         texts += [
-            Text(tuple(_file(f"{where}/{WIKI}/{path}", text))) for path, text in self.wiki.items()
+            FileText(tuple(_file(f"{where}/{WIKI}/{path}", text)))
+            for path, text in self.wiki.items()
         ]
         return tuple(texts)
 
@@ -291,10 +300,34 @@ def reproductions_left(output: Path) -> list[str]:
     )
 
 
-def is_left(output: Path, finding: str) -> bool:
-    """Whether a session's `output` holds anything in the place of `finding`'s reproduction.
-    Something there that isn't a reproduction is a flaw of shape."""
-    return (output / REPRODUCTIONS / finding).exists(follow_symlinks=False)
+def unmatched(output: Path, named: Collection[str]) -> list[Flaw]:
+    """Where the reproductions in a session's `output` aren't the ones its findings name:
+    each finding in `named` with nothing in its reproduction's place (something there that
+    isn't one is a flaw of shape), and each reproduction that no finding names."""
+    top = output / REPRODUCTIONS
+    return [
+        *(
+            Flaw(f"findings.json: {finding}.reproduction", f"there is no {REPRODUCTIONS}/{finding}")
+            for finding in named
+            if not (top / finding).exists(follow_symlinks=False)
+        ),
+        *(
+            Flaw(f"{REPRODUCTIONS}/{finding}", "no finding names it as its reproduction")
+            for finding in reproductions_left(output)
+            if finding not in named
+        ),
+    ]
+
+
+def flaws_in_form(output: Path, named: Collection[str]) -> list[Flaw]:
+    """What keeps the reproductions in a session's `output` from being checked for what they
+    say, beyond their shape (`shape_flaws`), given the reproductions its findings name: one
+    that isn't there or isn't named, and whatever trying each out finds (`Tried.flaws`). None
+    of it needs the case, so the session can be told and put it right."""
+    flaws = unmatched(output, named)
+    for reproduction in read_reproductions(output):
+        flaws += try_out(reproduction).flaws
+    return flaws
 
 
 def read_reproductions(output: Path) -> list[Reproduction]:

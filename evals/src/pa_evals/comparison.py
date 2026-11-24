@@ -82,16 +82,21 @@ def load_runs(run_dir: Path) -> list[RunResults]:
     Results written before efficiency figures or configuration names were recorded load with
     them as None.
     """
+    return [_load(path) for path in run_files(run_dir)]
+
+
+def run_files(run_dir: Path) -> list[Path]:
+    """Each run's `results.json` in a run directory: its own, or each `run-<n>/`'s in order."""
     single = run_dir / "results.json"
     if single.is_file():
-        return [_load(single)]
+        return [single]
     numbered = sorted(
         (path for path in run_dir.glob("run-*/results.json") if path.parent.name[4:].isdigit()),
         key=lambda path: int(path.parent.name[4:]),
     )
     if not numbered:
         raise ComparisonError(f"no eval results in {run_dir}")
-    return [_load(path) for path in numbered]
+    return numbered
 
 
 def _load(path: Path) -> RunResults:
