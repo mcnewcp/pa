@@ -1715,3 +1715,41 @@ def test_a_reproduction_that_holds_something_real_resumes_nothing(
 
     assert ran.code == 0
     assert len(stand_in.seen()) == 1
+
+
+def test_a_reproduction_refused_for_a_name_from_the_case_is_released_once_a_second_pass_renames_it(
+    data_root: DataRoot, cut, referral: Path, parts, desk, leave, reproduction, pa_eval
+):
+    renamed = leave(reproduction)
+    where = in_a_mail(reproduction, "Ask Billie about the jars.")
+    private = desk.diagnose(leave(reproduction))
+    notes = desk.refused(desk.release(), **{"one-word-names": 1})
+    assert f"- reproductions/f1/{where}: the name 'Billie'" in notes
+
+    revised = pa_eval(
+        *("diagnose", "--referral", referral, "--cut", cut.path, "--name", NAME),
+        *parts.arguments(),
+        *("--out", data_root.diagnoses, "--revise", private / "output"),
+        *("--notes", private / "check-notes.md", "--agent", "scripted", "--leaves", renamed),
+    )
+    ran = desk.release()
+
+    assert (revised.code, ran.code) == (0, 0)
+    # The revision's reproduction is released as any is, resolved to its own payloads' episodes.
+    released = desk.released / "reproductions" / "f1"
+    assert (released / "payloads" / "gmail" / "order.eml").read_text() == ORDER
+    record = json.loads((released / "reproduction.json").read_text())
+    assert sorted(record["episodes"]) == [
+        "gmail/order.eml",
+        "icloud_calendar/pickup.ics",
+        "obsidian/2026-09-21.md",
+    ]
+    assert json.loads((desk.released / "release.json").read_text())["revisions"] == 1
+    assert "reproductions: 1, untested\n" in ran.out
+    # The refused reproduction stays with the private analysis, and nothing of it is released.
+    kept = private / "refused" / "1" / "output" / "reproductions" / "f1"
+    assert "Ask Billie about the jars." in (kept / "payloads" / "gmail" / "order.eml").read_text()
+    assert files_under(kept) == sorted(reproduction)
+    assert not [
+        path for path in desk.released.rglob("*") if path.is_file() and "Billie" in path.read_text()
+    ]
