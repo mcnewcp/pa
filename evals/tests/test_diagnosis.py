@@ -396,3 +396,21 @@ def test_the_guard_sees_through_a_link_into_the_repository(
     assert ran.code == 1
     assert "is inside the repository" in ran.err
     assert not INSIDE.exists()
+
+
+def test_a_diagnosis_that_cant_start_takes_no_name(
+    tmp_path: Path, data_root: DataRoot, cut: Cut, referral: Path, leavings, pa_eval
+):
+    no_leaves = diagnose(pa_eval, referral, cut, data_root.diagnoses, "--agent", "scripted")
+    no_referral = diagnose(
+        pa_eval,
+        tmp_path / "no-referral.md",
+        cut,
+        data_root.diagnoses,
+        *("--agent", "scripted", "--leaves", leavings()),
+    )
+
+    assert (no_leaves.code, no_referral.code) == (1, 1)
+    assert "--agent scripted needs --leaves DIR" in no_leaves.err
+    assert "isn't a file" in no_referral.err
+    assert not data_root.diagnoses.exists()

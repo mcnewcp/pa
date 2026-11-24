@@ -28,6 +28,7 @@ A diagnosis's directory, private to the owner (0700, every file 0600):
         reply.md                  the session's final words
         session.json              the session's record (`SessionRecord`)
         session-error.txt         a failed session's whole error, which may quote its words
+        check-notes.md            what the release check found, when it refused
 
 The output is unchecked here: findings reach a development session only through the release
 check (`pa_evals.release_check`), on the devbox. Nothing here ever puts a line of the output, of
@@ -38,7 +39,9 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -88,6 +91,10 @@ FINDINGS = "findings.json"
 REPLY = "reply.md"
 SESSION = "session.json"
 SESSION_ERROR = "session-error.txt"
+
+OUTPUT_FILES: Mapping[str, int] = {ANALYSIS: 200_000, FINDINGS: 64_000}
+"""What an output holds: each file by name, with the most bytes it may hold. Both are UTF-8
+text, and an output holds nothing else. The caps are constants, not configuration."""
 
 _PRIVATE_DIRECTORY = 0o700
 _PRIVATE_FILE = 0o600
@@ -249,6 +256,92 @@ class Diagnosis:
                 f"{path} isn't a session's record ({error.error_count()} problems)"
             ) from None
 
+    def referral_text(self) -> str:
+        """The referral, as it was asked."""
+        if self.referral.is_symlink() or not self.referral.is_file():
+            raise DiagnosisError(f"{self.path} isn't a diagnosis: it has no {REFERRAL}")
+        return self.referral.read_text()
+
+    def keep(self, name: str, text: str) -> Path:
+        """Keeps `text` in the diagnosis's directory as the file `name`, for the owner alone,
+        and returns where."""
+        path = self.path / name
+        write_atomically(path, text.encode(), mode=_PRIVATE_FILE)
+        return path
+
+    def make_private(self) -> None:
+        """Leaves the directory and everything under it readable by the owner alone. A link is
+        left as it is, and never followed."""
+        self.path.chmod(_PRIVATE_DIRECTORY)
+        for directory, directories, files in self.path.walk():
+            for name in directories:
+                if not (directory / name).is_symlink():
+                    (directory / name).chmod(_PRIVATE_DIRECTORY)
+            for name in files:
+                if not (directory / name).is_symlink():
+                    (directory / name).chmod(_PRIVATE_FILE)
+
+
+@dataclass(frozen=True)
+class OutputProblem:
+    """One thing wrong with the shape of a session's output. Private: `path` can be a name the
+    session chose."""
+
+    path: str
+    """Which file, from the diagnosis's directory."""
+    what: str
+
+
+def output_problems(output: Path) -> list[OutputProblem]:
+    """What is wrong with the shape of the session's `output`: it holds the files in
+    `OUTPUT_FILES`, each a regular file of UTF-8 text within its cap, and nothing else. A link
+    is never followed."""
+    if output.is_symlink() or not output.is_dir():
+        return [OutputProblem(OUTPUT, "isn't a directory")]
+    problems: list[OutputProblem] = []
+    for entry in sorted(output.iterdir()):
+        status = entry.lstat()
+        if stat.S_ISLNK(status.st_mode):
+            wrong = "a link in place of a file"
+        elif entry.name not in OUTPUT_FILES:
+            kind = "directory" if stat.S_ISDIR(status.st_mode) else "file"
+            wrong = f"an unexpected {kind}"
+        elif not stat.S_ISREG(status.st_mode):
+            wrong = "not a regular file"
+        elif status.st_size > OUTPUT_FILES[entry.name]:
+            wrong = f"{status.st_size} bytes, over its cap of {OUTPUT_FILES[entry.name]}"
+        elif not _is_text(entry):
+            wrong = "not UTF-8 text"
+        else:
+            continue
+        problems.append(OutputProblem(f"{OUTPUT}/{entry.name}", wrong))
+    problems += [
+        OutputProblem(f"{OUTPUT}/{name}", "missing")
+        for name in OUTPUT_FILES
+        if not (output / name).exists(follow_symlinks=False)
+    ]
+    return problems
+
+
+def read_output(output: Path, name: str) -> bytes | None:
+    """The bytes of the output's file `name`, or None unless it is a regular file within its
+    cap, in an output that is a directory: nothing is read through a link, and nothing over a
+    cap is read at all."""
+    path = output / name
+    if output.is_symlink() or path.is_symlink() or not path.is_file():
+        return None
+    if path.stat().st_size > OUTPUT_FILES[name]:
+        return None
+    return path.read_bytes()
+
+
+def _is_text(path: Path) -> bool:
+    try:
+        path.read_bytes().decode()
+    except UnicodeDecodeError:
+        return False
+    return True
+
 
 def require_name(name: str) -> str:
     """`name`, refused (DiagnosisError) unless it can name a diagnosis."""
@@ -285,9 +378,9 @@ def diagnose(
     diagnosis.path.mkdir(mode=_PRIVATE_DIRECTORY)
     diagnosis.output.mkdir(mode=_PRIVATE_DIRECTORY)
     try:
-        _keep(diagnosis.referral, referral)
+        diagnosis.keep(REFERRAL, referral)
         reply = _ask(referral, case, diagnostician, diagnosis)
-        _keep(diagnosis.path / REPLY, reply.text)
+        diagnosis.keep(REPLY, reply.text)
         record = SessionRecord(
             name=name,
             cut=case.cut.name,
@@ -296,10 +389,10 @@ def diagnose(
             turns=reply.turns,
             duration_ms=reply.duration_ms,
         )
-        _keep(diagnosis.path / SESSION, record.model_dump_json(indent=2) + "\n")
+        diagnosis.keep(SESSION, record.model_dump_json(indent=2) + "\n")
     finally:
         # Whatever the session left, and however it ended, is the owner's alone.
-        _make_private(diagnosis.path)
+        diagnosis.make_private()
     return diagnosis
 
 
@@ -317,7 +410,7 @@ def _ask(
             )
         except ClaudeCliError as error:
             # The CLI's error can carry the session's own words, so it's kept, never raised.
-            _keep(diagnosis.path / SESSION_ERROR, f"{error}\n")
+            diagnosis.keep(SESSION_ERROR, f"{error}\n")
             how = "ran out of time" if isinstance(error, ClaudeCliTimeoutError) else "failed"
             raise DiagnosisError(
                 f"the diagnostician's session {how}, so the diagnosis {diagnosis.name} failed. "
@@ -334,20 +427,3 @@ def _lay(case: Case, target: Path) -> None:
         shutil.copytree(case.cut.wiki, DataRoot(cut).wiki)
     shutil.copyfile(case.cut.path / MANIFEST, cut / MANIFEST)
     make_read_only(target)
-
-
-def _keep(path: Path, text: str) -> None:
-    write_atomically(path, text.encode(), mode=_PRIVATE_FILE)
-
-
-def _make_private(top: Path) -> None:
-    """Leave `top` and everything under it readable by the owner alone. A link is left as it
-    is, and never followed."""
-    top.chmod(_PRIVATE_DIRECTORY)
-    for directory, directories, files in top.walk():
-        for name in directories:
-            if not (directory / name).is_symlink():
-                (directory / name).chmod(_PRIVATE_DIRECTORY)
-        for name in files:
-            if not (directory / name).is_symlink():
-                (directory / name).chmod(_PRIVATE_FILE)

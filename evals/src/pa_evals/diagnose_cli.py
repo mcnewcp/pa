@@ -112,8 +112,8 @@ def _diagnose(args: argparse.Namespace) -> int:
 
 def _diagnostician(args: argparse.Namespace) -> Diagnostician:
     if args.agent == "scripted":
-        if args.leaves is None:
-            raise DiagnoseChoiceError("--agent scripted needs --leaves DIR")
+        if args.leaves is None or not args.leaves.is_dir():
+            raise DiagnoseChoiceError("--agent scripted needs --leaves DIR, a directory")
         reply = "Done." if args.reply is None else args.reply.read_text()
         return ScriptedDiagnostician(args.leaves, reply=reply)
     return ClaudeDiagnostician(model=args.agent_model, timeout_seconds=args.timeout)
