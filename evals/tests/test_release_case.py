@@ -219,6 +219,23 @@ def test_a_question_that_isnt_in_the_case_is_refused(desk, leavings, well_formed
     assert "- findings.json: f1.questions: 'r99' isn't a question in the case" in notes
 
 
+def test_a_question_is_named_by_whatever_letter_its_eval_set_numbers_it_with(
+    desk, parts, write_eval_set, leavings, well_formed
+):
+    # The v0.13 real-data set numbers its questions r01 on, and the graded one q01 on.
+    parts.eval_set = write_eval_set(
+        {
+            "r07": (QUESTION, EXPECTED),
+            "r12": ("Who glazed it?", "The grocer."),
+            "q32": ("Where is the kiln kept?", "In the shed."),
+        }
+    )
+    first(well_formed, questions=["q32"])
+    desk.diagnose(leavings(well_formed))
+
+    assert desk.release().code == 0
+
+
 def test_a_question_the_runs_asked_is_in_the_case(desk, parts, leavings):
     # No eval set: the questions are those the runs asked, r07 and r12.
     parts.eval_set = None
