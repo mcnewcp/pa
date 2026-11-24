@@ -1484,8 +1484,8 @@ def test_a_name_a_payload_holds_encoded_is_refused(desk, leave, reproduction):
     notes = desk.refused(desk.release(), names=1)
 
     assert (
-        "- reproductions/f1/payloads/gmail/second.eml: its body, as ingest reads it: the name "
-        "'ottoline varga'"
+        "- reproductions/f1/payloads/gmail/second.eml: its body (text/plain), decoded: the "
+        "name 'ottoline varga'"
     ) in notes
 
 
@@ -1499,8 +1499,8 @@ def test_a_name_split_over_a_folded_line_of_a_payload_is_refused(desk, leave, re
     notes = desk.refused(desk.release(), names=1)
 
     assert (
-        "- reproductions/f1/payloads/icloud_calendar/pickup.ics: a participant, as ingest "
-        "reads it: the name 'ottoline varga'"
+        "- reproductions/f1/payloads/icloud_calendar/pickup.ics: its lines, unfolded: the "
+        "name 'ottoline varga'"
     ) in notes
 
 
@@ -1511,6 +1511,240 @@ def test_every_word_of_an_encoded_payload_is_held_to_every_rule(desk, leave, rep
     desk.diagnose(leave(reproduction))
 
     desk.refused(desk.release(), addresses=1, quotes=1, digits=1, **{"one-word-names": 1})
+
+
+# Every decoding of a payload is checked, not only the one ingest reads: a payload is released
+# as it was left, byte for byte, with every part and header a mail client would show.
+
+ALTERNATIVES = """\
+Message-ID: <order-3@mail.larder.example>
+Date: Mon, 21 Sep 2026 12:05:00 -0500
+From: Pru Tanager <pru@larder.example>
+To: Argus McNevans <argus@example.com>
+Subject: Your third marmalade order
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="jar"
+
+--jar
+Content-Type: text/plain; charset="utf-8"
+
+The third marmalade order ships on Monday.
+--jar
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: {encoding}
+
+{html}
+--jar--
+"""
+
+
+def with_an_html_part(html: str, encoding: str = "base64") -> str:
+    """A mail whose body ingest reads from its plain part, and never from its HTML one."""
+    if encoding == "base64":
+        html = base64.b64encode(html.encode()).decode()
+    return ALTERNATIVES.format(encoding=encoding, html=html)
+
+
+def encoded_word(text: str) -> str:
+    return f"=?utf-8?b?{base64.b64encode(text.encode()).decode()}?="
+
+
+IN_PIECES = 'Content-Disposition: inline; filename*0="Otto"; filename*1="line Varga"\n'
+"""A parameter written in two pieces (RFC 2231), which no line holds whole."""
+
+UNREAD_BY_INGEST = {
+    "an HTML part in base64": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>Ottoline Varga packed it.</p>"),
+        "part 2 (text/html), decoded",
+    ),
+    "an HTML part whose soft line break splits it": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>Otto=\nline=20Varga packed it.</p>", "quoted-printable"),
+        "part 2 (text/html), decoded",
+    ),
+    "an HTML part whose tags split it": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>Otto<b></b>line Varga packed it.</p>"),
+        "part 2 (text/html), as it shows",
+    ),
+    "an HTML part that writes it in character references": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>&#79;ttoline&nbsp;Varga packed it.</p>"),
+        "part 2 (text/html), decoded, with its character references read",
+    ),
+    "a header ingest doesn't read, in an encoded word": (
+        "payloads/gmail/order.eml",
+        ORDER.replace("Subject:", f"X-Packed-By: {encoded_word('Ottoline Varga')}\nSubject:"),
+        "its X-Packed-By header, decoded",
+    ),
+    "a header's parameter, in two pieces": (
+        "payloads/gmail/order.eml",
+        ORDER.replace("Subject:", f"{IN_PIECES}Subject:"),
+        "its Content-Disposition header's filename, decoded",
+    ),
+    "a calendar property ingest doesn't read, folded": (
+        "payloads/icloud_calendar/pickup.ics",
+        PICKUP.replace("STATUS:", "COMMENT:Packed by Otto\n line Varga\nSTATUS:"),
+        "its lines, unfolded",
+    ),
+    "a calendar property ingest doesn't read, with an escaped line break": (
+        "payloads/icloud_calendar/pickup.ics",
+        PICKUP.replace("STATUS:", "COMMENT:Packed by Ottoline\\nVarga\nSTATUS:"),
+        "its text, unescaped",
+    ),
+    "a chat's session, in an escape": (
+        "payloads/assistant_chat/chat.json",
+        json.dumps(CHAT, indent=2).replace("chat-1", "\\u004fttoline-Varga"),
+        "with its backslash escapes read",
+    ),
+    "a note, in a character reference": (
+        "payloads/obsidian/2026-09-21.md",
+        NOTE + "Packed by Ottoline&#32;Varga.\n",
+        "with its character references read",
+    ),
+    "a note's link, percent-encoded": (
+        "payloads/obsidian/2026-09-21.md",
+        NOTE + "[The packer](https://larder.example/staff/Ottoline%20Varga)\n",
+        "with its percent-encoding read",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "decoding"), UNREAD_BY_INGEST.values(), ids=UNREAD_BY_INGEST.keys()
+)
+def test_a_name_a_payload_holds_where_ingest_doesnt_read_it_is_refused(
+    desk, leave, reproduction, path: str, payload: str, decoding: str
+):
+    reproduction[path] = payload
+    desk.diagnose(leave(reproduction))
+
+    notes = desk.refused(desk.release(), names=1)
+
+    assert f"- reproductions/f1/{path}: {decoding}: the name 'ottoline varga'" in notes
+
+
+def test_every_word_of_a_part_ingest_doesnt_read_is_held_to_every_rule(desk, leave, reproduction):
+    reproduction["payloads/gmail/third.eml"] = with_an_html_part(
+        f"<p>{BODY_LINE}. Billie can be reached at {'ovarga' + '@' + STUDIO} or 555-014-2368.</p>"
+    )
+    desk.diagnose(leave(reproduction))
+
+    desk.refused(desk.release(), addresses=1, quotes=1, digits=1, **{"one-word-names": 1})
+
+
+@pytest.mark.parametrize("encoding", ["base64", "quoted-printable", "8bit"])
+def test_a_mail_with_an_html_part_that_holds_nothing_real_is_released_as_it_was_left(
+    desk, leave, reproduction, encoding: str
+):
+    # A fault in how an HTML mail is ingested can still be reproduced.
+    mail = with_an_html_part(
+        "<p>The third order ships on <b>Monday</b> &amp; no later.</p>", encoding
+    )
+    reproduction["payloads/gmail/third.eml"] = mail
+    desk.diagnose(leave(reproduction))
+
+    assert desk.release().code == 0
+
+    released = desk.released / "reproductions" / "f1" / "payloads" / "gmail" / "third.eml"
+    assert released.read_text() == mail
+
+
+ATTACHED = ALTERNATIVES.replace("multipart/alternative", "multipart/mixed")
+
+CANT_BE_DECODED = {
+    "an attachment that isn't text": (
+        "payloads/gmail/third.eml",
+        ATTACHED.replace('text/html; charset="utf-8"', "application/octet-stream").format(
+            encoding="base64", html=base64.b64encode(b"Ottoline Varga").decode()
+        ),
+        "part 2 (application/octet-stream) isn't text",
+    ),
+    "a part in an encoding nobody reads": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("begin 644 jar\n$:F%R\n`\nend", "x-uuencode"),
+        "part 2 (text/html) is in an encoding that isn't read (x-uuencode)",
+    ),
+    "a part in a character set nobody knows": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>Jars.</p>").replace(
+            'text/html; charset="utf-8"', "text/html; charset=x-jar"
+        ),
+        "part 2 (text/html) isn't text in the character set it names",
+    ),
+    "a part that says it is base64 and isn't": (
+        "payloads/gmail/third.eml",
+        ALTERNATIVES.format(encoding="base64", html="<p>Jars, not base64.</p>"),
+        "part 2 (text/html) is encoded as base64, and isn't base64",
+    ),
+    "a part that says twice how it is encoded": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("<p>Jars.</p>").replace(
+            "Content-Transfer-Encoding: base64",
+            "Content-Transfer-Encoding: 7bit\n" * 2 + "X-Jar: 1",
+        ),
+        "part 2 says twice what it is or how it is encoded",
+    ),
+    "a kind of text that has encodings of its own": (
+        "payloads/gmail/third.eml",
+        with_an_html_part("{\\rtf1 Jars.}", "7bit").replace("text/html", "text/rtf"),
+        "part 2 (text/rtf) is a kind of text that isn't read",
+    ),
+    "a header's encoded word in a character set nobody knows": (
+        "payloads/gmail/order.eml",
+        ORDER.replace("Subject:", "X-Packed-By: =?x-jar?q?Jars?=\nSubject:"),
+        "its X-Packed-By header holds an encoded word that can't be read",
+    ),
+    "a calendar property in an encoding of its own": (
+        "payloads/icloud_calendar/pickup.ics",
+        PICKUP.replace("STATUS:", "ATTACH;ENCODING=BASE64;VALUE=BINARY:SmFycw==\nSTATUS:"),
+        "the property on line 12, unfolded, is in an encoding of its own",
+    ),
+    "data in a link of a note": (
+        "payloads/obsidian/2026-09-21.md",
+        NOTE + "![The jar](data:image/png;base64,SmFycw==)\n",
+        "1 `data:` URIs that carry their data in base64",
+    ),
+    "data in a link of a wiki page": (
+        "wiki/people/pru-tanager.md",
+        PERSON + "![The jar](data:image/png;base64,SmFycw==) {ep:gmail/order.eml}\n",
+        "1 `data:` URIs that carry their data in base64",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "why"), CANT_BE_DECODED.values(), ids=CANT_BE_DECODED.keys()
+)
+def test_a_reproduction_that_holds_what_cant_be_decoded_to_text_is_refused(
+    desk, leave, reproduction, path: str, text: str, why: str
+):
+    # What can't be read can't be checked, and a payload is released whole.
+    reproduction[path] = text
+    desk.diagnose(leave(reproduction))
+
+    notes = desk.refused(desk.release(), encodings=1)
+
+    assert f"- reproductions/f1/{path}" in notes
+    assert why in notes
+
+
+def test_the_index_a_release_writes_is_checked_as_the_pages_it_is_made_from_are(
+    desk, leave, reproduction
+):
+    # A page's name and its summary are far apart in the page, and side by side in the index.
+    reproduction["wiki/topics/ottoline.md"] = (
+        "---\ntype: topic\naliases: []\nstatus: active\n"
+        "summary: Varga jars, which the larder stocks.\nupdated: 2026-09-21\n---\n# Ottoline\n\n"
+        "## Current state\nThe larder stocks them. {ep:gmail/order.eml}\n\n"
+        "## Decisions\n\n## Open loops\n\n## Notes\n"
+    )
+    desk.diagnose(leave(reproduction))
+
+    notes = desk.refused(desk.release(), names=1)
+
+    assert "- reproductions/f1/wiki/index.md:" in notes
 
 
 # A refusal, whatever it found.

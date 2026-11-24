@@ -201,8 +201,13 @@ reproductions/f1/
   - Each must ingest, so keep every header and field a real item of its source has, with
     made-up values. A daily note keeps its `Vault-Path:` and `Captured-At:` header and is
     named for its day: `Vault-Path: Daily/2026-09-21.md`.
-  - Write plain text, a whole header or field to a line. The check reads a payload line by
-    line, and as the PA reads it.
+  - Write plain text, a whole header or field to a line. Encode something (an HTML part in
+    base64, a header's encoded word, a folded line) only where the fault needs it. The check
+    reads a payload line by line, as the PA reads it, and in every decoding of its every part
+    and header, and holds each to every rule below.
+  - Whatever can't be decoded to text refuses the reproduction: an attachment or any part of a
+    mail that isn't text, an encoding or a character set nobody knows, a calendar property in
+    an encoding of its own, and data in a `data:` link, in any file.
 - `questions.json`: the questions that fail, as an eval set. `evidence` names the payloads a
   good answer cites, by file under `payloads/`; the release works out their episode ids. Leave
   `questions` empty if the fault shows without one, in what the librarian writes.

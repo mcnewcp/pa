@@ -59,6 +59,7 @@ RULES = (
     "reproductions",
     "one-word-names",
     "owner",
+    "encodings",
     "ingest",
     "lint",
 )

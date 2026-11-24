@@ -34,6 +34,9 @@ it, so it is held to more than the findings are:
   reproduction says.
 - `one-word-names`: a name of one word that the case holds, in the letter case it holds it.
 - `owner`: its owner is the synthetic corpus's fictional owner.
+- `encodings`: all of it can be decoded to text. A payload is released as it was left, so the
+  rules above read every decoding of its every part and header (`pa_evals.decodings`), and
+  what none of them can read (a part that isn't text, an unknown encoding) refuses it.
 - `ingest`: its payloads ingest into a throwaway data root with nothing quarantined.
 - `lint`: its wiki lints without errors.
 
@@ -505,6 +508,17 @@ def _owner(submission: Submission) -> list[Problem]:
     ]
 
 
+def _encodings(submission: Submission) -> list[Problem]:
+    """Everything in every reproduction can be decoded to text, so all of it was read by the
+    rules above: no part of a payload that isn't text, no encoding or character set nobody
+    knows, and no data in a `data:` URI."""
+    return [
+        Problem(flaw.where, flaw.what)
+        for tried in submission.reproductions
+        for flaw in tried.undecoded
+    ]
+
+
 def _ingest(submission: Submission) -> list[Problem]:
     """Every reproduction's payloads ingest into a throwaway data root, with nothing
     quarantined."""
@@ -539,6 +553,7 @@ RULES: tuple[Rule, ...] = (
     Rule("reproductions", _reproductions),
     Rule("one-word-names", _one_word_names),
     Rule("owner", _owner),
+    Rule("encodings", _encodings),
     Rule("ingest", _ingest),
     Rule("lint", _lint),
 )

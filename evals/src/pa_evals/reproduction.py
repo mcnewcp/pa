@@ -56,7 +56,7 @@ import re
 import shutil
 import stat
 import tempfile
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -83,9 +83,17 @@ from pa_core.librarian.wiki import (
 )
 from pa_core.normalizers import payload_extension
 from pa_core.owner import Owner
+from pa_evals.decodings import (
+    Decoded,
+    Decoding,
+    Said,
+    decode_payload,
+    embedded_data,
+    text_decodings,
+)
 from pa_evals.eval_set import CATEGORIES, EvalSet
 from pa_evals.models import FrozenModel
-from pa_evals.real_content import Passage, words
+from pa_evals.real_content import Passage
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -172,7 +180,8 @@ class ReproductionRecord(FrozenModel):
 @dataclass(frozen=True)
 class FileText:
     """One file of a reproduction, as the pieces of text a release would hand over in it:
-    its name, its lines, and, for a payload, what ingest reads out of it."""
+    its name, its lines, and every other way it reads (`pa_evals.decodings`): each decoding
+    of it that says something its lines don't."""
 
     pieces: tuple[Passage, ...]
     payload: bool = False
@@ -207,11 +216,39 @@ class Tried:
     """Each payload that ingest quarantined, or left, with ingest's reason."""
     unlinted: tuple[Flaw, ...]
     """Each error lint found in the wiki, against the episodes the payloads ingest to."""
+    decoded: Mapping[str, Decoded]
+    """Each payload, by its inbox name, decoded every way its format can be."""
 
     @property
     def flaws(self) -> tuple[Flaw, ...]:
         """Everything trying it out found wrong with it."""
-        return (*self.unsaid, *self.not_the_owners, *self.quarantined, *self.unlinted)
+        return (
+            *self.unsaid,
+            *self.not_the_owners,
+            *self.undecoded,
+            *self.quarantined,
+            *self.unlinted,
+        )
+
+    @functools.cached_property
+    def undecoded(self) -> tuple[Flaw, ...]:
+        """Where it holds something that can't be decoded to text, and so can't be checked:
+        a part of a payload that isn't text, or is in an encoding or a character set nobody
+        knows, and data carried in a `data:` URI, in any file."""
+        payloads = f"{self.reproduction.where}/{PAYLOADS}"
+        return (
+            *(
+                Flaw(f"{payloads}/{name}", what)
+                for name, decoded in self.decoded.items()
+                for what in decoded.unread
+            ),
+            *(
+                Flaw(piece.where, f"{count} `data:` URIs that carry their data in base64")
+                for text in self.texts
+                for piece in text.pieces
+                if (count := embedded_data(piece.text))
+            ),
+        )
 
     @property
     def record(self) -> ReproductionRecord:
@@ -228,25 +265,26 @@ class Tried:
     def texts(self) -> tuple[FileText, ...]:
         """Everything a release would hand over, file by file, as text to check.
 
-        The wiki is read with its citations resolved, as it is released. The questions are
-        read field by field, as the eval set is written afresh from them. A payload is read
-        twice: as it is written, and as ingest reads it, wherever that says something its
-        lines don't (a body in another encoding, a name split over a folded line).
+        Each file is read as it is written, line by line, and then every other way it reads
+        (`pa_evals.decodings`), wherever that says something its lines don't. The wiki is
+        read with its citations resolved and with its index, as it is released. The questions
+        are read field by field, as the eval set is written afresh from them. A payload is
+        released as it was left, so it is read in every decoding of its every part and
+        header, and as ingest reads it.
         """
         left, where = self.reproduction, self.reproduction.where
-        texts = [FileText((Passage(f"{where}/{EXPECTATION}", left.expectation),))]
+        texts = [FileText(tuple(_field(f"{where}/{EXPECTATION}", left.expectation)))]
         if self.asked is not None:
             texts.append(FileText(tuple(_asked(f"{where}/{QUESTIONS}", self.asked))))
         for name, raw in left.payloads.items():
-            file, written = f"{where}/{PAYLOADS}/{name}", raw.decode()
-            pieces = [*_file(file, written)]
+            decodings = [*self.decoded[name].decodings]
             if name in self.envelopes:
-                pieces += _as_ingest_reads(file, self.envelopes[name], written)
-            texts.append(FileText(tuple(pieces), payload=True))
-        texts += [
-            FileText(tuple(_file(f"{where}/{WIKI}/{path}", text)))
-            for path, text in self.wiki.items()
-        ]
+                decodings += _as_ingest_reads(self.envelopes[name])
+            texts.append(
+                _file_text(f"{where}/{PAYLOADS}/{name}", raw.decode(), decodings, payload=True)
+            )
+        wiki = dict(self.wiki) if self.index is None else {**self.wiki, INDEX: self.index}
+        texts += [_file_text(f"{where}/{WIKI}/{path}", text) for path, text in wiki.items()]
         return tuple(texts)
 
     def write(self, directory: Path) -> None:
@@ -505,9 +543,19 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
         store = FilesystemL0(data_root.l0)
         with open_catalog(data_root.catalog, store) as catalog:
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: as_of)
+        refused = _quarantined(data_root.l0)
         quarantined = [
-            *_quarantined(reproduction, data_root.l0),
+            *(
+                Flaw(f"{reproduction.where}/{PAYLOADS}/{name}", f"quarantined: {why}")
+                for name, why in refused.items()
+            ),
             *(Flaw(f"{reproduction.where}/{PAYLOADS}", f"left: {why}") for why in summary.left),
+            # A payload that is no episode is refused, whatever ingest made of it.
+            *(
+                Flaw(f"{reproduction.where}/{PAYLOADS}/{name}", "can't be read as an episode")
+                for name in reproduction.payloads
+                if name not in envelopes and name not in refused
+            ),
         ]
         ingests = not quarantined and ids.keys() == reproduction.payloads.keys()
         # A wiki is linted against episodes, so only once every payload is one.
@@ -556,6 +604,10 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
         not_the_owners=tuple(not_the_owners),
         quarantined=tuple(quarantined),
         unlinted=tuple(unlinted),
+        decoded={
+            name: decode_payload(Source(PurePosixPath(name).parent.name), raw)
+            for name, raw in reproduction.payloads.items()
+        },
     )
 
 
@@ -567,19 +619,23 @@ def _envelopes(payloads: Mapping[str, bytes], owner: Owner, as_of: datetime) -> 
         try:
             envelopes[name] = inbox_normalizer(PurePosixPath(name), owner)(raw, captured_at=as_of)
         except Exception:
-            continue  # Ingest quarantines it, and says why.
+            # Whatever a normalizer raises, the payload can't be an episode: that is ingest's
+            # own rule (`pa_core.ingest`), and ingest says why when it quarantines it. A
+            # payload left out here is refused by whoever tries the reproduction out.
+            continue
     return envelopes
 
 
-def _quarantined(reproduction: Reproduction, l0: Path) -> Iterator[Flaw]:
-    """Each payload ingest quarantined into the store at `l0`, with its reason."""
+def _quarantined(l0: Path) -> dict[str, str]:
+    """Each payload ingest quarantined into the store at `l0`, by its inbox name, with
+    ingest's reason."""
+    reasons: dict[str, str] = {}
     for path in sorted((l0 / "quarantine").glob("*.json")):
         if not path.with_suffix("").is_file():
             continue  # A quarantined payload that is itself JSON, not its record.
         record = QuarantineRecord.model_validate_json(path.read_bytes())
-        yield Flaw(
-            f"{reproduction.where}/{PAYLOADS}/{record.inbox_name}", f"quarantined: {record.reason}"
-        )
+        reasons[record.inbox_name] = record.reason
+    return reasons
 
 
 def _expectation_flaws(reproduction: Reproduction) -> Iterator[Flaw]:
@@ -663,31 +719,67 @@ def _cited(reproduction: Reproduction, ids: Mapping[str, str]) -> tuple[dict[str
 # What a reproduction says, as text to check.
 
 
-def _file(file: str, text: str) -> Iterator[Passage]:
-    """A file's name, without its directory and its extension, and each of its lines."""
-    yield Passage(f"{file}: its name", PurePosixPath(file).stem)
-    for number, line in enumerate(text.splitlines(), start=1):
-        yield Passage(f"{file}:{number}", line)
+def _file_text(
+    file: str, written: str, decodings: Sequence[Decoding] = (), *, payload: bool = False
+) -> FileText:
+    """A file as text to check: its name, without its directory and its extension, each of
+    its lines, and then every other way it reads that says something nothing before it does:
+    each encoding any text may hold, read in the file as it is written and in each of
+    `decodings`, which are in order, what is nearest the file's bytes first."""
+    said = Said(written)
+    kept: list[Decoding] = []
+    for decoding in (Decoding("", written), *decodings):
+        if decoding.what:
+            if not said.new(decoding.text):
+                continue
+            kept.append(decoding)
+        kept += [
+            Decoding(", ".join(filter(None, (decoding.what, read.what))), read.text)
+            for read in text_decodings(decoding.text)
+            if said.new(read.text)
+        ]
+    return FileText(
+        (
+            Passage(f"{file}: its name", PurePosixPath(file).stem),
+            *(
+                Passage(f"{file}:{number}", line)
+                for number, line in enumerate(written.splitlines(), start=1)
+            ),
+            *(Passage(f"{file}: {decoding.what}", decoding.text) for decoding in kept),
+        ),
+        payload=payload,
+    )
 
 
 def _asked(file: str, asked: EvalSet) -> Iterator[Passage]:
-    """Every field of the questions that a session wrote freely."""
-    yield Passage(f"{file}: owner.name", asked.owner.name)
-    for address in asked.owner.email_addresses:
-        yield Passage(f"{file}: owner.email_addresses", address)
-    for name in asked.owner.other_names:
-        yield Passage(f"{file}: owner.other_names", name)
-    yield Passage(f"{file}: time_zone", asked.time_zone)
+    """Every field of the questions that a session wrote freely, and each encoding any text
+    may hold read in it."""
+    fields = [
+        ("owner.name", asked.owner.name),
+        *(("owner.email_addresses", address) for address in asked.owner.email_addresses),
+        *(("owner.other_names", name) for name in asked.owner.other_names),
+        ("time_zone", asked.time_zone),
+    ]
     for index, question in enumerate(asked.questions):
-        yield Passage(f"{file}: questions.{index}.id", question.id)
-        yield Passage(f"{file}: questions.{index}.question", question.question)
-        yield Passage(f"{file}: questions.{index}.expected_answer", question.expected_answer)
+        fields += [
+            (f"questions.{index}.id", question.id),
+            (f"questions.{index}.question", question.question),
+            (f"questions.{index}.expected_answer", question.expected_answer),
+        ]
+    for field, text in fields:
+        yield from _field(f"{file}: {field}", text)
 
 
-def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Passage]:
-    """What ingest reads out of a payload, wherever the payload's own lines don't hold the
-    same words in a row."""
-    lines = f" {' '.join(words(written))} "
+def _field(where: str, text: str) -> Iterator[Passage]:
+    """A text that is read whole, and each encoding any text may hold read in it."""
+    yield Passage(where, text)
+    for decoding in text_decodings(text):
+        yield Passage(f"{where}, {decoding.what}", decoding.text)
+
+
+def _as_ingest_reads(envelope: Envelope) -> list[Decoding]:
+    """What ingest reads out of a payload, which is what the librarian and the assistant are
+    given of it."""
     read = [
         *(("a participant", person.name or "") for person in envelope.participants),
         *(("a participant's address", person.identifier) for person in envelope.participants),
@@ -696,10 +788,7 @@ def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Pa
         ("its calendar's name", envelope.calendar_name or ""),
         *(("a label", label) for label in envelope.labels),
     ]
-    for what, text in read:
-        said = " ".join(words(text))
-        if said and f" {said} " not in lines:
-            yield Passage(f"{file}: {what}, as ingest reads it", text)
+    return [Decoding(f"{what}, as ingest reads it", text) for what, text in read if text]
 
 
 # After an edit: a released reproduction, resolved again.

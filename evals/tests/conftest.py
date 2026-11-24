@@ -69,7 +69,7 @@ directory's path, which a command prints."""
 RULES = (
     *("shape", "schema", "paths", "episodes", "questions", "labels"),
     *("names", "addresses", "quotes", "digits"),
-    *("reproductions", "one-word-names", "owner", "ingest", "lint"),
+    *("reproductions", "one-word-names", "owner", "encodings", "ingest", "lint"),
 )
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
