@@ -59,6 +59,7 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
         },
         "reproductions": 0,
         "payloads": 0,
+        "revisions": 0,
     }
     # The private analysis stays under the data root, for the owner alone.
     assert (desk.private / "output" / "analysis.md").read_text() == (

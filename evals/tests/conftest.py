@@ -476,6 +476,7 @@ everything = (case, *case.rglob("*"))
     "case_files": sorted(str(p.relative_to(case)) for p in everything if p.is_file()),
     "earlier": {str(p.relative_to(case)): p.read_text() for p in case.glob("earlier/*/*")},
     "writable": sorted(str(p.relative_to(case)) for p in everything if os.access(p, os.W_OK)),
+    "found": {str(p.relative_to(output)): p.read_text() for p in output.rglob("*") if p.is_file()},
 }))
 if step.get("leaves"):
     for entry in output.iterdir():

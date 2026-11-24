@@ -256,7 +256,34 @@ The check holds every file of a reproduction to what it holds the findings to, a
 - Give each id you make up few digits (`<order-1@mail.larder.example>`), and write dates and
   times as the item's format does (`20261017T090000`, `2026-10-05T21:30:00-05:00`) or in words.
 
+## A revision
+
+Your message may say instead that an earlier session answered the referral, and that the check
+refused what it left. Then `${output}` already holds that session's files, and your message
+holds the check's notes: each rule, how many problems it found, and for each problem its place
+and what was found there. The notes can quote the case, so only you read them.
+
+You don't answer the referral afresh. You put right what the notes name, so that the same
+findings and reproductions can pass. The check runs again on what you leave, exactly as strict.
+
+- **Rename what the notes name.** In the findings, a person's or an organization's name becomes
+  a description: "the sender", "one person's page". In a reproduction it becomes a made-up name
+  the case doesn't hold, changed in every file of that reproduction that writes it (payloads,
+  wiki, questions, and expectation), so the reproduction still fails the same way. An address
+  or a domain moves to a reserved example domain. A long number becomes a short one, or words.
+- **Rewrite what they quote.** Where a note quotes words the case holds, say the same thing in
+  your own words in the findings, and in different made-up wording in a reproduction. Keep the
+  shape that makes the PA go wrong.
+- **Put right whatever else a note names**: a path that isn't in the repository, an id or a
+  label that isn't in the case, a payload that doesn't ingest, a page that fails lint.
+- **Change nothing else.** Edit the files where they are. Every finding, field, and file the
+  notes don't name stays exactly as it is, and so does `analysis.md`, unless a note names it.
+  Add no finding and drop none. Don't soften a finding to get it past the check: a finding that
+  can't be said without something real keeps its mechanism and loses the detail.
+
+Read the case again only where a change needs it, such as to pick a name the case doesn't hold.
+
 ## When you're done
 
-End with one line saying what you left. Don't repeat the analysis, the findings, or a
-reproduction in your reply.
+End with one line saying what you left, or what you changed in a revision. Don't repeat the
+analysis, the findings, a reproduction, or the check's notes in your reply.
