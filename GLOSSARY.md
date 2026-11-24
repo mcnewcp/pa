@@ -248,3 +248,29 @@ _Avoid_: Eval date, reference date
 
 **Baseline**:
 The assistant answering by plain file search over L0, with no derived layers. The first score that later milestones are compared against.
+
+## Diagnosis
+
+**Diagnostician**:
+The session that reads real content to say why the PA got something wrong, on behalf of a development session, which never reads it.
+_Avoid_: Analyst, debugger, outside session
+
+**Diagnosis**:
+One referral answered over one case. It leaves a private analysis for the owner, findings, and a reproduction.
+_Avoid_: Investigation, debug run, report
+
+**Referral**:
+The question a development session puts to the diagnostician, such as why two eval questions fail more often on a dreamed eval wiki. It holds nothing real.
+_Avoid_: Brief (that's the morning brief), prompt, ticket
+
+**Case**:
+The real material a diagnosis reads, all of it frozen: a cut, with the eval set, eval runs, dreamed copies of its wiki, and earlier private analyses the referral is about.
+_Avoid_: Evidence (that's an eval question's), dataset, context
+
+**Findings**:
+What a diagnosis tells a development session: where the fault lies and how it happens, naming questions and episodes only by their opaque ids. Findings are released only after a check that they hold nothing real.
+_Avoid_: Report, scrubbed report, results
+
+**Reproduction**:
+Fictional raw payloads, wiki pages, and eval questions that fail the way the case did, released with the findings. Committed, it becomes a fixture.
+_Avoid_: Repro case, synthetic copy, anonymized data
