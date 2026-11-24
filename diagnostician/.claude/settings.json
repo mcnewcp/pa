@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "deny": [
+      "WebSearch",
+      "WebFetch",
+      "mcp__*",
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.claude.json)"
+    ],
+    "additionalDirectories": [
+      "${case}",
+      "${output}"
+    ]
+  },
+  "enableAllProjectMcpServers": false,
+  "disableClaudeAiConnectors": true
+}

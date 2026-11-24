@@ -110,6 +110,13 @@ class DataRoot:
         return self.path / "evals"
 
     @property
+    def diagnoses(self) -> Path:
+        """The private diagnoses directory: one directory per diagnosis, holding its referral,
+        the session's output (a private analysis and the findings as it left them), and the
+        session's record. It quotes real content, so no command prints any of it."""
+        return self.path / "diagnoses"
+
+    @property
     def run_errors(self) -> Path:
         """Where the whole error of the last failed librarian run, and of the last failed
         dreaming run, is kept for the owner (`pa_home.librarian`): it quotes pages, so no

@@ -257,7 +257,7 @@ def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     """Copy the eval wiki's tree to `target`, beside the throwaway L0, with nothing in it
     writable."""
     shutil.copytree(wiki.tree, target)
-    _make_read_only(target)
+    make_read_only(target)
     return target
 
 
@@ -294,7 +294,7 @@ def _lay_statuses(eval_set: EvalSet, directory: Path, *, wiki: bool) -> dict[dat
         write_status(path, status, at=as_of)
         statuses[as_of] = path
     if statuses:
-        _make_read_only(directory)
+        make_read_only(directory)
     return statuses
 
 
@@ -306,11 +306,11 @@ def lay_cut(cut: Cut, data_root: DataRoot) -> None:
         shutil.copytree(cut.l0, data_root.l0)
     else:
         data_root.l0.mkdir()
-    _make_read_only(data_root.l0)
+    make_read_only(data_root.l0)
     if cut.status is not None:
         data_root.status.parent.mkdir()
         shutil.copyfile(cut.status, data_root.status)
-        _make_read_only(data_root.status.parent)
+        make_read_only(data_root.status.parent)
 
 
 def _cut_result(cut: Cut) -> CutResult:
@@ -323,7 +323,7 @@ def _cut_result(cut: Cut) -> CutResult:
     )
 
 
-def _make_read_only(top: Path) -> None:
+def make_read_only(top: Path) -> None:
     """Leave nothing under `top` writable: no file can be changed, and no directory can take a
     new file."""
     for directory, _, files in top.walk(top_down=False):
