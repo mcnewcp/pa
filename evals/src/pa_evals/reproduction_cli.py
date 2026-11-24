@@ -44,8 +44,8 @@ def _resolve(args: argparse.Namespace) -> int:
     try:
         resolved = resolve_again(args.directory)
     except UnresolvedError as error:
-        for flaw in error.flaws:
-            print(f"{flaw.where}: {flaw.what}", file=sys.stderr)
+        for problem in error.problems:
+            print(f"{problem.where}: {problem.what}", file=sys.stderr)
         raise
     record = resolved.record
     print(f"reproduction: {record.finding}, resolved again")

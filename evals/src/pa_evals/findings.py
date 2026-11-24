@@ -18,7 +18,7 @@ from pydantic import Field, NonNegativeInt, StringConstraints, ValidationError, 
 
 from pa_core.envelope import Source
 from pa_core.errors import PaError
-from pa_evals.models import FrozenModel
+from pa_evals.models import FrozenModel, problems_of
 
 SUMMARY_CHARACTERS = 600
 """The most characters the findings' summary may hold."""
@@ -52,7 +52,9 @@ consolidation, or dreaming, the host's candidates, lint, the assistant's navigat
 answer, the judge, the eval set, or the harness."""
 Confidence = Literal["low", "medium", "high"]
 
-FindingId = Annotated[str, StringConstraints(pattern=r"^f[1-9]\d?$")]
+FINDING_ID = r"f[1-9]\d?"
+"""What a finding's id is made of."""
+FindingId = Annotated[str, StringConstraints(pattern=f"^{FINDING_ID}$")]
 """A finding's id: `f1`, `f2`, ..."""
 QuestionId = Annotated[str, StringConstraints(pattern=r"^r\d{2,4}$")]
 """An opaque question id, as a real-data eval set numbers its questions (`r07`)."""
@@ -147,12 +149,7 @@ def parse_findings(data: bytes) -> Findings:
     try:
         return Findings.model_validate_json(data)
     except ValidationError as error:
-        raise FindingsError(
-            tuple(
-                f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: {problem['msg']}"
-                for problem in error.errors(include_input=False, include_url=False)
-            )
-        ) from None
+        raise FindingsError(problems_of(error)) from None
 
 
 def findings_json(findings: Findings) -> bytes:

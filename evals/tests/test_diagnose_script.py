@@ -49,6 +49,10 @@ if argv[0] == "exec":
     sys.exit(subprocess.run(["bash", "-c", here(argv[7])], env=login).returncode)
 if argv[:3] == ["file", "pull", "-r"]:
     source = here("/" + argv[3].split("/", 1)[1])
+    # What a VM that isn't to be trusted adds to a diagnosis after its own command held the
+    # output to its form.
+    if os.environ.get("VM_ADDS"):
+        shutil.copytree(os.environ["VM_ADDS"], source, dirs_exist_ok=True)
     shutil.copytree(source, os.path.join(argv[4], os.path.basename(source)), symlinks=True)
 """
 
@@ -58,7 +62,8 @@ def diagnose_sh(
     tmp_path: Path, data_root: DataRoot, cut: Cut, referral: Path, unsalted: Callable[[str], None]
 ) -> Callable[..., subprocess.CompletedProcess[str]]:
     """Runs diagnose.sh over the cut, with the given options, on the instance the cut was taken
-    from. Nothing it prints may hold a word a session wrote or the case holds."""
+    from. Nothing it prints may hold a word a session wrote or the case holds. `vm_adds` is a
+    directory of files the VM adds to the diagnosis as it is pulled."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     stand_ins = {
@@ -76,7 +81,9 @@ def diagnose_sh(
         "PA_OWNER_OTHER_NAMES=Gus\n"
     )
 
-    def run(*options: object, name: str = "dreamed-drop") -> subprocess.CompletedProcess[str]:
+    def run(
+        *options: object, name: str = "dreamed-drop", vm_adds: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             [
                 *("bash", str(DIAGNOSE), "--referral", str(referral), "--name", name),
@@ -92,6 +99,7 @@ def diagnose_sh(
                 "PA_RELEASED_DIR": str(tmp_path / "released"),
                 "VM_ROOT": str(tmp_path / "vm"),
                 "VM_CODE": str(REPOSITORY),
+                **({"VM_ADDS": str(vm_adds)} if vm_adds else {}),
             },
         )
         unsalted(result.stdout)
@@ -268,7 +276,7 @@ def test_findings_the_real_check_refuses_are_revised_in_the_vm_and_released_once
         "payloads: 0",
         *(f"check {rule}: 0" for rule in rules),
     ]
-    # The refused output and the check's notes went into the VM, for the second pass.
+    # The refused output and the check's notes went into the VM, for the revision.
     pushed = tmp_path / "vm" / "srv" / "pa" / "eval" / "case" / "refused"
     assert blamed(pushed / "output" / "findings.json") == [SLIPPED]
     assert f"'{SLIPPED}' isn't in the repository" in (pushed / "check-notes.md").read_text()
@@ -356,3 +364,181 @@ def test_a_session_that_leaves_its_output_out_of_form_ends_with_the_failed_code(
     assert (private / "output-problems.md").is_file()
     assert not (private / "session.json").exists()
     assert modes(private) == PRIVATE
+
+
+# Planted leaks, through the whole command (#158's story 71). The case holds a made-up person,
+# her address, and a sentence of hers, which stand in for real content. A scripted session
+# plants each in its findings and in a reproduction, with a long number. The check on the
+# devbox refuses the diagnosis and its revisions, by rule and count, and nothing the script
+# prints holds any of what was planted.
+#
+# A run of words the repository holds passes the check, and this file is in the repository, so
+# the sentence is written backwards here.
+
+
+def forwards(backwards: str) -> str:
+    return " ".join(reversed(backwards.split()))
+
+
+SENTENCE = forwards("wall left the along cracked kiln big The")
+NAMED = "Ottoline Varga"
+ADDRESS = "ovarga" + "@" + "sgraffito-works" + "." + "com"
+NUMBER = "555-014-2368"
+PLANTED = (NAMED, ADDRESS, SENTENCE, NUMBER)
+
+CASE_MAIL = f"""\
+Message-ID: <kiln-0001@mail.pottery.example>
+Date: Tue, 22 Sep 2026 09:15:00 -0500
+From: {NAMED} <ovarga@pottery.example>
+To: Argus McNevans <argus@example.com>
+Subject: The firing
+Content-Type: text/plain; charset="utf-8"
+
+{SENTENCE}, so every piece waits for the small one.
+"""
+
+
+@pytest.fixture
+def also_in_the_case(also_in_the_case):
+    also_in_the_case.payloads["gmail/kiln.eml"] = CASE_MAIL
+    return also_in_the_case
+
+
+ORDER = """\
+Message-ID: <order-1@mail.larder.example>
+Date: Mon, 21 Sep 2026 10:05:00 -0500
+From: Pru Tanager <pru@larder.example>
+To: Argus McNevans <argus@example.com>
+Subject: Your preserves order
+Content-Type: text/plain; charset="utf-8"
+
+The preserves order ships on Friday, in two boxes.
+"""
+QUESTIONS = {
+    "as_of": "2026-09-22T20:00:00-05:00",
+    "owner": {
+        "name": "Argus McNevans",
+        "email_addresses": ["argus@example.com"],
+        "other_names": ["Gus"],
+    },
+    "time_zone": "America/Chicago",
+    "questions": [
+        {
+            "id": "order-ships",
+            "category": "single_fact_recall",
+            "question": "When does my preserves order ship?",
+            "expected_answer": "Friday.",
+            "evidence": ["gmail/order.eml"],
+        }
+    ],
+}
+
+
+@pytest.fixture
+def leaves_a_reproduction(
+    leavings: Callable[..., Path], well_formed: dict[str, Any]
+) -> Callable[..., Path]:
+    """Makes what a scripted session leaves: findings whose first names a reproduction, and
+    that reproduction, in form. `planted` goes into the finding's mechanism and into the
+    reproduction's mail."""
+
+    def leave(planted: str = "") -> Path:
+        well_formed["findings"][0].update(
+            reproduction="f1",
+            no_reproduction=None,
+            mechanism=f"A merge keeps the older page's summary. {planted}".strip(),
+        )
+        left = leavings(well_formed)
+        reproduction = left / "reproductions" / "f1"
+        (reproduction / "payloads" / "gmail").mkdir(parents=True)
+        (reproduction / "payloads" / "gmail" / "order.eml").write_text(f"{ORDER}{planted}\n")
+        (reproduction / "questions.json").write_text(json.dumps(QUESTIONS))
+        (reproduction / "expectation.md").write_text(
+            "The assistant should say the order ships Friday; it says it doesn't know.\n"
+        )
+        return left
+
+    return leave
+
+
+def refusals(printed: str, rules: tuple[str, ...]) -> list[dict[str, int]]:
+    """Each refusal the script printed: every rule's count, by its name."""
+    passes = printed.split("refused, and nothing is released\n")[1:]
+    return [
+        {
+            rule: int(line.removeprefix(f"check {rule}: "))
+            for rule in rules
+            for line in refused.splitlines()
+            if line.startswith(f"check {rule}: ")
+        }
+        for refused in passes
+    ]
+
+
+def test_a_name_an_address_a_quote_and_a_number_planted_in_what_a_session_leaves_are_refused(
+    tmp_path: Path,
+    data_root: DataRoot,
+    parts: Any,
+    leaves_a_reproduction: Callable[..., Path],
+    rules: tuple[str, ...],
+    diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
+):
+    planted = f"{NAMED} wrote from {ADDRESS}: {SENTENCE}. Quote {NUMBER} when you call."
+
+    # A scripted session leaves the same output each time it revises.
+    result = diagnose_sh(
+        *parts.arguments(), *("--agent", "scripted", "--leaves", leaves_a_reproduction(planted))
+    )
+
+    assert result.returncode == REFUSED, result.stderr
+    # Each is refused under its own rule: once in the findings and once in the reproduction,
+    # on the first pass and on both revisions.
+    found = {"names": 2, "addresses": 2, "quotes": 2, "digits": 2}
+    assert refusals(result.stdout, rules) == [{**dict.fromkeys(rules, 0), **found}] * 3
+    assert not (tmp_path / "released").exists() or not list((tmp_path / "released").iterdir())
+    # Nothing the script prints holds any of them. The owner's notes hold them all, with where.
+    printed = (result.stdout + result.stderr).lower()
+    for leak in PLANTED:
+        assert leak.lower() not in printed
+    [private] = data_root.diagnoses.iterdir()
+    notes = (private / "check-notes.md").read_text()
+    for where in ("findings.json: f1.mechanism", "reproductions/f1/payloads/gmail/order.eml:9"):
+        assert f"- {where}: the name {NAMED.lower()!r}" in notes
+        assert f"- {where}: the address {ADDRESS!r}" in notes
+        assert f"- {where}: 8 words in a row that the case holds" in notes
+        assert f"- {where}: a number of 10 digits: {NUMBER!r}" in notes
+    assert modes(private) == PRIVATE
+
+
+def test_a_file_that_isnt_allowed_in_what_comes_back_from_the_vm_is_refused(
+    tmp_path: Path,
+    data_root: DataRoot,
+    parts: Any,
+    leaves_a_reproduction: Callable[..., Path],
+    rules: tuple[str, ...],
+    diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
+):
+    # `pa-eval diagnose` holds a session's output to its form where the session ran, and the
+    # check on the devbox never counts on that: these arrive after it, in the findings' place
+    # and in a reproduction.
+    added = tmp_path / "added"
+    for place in ("output", "output/reproductions/f1/payloads/gmail"):
+        (added / place).mkdir(parents=True)
+        (added / place / "gooseberry.txt").write_text(f"{NAMED}, {ADDRESS}\n")
+
+    result = diagnose_sh(
+        *parts.arguments(),
+        *("--agent", "scripted", "--leaves", leaves_a_reproduction()),
+        vm_adds=added,
+    )
+
+    assert result.returncode == REFUSED, result.stderr
+    assert refusals(result.stdout, rules) == [{**dict.fromkeys(rules, 0), "shape": 2}] * 3
+    assert not (tmp_path / "released").exists() or not list((tmp_path / "released").iterdir())
+    printed = (result.stdout + result.stderr).lower()
+    for leak in (NAMED, ADDRESS, "gooseberry"):
+        assert leak.lower() not in printed
+    [private] = data_root.diagnoses.iterdir()
+    notes = (private / "check-notes.md").read_text()
+    assert "- output/gooseberry.txt: an unexpected file" in notes
+    assert "- output/reproductions/f1/payloads/gmail/gooseberry.txt: an unexpected file" in notes

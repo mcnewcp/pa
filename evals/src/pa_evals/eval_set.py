@@ -14,7 +14,7 @@ from pydantic import AwareDatetime, Field, ValidationError, field_validator, mod
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
-from pa_evals.models import FrozenModel
+from pa_evals.models import FrozenModel, problems_of
 from pa_home.cut import Cut
 
 type Category = Literal[
@@ -142,10 +142,7 @@ class EvalSet(FrozenModel):
 def format_problems(error: ValidationError) -> str:
     """Where a file or reply fails its format and why, never quoting what it holds: a real-data
     set's questions and answers are private."""
-    return "; ".join(
-        f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: {problem['msg']}"
-        for problem in error.errors(include_input=False, include_url=False)
-    )
+    return "; ".join(problems_of(error))
 
 
 def load_eval_set(path: Path, *, cut: Cut | None = None) -> EvalSet:

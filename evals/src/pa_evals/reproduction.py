@@ -36,13 +36,13 @@ right after such an edit (`pa-eval reproduction resolve`).
 
 What is here is for whoever holds a session's output to it:
 
-- `shape_flaws`: what is wrong with the files themselves. Nothing of a reproduction is read
+- `shape_problems`: what is wrong with the files themselves. Nothing of a reproduction is read
   unless its shape is right;
 - `read_reproductions`, then `try_out`: each reproduction put through what a development
-  session will put it through, with what that found wrong (`Tried`);
-- `flaws_in_form`: everything above that can be told without the case, which the session that
-  left a reproduction is resumed to put right (`pa_evals.diagnosis.malformed`);
-- `Tried.write`: the reproduction as it is released.
+  session will put it through, with what that found wrong (`Trial`);
+- `problems_in_form`: everything above that can be told without the case, which the session that
+  left a reproduction is resumed to put right (`pa_evals.diagnosis.out_of_form`);
+- `Trial.write`: the reproduction as it is released.
 
 Everything a reproduction holds is checked before it is released (`pa_evals.release_check`),
 against the case too, on the devbox. What is wrong with one is private, since it may quote
@@ -56,7 +56,7 @@ import re
 import shutil
 import stat
 import tempfile
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -83,9 +83,20 @@ from pa_core.librarian.wiki import (
 )
 from pa_core.normalizers import payload_extension
 from pa_core.owner import Owner
+from pa_evals.decodings import (
+    Decoded,
+    Decoding,
+    Said,
+    decode_payload,
+    embedded_data,
+    text_decodings,
+)
 from pa_evals.eval_set import CATEGORIES, EvalSet
-from pa_evals.models import FrozenModel
-from pa_evals.real_content import Passage, words
+from pa_evals.findings import FINDING_ID
+from pa_evals.models import FrozenModel, problems_of
+from pa_evals.plain_files import is_text, regular_files
+from pa_evals.problem import Problem
+from pa_evals.real_content import Passage
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -116,22 +127,12 @@ reproduction a minimal fixture, never a copy of the case. Constants, not configu
 EXPECTATION_CHARACTERS = 400
 """The most characters the line of expectation may hold."""
 
-_FINDING = re.compile(r"f[1-9]\d?")
+_FINDING = re.compile(FINDING_ID)
 """A reproduction's directory is named for its finding, by id."""
 _PAYLOAD_STEM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 """A payload's file name, before its source's extension."""
 _CITED_PAYLOAD = re.compile(r"\{ep:([^{}\s]+)\}")
 """A wiki's citation of a payload by file, as a session leaves it."""
-
-
-@dataclass(frozen=True)
-class Flaw:
-    """One thing wrong with a reproduction. Private: both fields can quote what the session
-    wrote."""
-
-    where: str
-    """Which file, from the session's output: `reproductions/f1/payloads/gmail/order.eml`."""
-    what: str
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,8 @@ class ReproductionRecord(FrozenModel):
 @dataclass(frozen=True)
 class FileText:
     """One file of a reproduction, as the pieces of text a release would hand over in it:
-    its name, its lines, and, for a payload, what ingest reads out of it."""
+    its name, its lines, and every other way it reads (`pa_evals.decodings`): each decoding
+    of it that says something its lines don't."""
 
     pieces: tuple[Passage, ...]
     payload: bool = False
@@ -180,7 +182,7 @@ class FileText:
 
 
 @dataclass(frozen=True)
-class Tried:
+class Trial:
     """A reproduction put through what a development session will put it through: its payloads
     ingested into a throwaway data root, and its questions and wiki resolved to the episodes
     they ingest to."""
@@ -197,21 +199,66 @@ class Tried:
     index: str | None
     """The index a librarian's run would leave the wiki; None when there is no wiki, or when
     its citations can't all be resolved."""
-    unsaid: tuple[Flaw, ...]
+    form_problems: tuple[Problem, ...]
     """Where it doesn't say what a reproduction says: an expectation that isn't one line,
     questions that aren't an eval set, and evidence or a citation that names no payload of
     its own."""
-    not_the_owners: tuple[Flaw, ...]
+    owner_problems: tuple[Problem, ...]
     """Where it is someone's other than the fictional owner's."""
-    quarantined: tuple[Flaw, ...]
+    ingest_problems: tuple[Problem, ...]
     """Each payload that ingest quarantined, or left, with ingest's reason."""
-    unlinted: tuple[Flaw, ...]
+    lint_problems: tuple[Problem, ...]
     """Each error lint found in the wiki, against the episodes the payloads ingest to."""
+    decoded: Mapping[str, Decoded]
+    """Each payload, by its inbox name, decoded every way its format can be."""
 
     @property
-    def flaws(self) -> tuple[Flaw, ...]:
+    def problems(self) -> tuple[Problem, ...]:
         """Everything trying it out found wrong with it."""
-        return (*self.unsaid, *self.not_the_owners, *self.quarantined, *self.unlinted)
+        return (
+            *self.form_problems,
+            *self.owner_problems,
+            *self.encoding_problems,
+            *self.ingest_problems,
+            *self.lint_problems,
+        )
+
+    @functools.cached_property
+    def file_names(self) -> frozenset[str]:
+        """The names of its own files, in lower case, which it may cite (`order.eml`): its
+        payloads', each with the name of the file a note says it was captured from, and its
+        wiki's, with those a release writes. Dotted names that are no domains."""
+        files = [
+            *self.reproduction.payloads,
+            *(
+                envelope.native_id
+                for envelope in self.envelopes.values()
+                if envelope.source == Source.OBSIDIAN
+            ),
+            *self.reproduction.wiki,
+            *(EXPECTATION, QUESTIONS, EVAL_SET, RECORD, INDEX),
+        ]
+        return frozenset(PurePosixPath(file).name.lower() for file in files)
+
+    @functools.cached_property
+    def encoding_problems(self) -> tuple[Problem, ...]:
+        """Where it holds something that can't be decoded to text, and so can't be checked:
+        a part of a payload that isn't text, or is in an encoding or a character set nobody
+        knows, and data carried in a `data:` URI, in any file."""
+        payloads = f"{self.reproduction.where}/{PAYLOADS}"
+        return (
+            *(
+                Problem(f"{payloads}/{name}", what)
+                for name, decoded in self.decoded.items()
+                for what in decoded.unread
+            ),
+            *(
+                Problem(piece.where, f"{count} `data:` URIs that carry their data in base64")
+                for text in self.texts
+                for piece in text.pieces
+                if (count := embedded_data(piece.text))
+            ),
+        )
 
     @property
     def record(self) -> ReproductionRecord:
@@ -228,25 +275,26 @@ class Tried:
     def texts(self) -> tuple[FileText, ...]:
         """Everything a release would hand over, file by file, as text to check.
 
-        The wiki is read with its citations resolved, as it is released. The questions are
-        read field by field, as the eval set is written afresh from them. A payload is read
-        twice: as it is written, and as ingest reads it, wherever that says something its
-        lines don't (a body in another encoding, a name split over a folded line).
+        Each file is read as it is written, line by line, and then every other way it reads
+        (`pa_evals.decodings`), wherever that says something its lines don't. The wiki is
+        read with its citations resolved and with its index, as it is released. The questions
+        are read field by field, as the eval set is written afresh from them. A payload is
+        released as it was left, so it is read in every decoding of its every part and
+        header, and as ingest reads it.
         """
         left, where = self.reproduction, self.reproduction.where
-        texts = [FileText((Passage(f"{where}/{EXPECTATION}", left.expectation),))]
+        texts = [FileText(tuple(_field(f"{where}/{EXPECTATION}", left.expectation)))]
         if self.asked is not None:
             texts.append(FileText(tuple(_asked(f"{where}/{QUESTIONS}", self.asked))))
         for name, raw in left.payloads.items():
-            file, written = f"{where}/{PAYLOADS}/{name}", raw.decode()
-            pieces = [*_file(file, written)]
+            decodings = [*self.decoded[name].decodings]
             if name in self.envelopes:
-                pieces += _as_ingest_reads(file, self.envelopes[name], written)
-            texts.append(FileText(tuple(pieces), payload=True))
-        texts += [
-            FileText(tuple(_file(f"{where}/{WIKI}/{path}", text)))
-            for path, text in self.wiki.items()
-        ]
+                decodings += _as_ingest_reads(self.envelopes[name])
+            texts.append(
+                _file_text(f"{where}/{PAYLOADS}/{name}", raw.decode(), decodings, payload=True)
+            )
+        wiki = dict(self.wiki) if self.index is None else {**self.wiki, INDEX: self.index}
+        texts += [_file_text(f"{where}/{WIKI}/{path}", text) for path, text in wiki.items()]
         return tuple(texts)
 
     def write(self, directory: Path) -> None:
@@ -286,7 +334,7 @@ def reproduction_values() -> dict[str, str]:
 # The shape: what a reproduction's directory may hold.
 
 
-def shape_flaws(output: Path) -> list[Flaw]:
+def shape_problems(output: Path) -> list[Problem]:
     """What is wrong with the shape of the reproductions in a session's `output`.
 
     The directory of reproductions holds a directory for each, named for its finding. Each
@@ -297,15 +345,15 @@ def shape_flaws(output: Path) -> list[Flaw]:
     if not top.exists(follow_symlinks=False):
         return []
     if top.is_symlink() or not top.is_dir():
-        return [Flaw(REPRODUCTIONS, "isn't a directory")]
-    flaws: list[Flaw] = []
+        return [Problem(REPRODUCTIONS, "isn't a directory")]
+    problems: list[Problem] = []
     for entry in sorted(top.iterdir()):
         where = f"{REPRODUCTIONS}/{entry.name}"
         if _is_directory(entry) and _FINDING.fullmatch(entry.name):
-            flaws += _shape(entry, where)
+            problems += _shape(entry, where)
         else:
-            flaws.append(_misplaced(entry, where))
-    return flaws
+            problems.append(_misplaced(entry, where))
+    return problems
 
 
 def reproductions_left(output: Path) -> list[str]:
@@ -320,47 +368,49 @@ def reproductions_left(output: Path) -> list[str]:
     )
 
 
-def unmatched(output: Path, named: Collection[str]) -> list[Flaw]:
+def unmatched(output: Path, named: Collection[str]) -> list[Problem]:
     """Where the reproductions in a session's `output` aren't the ones its findings name:
     each finding in `named` with nothing in its reproduction's place (something there that
-    isn't one is a flaw of shape), and each reproduction that no finding names."""
+    isn't one is a problem of shape), and each reproduction that no finding names."""
     top = output / REPRODUCTIONS
     return [
         *(
-            Flaw(f"findings.json: {finding}.reproduction", f"there is no {REPRODUCTIONS}/{finding}")
+            Problem(
+                f"findings.json: {finding}.reproduction", f"there is no {REPRODUCTIONS}/{finding}"
+            )
             for finding in named
             if not (top / finding).exists(follow_symlinks=False)
         ),
         *(
-            Flaw(f"{REPRODUCTIONS}/{finding}", "no finding names it as its reproduction")
+            Problem(f"{REPRODUCTIONS}/{finding}", "no finding names it as its reproduction")
             for finding in reproductions_left(output)
             if finding not in named
         ),
     ]
 
 
-def flaws_in_form(output: Path, named: Collection[str]) -> list[Flaw]:
+def problems_in_form(output: Path, named: Collection[str]) -> list[Problem]:
     """What keeps the reproductions in a session's `output` from being checked for what they
-    say, beyond their shape (`shape_flaws`), given the reproductions its findings name: one
-    that isn't there or isn't named, and whatever trying each out finds (`Tried.flaws`). None
+    say, beyond their shape (`shape_problems`), given the reproductions its findings name: one
+    that isn't there or isn't named, and whatever trying each out finds (`Trial.problems`). None
     of it needs the case, so the session can be told and put it right."""
-    flaws = unmatched(output, named)
+    problems = unmatched(output, named)
     for reproduction in read_reproductions(output):
-        flaws += try_out(reproduction).flaws
-    return flaws
+        problems += try_out(reproduction).problems
+    return problems
 
 
 def read_reproductions(output: Path) -> list[Reproduction]:
     """Every reproduction in a session's `output`, by its finding's id. None of them is read
-    unless the shape of all of them is right (`shape_flaws`)."""
-    if shape_flaws(output):
+    unless the shape of all of them is right (`shape_problems`)."""
+    if shape_problems(output):
         return []
     return [_read(output / REPRODUCTIONS / finding) for finding in reproductions_left(output)]
 
 
-def _shape(directory: Path, where: str) -> list[Flaw]:
+def _shape(directory: Path, where: str) -> list[Problem]:
     """What is wrong with the shape of the reproduction in `directory`."""
-    flaws: list[Flaw] = []
+    problems: list[Problem] = []
     payloads: list[Path] = []
     wiki: list[Path] = []
     files: list[Path] = []
@@ -369,39 +419,39 @@ def _shape(directory: Path, where: str) -> list[Flaw]:
         if entry.name in (EXPECTATION, QUESTIONS) and _is_file(entry):
             files.append(entry)
         elif entry.name == PAYLOADS and _is_directory(entry):
-            flaws += _payloads(entry, here, payloads)
+            problems += _payloads(entry, here, payloads)
         elif entry.name == WIKI and _is_directory(entry):
-            flaws += _wiki(entry, here, wiki)
+            problems += _wiki(entry, here, wiki)
         else:
-            flaws.append(_misplaced(entry, here))
+            problems.append(_misplaced(entry, here))
     files += payloads + wiki
     size = sum(file.lstat().st_size for file in files)
     if len(payloads) > MOST_PAYLOADS:
         over = f"{len(payloads)} payloads, over the cap of {MOST_PAYLOADS}"
-        flaws.append(Flaw(f"{where}/{PAYLOADS}", over))
+        problems.append(Problem(f"{where}/{PAYLOADS}", over))
     if len(wiki) > MOST_WIKI_FILES:
-        flaws.append(
-            Flaw(f"{where}/{WIKI}", f"{len(wiki)} files, over the cap of {MOST_WIKI_FILES}")
+        problems.append(
+            Problem(f"{where}/{WIKI}", f"{len(wiki)} files, over the cap of {MOST_WIKI_FILES}")
         )
     if size > MOST_BYTES:
-        flaws.append(Flaw(where, f"{size} bytes, over the cap of {MOST_BYTES}"))
+        problems.append(Problem(where, f"{size} bytes, over the cap of {MOST_BYTES}"))
     else:
-        flaws += [
-            Flaw(f"{where}/{file.relative_to(directory).as_posix()}", "not UTF-8 text")
+        problems += [
+            Problem(f"{where}/{file.relative_to(directory).as_posix()}", "not UTF-8 text")
             for file in files
-            if not _is_text(file)
+            if not is_text(file)
         ]
-    flaws += [
-        Flaw(f"{where}/{name}", "missing")
+    problems += [
+        Problem(f"{where}/{name}", "missing")
         for name in (EXPECTATION, QUESTIONS)
         if not (directory / name).exists(follow_symlinks=False)
     ]
     if not payloads and not (directory / PAYLOADS).is_symlink():
-        flaws.append(Flaw(f"{where}/{PAYLOADS}", "missing: a reproduction has a payload"))
-    return flaws
+        problems.append(Problem(f"{where}/{PAYLOADS}", "missing: a reproduction has a payload"))
+    return problems
 
 
-def _payloads(directory: Path, where: str, found: list[Path]) -> Iterator[Flaw]:
+def _payloads(directory: Path, where: str, found: list[Path]) -> Iterator[Problem]:
     """Flaws in the payloads' directory: a directory per source, each holding only payloads
     in that source's format. The payloads go into `found`."""
     for source in sorted(directory.iterdir()):
@@ -420,7 +470,7 @@ def _payloads(directory: Path, where: str, found: list[Path]) -> Iterator[Flaw]:
                 yield _misplaced(entry, f"{here}/{entry.name}")
 
 
-def _wiki(directory: Path, where: str, found: list[Path]) -> Iterator[Flaw]:
+def _wiki(directory: Path, where: str, found: list[Path]) -> Iterator[Problem]:
     """Flaws in the starting wiki: the wiki's layout, without the index, which a release
     writes. Lint holds what the files say. The files go into `found`."""
     for entry in sorted(directory.iterdir()):
@@ -438,13 +488,13 @@ def _wiki(directory: Path, where: str, found: list[Path]) -> Iterator[Flaw]:
             yield _misplaced(entry, here)
 
 
-def _misplaced(entry: Path, where: str) -> Flaw:
+def _misplaced(entry: Path, where: str) -> Problem:
     mode = entry.lstat().st_mode
     if stat.S_ISLNK(mode):
-        return Flaw(where, "a link in place of a file")
+        return Problem(where, "a link in place of a file")
     if stat.S_ISDIR(mode):
-        return Flaw(where, "an unexpected directory")
-    return Flaw(where, "an unexpected file" if stat.S_ISREG(mode) else "not a regular file")
+        return Problem(where, "an unexpected directory")
+    return Problem(where, "an unexpected file" if stat.S_ISREG(mode) else "not a regular file")
 
 
 def _is_file(path: Path) -> bool:
@@ -453,14 +503,6 @@ def _is_file(path: Path) -> bool:
 
 def _is_directory(path: Path) -> bool:
     return stat.S_ISDIR(path.lstat().st_mode)
-
-
-def _is_text(path: Path) -> bool:
-    try:
-        path.read_bytes().decode()
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 def _read(directory: Path) -> Reproduction:
@@ -485,18 +527,20 @@ def _read(directory: Path) -> Reproduction:
 # Trying one out.
 
 
-def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tried:
-    """`reproduction`, ingested into a throwaway data root as `owner`'s, with its questions'
-    evidence and its wiki's citations resolved to the episodes its payloads ingest to."""
-    unsaid = list(_expectation_flaws(reproduction))
+def try_out(reproduction: Reproduction) -> Trial:
+    """`reproduction`, ingested into a throwaway data root as the fictional owner's, with its
+    questions' evidence and its wiki's citations resolved to the episodes its payloads ingest
+    to."""
+    owner = FICTIONAL_OWNER
+    form_problems = list(_expectation_problems(reproduction))
     asked, unread = _questions(reproduction)
-    unsaid += unread
+    form_problems += unread
     as_of = datetime.now(UTC) if asked is None else asked.as_of
     envelopes = _envelopes(reproduction.payloads, owner, as_of)
     ids = {name: envelope.episode_id for name, envelope in envelopes.items()}
     wiki, uncited = _cited(reproduction, ids)
-    unsaid += uncited
-    index, unlinted = None, []
+    form_problems += uncited
+    index, lint_problems = None, []
     with tempfile.TemporaryDirectory(prefix="pa-reproduction-") as directory:
         data_root = DataRoot(Path(directory))
         for name, raw in reproduction.payloads.items():
@@ -505,11 +549,21 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
         store = FilesystemL0(data_root.l0)
         with open_catalog(data_root.catalog, store) as catalog:
             summary = ingest(data_root.inbox, store, catalog, owner, now=lambda: as_of)
-        quarantined = [
-            *_quarantined(reproduction, data_root.l0),
-            *(Flaw(f"{reproduction.where}/{PAYLOADS}", f"left: {why}") for why in summary.left),
+        refused = _quarantined(data_root.l0)
+        ingest_problems = [
+            *(
+                Problem(f"{reproduction.where}/{PAYLOADS}/{name}", f"quarantined: {why}")
+                for name, why in refused.items()
+            ),
+            *(Problem(f"{reproduction.where}/{PAYLOADS}", f"left: {why}") for why in summary.left),
+            # A payload that is no episode is refused, whatever ingest made of it.
+            *(
+                Problem(f"{reproduction.where}/{PAYLOADS}/{name}", "can't be read as an episode")
+                for name in reproduction.payloads
+                if name not in envelopes and name not in refused
+            ),
         ]
-        ingests = not quarantined and ids.keys() == reproduction.payloads.keys()
+        ingests = not ingest_problems and ids.keys() == reproduction.payloads.keys()
         # A wiki is linted against episodes, so only once every payload is one.
         if wiki and ingests and not uncited:
             for path, text in wiki.items():
@@ -523,39 +577,43 @@ def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tr
                 owner=owner,
                 thresholds=Thresholds(as_of.date(), PAGE_THRESHOLD, LOOP_AGE_DAYS),
             )
-            unlinted = [
-                Flaw(
+            lint_problems = [
+                Problem(
                     f"{reproduction.where}/{WIKI}/{error.path}"
                     + ("" if error.line is None else f":{error.line}"),
                     error.message,
                 )
                 for error in report.errors
             ]
-    eval_set, not_the_owners = None, []
+    eval_set, owner_problems = None, []
     if asked is not None:
-        unnamed = list(_evidence_flaws(reproduction, asked))
-        unsaid += unnamed
+        unnamed = list(_evidence_problems(reproduction, asked))
+        form_problems += unnamed
         if not unnamed and ingests:
             eval_set = _resolved(asked, ids)
         if asked.owner.to_owner() != owner:
-            not_the_owners.append(
-                Flaw(
+            owner_problems.append(
+                Problem(
                     f"{reproduction.where}/{QUESTIONS}",
                     "owner: isn't the synthetic corpus's fictional owner, whose every "
                     "reproduction is",
                 )
             )
-    return Tried(
+    return Trial(
         reproduction,
         envelopes,
         asked,
         eval_set,
         wiki,
         index,
-        unsaid=tuple(unsaid),
-        not_the_owners=tuple(not_the_owners),
-        quarantined=tuple(quarantined),
-        unlinted=tuple(unlinted),
+        form_problems=tuple(form_problems),
+        owner_problems=tuple(owner_problems),
+        ingest_problems=tuple(ingest_problems),
+        lint_problems=tuple(lint_problems),
+        decoded={
+            name: decode_payload(Source(PurePosixPath(name).parent.name), raw)
+            for name, raw in reproduction.payloads.items()
+        },
     )
 
 
@@ -567,47 +625,48 @@ def _envelopes(payloads: Mapping[str, bytes], owner: Owner, as_of: datetime) -> 
         try:
             envelopes[name] = inbox_normalizer(PurePosixPath(name), owner)(raw, captured_at=as_of)
         except Exception:
-            continue  # Ingest quarantines it, and says why.
+            # Whatever a normalizer raises, the payload can't be an episode: that is ingest's
+            # own rule (`pa_core.ingest`), and ingest says why when it quarantines it. A
+            # payload left out here is refused by whoever tries the reproduction out.
+            continue
     return envelopes
 
 
-def _quarantined(reproduction: Reproduction, l0: Path) -> Iterator[Flaw]:
-    """Each payload ingest quarantined into the store at `l0`, with its reason."""
+def _quarantined(l0: Path) -> dict[str, str]:
+    """Each payload ingest quarantined into the store at `l0`, by its inbox name, with
+    ingest's reason."""
+    reasons: dict[str, str] = {}
     for path in sorted((l0 / "quarantine").glob("*.json")):
         if not path.with_suffix("").is_file():
             continue  # A quarantined payload that is itself JSON, not its record.
         record = QuarantineRecord.model_validate_json(path.read_bytes())
-        yield Flaw(
-            f"{reproduction.where}/{PAYLOADS}/{record.inbox_name}", f"quarantined: {record.reason}"
-        )
+        reasons[record.inbox_name] = record.reason
+    return reasons
 
 
-def _expectation_flaws(reproduction: Reproduction) -> Iterator[Flaw]:
+def _expectation_problems(reproduction: Reproduction) -> Iterator[Problem]:
     where = f"{reproduction.where}/{EXPECTATION}"
     lines = [line for line in reproduction.expectation.splitlines() if line.strip()]
     if len(lines) != 1:
-        yield Flaw(where, f"{len(lines)} lines, where one says what should happen and what does")
+        yield Problem(where, f"{len(lines)} lines, where one says what should happen and what does")
     elif len(lines[0]) > EXPECTATION_CHARACTERS:
-        yield Flaw(where, f"{len(lines[0])} characters, over the cap of {EXPECTATION_CHARACTERS}")
+        yield Problem(
+            where, f"{len(lines[0])} characters, over the cap of {EXPECTATION_CHARACTERS}"
+        )
 
 
-def _questions(reproduction: Reproduction) -> tuple[EvalSet | None, list[Flaw]]:
+def _questions(reproduction: Reproduction) -> tuple[EvalSet | None, list[Problem]]:
     """The questions as they were left, their evidence still naming payloads; None, with why,
     when they aren't an eval set."""
     try:
         return EvalSet.model_validate_json(reproduction.questions), []
     except ValidationError as error:
         return None, [
-            Flaw(
-                f"{reproduction.where}/{QUESTIONS}",
-                f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: "
-                f"{problem['msg']}",
-            )
-            for problem in error.errors(include_input=False, include_url=False)
+            Problem(f"{reproduction.where}/{QUESTIONS}", what) for what in problems_of(error)
         ]
 
 
-def _evidence_flaws(reproduction: Reproduction, asked: EvalSet) -> Iterator[Flaw]:
+def _evidence_problems(reproduction: Reproduction, asked: EvalSet) -> Iterator[Problem]:
     """Each piece of evidence, and each adversarial episode, that names no payload of the
     reproduction."""
     named = [
@@ -620,7 +679,7 @@ def _evidence_flaws(reproduction: Reproduction, asked: EvalSet) -> Iterator[Flaw
     ]
     for field, name in named:
         if name not in reproduction.payloads:
-            yield Flaw(
+            yield Problem(
                 f"{reproduction.where}/{QUESTIONS}",
                 f"{field}: {name!r} isn't a payload of the reproduction: evidence names a "
                 f"payload by its file under {PAYLOADS}/",
@@ -637,57 +696,95 @@ def _resolved(asked: EvalSet, ids: Mapping[str, str]) -> EvalSet:
     return asked.model_copy(update={"questions": questions, "adversarial": adversarial})
 
 
-def _cited(reproduction: Reproduction, ids: Mapping[str, str]) -> tuple[dict[str, str], list[Flaw]]:
+def _cited(
+    reproduction: Reproduction, ids: Mapping[str, str]
+) -> tuple[dict[str, str], list[Problem]]:
     """The starting wiki with each citation of a payload as a citation of the episode it
     ingests to, and each citation that names no payload of the reproduction."""
-    flaws: list[Flaw] = []
+    problems: list[Problem] = []
     wiki: dict[str, str] = {}
     for path, text in reproduction.wiki.items():
         lines = text.splitlines(keepends=True)
         for number, line in enumerate(lines, start=1):
             for name in _CITED_PAYLOAD.findall(line):
                 if name not in reproduction.payloads:
-                    flaws.append(
-                        Flaw(
+                    problems.append(
+                        Problem(
                             f"{reproduction.where}/{WIKI}/{path}:{number}",
                             f"cites {name!r}, which isn't a payload of the reproduction",
                         )
                     )
-        # A citation that can't be resolved is a flaw already; what it names is no one's text.
+        # A citation that can't be resolved is a problem already; what it names is no one's text.
         wiki[path] = _CITED_PAYLOAD.sub(
             lambda match: f"[ep:{ids[match[1]]}]" if match[1] in ids else "{ep:}", text
         )
-    return wiki, flaws
+    return wiki, problems
 
 
 # What a reproduction says, as text to check.
 
 
-def _file(file: str, text: str) -> Iterator[Passage]:
-    """A file's name, without its directory and its extension, and each of its lines."""
-    yield Passage(f"{file}: its name", PurePosixPath(file).stem)
-    for number, line in enumerate(text.splitlines(), start=1):
-        yield Passage(f"{file}:{number}", line)
+def _file_text(
+    file: str, written: str, decodings: Sequence[Decoding] = (), *, payload: bool = False
+) -> FileText:
+    """A file as text to check: its name, without its directory and its extension, each of
+    its lines, and then every other way it reads that says something nothing before it does:
+    each encoding any text may hold, read in the file as it is written and in each of
+    `decodings`, which are in order, what is nearest the file's bytes first."""
+    said = Said(written)
+    kept: list[Decoding] = []
+    for decoding in (Decoding("", written), *decodings):
+        if decoding.what:
+            if not said.new(decoding.text):
+                continue
+            kept.append(decoding)
+        kept += [
+            Decoding(", ".join(filter(None, (decoding.what, read.what))), read.text)
+            for read in text_decodings(decoding.text)
+            if said.new(read.text)
+        ]
+    return FileText(
+        (
+            Passage(f"{file}: its name", PurePosixPath(file).stem),
+            *(
+                Passage(f"{file}:{number}", line)
+                for number, line in enumerate(written.splitlines(), start=1)
+            ),
+            *(Passage(f"{file}: {decoding.what}", decoding.text) for decoding in kept),
+        ),
+        payload=payload,
+    )
 
 
 def _asked(file: str, asked: EvalSet) -> Iterator[Passage]:
-    """Every field of the questions that a session wrote freely."""
-    yield Passage(f"{file}: owner.name", asked.owner.name)
-    for address in asked.owner.email_addresses:
-        yield Passage(f"{file}: owner.email_addresses", address)
-    for name in asked.owner.other_names:
-        yield Passage(f"{file}: owner.other_names", name)
-    yield Passage(f"{file}: time_zone", asked.time_zone)
+    """Every field of the questions that a session wrote freely, and each encoding any text
+    may hold read in it."""
+    fields = [
+        ("owner.name", asked.owner.name),
+        *(("owner.email_addresses", address) for address in asked.owner.email_addresses),
+        *(("owner.other_names", name) for name in asked.owner.other_names),
+        ("time_zone", asked.time_zone),
+    ]
     for index, question in enumerate(asked.questions):
-        yield Passage(f"{file}: questions.{index}.id", question.id)
-        yield Passage(f"{file}: questions.{index}.question", question.question)
-        yield Passage(f"{file}: questions.{index}.expected_answer", question.expected_answer)
+        fields += [
+            (f"questions.{index}.id", question.id),
+            (f"questions.{index}.question", question.question),
+            (f"questions.{index}.expected_answer", question.expected_answer),
+        ]
+    for field, text in fields:
+        yield from _field(f"{file}: {field}", text)
 
 
-def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Passage]:
-    """What ingest reads out of a payload, wherever the payload's own lines don't hold the
-    same words in a row."""
-    lines = f" {' '.join(words(written))} "
+def _field(where: str, text: str) -> Iterator[Passage]:
+    """A text that is read whole, and each encoding any text may hold read in it."""
+    yield Passage(where, text)
+    for decoding in text_decodings(text):
+        yield Passage(f"{where}, {decoding.what}", decoding.text)
+
+
+def _as_ingest_reads(envelope: Envelope) -> list[Decoding]:
+    """What ingest reads out of a payload, which is what the librarian and the assistant are
+    given of it."""
     read = [
         *(("a participant", person.name or "") for person in envelope.participants),
         *(("a participant's address", person.identifier) for person in envelope.participants),
@@ -696,10 +793,7 @@ def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Pa
         ("its calendar's name", envelope.calendar_name or ""),
         *(("a label", label) for label in envelope.labels),
     ]
-    for what, text in read:
-        said = " ".join(words(text))
-        if said and f" {said} " not in lines:
-            yield Passage(f"{file}: {what}, as ingest reads it", text)
+    return [Decoding(f"{what}, as ingest reads it", text) for what, text in read if text]
 
 
 # After an edit: a released reproduction, resolved again.
@@ -707,11 +801,11 @@ def _as_ingest_reads(file: str, envelope: Envelope, written: str) -> Iterator[Pa
 
 class UnresolvedError(PaError):
     """A directory that can't be resolved again as a released reproduction. Its message says
-    how much is wrong; `flaws` says what and where, in the reproduction's own words."""
+    how much is wrong; `problems` says what and where, in the reproduction's own words."""
 
-    def __init__(self, message: str, flaws: tuple[Flaw, ...] = ()) -> None:
+    def __init__(self, message: str, problems: tuple[Problem, ...] = ()) -> None:
         super().__init__(message)
-        self.flaws = flaws
+        self.problems = problems
 
 
 @dataclass(frozen=True)
@@ -740,23 +834,26 @@ def resolve_again(directory: Path) -> ResolvedAgain:
     was = _record(directory)
     with tempfile.TemporaryDirectory(prefix="pa-reproduction-") as scratch:
         output = Path(scratch)
-        flaws = _as_left(directory, output / REPRODUCTIONS / was.finding, was)
-        flaws += shape_flaws(output)
-        tried = None
-        if not flaws:
+        problems = _as_left(directory, output / REPRODUCTIONS / was.finding, was)
+        problems += shape_problems(output)
+        trial = None
+        if not problems:
             [reproduction] = read_reproductions(output)
-            tried = try_out(reproduction)
-            flaws += tried.flaws
-    if tried is None or flaws:
+            trial = try_out(reproduction)
+            problems += trial.problems
+    if trial is None or problems:
         raise UnresolvedError(
             f"{directory} isn't resolved again, and is left as it was "
-            f"({len(flaws)} problem{'' if len(flaws) == 1 else 's'})",
-            tuple(Flaw(_as_released(flaw.where, was.finding), flaw.what) for flaw in flaws),
+            f"({len(problems)} problem{'' if len(problems) == 1 else 's'})",
+            tuple(
+                Problem(_as_released(problem.where, was.finding), problem.what)
+                for problem in problems
+            ),
         )
-    tried.write(directory)
-    if tried.index is None:
+    trial.write(directory)
+    if trial.index is None:
         (directory / WIKI / INDEX).unlink(missing_ok=True)
-    record = tried.record
+    record = trial.record
     renewed = sum(was.episodes.get(name) != episode for name, episode in record.episodes.items())
     return ResolvedAgain(record, renewed)
 
@@ -788,7 +885,7 @@ def _as_released(where: str, finding: str) -> str:
     return EVAL_SET + place.removeprefix(QUESTIONS) if place.startswith(QUESTIONS) else place
 
 
-def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Flaw]:
+def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Problem]:
     """Write the released reproduction in `released` to `left` in the form a session leaves:
     each episode id as the file of the payload it is, and no index or record. Returns each
     place that names an episode none of the payloads is, from the session's output.
@@ -804,13 +901,13 @@ def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Flaw]:
     shutil.copytree(released, left, symlinks=True, ignore=written_by_a_release)
     names = _payloads_by_episode(left / PAYLOADS, was)
     where = f"{REPRODUCTIONS}/{was.finding}"
-    flaws: list[Flaw] = []
+    problems: list[Problem] = []
 
     def by_file(field: str, evidence: list[str]) -> list[str]:
         """`evidence` with each episode id as its payload's file. What names a payload by its
         file already stands."""
         if any(named not in names and "/" not in named for named in evidence):
-            flaws.append(Flaw(f"{where}/{QUESTIONS}", f"{field}: names {_NO_PAYLOAD}"))
+            problems.append(Problem(f"{where}/{QUESTIONS}", f"{field}: names {_NO_PAYLOAD}"))
         return [names.get(named, named) for named in evidence]
 
     questions = released / EVAL_SET
@@ -836,14 +933,14 @@ def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Flaw]:
             )
             asked = by_payload.model_dump_json().encode()
         (left / QUESTIONS).write_bytes(asked)
-    for page in _regular_files(left / WIKI):
-        if page.suffix != ".md" or not _is_text(page):
+    for page in regular_files(left / WIKI):
+        if page.suffix != ".md" or not is_text(page):
             continue
         lines = page.read_text(encoding="utf-8").splitlines(keepends=True)
         for number, line in enumerate(lines, start=1):
             if any(cited not in names for cited in CITATION.findall(line)):
                 place = f"{where}/{page.relative_to(left).as_posix()}:{number}"
-                flaws.append(Flaw(place, f"cites {_NO_PAYLOAD}"))
+                problems.append(Problem(place, f"cites {_NO_PAYLOAD}"))
         page.write_text(
             CITATION.sub(
                 lambda cited: f"{{ep:{names[cited[1]]}}}" if cited[1] in names else cited[0],
@@ -851,7 +948,7 @@ def _as_left(released: Path, left: Path, was: ReproductionRecord) -> list[Flaw]:
             ),
             encoding="utf-8",
         )
-    return flaws
+    return problems
 
 
 def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, str]:
@@ -859,8 +956,7 @@ def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, s
     that ingests to it now, or else the one the record says ingested to it, which was edited
     since."""
     now = {
-        path.relative_to(payloads).as_posix(): path.read_bytes()
-        for path in _regular_files(payloads)
+        path.relative_to(payloads).as_posix(): path.read_bytes() for path in regular_files(payloads)
     }
     return {
         **{episode: name for name, episode in was.episodes.items() if name in now},
@@ -869,14 +965,3 @@ def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, s
             for name, envelope in _envelopes(now, FICTIONAL_OWNER, datetime.now(UTC)).items()
         },
     }
-
-
-def _regular_files(directory: Path) -> Iterator[Path]:
-    """Every regular file under `directory`, through no link."""
-    if not directory.exists(follow_symlinks=False) or not _is_directory(directory):
-        return
-    for entry in sorted(directory.iterdir()):
-        if _is_directory(entry):
-            yield from _regular_files(entry)
-        elif _is_file(entry):
-            yield entry

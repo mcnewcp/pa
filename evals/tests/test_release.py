@@ -55,7 +55,8 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
         "checks": {
             **{"shape": 0, "schema": 0, "paths": 0, "episodes": 0, "questions": 0, "labels": 0},
             **{"names": 0, "addresses": 0, "quotes": 0, "digits": 0},
-            **{"reproductions": 0, "one-word-names": 0, "owner": 0, "ingest": 0, "lint": 0},
+            **{"reproductions": 0, "one-word-names": 0, "owner": 0, "encodings": 0},
+            **{"ingest": 0, "lint": 0},
         },
         "reproductions": 0,
         "payloads": 0,
@@ -73,7 +74,7 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
     for rule in (
         *("shape", "schema", "paths", "episodes", "questions", "labels"),
         *("names", "addresses", "quotes", "digits"),
-        *("reproductions", "one-word-names", "owner", "ingest", "lint"),
+        *("reproductions", "one-word-names", "owner", "encodings", "ingest", "lint"),
     ):
         assert f"check {rule}: 0\n" in ran.out
 
@@ -422,10 +423,10 @@ def test_a_private_directory_linked_out_of_the_data_root_is_refused(tmp_path: Pa
     assert not desk.released.exists()
 
 
-def test_a_case_inside_the_repository_is_refused(desk, leavings, pa_eval):
+def test_a_case_inside_the_repository_is_refused(desk, referral, leavings, pa_eval):
     desk.diagnose(leavings())
 
-    ran = pa_eval("release", "--name", NAME, "--cut", INSIDE)
+    ran = pa_eval("release", "--name", NAME, "--referral", referral, "--cut", INSIDE)
 
     assert ran.code == 1
     assert f"--cut ({INSIDE}) is inside the repository" in ran.err

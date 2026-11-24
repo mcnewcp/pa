@@ -59,6 +59,7 @@ RULES = (
     "reproductions",
     "one-word-names",
     "owner",
+    "encodings",
     "ingest",
     "lint",
 )
@@ -91,7 +92,7 @@ if command.startswith("bash -s"):
     session = ways[min(len(ran) - 1, len(ways) - 1)]
     name = words[words.index("--name") + 1]
     diagnosis = words[words.index("--out") + 1] + "/" + name
-    # A second pass revises the diagnosis where it is, and keeps the pass it revised by number.
+    # A revision revises the diagnosis where it is, and keeps the pass it revised by number.
     revision = len([c for c in ran if "--revise" in shlex.split(c["argv"][-1])])
     if session["leaves"]:
         with open(vm_dirs, "a") as listed:
@@ -104,10 +105,17 @@ if command.startswith("bash -s"):
     sys.exit(session["exit"])
 if argv[:3] == ["file", "pull", "-r"]:
     # What a session leaves, as a pull brings it back: readable by everyone until tightened.
-    # With it comes each pass a second pass kept there.
+    # With it comes each pass a revision kept there.
     source = argv[-2].split("/", 1)[1]
     target = os.path.join(argv[-1], os.path.basename(source))
     left = ["referral.md", "reply.md", "session.json", "output/analysis.md", "output/findings.json"]
+    earlier = [json.load(open(os.path.join(calls, file))) for file in sorted(os.listdir(calls))]
+    in_vm = [c["argv"][-1] if c["prog"] == "incus" else "" for c in earlier]
+    # The referral comes back as it was pushed, unless the last session's way says otherwise.
+    [pushed] = [c for c, ran in zip(earlier, in_vm) if ran.endswith("/case/referral.md")][-1:]
+    ways = json.load(open(os.environ["SESSION"]))
+    way = ways[min(len([ran for ran in in_vm if ran.startswith("bash -s")]), len(ways)) - 1]
+    comes_back = {"referral.md": bytes.fromhex(pushed["stdin"]).decode(), **way["comes_back"]}
     for kept in known:
         if kept.startswith("/" + source + "/refused/"):
             number = os.path.basename(kept)
@@ -115,8 +123,13 @@ if argv[:3] == ["file", "pull", "-r"]:
     for file in left:
         os.makedirs(os.path.dirname(os.path.join(target, file)), exist_ok=True)
         with open(os.path.join(target, file), "w") as pulled:
-            pulled.write("made up\\n")
+            pulled.write(comes_back.get(file, "made up\\n"))
         os.chmod(os.path.join(target, file), 0o644)
+    # A link the session left in its diagnosis, as a pull brings one back.
+    for file, to in way["links"].items():
+        if os.path.lexists(os.path.join(target, file)):
+            os.remove(os.path.join(target, file))
+        os.symlink(to, os.path.join(target, file))
     for directory, _, _ in os.walk(target):
         os.chmod(directory, 0o755)
 """
@@ -132,9 +145,11 @@ histories = {}
 for value in option("--history"):
     label, _, directory = value.partition("=")
     histories[label] = sorted(os.listdir(directory)) if os.path.isdir(directory) else None
+referral = [open(path).read() for path in option("--referral")]
 with open(os.path.join(calls, f"{number:03}.json"), "w") as call:
     env = {name: value for name, value in os.environ.items() if name.startswith("PA_")}
-    json.dump({"prog": "pa-eval", "argv": argv, "env": env, "histories": histories}, call)
+    took = {"argv": argv, "env": env, "histories": histories, "referral": referral}
+    json.dump({"prog": "pa-eval", **took}, call)
 if argv[0] == "wiki-history":
     [out] = option("--out")
     os.makedirs(out)
@@ -210,8 +225,11 @@ def diagnose(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Runs diagnose.sh. `session` is how the session's command in the VM ends, and `release`
-    how the devbox's release check does. A list of either is how each one ends in turn: the
-    first pass's, then each revision's (the last again, after that)."""
+    how the devbox's release check does. A session's `touches` are files it writes while it
+    runs, its `comes_back` what files of the diagnosis hold when they are pulled, by name, and
+    its `links` links it left in the diagnosis, by name, with where each points. A list of
+    either is how each one ends in turn: the first pass's, then each revision's (the last
+    again, after that)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stand_ins = {
@@ -230,6 +248,7 @@ def diagnose(
         "PA_OWNER_NAME='Argus McNevans'\nPA_OWNER_EMAILS=argus@example.com\n"
     )
     said = {"exit": 0, "stdout": SESSION_SAYS, "stderr": "", "leaves": True, "touches": []}
+    said |= {"comes_back": {}, "links": {}}
     sessions_end = session if isinstance(session, list) else [session or {}]
     (tmp_path / "session.json").write_text(json.dumps([said | way for way in sessions_end]))
     checked = {"exit": 0, "stdout": RELEASE_SAYS, "stderr": ""}
@@ -414,8 +433,12 @@ def test_a_diagnosis_runs_in_the_vm_comes_back_private_and_is_released_on_the_de
 
     # The release check runs on the devbox, over the devbox's copy of the case, as the instance's
     # owner.
-    assert release["argv"] == ["release", "--name", name, "--cut", str(cut)]
+    asked = f"{private.parent}/.work-{name}/referral.md"
+    assert release["argv"] == ["release", "--name", name, "--referral", asked, "--cut", str(cut)]
     assert release["env"]["PA_DATA_DIR"] == str(data_root(tmp_path))
+    # The referral it checks against is the devbox's own, and so is the one kept privately.
+    assert release["referral"] == [referral.read_text()]
+    assert (private / "referral.md").read_text() == referral.read_text()
     assert release["env"]["PA_OWNER_NAME"] == "Argus McNevans"
 
     assert result.stdout == (
@@ -595,6 +618,7 @@ def test_the_rest_of_the_case_is_pushed_each_time_with_each_wikis_history_export
     [name] = given(release["argv"], "--name")
     assert release["argv"] == [
         *("release", "--name", name),
+        *("--referral", f"{data_root(tmp_path)}/diagnoses/.work-{name}/referral.md"),
         *("--cut", str(cut)),
         *("--eval-set", str(parts["eval_set"])),
         *("--runs", f"own={parts['own']}"),
@@ -736,6 +760,101 @@ REFUSAL = {"exit": REFUSED, "stdout": REFUSAL_SAYS, "notes": NOTES}
 VM_REFUSED = f"{VM_CASE}/refused"
 
 
+CHANGED = "Why did Nell Okafor ask Ridgeline about a lease that renews?\n"
+"""A referral as a session in the VM might leave it, to have the check excuse what it holds."""
+
+
+def test_a_referral_that_comes_back_changed_fails_the_diagnosis_with_nothing_checked(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    """The check excuses what the referral holds, so the referral is the devbox's to say: the
+    copy the VM kept with the diagnosis is the session's to change."""
+    result = refer(tmp_path, calls, referral, cut, session={"comes_back": {"referral.md": CHANGED}})
+
+    assert result.returncode == 1
+    assert "isn't the referral that was pushed" in result.stderr
+    assert releases(calls) == []
+    assert "release" not in result.stdout
+    assert not (tmp_path / "released").exists()
+    # The devbox's own copy is the one kept; what came back is beside it, for the owner.
+    [private] = diagnoses(tmp_path)
+    assert (private / "referral.md").read_text() == referral.read_text()
+    assert (private / "referral-from-the-vm.md").read_text() == CHANGED
+    assert modes(private) == PRIVATE
+    assert not [word for word in SALT if word in result.stdout + result.stderr]
+
+
+def test_a_referral_that_comes_back_changed_from_a_revision_fails_the_diagnosis_too(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session=[{}, {"comes_back": {"referral.md": CHANGED}}],
+        release=[REFUSAL, {}],
+    )
+
+    assert result.returncode == 1
+    assert "isn't the referral that was pushed" in result.stderr
+    # The first pass was checked and refused. The revision never was.
+    assert len(sessions(calls)) == 2
+    assert len(releases(calls)) == 1
+    assert not (tmp_path / "released").exists()
+    [private] = diagnoses(tmp_path)
+    assert (private / "referral.md").read_text() == referral.read_text()
+    assert (private / "referral-from-the-vm.md").read_text() == CHANGED
+
+
+def test_every_pass_is_checked_against_the_referral_as_it_was_when_the_diagnosis_started(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path
+):
+    asked = referral.read_text()
+
+    # The file is written over while the first session runs.
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session={"touches": [str(referral)]},
+        release=[REFUSAL, {}],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert referral.read_text() != asked
+    assert [release["referral"] for release in releases(calls)] == [[asked], [asked]]
+    [private] = diagnoses(tmp_path)
+    assert (private / "referral.md").read_text() == asked
+
+
+@pytest.mark.parametrize("link", ["referral.md", "release-output.txt", "diagnose-output.txt"])
+def test_a_link_that_comes_back_in_a_diagnosis_is_never_written_through(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path, link: str
+):
+    """The script writes the referral and what its commands let slip into the private
+    directory, by name. A session that left a link of one of those names would have it write
+    wherever the link points on the devbox."""
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_text("the developer's own file\n")
+
+    result = refer(
+        tmp_path,
+        calls,
+        referral,
+        cut,
+        session={"links": {link: str(elsewhere)}, "stderr": SLIPPED},
+        release={"exit": 1, "stdout": "", "stderr": SLIPPED},
+    )
+
+    assert result.returncode == 1
+    assert elsewhere.read_text() == "the developer's own file\n"
+    [private] = diagnoses(tmp_path)
+    assert not (private / link).is_symlink()
+    assert (private / "referral.md").read_text() == referral.read_text()
+
+
 def session_says(name: str, private: Path, *, revisions: int) -> list[str]:
     """What the script prints of a session that ended well, and of bringing back what it left."""
     return [
@@ -787,7 +906,7 @@ def test_a_refused_diagnosis_is_revised_by_the_checks_notes_and_released_once_th
     # The refused output and the check's notes go into the VM, which may hold them, on stdin.
     assert pushed(push_output) == ["output/analysis.md", "output/findings.json"]
     assert bytes.fromhex(push_notes["stdin"]).decode() == NOTES.replace("{pass}", "1")
-    # The second pass is asked the same referral over the same case, with the VM's copies.
+    # The revision is asked the same referral over the same case, with the VM's copies.
     assert options_of(revision) == [
         *options_of(first),
         *("--revise", f"{VM_REFUSED}/output"),
@@ -899,7 +1018,7 @@ def test_a_revision_whose_session_fails_ends_the_diagnosis_with_the_failed_code(
 def test_a_revision_that_never_started_leaves_the_refused_diagnosis_as_it_was(
     tmp_path: Path, calls: Path, cut: Path, referral: Path
 ):
-    """A second pass that fails before it touches the diagnosis left nothing to bring back: the
+    """A revision that fails before it touches the diagnosis left nothing to bring back: the
     devbox's copy, with the check's notes, isn't replaced by the VM's."""
     unstarted = "pa-eval: the diagnosis read another case than the one given\n"
 
@@ -1220,6 +1339,43 @@ def test_what_the_release_check_let_slip_is_kept_for_the_owner_as_well(
     assert kept.read_text() == SLIPPED
     assert modes(private) == PRIVATE
     assert f"5 lines pa-eval release printed aren't shown: they are kept in {kept}" in result.stderr
+
+
+def live_store(root: Path) -> Path:
+    """A directory laid out as a data root in use is, with its wiki and the wiki's git
+    directory, as a dreamed copy has too."""
+    for directory in ("inbox/assistant_chat", "l0/episodes", "wiki/people", "wiki.git"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+@pytest.mark.parametrize("which", ["the data root", "a store elsewhere"])
+def test_the_live_store_is_never_a_wiki_of_the_case(
+    tmp_path: Path, calls: Path, cut: Path, referral: Path, which: str
+):
+    """A data root holds a wiki and its git directory, as a dreamed copy does. A case holds a
+    cut of the store, and copies of the cut's wiki, never the store."""
+    roots = {"the data root": data_root(tmp_path), "a store elsewhere": tmp_path / "restored"}
+    live = live_store(roots[which])
+
+    result = refer(tmp_path, calls, referral, cut, "--wiki", f"live={live}")
+
+    assert result.returncode == 1
+    assert f"the wiki under live ({live}) is a live store" in result.stderr
+    assert recorded(calls) == []
+    assert diagnoses(tmp_path) == []
+
+
+def test_a_live_store_is_never_the_cut(tmp_path: Path, calls: Path, cut: Path, referral: Path):
+    """A directory named as a cut is and holding a manifest, with what only a live store has."""
+    live_store(cut)
+
+    result = refer(tmp_path, calls, referral, cut)
+
+    assert result.returncode == 1
+    assert f"{cut} isn't a cut" in result.stderr
+    assert recorded(calls) == []
+    assert diagnoses(tmp_path) == []
 
 
 NAMED_CUT = ("--name", "dreamed-drop", "--cut", "{cut}")

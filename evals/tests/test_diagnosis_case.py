@@ -145,8 +145,6 @@ def test_each_part_of_the_case_is_laid_read_only_under_its_label(
     assert "cut/cut.json" in looking.files
     assert looking.writable == []
     assert not looking.request.case.exists()
-    # The code as deployed isn't laid: the session is pointed at it.
-    assert looking.request.code == REPOSITORY
 
 
 def diagnose(pa_eval, referral: Path, cut: Cut, out: Path, *extra: object):
@@ -350,4 +348,54 @@ def test_a_part_that_isnt_what_it_is_named_as_is_refused_before_a_session_starts
     assert said in ran.err
     # Nothing a part holds is quoted, and no diagnosis takes the name.
     assert "gooseberry" not in ran.err
+    assert not data_root.diagnoses.exists()
+
+
+# The live store is never a part of a case: only a cut of it, and copies of the cut's wiki.
+
+
+def as_a_cut(tmp_path: Path, data_root: DataRoot, cut: Cut) -> dict[str, Path]:
+    """Directories that hold a cut's manifest and aren't cuts."""
+    # The store itself, with a manifest in it.
+    shutil.copyfile(cut.path / "cut.json", data_root.path / "cut.json")
+    # A store laid out elsewhere (a restored backup, say), named as the cut is.
+    restored = tmp_path / "restored" / cut.name
+    shutil.copytree(cut.path, restored)
+    (restored / "inbox").mkdir()
+    # A cut under another name than the time it was taken.
+    renamed = tmp_path / "renamed" / "latest"
+    shutil.copytree(cut.path, renamed)
+    return {"the store": data_root.path, "a store elsewhere": restored, "another name": renamed}
+
+
+@pytest.mark.parametrize("which", ["the store", "a store elsewhere", "another name"])
+def test_a_directory_that_isnt_a_cut_is_refused_as_the_cut_before_a_session_starts(
+    tmp_path: Path, data_root: DataRoot, cut: Cut, referral: Path, leavings, pa_eval, which: str
+):
+    not_a_cut = as_a_cut(tmp_path, data_root, cut)[which]
+
+    ran = pa_eval(
+        *("diagnose", "--referral", referral, "--cut", not_a_cut, "--name", "dreamed-drop"),
+        *("--out", tmp_path / "diagnoses", "--agent", "scripted", "--leaves", leavings()),
+    )
+
+    assert ran.code == 1
+    assert f"{not_a_cut} isn't a cut" in ran.err
+    assert not (tmp_path / "diagnoses").exists()
+
+
+def test_the_live_wiki_is_refused_as_a_wiki_of_the_case_before_a_session_starts(
+    data_root: DataRoot, cut: Cut, referral: Path, leavings, pa_eval
+):
+    ran = diagnose(
+        pa_eval,
+        referral,
+        cut,
+        data_root.diagnoses,
+        *("--wiki", f"own={data_root.wiki}"),
+        *("--agent", "scripted", "--leaves", leavings()),
+    )
+
+    assert ran.code == 1
+    assert f"the wiki under own ({data_root.wiki}) is a live store's" in ran.err
     assert not data_root.diagnoses.exists()

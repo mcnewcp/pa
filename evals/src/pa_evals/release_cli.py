@@ -9,6 +9,10 @@ root, where a development session may read it.
 The findings are checked against what the case holds and against the owner's identity
 (`PA_OWNER_NAME`, `PA_OWNER_EMAILS`, `PA_OWNER_OTHER_NAMES`), so it refuses to run without one.
 
+It is given the referral too, in the devbox's own copy (`--referral`): the check lets findings
+repeat what the referral holds, so it never takes it from the diagnosis's directory, which came
+back from where the session ran.
+
 What it prints is the diagnosis's name, the released directory, and counts: the findings by
 kind, the reproductions released with them and the payloads those hold, and each rule by name
 with how many problems it found. Never a line of the findings or of a reproduction, or what a
@@ -51,6 +55,14 @@ def add_release_command(commands: Any) -> None:
         "directory or refuse it.",
     )
     command.add_argument("--name", required=True, help="The diagnosis's name.")
+    command.add_argument(
+        "--referral",
+        type=Path,
+        required=True,
+        metavar="FILE",
+        help="The referral, as it was asked: this machine's own copy, never the one kept with "
+        "the diagnosis, which came back from where the session ran.",
+    )
     # The case the diagnosis read, part for part, in this machine's copy.
     add_case_arguments(command)
     command.set_defaults(handler=_release)
@@ -67,16 +79,24 @@ def _release(args: argparse.Namespace) -> int:
     released = _released(released_root, data_root, name)
     if not private.is_dir():
         raise ReleaseChoiceError(f"there is no diagnosis named {name} in {data_root.diagnoses}")
-    verdict = release(Diagnosis(private), case.load(), owner=owner, released=released)
-    if isinstance(verdict, Refusal):
+    if not args.referral.is_file():
+        raise ReleaseChoiceError(f"the referral {args.referral} isn't a file")
+    outcome = release(
+        Diagnosis(private),
+        case.load(),
+        referral=args.referral.read_text(),
+        owner=owner,
+        released=released,
+    )
+    if isinstance(outcome, Refusal):
         print(f"release: {name}: refused, and nothing is released")
-        _print_checks(verdict.checks)
-        print(f"notes: {verdict.notes}")
+        _print_checks(outcome.checks)
+        print(f"notes: {outcome.notes}")
         return REFUSED
-    record = verdict.record
+    record = outcome.record
     kinds = ", ".join(f"{count} {kind}" for kind, count in record.kinds.items())
     print(f"release: {name}: released")
-    print(f"released: {verdict.directory}")
+    print(f"released: {outcome.directory}")
     print(f"findings: {record.findings}" + (f" ({kinds})" if kinds else ""))
     print(f"reproductions: {record.reproductions}" + (", untested" if record.reproductions else ""))
     print(f"payloads: {record.payloads}")

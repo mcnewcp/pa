@@ -64,7 +64,7 @@ def refused(desk, slipped: Path) -> Path:
 
 @pytest.fixture
 def revise(data_root: DataRoot, cut: Cut, referral: Path, parts, pa_eval) -> Callable[..., Any]:
-    """Runs the second pass over the diagnosis `NAME`: by default over the output and the notes
+    """Runs a revision of the diagnosis `NAME`: by default over the output and the notes
     in its own directory, and the case's parts as they are when it runs."""
 
     def run(*extra: object, output: Path | None = None, notes: Path | None = None) -> Any:
@@ -289,7 +289,7 @@ def test_a_refused_output_without_the_checks_notes_isnt_a_second_pass(
     )
 
     assert ran.code == 1
-    assert "a second pass needs both --revise DIR and --notes FILE" in ran.err
+    assert "a revision needs both --revise DIR and --notes FILE" in ran.err
     assert files(refused) == before
 
 

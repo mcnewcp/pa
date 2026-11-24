@@ -5,9 +5,9 @@ The release check (`pa_evals.release_check`) owns the rules. This module gives i
 are made of:
 
 - **what a case holds**: the names of its people and organizations (`Identifier`), and its
-  text (`Passage`), gathered from the case's parts. Each part is a `Source`: `Envelopes`,
+  text (`Passage`), gathered from the case's parts. Each part is a `Part`: `Envelopes`,
   `Wiki`, `History`, `OwnerIdentity`, and `Text` for a part that is text alone (an eval set,
-  runs, an earlier analysis). A case that gains a part gains a `Source` for it, and nothing
+  runs, an earlier analysis). A case that gains a part gains a `Part` for it, and nothing
   else here changes;
 - **what may be repeated**: the text of the repository (`repository_passages`), which is
   public already;
@@ -51,6 +51,7 @@ from pa_core.librarian.wiki import (
     read_frontmatter,
 )
 from pa_core.owner import Owner
+from pa_evals.plain_files import regular_files
 
 NAME_WORDS = 2
 """The fewest words a name has to be refused wherever it is written. A name of one word is
@@ -136,8 +137,9 @@ class Passage:
     text: str
 
 
-class Source(Protocol):
-    """One part of a case, as the release check reads it."""
+class Part(Protocol):
+    """One part of a case, as the release check reads it. Never a source, which is where an
+    episode came from."""
 
     def identifiers(self) -> Iterable[Identifier]:
         """The names it holds for people and organizations."""
@@ -236,15 +238,8 @@ class Wiki:
 
     def _files(self) -> Iterator[tuple[Path, str]]:
         """Each regular file in the tree, by its path from the tree's root, with its text."""
-        if self.tree.is_symlink():
-            return
-        for directory, _, names in self.tree.walk():
-            for name in sorted(names):
-                path = directory / name
-                if path.is_symlink() or not path.is_file():
-                    continue
-                text = path.read_text(encoding="utf-8", errors="replace")
-                yield path.relative_to(self.tree), text
+        for path in regular_files(self.tree):
+            yield path.relative_to(self.tree), path.read_text(encoding="utf-8", errors="replace")
 
 
 def _aliases(page: str) -> Sequence[str]:
@@ -336,15 +331,15 @@ class OwnerIdentity:
 class RealContent:
     """What a case holds, gathered from its parts."""
 
-    sources: Sequence[Source]
+    parts: Sequence[Part]
 
     @functools.cached_property
     def names(self) -> Mapping[Words, str]:
         """Every name the case holds, as the runs of words that are refused (`name_runs`),
         each with what holds it."""
         names: dict[Words, str] = {}
-        for source in self.sources:
-            for identifier in source.identifiers():
+        for part in self.parts:
+            for identifier in part.identifiers():
                 for run in name_runs(identifier.text):
                     names.setdefault(run, identifier.held)
         return names
@@ -353,13 +348,11 @@ class RealContent:
     def single_names(self) -> Mapping[str, str]:
         """Every name of one word the case holds, as it is refused (`single_names`), each
         with what holds it."""
-        return single_names(
-            identifier for source in self.sources for identifier in source.identifiers()
-        )
+        return single_names(identifier for part in self.parts for identifier in part.identifiers())
 
     def passages(self) -> Iterator[Passage]:
-        for source in self.sources:
-            yield from source.passages()
+        for part in self.parts:
+            yield from part.passages()
 
 
 # Names.
@@ -465,24 +458,42 @@ _TOP_LEVEL = re.compile(r"[^\W\d_][\w-]+")
 abbreviation (`e.g.`), a figure (`2.5`), and a version (`v0.14.1`) aren't domains."""
 
 
+_SCHEME = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//$")
+"""What is written before a link's host: its scheme (`https://`), or the two slashes alone."""
+_PATH = re.compile(r"/[^\s/]|\?[\w%]")
+"""What is written after a link's host: a path, or a question."""
+
+
 @dataclass(frozen=True)
 class Unreserved:
     """What a text holds that is outside the reserved example domains."""
 
     addresses: Sequence[str]
     """Each address, which is refused whatever else holds its domain."""
+    links: Sequence[str]
+    """Each link, by its host, in lower case: a dotted name with a scheme before it or a path
+    after it. A link is refused whatever else holds its host."""
     dotted_names: Sequence[str]
-    """Each dotted name that could be a domain, in lower case. One is a domain unless it is
-    code or a file's name, which only the repository can say (`holding_dotted_names`)."""
+    """Each other dotted name that could be a domain, in lower case. One is a domain unless
+    it is code or a file's name, which only whoever knows the files can say
+    (`holding_dotted_names`)."""
 
 
 def unreserved(text: str) -> Unreserved:
-    """The addresses and the dotted names in `text` that are outside the reserved example
-    domains. An address is anything written around an `@`, whatever its host."""
+    """The addresses, the links, and the dotted names in `text` that are outside the reserved
+    example domains. An address is anything written around an `@`, whatever its host."""
     text = plain(text).replace("\u3002", ".")  # An ideographic full stop reads as a dot.
     addresses = [match[0] for match in _ADDRESS.finditer(text) if not _is_reserved(match["domain"])]
-    dotted = [_domain(match[0]) for match in _DOTTED.finditer(_ADDRESS.sub(" ", text))]
-    return Unreserved(addresses, [name for name in dotted if name and not _is_reserved(name)])
+    links: list[str] = []
+    dotted: list[str] = []
+    text = _ADDRESS.sub(" ", text)
+    for match in _DOTTED.finditer(text):
+        name = _domain(match[0])
+        if not name or _is_reserved(name):
+            continue
+        linked = _SCHEME.search(text, 0, match.start()) or _PATH.match(text, match.end())
+        (links if linked else dotted).append(name)
+    return Unreserved(addresses, links, dotted)
 
 
 def _domain(dotted: str) -> str | None:
@@ -545,7 +556,7 @@ def repeated(passages: Iterable[Passage], runs: Collection[Words]) -> dict[Words
 
 # Long numbers.
 
-_ID = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
+EPISODE_ID = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
 """Something of an episode id's shape: a source, then 16 hex characters."""
 _DATE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 _NUMBER = re.compile(r"\d(?:[()]?[ \t.\u2010-\u2015-]?[()]?\d)*")
@@ -564,7 +575,7 @@ def long_numbers(text: str, *, ids: Collection[str] = (), times: bool = False) -
     one: a calendar's `20261017` and `20261017T090000Z`, and a time to a fraction of a second
     after its date, `2026-10-08T01:12:04.512345Z`.
     """
-    text = _ID.sub(lambda match: "id" if match[0] in ids else match[0], plain(text))
+    text = EPISODE_ID.sub(lambda match: "id" if match[0] in ids else match[0], plain(text))
     if times:
         text = _DATED_TIME.sub(lambda match: "time" if _is_date(match[1]) else match[0], text)
         text = _CALENDAR_TIME.sub(

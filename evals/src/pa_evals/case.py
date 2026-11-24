@@ -9,6 +9,10 @@ optional:
   history as files (`pa_evals.wiki_history`), since a session has no git directory to read;
 - earlier diagnoses' private analyses, which a follow-up referral builds on.
 
+The live store is never a part of a case: a diagnosis reads something that holds still. So the
+cut must be a cut, as `pa cut` takes one, and a wiki a cut's own or a copy of it, never the
+data root's.
+
 This module owns what a case holds and how it is laid for the session, so nothing else does.
 The layout is fixed, and the diagnostician's instructions name it, so a referral can say "the
 runs under `dreamed`":
@@ -39,6 +43,7 @@ import re
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 
 from pa_core.errors import PaError
@@ -46,8 +51,9 @@ from pa_evals.comparison import ComparisonError, load_runs, run_files
 from pa_evals.eval_set import EvalSet, load_eval_set
 from pa_evals.findings import LABEL
 from pa_evals.harness import lay_cut, make_read_only
+from pa_evals.plain_files import regular_files
 from pa_evals.results import RunResults
-from pa_home.config import DataRoot
+from pa_home.config import DataRoot, is_live_store
 from pa_home.cut import MANIFEST, Cut, load_cut
 
 _LABEL = re.compile(LABEL)
@@ -75,7 +81,7 @@ class CaseWiki:
 
     def history_files(self) -> list[Path]:
         """The files of its history, oldest first (none without one)."""
-        return [] if self.history is None else _regular_files(self.history)
+        return [] if self.history is None else regular_files(self.history)
 
 
 @dataclass(frozen=True)
@@ -131,7 +137,7 @@ def load_case(
     - `histories`: by a wiki's label, the directory its history was exported to;
     - `earlier`: by an earlier diagnosis's name, the file of its private analysis.
     """
-    cut = load_cut(cut_dir)
+    cut = _a_cut(cut_dir)
     runs, wikis, histories = runs or {}, wikis or {}, histories or {}
     for label in (*runs, *wikis, *histories):
         if not _LABEL.fullmatch(label):
@@ -142,6 +148,11 @@ def load_case(
     for label, tree in wikis.items():
         if not _is_directory(tree):
             raise CaseError(f"the wiki under {label} ({tree}) isn't a directory")
+        if is_live_store(tree.parent):
+            raise CaseError(
+                f"the wiki under {label} ({tree}) is a live store's: a case holds a cut's own "
+                "wiki, or a dreamed copy of it, never the wiki the librarian is writing"
+            )
     for label, history in histories.items():
         if label not in wikis:
             raise CaseError(f"there is a history under {label}, and no wiki: name its wiki too")
@@ -167,6 +178,24 @@ def load_case(
     return case
 
 
+def _a_cut(directory: Path) -> Cut:
+    """The cut in `directory`, refused (CaseError) unless it is one as `pa cut` takes it: named
+    for the time it was taken, and holding nothing that only a live store does. A manifest
+    doesn't make a data root a cut."""
+    cut = load_cut(directory)
+    if is_live_store(directory) or DataRoot(directory).wiki_git.exists(follow_symlinks=False):
+        raise CaseError(
+            f"{directory} isn't a cut: it holds what only a live store does. A case holds a cut "
+            "of the store (`pa cut` takes one), never the store itself"
+        )
+    if cut.name != f"{cut.as_of.astimezone(UTC):%Y%m%dT%H%M%SZ}":
+        raise CaseError(
+            f"{directory} isn't a cut: it isn't named for the time it was taken, as `pa cut` "
+            "names one"
+        )
+    return cut
+
+
 def lay_case(case: Case, target: Path) -> None:
     """Copy `case` to `target`, laid out as this module's docstring says, with nothing in it
     writable. Only regular files are copied: nothing is read through a link."""
@@ -183,7 +212,7 @@ def lay_case(case: Case, target: Path) -> None:
         for number, file in enumerate(results, start=1):
             _copy(file, target / RUNS / label / f"run-{number}" / file.name)
     for label, wiki in case.wikis.items():
-        for file in _regular_files(wiki.tree):
+        for file in regular_files(wiki.tree):
             _copy(file, target / WIKIS / label / WIKI_TREE / file.relative_to(wiki.tree))
         for file in wiki.history_files():
             _copy(file, target / WIKIS / label / WIKI_HISTORY / file.name)
@@ -210,16 +239,6 @@ def _run_files(directory: Path) -> list[Path]:
 
 def _is_directory(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
-
-
-def _regular_files(top: Path) -> list[Path]:
-    """Every regular file under `top`, in order, without following a link."""
-    return sorted(
-        directory / name
-        for directory, _, names in top.walk()
-        for name in names
-        if not (directory / name).is_symlink() and (directory / name).is_file()
-    )
 
 
 def _copy(source: Path, target: Path) -> None:

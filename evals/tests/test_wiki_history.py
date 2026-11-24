@@ -155,6 +155,20 @@ def test_a_copy_with_no_history_is_refused(tmp_path: Path, copy: Path, pa_eval):
     assert not out.exists()
 
 
+def test_the_live_store_is_refused_as_a_dreamed_copy(
+    tmp_path: Path, data_root: DataRoot, cut: Cut, pa_eval
+):
+    # The store holds a wiki and its git directory, as a dreamed copy does.
+    assert (data_root.path / "wiki.git").is_dir()
+    out = tmp_path / "histories" / "live"
+
+    ran = pa_eval("wiki-history", "--copy", data_root.path, "--out", out)
+
+    assert ran.code == 1
+    assert f"{data_root.path} is a live store, not a dreamed copy" in ran.err
+    assert not out.exists()
+
+
 def test_a_history_is_of_a_cuts_wiki_or_of_a_copy_and_never_both(tmp_path: Path, copy: Path):
     with pytest.raises(SystemExit):
         main(["wiki-history", "--out", str(tmp_path / "out")])

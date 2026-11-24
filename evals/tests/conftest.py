@@ -69,7 +69,7 @@ directory's path, which a command prints."""
 RULES = (
     *("shape", "schema", "paths", "episodes", "questions", "labels"),
     *("names", "addresses", "quotes", "digits"),
-    *("reproductions", "one-word-names", "owner", "ingest", "lint"),
+    *("reproductions", "one-word-names", "owner", "encodings", "ingest", "lint"),
 )
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
@@ -445,7 +445,12 @@ def desk(
         return data_root.diagnoses / NAME
 
     def release(*extra: object) -> Ran:
-        return pa_eval("release", "--name", NAME, "--cut", cut.path, *parts.arguments(), *extra)
+        # The referral is the devbox's own, never the copy kept with the diagnosis.
+        return pa_eval(
+            *("release", "--name", NAME, "--referral", referral, "--cut", cut.path),
+            *parts.arguments(),
+            *extra,
+        )
 
     return Desk(data_root.diagnoses / NAME, released / NAME, release, diagnose)
 

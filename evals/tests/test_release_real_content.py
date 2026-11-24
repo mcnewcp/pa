@@ -349,13 +349,40 @@ def test_an_address_or_a_domain_outside_the_reserved_example_domains_is_refused(
 
 
 def test_an_address_is_refused_though_the_repository_holds_its_domain(desk, leavings, well_formed):
-    # The repository's fixtures hold this domain, so by itself it passes. An address never does.
-    well_formed["summary"] = "Mail from gmail.com is filed twice, as ovarga" + "@gmail.com shows."
+    # This file holds the domain, so by itself it passes. An address never does. It is no
+    # reserved domain, and no mailbox either: nothing outside a private network ends this way.
+    well_formed["summary"] = (
+        "Mail from kiln.internal is filed twice, as ovarga" + "@kiln.internal shows."
+    )
     desk.diagnose(leavings(well_formed))
 
     notes = desk.refused(desk.release(), addresses=1)
 
-    assert "- findings.json: summary: the address 'ovarga@gmail.com' is outside" in notes
+    assert "- findings.json: summary: the address 'ovarga@kiln.internal' is outside" in notes
+
+
+# A link is never excused: the repository names hosts that anyone has pages at. This file is
+# in the repository, so each of these hosts is a dotted name the repository holds.
+
+LINKS = {
+    "a link to a host the repository names": "https://github.com/-no-such-account-/records",
+    "a link without its scheme": "claude.ai/chat/no-such-chat",
+    "a link with a question": "https://www.icloud.com?shared=nothing",
+    "a link to a file of the repository's name": "http://dreaming.py",
+}
+
+
+@pytest.mark.parametrize("text", LINKS.values(), ids=LINKS.keys())
+def test_a_link_is_refused_in_the_findings_though_the_repository_holds_its_host(
+    desk, leavings, well_formed, text: str
+):
+    first(well_formed, suggestion=f"Compare it with {text} first.")
+    desk.diagnose(leavings(well_formed))
+
+    notes = desk.refused(desk.release(), addresses=1)
+
+    assert "- findings.json: f1.suggestion: the link to " in notes
+    assert "is outside the reserved example domains" in notes
 
 
 INSIDE_THE_RESERVED_DOMAINS_OR_NO_DOMAIN = {
@@ -365,6 +392,10 @@ INSIDE_THE_RESERVED_DOMAINS_OR_NO_DOMAIN = {
     "the other reserved names": "a@example.net, b@host.test, and c@pa.invalid",
     "a reserved domain": "www.example.com and POTTERY.EXAMPLE",
     "a file in the repository": "librarian/CLAUDE.md and dreaming.py",
+    "a file in the repository, by its line": "core/src/pa_core/librarian/dreaming.py:120",
+    "a directory of the repository": "the copy's wiki.git/ and deploy/home/",
+    "a link to a reserved domain": "https://pottery.example/classes?term=autumn",
+    "a host the repository names, by itself": "gmail.com",
     "a module in the repository": "pa_core.librarian.lint",
     "code the repository holds": "cut.episode_ids() and Path.is_file()",
     "a dotted name the referral holds": "kiln_report.final",
@@ -503,6 +534,35 @@ def test_only_the_words_the_referral_doesnt_hold_are_refused(desk, referral, lea
 
     # The first six words are the referral's; the run that takes in the seventh isn't.
     assert "7 words in a row that the case holds" in notes
+
+
+def test_a_referral_changed_where_the_session_ran_excuses_nothing_and_nothing_is_checked(
+    desk, leavings, well_formed
+):
+    # The referral excuses what it holds, so the check takes it from the devbox. The copy kept
+    # with the diagnosis came back from where the session ran, which could have written it.
+    first(well_formed, mechanism=f"The page says: {BODY_LINE}. It is at {STUDIO}.")
+    private = desk.diagnose(leavings(well_formed))
+    with (private / "referral.md").open("a") as came_back:
+        came_back.write(f"\nA run answered: {BODY_LINE}. It is at {STUDIO}.\n")
+
+    ran = desk.release()
+
+    # A failure, never a refusal: nothing was checked, so there are no notes.
+    assert ran.code == 1
+    assert ran.out == ""
+    assert "isn't the referral that was given" in ran.err
+    assert not desk.released.exists()
+    assert not (private / "check-notes.md").exists()
+
+
+def test_the_release_check_needs_the_referral_that_was_asked(desk, cut: Cut, leavings, pa_eval):
+    desk.diagnose(leavings())
+
+    with pytest.raises(SystemExit):
+        pa_eval("release", "--name", "dreamed-drop", "--cut", cut.path)
+
+    assert not desk.released.exists()
 
 
 # Digits.

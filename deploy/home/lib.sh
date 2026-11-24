@@ -232,7 +232,7 @@ PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
 # (a directory each, by name) until it is pulled.
 PA_VM_EVAL_CASE=$PA_VM_EVAL/case
 PA_VM_EVAL_DIAGNOSES=$PA_VM_EVAL/diagnoses
-# Where it pushes what a second pass revises: the output the release check refused (output/) and
+# Where it pushes what a revision is given: the output the release check refused (output/) and
 # the check's notes, replaced each revision and gone with the case at the next diagnosis.
 PA_VM_EVAL_REFUSED=$PA_VM_EVAL_CASE/refused
 # The diagnostician's configuration (pa_home.config.load_diagnostician_config), which
@@ -402,6 +402,17 @@ require_private() {
       die "the $1 ($resolved) is inside the repository ($repository): real-data eval sets, drafts, cuts, and run directories stay under the data root"
       ;;
   esac
+}
+
+# is_live_store DIR: DIR is laid out as a data root in use is (pa_home.config.is_live_store): it
+# holds an inbox, the lock, the catalog, the capture cycle's state, or a store with its wiki's
+# git directory beside it. A cut of a store, and a copy of a cut's wiki, hold none of those.
+is_live_store() {
+  local part
+  for part in inbox pa.lock catalog state; do
+    [[ ! -e $1/$part && ! -L $1/$part ]] || return 0
+  done
+  [[ (-e $1/l0 || -L $1/l0) && (-e $1/wiki.git || -L $1/wiki.git) ]]
 }
 
 # cut_name DIR prints the name of the cut in DIR (its as-of time), and stops unless DIR is a cut

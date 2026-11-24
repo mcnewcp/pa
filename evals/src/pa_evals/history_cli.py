@@ -2,7 +2,8 @@
 diagnosis's case to hold (see `pa_evals.wiki_history`).
 
 It runs on the devbox, where a wiki's git directory is: the live wiki's, for a cut's own wiki,
-up to the commit the cut holds, or a dreamed copy's own. The history is real data: it is refused
+up to the commit the cut holds, or a dreamed copy's own. The live store is never taken for a
+copy: its wiki's history is exported only up to a cut. The history is real data: it is refused
 inside the repository, and what the command prints is a count and the path.
 """
 
@@ -15,7 +16,7 @@ from typing import Any
 from pa_core.librarian.replay import ReplayTarget
 from pa_evals.real_data import require_private
 from pa_evals.wiki_history import WikiHistoryError, export_history
-from pa_home.config import load_data_root
+from pa_home.config import is_live_store, load_data_root
 from pa_home.cut import load_cut
 
 
@@ -53,7 +54,13 @@ def _wiki_history(args: argparse.Namespace) -> int:
     # Every path is checked before any is read.
     out = require_private(args.out, "--out")
     if args.copy is not None:
-        git_dir = ReplayTarget(require_private(args.copy, "--copy")).git_dir
+        copy = require_private(args.copy, "--copy")
+        if is_live_store(copy):
+            raise WikiHistoryError(
+                f"{copy} is a live store, not a dreamed copy: a case holds its wiki's history "
+                "only up to a cut (--cut)"
+            )
+        git_dir = ReplayTarget(copy).git_dir
         if not git_dir.is_dir():
             raise WikiHistoryError(
                 f"{args.copy} has no {git_dir.name}: it isn't a dreamed copy that has run"

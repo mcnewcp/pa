@@ -5,7 +5,7 @@ The case and the diagnosis left are real data: each is refused inside the reposi
 prints says where the diagnosis was left and what the session cost, never what it wrote. The
 findings it leaves are unchecked: `pa-eval release` checks and releases them, on the devbox.
 
-A second pass (`--revise DIR --notes FILE`) revises a diagnosis the release check refused: a
+A revision (`--revise DIR --notes FILE`) corrects a diagnosis the release check refused: a
 new session is given the refused output and the check's notes, over the same referral and
 case, as drafting's second pass is given a draft and the owner's notes. The refused output and
 the notes are real data too, refused inside the repository, and the notes are never printed.
@@ -73,7 +73,7 @@ def add_diagnose_command(commands: Any) -> None:
         "--revise",
         type=Path,
         metavar="DIR",
-        help="A second pass: revise the diagnosis NAME in --out, whose output the release check "
+        help="A revision: revise the diagnosis NAME in --out, whose output the release check "
         "refused. DIR is that output, as the check read it; the refused pass is kept in the "
         "diagnosis's directory, and what the session leaves is its output from then on.",
     )
@@ -137,7 +137,7 @@ def add_diagnose_command(commands: Any) -> None:
 def _diagnose(args: argparse.Namespace) -> int:
     name = require_name(args.name)
     if (args.revise is None) != (args.notes is None):
-        raise DiagnoseChoiceError("a second pass needs both --revise DIR and --notes FILE")
+        raise DiagnoseChoiceError("a revision needs both --revise DIR and --notes FILE")
     # Every path is checked before any is read.
     out = require_private(args.out, "--out")
     refused = None if args.revise is None else require_private(args.revise, "--revise")

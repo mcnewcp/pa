@@ -293,3 +293,15 @@ def test_each_part_of_the_case_is_refused_inside_the_repository_on_release(
     assert f"{named} ({INSIDE}) is inside the repository" in ran.err
     assert not INSIDE.exists()
     assert not desk.released.exists()
+
+
+def test_the_live_wiki_is_refused_as_a_wiki_of_the_case_on_release(
+    desk, data_root: DataRoot, leavings
+):
+    desk.diagnose(leavings())
+
+    ran = desk.release("--wiki", f"live={data_root.wiki}")
+
+    assert ran.code == 1
+    assert f"the wiki under live ({data_root.wiki}) is a live store's" in ran.err
+    assert not desk.released.exists()

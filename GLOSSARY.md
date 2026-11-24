@@ -274,3 +274,23 @@ _Avoid_: Report, scrubbed report, results
 **Reproduction**:
 Fictional raw payloads, wiki pages, and eval questions that fail the way the case did, released with the findings. Committed, it becomes a fixture.
 _Avoid_: Repro case, synthetic copy, anonymized data
+
+**Label**:
+The name a referral gives a set of eval runs, or a wiki, in the case. Findings count runs under labels, so they say which runs without naming anything real.
+_Avoid_: Tag, alias, run name
+
+**Release check**:
+The check, made outside the diagnostician's reach and never where it ran, that a diagnosis's findings and reproductions are in form and hold nothing real. It releases all of them or refuses all of them.
+_Avoid_: Scrub, review, filter, verdict (that's the wiki's judgement on the real-data eval set)
+
+**Check's notes**:
+What a release check found, and where, when it refused. They quote real content, so they are the owner's, and go back only to the diagnostician.
+_Avoid_: Refusal report, check log, feedback
+
+**Revision**:
+A new diagnostician session's correction of a diagnosis the release check refused, made from the refused output and the check's notes. The first session's go at a diagnosis and each revision are its passes; a diagnosis is revised at most twice.
+_Avoid_: Second pass (a third pass is a revision too), retry, resume (that's the same session told its output isn't in form)
+
+**Released directory**:
+Where a release check puts the findings and reproductions it releases, for a development session to read. It is outside the repository and outside the data root.
+_Avoid_: Output directory, public directory, findings directory
