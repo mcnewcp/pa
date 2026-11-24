@@ -6,6 +6,9 @@ named, in the private diagnoses directory under the data root; a release goes to
 the same name in the released directory (`PA_RELEASED_DIR`), outside the repository and the data
 root, where a development session may read it.
 
+The findings are checked against what the case holds and against the owner's identity
+(`PA_OWNER_NAME`, `PA_OWNER_EMAILS`, `PA_OWNER_OTHER_NAMES`), so it refuses to run without one.
+
 What it prints is the diagnosis's name, the released directory, and counts: each rule by name
 with how many problems it found. Never a line of the findings, or what a rule found; that is in
 the check's notes, kept with the private analysis.
@@ -25,6 +28,7 @@ from pa_home.config import (
     RELEASED_DIR_VAR,
     DataRoot,
     load_data_root,
+    load_owner,
     load_released_directory,
     require_outside_repository,
 )
@@ -59,13 +63,16 @@ def _release(args: argparse.Namespace) -> int:
     name = require_name(args.name)
     # Every path is checked before any is read.
     data_root = load_data_root()
+    owner = load_owner()
     released_root = load_released_directory(data_root)
     cut_dir = require_private(args.cut, "--cut")
     private = _private(data_root, name)
     released = _released(released_root, data_root, name)
     if not private.is_dir():
         raise ReleaseChoiceError(f"there is no diagnosis named {name} in {data_root.diagnoses}")
-    verdict = release(Diagnosis(private), Case(cut=load_cut(cut_dir)), released=released)
+    verdict = release(
+        Diagnosis(private), Case(cut=load_cut(cut_dir)), owner=owner, released=released
+    )
     if isinstance(verdict, Refusal):
         print(f"release: {name}: refused, and nothing is released")
         _print_checks(verdict.checks)

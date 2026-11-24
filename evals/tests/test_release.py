@@ -12,7 +12,6 @@ import json
 import re
 import stat
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,48 +21,7 @@ from pa_home.config import DataRoot
 from pa_home.cut import Cut
 
 NAME = "dreamed-drop"
-REFUSED = 3
-"""The exit code of a refusal, which a script tells from a failure (1)."""
-
-
-@dataclass(frozen=True)
-class Desk:
-    """Where a release happens in a test: the private diagnoses directory under the data root,
-    and the released directory outside it."""
-
-    private: Path
-    released: Path
-    release: Callable[..., Any]
-    """Runs `pa-eval release` for the diagnosis named `NAME`."""
-    diagnose: Callable[..., Path]
-    """Makes the diagnosis named `NAME`, whose session leaves the given directory's files."""
-
-
-@pytest.fixture
-def desk(
-    tmp_path: Path,
-    data_root: DataRoot,
-    cut: Cut,
-    referral: Path,
-    pa_eval,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Desk:
-    released = tmp_path / "released"
-    monkeypatch.setenv("PA_DATA_DIR", str(data_root.path))
-    monkeypatch.setenv("PA_RELEASED_DIR", str(released))
-
-    def diagnose(leaves: Path) -> Path:
-        ran = pa_eval(
-            *("diagnose", "--referral", referral, "--cut", cut.path, "--name", NAME),
-            *("--out", data_root.diagnoses, "--agent", "scripted", "--leaves", leaves),
-        )
-        assert ran.code == 0
-        return data_root.diagnoses / NAME
-
-    def release(*extra: object) -> Any:
-        return pa_eval("release", "--name", NAME, "--cut", cut.path, *extra)
-
-    return Desk(data_root.diagnoses / NAME, released / NAME, release, diagnose)
+"""The diagnosis the `desk` (conftest) makes and releases."""
 
 
 def modes(top: Path) -> dict[str, int]:
@@ -75,7 +33,7 @@ def modes(top: Path) -> dict[str, int]:
 
 
 def test_well_formed_findings_are_released_with_a_record_of_the_release(
-    desk: Desk, cut: Cut, leavings, well_formed
+    desk, cut: Cut, leavings, well_formed
 ):
     left = leavings()
     desk.diagnose(left)
@@ -94,7 +52,10 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
         "cut": cut.name,
         "findings": 2,
         "kinds": {"fault": 1, "noise": 1},
-        "checks": {"shape": 0, "schema": 0, "paths": 0},
+        "checks": {
+            **{"shape": 0, "schema": 0, "paths": 0, "episodes": 0},
+            **{"names": 0, "addresses": 0, "quotes": 0, "digits": 0},
+        },
     }
     # The private analysis stays under the data root, for the owner alone.
     assert (desk.private / "output" / "analysis.md").read_text() == (
@@ -105,12 +66,11 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
     assert f"release: {NAME}: released" in ran.out
     assert f"released: {desk.released}" in ran.out
     assert "findings: 2 (1 fault, 1 noise)" in ran.out
-    assert "check shape: 0" in ran.out
-    assert "check schema: 0" in ran.out
-    assert "check paths: 0" in ran.out
+    for rule in ("shape", "schema", "paths", "episodes", "names", "addresses", "quotes", "digits"):
+        assert f"check {rule}: 0\n" in ran.out
 
 
-def test_a_release_leaves_the_diagnosis_readable_by_the_owner_alone(desk: Desk, leavings):
+def test_a_release_leaves_the_diagnosis_readable_by_the_owner_alone(desk, leavings):
     private = desk.diagnose(leavings())
     # As a copy pulled from another machine might arrive.
     for path in (private, *private.rglob("*")):
@@ -129,9 +89,7 @@ def test_a_release_leaves_the_diagnosis_readable_by_the_owner_alone(desk: Desk, 
     }
 
 
-def test_released_findings_are_written_afresh_from_the_schemas_fields(
-    desk: Desk, leavings, well_formed
-):
+def test_released_findings_are_written_afresh_from_the_schemas_fields(desk, leavings, well_formed):
     # JSON lets a key come twice, and the last one counts. Only what the schema read is
     # released, never the file the session wrote.
     written = json.dumps(well_formed, indent=2).replace(
@@ -148,22 +106,6 @@ def test_released_findings_are_written_afresh_from_the_schemas_fields(
 
 
 # A refusal.
-
-
-def refused(desk: Desk, ran: Any, **problems: int) -> str:
-    """Asserts that `ran` was a refusal that found `problems` (a count per rule; 0 for the
-    rest), released nothing, and kept its notes for the owner alone. Returns the notes."""
-    assert ran.code == REFUSED
-    assert not desk.released.exists()
-    assert not desk.released.parent.exists() or not list(desk.released.parent.iterdir())
-    assert f"release: {NAME}: refused" in ran.out
-    for rule, count in {"shape": 0, "schema": 0, "paths": 0, **problems}.items():
-        assert f"check {rule}: {count}\n" in ran.out
-    notes = desk.private / "check-notes.md"
-    assert f"notes: {notes}" in ran.out
-    assert stat.S_IMODE(notes.stat().st_mode) == 0o600
-    assert stat.S_IMODE(desk.private.stat().st_mode) == 0o700
-    return notes.read_text()
 
 
 def first(findings: dict[str, Any], **fields: Any) -> None:
@@ -191,22 +133,22 @@ OFF_THE_SCHEMA: dict[str, Callable[[dict[str, Any]], Any]] = {
 
 @pytest.mark.parametrize("change", OFF_THE_SCHEMA.values(), ids=OFF_THE_SCHEMA.keys())
 def test_findings_off_the_schema_are_refused(
-    desk: Desk, leavings, well_formed, change: Callable[[dict[str, Any]], Any]
+    desk, leavings, well_formed, change: Callable[[dict[str, Any]], Any]
 ):
     change(well_formed)
     desk.diagnose(leavings(well_formed))
 
-    notes = refused(desk, desk.release(), schema=1)
+    notes = desk.refused(desk.release(), schema=1)
 
     # The notes say where, for the owner.
     assert "## schema: 1" in notes
     assert "- findings.json: " in notes
 
 
-def test_findings_that_arent_json_are_refused(desk: Desk, leavings):
+def test_findings_that_arent_json_are_refused(desk, leavings):
     desk.diagnose(leavings("The gooseberry findings, in prose.\n"))
 
-    refused(desk, desk.release(), schema=1)
+    desk.refused(desk.release(), schema=1)
 
 
 OVER_A_CAP: dict[str, Callable[[dict[str, Any]], Any]] = {
@@ -221,15 +163,15 @@ OVER_A_CAP: dict[str, Callable[[dict[str, Any]], Any]] = {
 
 @pytest.mark.parametrize("change", OVER_A_CAP.values(), ids=OVER_A_CAP.keys())
 def test_findings_over_a_length_or_count_cap_are_refused(
-    desk: Desk, leavings, well_formed, change: Callable[[dict[str, Any]], Any]
+    desk, leavings, well_formed, change: Callable[[dict[str, Any]], Any]
 ):
     change(well_formed)
     desk.diagnose(leavings(well_formed))
 
-    refused(desk, desk.release(), schema=1)
+    desk.refused(desk.release(), schema=1)
 
 
-def test_findings_at_every_cap_are_released(desk: Desk, leavings, well_formed):
+def test_findings_at_every_cap_are_released(desk, leavings, well_formed):
     well_formed["summary"] = "s" * 600
     first(well_formed, mechanism="m" * 800, suggestion="g" * 800)
     well_formed["findings"] = [{**well_formed["findings"][0], "id": f"f{n}"} for n in range(1, 11)]
@@ -256,18 +198,16 @@ def test_findings_at_every_cap_are_released(desk: Desk, leavings, well_formed):
         ".",
     ],
 )
-def test_a_path_that_isnt_in_the_repository_is_refused(
-    desk: Desk, leavings, well_formed, path: str
-):
+def test_a_path_that_isnt_in_the_repository_is_refused(desk, leavings, well_formed, path: str):
     first(well_formed, code=["librarian/CLAUDE.md", path])
     desk.diagnose(leavings(well_formed))
 
-    notes = refused(desk, desk.release(), paths=1)
+    notes = desk.refused(desk.release(), paths=1)
 
     assert f"- findings.json: f1.code: {path!r} isn't in the repository" in notes
 
 
-def test_a_file_and_a_directory_in_the_repository_pass(desk: Desk, leavings, well_formed):
+def test_a_file_and_a_directory_in_the_repository_pass(desk, leavings, well_formed):
     first(well_formed, code=["evals/src/pa_evals/diagnosis.py", "librarian", "agent/"])
     desk.diagnose(leavings(well_formed))
 
@@ -281,28 +221,28 @@ def test_a_file_and_a_directory_in_the_repository_pass(desk: Desk, leavings, wel
     ]
 
 
-def test_an_unexpected_file_is_refused(desk: Desk, leavings):
+def test_an_unexpected_file_is_refused(desk, leavings):
     desk.diagnose(leavings(extra={"gooseberry.txt": "Zebulon's marmalade recipe.\n"}))
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert "- output/gooseberry.txt: an unexpected file" in notes
 
 
-def test_an_unexpected_directory_is_refused(desk: Desk, leavings):
+def test_an_unexpected_directory_is_refused(desk, leavings):
     left = leavings()
     (left / "gooseberry").mkdir()
     (left / "gooseberry" / "findings.json").write_text("{}")
     desk.diagnose(left)
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert "- output/gooseberry: an unexpected directory" in notes
 
 
 @pytest.mark.parametrize("name", ["analysis.md", "findings.json"])
 def test_a_link_in_place_of_a_file_is_refused_and_never_followed(
-    tmp_path: Path, desk: Desk, leavings, name: str
+    tmp_path: Path, desk, leavings, name: str
 ):
     # The link leads to a file that would pass, were it read.
     left = leavings()
@@ -313,61 +253,61 @@ def test_a_link_in_place_of_a_file_is_refused_and_never_followed(
     desk.diagnose(left)
     assert (desk.private / "output" / name).is_symlink()
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert f"- output/{name}: a link in place of a file" in notes
     # The link's target is left as it was: a release changes no file outside the diagnosis.
     assert stat.S_IMODE((elsewhere / name).stat().st_mode) != 0o600
 
 
-def test_an_output_that_is_a_link_is_refused(tmp_path: Path, desk: Desk, leavings):
+def test_an_output_that_is_a_link_is_refused(tmp_path: Path, desk, leavings):
     private = desk.diagnose(leavings())
     elsewhere = tmp_path / "elsewhere"
     (private / "output").rename(elsewhere)
     (private / "output").symlink_to(elsewhere, target_is_directory=True)
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert "- output: isn't a directory" in notes
 
 
 @pytest.mark.parametrize("name", ["analysis.md", "findings.json"])
-def test_a_missing_file_is_refused(desk: Desk, leavings, name: str):
+def test_a_missing_file_is_refused(desk, leavings, name: str):
     left = leavings()
     (left / name).unlink()
     desk.diagnose(left)
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert f"- output/{name}: missing" in notes
 
 
-def test_a_file_over_its_size_cap_is_refused(desk: Desk, leavings):
+def test_a_file_over_its_size_cap_is_refused(desk, leavings):
     left = leavings()
     (left / "analysis.md").write_text("The marmalade invoice.\n" * 10_000)
     desk.diagnose(left)
 
-    refused(desk, desk.release(), shape=1)
+    desk.refused(desk.release(), shape=1)
 
 
-def test_a_file_that_isnt_text_is_refused(desk: Desk, leavings):
+def test_a_file_that_isnt_text_is_refused(desk, leavings):
     left = leavings()
     (left / "analysis.md").write_bytes(b"\xff\xfe\x00marmalade")
     desk.diagnose(left)
 
-    notes = refused(desk, desk.release(), shape=1)
+    notes = desk.refused(desk.release(), shape=1)
 
     assert "- output/analysis.md: not UTF-8 text" in notes
 
 
 def test_every_rule_that_fails_is_counted_and_the_private_analysis_is_kept(
-    desk: Desk, leavings, well_formed
+    desk, leavings, well_formed
 ):
     first(well_formed, code=["gooseberry/one.py", "gooseberry/two.py"])
     left = leavings(well_formed, extra={"gooseberry.txt": "jam\n"})
     desk.diagnose(left)
 
-    refused(desk, desk.release(), shape=1, paths=2)
+    desk.refused(desk.release(), shape=1, paths=2)
 
     # A refused diagnosis still tells the owner something.
     assert (desk.private / "output" / "analysis.md").read_text() == (
@@ -381,7 +321,7 @@ INSIDE = Path(__file__).resolve().parents[1] / "runs" / "private-release-test-ne
 
 
 def test_a_released_directory_inside_the_repository_is_refused(
-    desk: Desk, leavings, monkeypatch: pytest.MonkeyPatch
+    desk, leavings, monkeypatch: pytest.MonkeyPatch
 ):
     desk.diagnose(leavings())
     monkeypatch.setenv("PA_RELEASED_DIR", str(INSIDE))
@@ -393,7 +333,7 @@ def test_a_released_directory_inside_the_repository_is_refused(
     assert not INSIDE.exists()
 
 
-def test_a_released_directory_linked_into_the_repository_is_refused(desk: Desk, leavings):
+def test_a_released_directory_linked_into_the_repository_is_refused(desk, leavings):
     desk.diagnose(leavings())
     desk.released.parent.mkdir()
     desk.released.symlink_to(INSIDE, target_is_directory=True)
@@ -407,7 +347,7 @@ def test_a_released_directory_linked_into_the_repository_is_refused(desk: Desk, 
 
 @pytest.mark.parametrize("where", ["released", "evals/released", "."])
 def test_a_released_directory_inside_the_data_root_is_refused(
-    desk: Desk, data_root: DataRoot, leavings, monkeypatch: pytest.MonkeyPatch, where: str
+    desk, data_root: DataRoot, leavings, monkeypatch: pytest.MonkeyPatch, where: str
 ):
     desk.diagnose(leavings())
     monkeypatch.setenv("PA_RELEASED_DIR", str(data_root.path / where))
@@ -420,7 +360,7 @@ def test_a_released_directory_inside_the_data_root_is_refused(
 
 
 def test_a_released_directory_that_holds_the_data_root_is_refused(
-    desk: Desk, data_root: DataRoot, leavings, monkeypatch: pytest.MonkeyPatch
+    desk, data_root: DataRoot, leavings, monkeypatch: pytest.MonkeyPatch
 ):
     desk.diagnose(leavings())
     monkeypatch.setenv("PA_RELEASED_DIR", str(data_root.path.parent))
@@ -433,7 +373,7 @@ def test_a_released_directory_that_holds_the_data_root_is_refused(
 
 
 def test_a_data_root_inside_the_repository_is_refused(
-    desk: Desk, leavings, monkeypatch: pytest.MonkeyPatch
+    desk, leavings, monkeypatch: pytest.MonkeyPatch
 ):
     desk.diagnose(leavings())
     monkeypatch.setenv("PA_DATA_DIR", str(INSIDE))
@@ -446,7 +386,7 @@ def test_a_data_root_inside_the_repository_is_refused(
     assert not desk.released.exists()
 
 
-def test_a_private_directory_linked_into_the_repository_is_refused(desk: Desk):
+def test_a_private_directory_linked_into_the_repository_is_refused(desk):
     desk.private.parent.mkdir(parents=True)
     desk.private.symlink_to(INSIDE, target_is_directory=True)
 
@@ -458,9 +398,7 @@ def test_a_private_directory_linked_into_the_repository_is_refused(desk: Desk):
     assert not desk.released.exists()
 
 
-def test_a_private_directory_linked_out_of_the_data_root_is_refused(
-    tmp_path: Path, desk: Desk, leavings
-):
+def test_a_private_directory_linked_out_of_the_data_root_is_refused(tmp_path: Path, desk, leavings):
     private = desk.diagnose(leavings())
     private.rename(tmp_path / "elsewhere")
     private.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
@@ -472,7 +410,7 @@ def test_a_private_directory_linked_out_of_the_data_root_is_refused(
     assert not desk.released.exists()
 
 
-def test_a_case_inside_the_repository_is_refused(desk: Desk, leavings, pa_eval):
+def test_a_case_inside_the_repository_is_refused(desk, leavings, pa_eval):
     desk.diagnose(leavings())
 
     ran = pa_eval("release", "--name", NAME, "--cut", INSIDE)
@@ -485,7 +423,7 @@ def test_a_case_inside_the_repository_is_refused(desk: Desk, leavings, pa_eval):
 # No release is written over, and a diagnosis is checked against the case it read.
 
 
-def test_a_name_already_released_is_refused(desk: Desk, leavings):
+def test_a_name_already_released_is_refused(desk, leavings):
     desk.diagnose(leavings())
     desk.released.mkdir(parents=True)
     (desk.released / "findings.json").write_text("an earlier release\n")
@@ -498,7 +436,7 @@ def test_a_name_already_released_is_refused(desk: Desk, leavings):
     assert (desk.released / "findings.json").read_text() == "an earlier release\n"
 
 
-def test_a_diagnosis_is_released_once(desk: Desk, leavings):
+def test_a_diagnosis_is_released_once(desk, leavings):
     desk.diagnose(leavings())
     assert desk.release().code == 0
     released = (desk.released / "release.json").read_text()
@@ -510,7 +448,7 @@ def test_a_diagnosis_is_released_once(desk: Desk, leavings):
     assert (desk.released / "release.json").read_text() == released
 
 
-def test_a_name_with_no_diagnosis_is_refused(desk: Desk):
+def test_a_name_with_no_diagnosis_is_refused(desk):
     ran = desk.release()
 
     assert ran.code == 1
@@ -518,7 +456,7 @@ def test_a_name_with_no_diagnosis_is_refused(desk: Desk):
     assert not desk.released.exists()
 
 
-def test_a_diagnosis_is_checked_against_the_cut_it_read(desk: Desk, leavings):
+def test_a_diagnosis_is_checked_against_the_cut_it_read(desk, leavings):
     private = desk.diagnose(leavings())
     session = json.loads((private / "session.json").read_text())
     (private / "session.json").write_text(json.dumps({**session, "cut": "20250101T000000Z"}))
@@ -530,7 +468,7 @@ def test_a_diagnosis_is_checked_against_the_cut_it_read(desk: Desk, leavings):
     assert not desk.released.exists()
 
 
-def test_a_session_record_that_isnt_one_is_refused_without_quoting_it(desk: Desk, leavings):
+def test_a_session_record_that_isnt_one_is_refused_without_quoting_it(desk, leavings):
     private = desk.diagnose(leavings())
     session = json.loads((private / "session.json").read_text())
     (private / "session.json").write_text(json.dumps({**session, "commit": "gooseberry"}))

@@ -61,11 +61,18 @@ with the real names, questions, and answers.
 For the development session. A check on another machine releases them to it only if they hold
 nothing real, and refuses them whole otherwise. So in the findings:
 
-- Name questions and episodes only by their ids.
-- Never write a person's or an organization's name, an address, a domain, or a number such as
-  a phone or an account number.
-- Never repeat words from the case: not from mail, notes, chats, or wiki pages. Describe what
-  happened in your own words, in terms of the PA's code and instructions.
+- Name questions and episodes only by their ids, and only episodes that are in the case.
+- Never write a person's or an organization's name, in any form: a page's slug
+  (`first-last`) is a name too, and so is a label that holds one. Say "the sender", "one
+  person's page", "the two pages that were merged".
+- Never write an address, a link, or a domain, unless it is at a reserved example domain
+  such as `example.com`. A dotted name that the PA's repository doesn't hold reads as a
+  domain, so name code as the repository does and files by their paths.
+- Never write a number of seven digits or more, such as a phone or an account number,
+  however it is broken up. A date written `2026-10-05` is fine.
+- Never repeat words from the case: six words in a row from mail, a note, a chat, or a wiki
+  page refuse the findings. Describe what happened in your own words, in terms of the PA's
+  code and instructions.
 - Keep to the schema. A field it doesn't name, or text over a cap, refuses the findings.
 
 ```json

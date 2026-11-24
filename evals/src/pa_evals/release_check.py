@@ -13,10 +13,24 @@ what a rule holds. To add one, write its function and add a `Rule` to `RULES`:
 - each problem says what was found and where, which is private: it goes to the check's notes,
   kept in the diagnosis's directory for the owner alone, and nowhere else.
 
-The rules here hold the output to its form: the files an output may hold, the findings schema,
-and paths that are in the repository. None of them knows real content from fictional yet (a
-name, an address, quoted text, a long number), so until those rules are here a release is for a
-synthetic case only, and nothing here may be run over real data.
+The first rules hold the output to its form: the files an output may hold, the findings
+schema, paths that are in the repository, and episodes that are in the case. The rest are the
+fence: they refuse real content in every piece of the findings' text (`_pieces`), told from
+fictional by what the case holds (`pa_evals.real_content`).
+
+- `names`: a name of two or more words that the case holds for a person or an organization.
+- `addresses`: an address or a domain outside the reserved example domains.
+- `quotes`: six or more words in a row that the case holds, unless the repository or the
+  referral holds them too.
+- `digits`: a number of seven or more digits, in a row or in the groups a phone number is
+  written in.
+
+What the case holds comes from its parts (`_sources`), and what is checked is each piece of
+text a release would hand over (`_pieces`). A diagnosis that gains an output (a reproduction)
+adds its pieces, and a case that gains a part adds a source; the rules stay as they are.
+
+The thresholds are constants, not configuration. The rules catch identifiers and quoted text,
+never meaning: a paraphrase passes, and so does a name of one word.
 
 A release writes the released directory, whole or not at all:
 
@@ -30,15 +44,33 @@ Nothing here puts what a rule found in an exception or a return value's printabl
 from __future__ import annotations
 
 import shutil
-import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from pa_core.errors import PaError
+from pa_core.owner import Owner
 from pa_evals.diagnosis import FINDINGS, Case, Diagnosis, output_problems, read_output
 from pa_evals.findings import Findings, FindingsError, findings_json, parse_findings
 from pa_evals.models import FrozenModel
+from pa_evals.real_content import (
+    QUOTED_WORDS,
+    Envelopes,
+    OwnerIdentity,
+    Passage,
+    RealContent,
+    Source,
+    Wiki,
+    held_by,
+    holding_dotted_names,
+    long_numbers,
+    named,
+    repeated,
+    repository_passages,
+    tracked_files,
+    unreserved,
+    words,
+)
 from pa_home.project import REPOSITORY
 
 NOTES = "check-notes.md"
@@ -75,6 +107,43 @@ class Submission:
     reads them has nothing to say then: the diagnosis is refused already."""
     off_schema: tuple[str, ...]
     """Where the findings leave the schema, and why."""
+    real: RealContent
+    """What the case holds, and the owner's identity."""
+
+    def public(self) -> Iterator[Passage]:
+        """What is public already, so findings may repeat it: the referral, which holds
+        nothing real, and the repository."""
+        yield Passage("the referral", self.referral)
+        yield from repository_passages(self.repository)
+
+
+@dataclass(frozen=True)
+class Piece:
+    """A piece of the text a release would hand a development session."""
+
+    where: str
+    """Which file and field it is, for the notes: `findings.json: f1.mechanism`."""
+    text: str
+
+
+@dataclass(frozen=True)
+class Reading:
+    """Pieces read one after another, as words. A name or a quote is looked for across them,
+    so one split between two fields is still found."""
+
+    pieces: Sequence[Piece]
+    words: Sequence[str]
+    piece_of: Sequence[int]
+    """For each word, the index of the piece it is in."""
+
+    @classmethod
+    def of(cls, pieces: Sequence[Piece]) -> Reading:
+        read = [(word, index) for index, piece in enumerate(pieces) for word in words(piece.text)]
+        return cls(pieces, [word for word, _ in read], [index for _, index in read])
+
+    def where(self, word: int) -> str:
+        """Where the word at index `word` is."""
+        return self.pieces[self.piece_of[word]].where
 
 
 @dataclass(frozen=True)
@@ -112,10 +181,144 @@ def _paths(submission: Submission) -> list[Problem]:
     ]
 
 
+def _episodes(submission: Submission) -> list[Problem]:
+    """Every episode a finding names is in the case. An id's 16 hex characters could spell
+    anything else."""
+    if submission.findings is None:
+        return []
+    held = submission.case.cut.episode_ids()
+    return [
+        Problem(f"{FINDINGS}: {finding.id}.episodes", f"{episode!r} isn't an episode in the case")
+        for finding in submission.findings.findings
+        for episode in finding.episodes
+        if episode not in held
+    ]
+
+
+def _pieces(findings: Findings) -> list[Piece]:
+    """Every piece of the findings' text that a session wrote freely, in the order the
+    released file holds it.
+
+    That is the summary, and each finding's labels with their counts of runs, its mechanism,
+    and its suggestion. What is left out is held another way: a field off a fixed list by the
+    schema, a finding's id and its questions by their patterns, its episodes by the `episodes`
+    rule, and its paths by the `paths` rule.
+    """
+    pieces = [Piece(f"{FINDINGS}: summary", findings.summary)]
+    for finding in findings.findings:
+        pieces += [
+            Piece(f"{FINDINGS}: {finding.id}.runs", f"{label}: {affected} of {asked}")
+            for label, (affected, asked) in finding.runs.items()
+        ]
+        pieces += [
+            Piece(f"{FINDINGS}: {finding.id}.mechanism", finding.mechanism),
+            Piece(f"{FINDINGS}: {finding.id}.suggestion", finding.suggestion),
+        ]
+    return pieces
+
+
+def _names(submission: Submission) -> list[Problem]:
+    """No name of two or more words that the case holds for a person or an organization: a
+    participant's display name, a page's slug, alias, or name, or one of the owner's names."""
+    if submission.findings is None:
+        return []
+    reading = Reading.of(_pieces(submission.findings))
+    names = submission.real.names
+    return [
+        Problem(
+            reading.where(start),
+            f"the name {' '.join(reading.words[start:end])!r}, which the case holds "
+            f"({held_by(tuple(reading.words[start:end]), names)})",
+        )
+        for start, end in named(reading.words, names)
+    ]
+
+
+def _addresses(submission: Submission) -> list[Problem]:
+    """No address, and no domain, outside the reserved example domains, whether or not the
+    case holds it. A dotted name the repository or the referral holds is code or a file's
+    name, not a domain; an address is never excused."""
+    if submission.findings is None:
+        return []
+    found = [(piece, unreserved(piece.text)) for piece in _pieces(submission.findings)]
+    dotted = {name for _, outside in found for name in outside.dotted_names}
+    domains = dotted - holding_dotted_names(submission.public(), dotted) if dotted else dotted
+    outside_them = "is outside the reserved example domains"
+    return [
+        problem
+        for piece, outside in found
+        for problem in (
+            *(Problem(piece.where, f"the address {a!r} {outside_them}") for a in outside.addresses),
+            *(
+                Problem(piece.where, f"the domain {name!r} {outside_them}")
+                for name in outside.dotted_names
+                if name in domains
+            ),
+        )
+    ]
+
+
+def _quotes(submission: Submission) -> list[Problem]:
+    """No six words in a row that the case holds in an episode's subject or body or in a wiki
+    file, unless the referral or the repository holds the same six: those are public already.
+    Words that go on past six are one quote."""
+    if submission.findings is None:
+        return []
+    reading = Reading.of(_pieces(submission.findings))
+    runs = [
+        tuple(reading.words[start : start + QUOTED_WORDS])
+        for start in range(len(reading.words) - QUOTED_WORDS + 1)
+    ]
+    held = repeated(submission.real.passages(), set(runs))
+    public = repeated(submission.public(), set(held))
+    quoted = [run in held and run not in public for run in runs]
+    problems: list[Problem] = []
+    start = 0
+    while start < len(runs):
+        if not quoted[start]:
+            start += 1
+            continue
+        last = start
+        while last + 1 < len(runs) and quoted[last + 1]:
+            last += 1
+        end = last + QUOTED_WORDS
+        problems.append(
+            Problem(
+                reading.where(start),
+                f"{end - start} words in a row that the case holds ({held[runs[start]]}): "
+                f"{' '.join(reading.words[start:end])!r}",
+            )
+        )
+        start = last + 1
+    return problems
+
+
+def _digits(submission: Submission) -> list[Problem]:
+    """No number of seven digits or more, which could be a phone, an account, or a
+    confirmation number. An id of one of the case's episodes isn't one, and neither is a
+    date."""
+    if submission.findings is None:
+        return []
+    episodes = submission.case.cut.episode_ids()
+    return [
+        Problem(
+            piece.where,
+            f"a number of {sum(character.isdigit() for character in number)} digits: {number!r}",
+        )
+        for piece in _pieces(submission.findings)
+        for number in long_numbers(piece.text, ids=episodes)
+    ]
+
+
 RULES: tuple[Rule, ...] = (
     Rule("shape", _shape),
     Rule("schema", _schema),
     Rule("paths", _paths),
+    Rule("episodes", _episodes),
+    Rule("names", _names),
+    Rule("addresses", _addresses),
+    Rule("quotes", _quotes),
+    Rule("digits", _digits),
 )
 """Every rule, in the order its count is reported."""
 
@@ -156,12 +359,18 @@ class Refusal:
 
 
 def release(
-    diagnosis: Diagnosis, case: Case, *, released: Path, repository: Path = REPOSITORY
+    diagnosis: Diagnosis,
+    case: Case,
+    *,
+    owner: Owner,
+    released: Path,
+    repository: Path = REPOSITORY,
 ) -> Release | Refusal:
     """Checks `diagnosis` against every rule, and releases its findings to the directory
     `released` or refuses it.
 
-    `case` is the case the diagnosis read, in the devbox's copy. A release writes `released`
+    `case` is the case the diagnosis read, in the devbox's copy, and `owner` the owner whose
+    store it was cut from: what they hold is what the findings may not. A release writes `released`
     whole; a refusal writes nothing there, and keeps what each rule found in the diagnosis's
     directory. Either way the diagnosis's directory is left readable by the owner alone.
 
@@ -186,7 +395,7 @@ def release(
         )
     referral = diagnosis.referral_text()
     diagnosis.make_private()
-    submission = _submitted(diagnosis, case, referral, repository)
+    submission = _submitted(diagnosis, case, referral, repository, owner)
     found = {rule.name: list(rule.check(submission)) for rule in RULES}
     checks = {name: len(problems) for name, problems in found.items()}
     findings = submission.findings
@@ -204,7 +413,9 @@ def release(
     return Release(released, record)
 
 
-def _submitted(diagnosis: Diagnosis, case: Case, referral: str, repository: Path) -> Submission:
+def _submitted(
+    diagnosis: Diagnosis, case: Case, referral: str, repository: Path, owner: Owner
+) -> Submission:
     findings, off_schema = None, ()
     data = read_output(diagnosis.output, FINDINGS)
     if data is not None:
@@ -219,7 +430,17 @@ def _submitted(diagnosis: Diagnosis, case: Case, referral: str, repository: Path
         repository=repository,
         findings=findings,
         off_schema=off_schema,
+        real=RealContent(_sources(case, owner)),
     )
+
+
+def _sources(case: Case, owner: Owner) -> list[Source]:
+    """The parts of `case` that hold real content, and the owner's identity. A case that
+    gains a part gains a source here."""
+    sources: list[Source] = [OwnerIdentity(owner), Envelopes(case.cut.l0)]
+    if case.cut.wiki is not None:
+        sources.append(Wiki(case.cut.wiki))
+    return sources
 
 
 def _notes(name: str, found: dict[str, list[Problem]]) -> str:
@@ -254,16 +475,7 @@ def _write(released: Path, findings: Findings, record: ReleaseRecord) -> None:
 def _tracked(repository: Path) -> frozenset[str]:
     """Every file git tracks in `repository`, and every directory holding one, as paths from
     its root."""
-    try:
-        listed = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=repository, capture_output=True, text=True, check=True
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        raise ReleaseError(
-            f"can't list the files git tracks in {repository}: the release check runs in a "
-            "checkout of the repository"
-        ) from None
-    files = [PurePosixPath(name) for name in listed.split("\0") if name]
+    files = [PurePosixPath(name) for name in tracked_files(repository)]
     return frozenset(str(path) for file in files for path in (file, *file.parents) if path.parts)
 
 
