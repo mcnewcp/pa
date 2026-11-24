@@ -183,9 +183,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
     commands.add_parser(
         "backup",
-        help="Back up L0, the wiki's git directory, and the private eval directory to the "
-        "configured restic repository, and record the outcome in the status. Skips if another "
-        "run holds the data root's lock.",
+        help="Back up L0, the wiki's git directory, the private eval directory, and the "
+        "private diagnoses directory to the configured restic repository, and record the "
+        "outcome in the status. Skips if another run holds the data root's lock.",
     )
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."

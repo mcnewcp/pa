@@ -48,7 +48,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
 | `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
 | `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
-| `diagnose.sh --referral FILE --name NAME --cut DIR [case parts]` | Runs a diagnosis through the VM (ADR-0010): pushes the case (the cut once), has a diagnostician's session answer the referral, brings what it left back to `diagnoses/` under the data root, and runs the release check on the devbox (`pa-eval release`). Exits 0 when the findings are released, 3 when the check refuses them, 4 when the session fails, and 1 otherwise |
+| `diagnose.sh --referral FILE --name NAME --cut DIR [case parts]` | Runs a diagnosis through the VM (ADR-0010): pushes the case (the cut once), has a diagnostician's session answer the referral, brings what it left back to `diagnoses/` under the data root, and runs the release check on the devbox (`pa-eval release`). Exits 0 when the findings are released, 3 when the check refuses them, 4 when the session fails, and 1 otherwise ([Diagnoses](#diagnoses)) |
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
@@ -58,7 +58,7 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
 | `gmail.sh auth\|dry-run …` | Runs `pa gmail` on the devbox: the consent (and re-auth), and the dry run's counts ([Gmail](#gmail)) |
 | `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
-| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
+| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory, the private eval directory and the private diagnoses directory, on the USB SSD ([The backup](#the-backup)) |
 | `capture.sh [--backfill W \| --reconcile]` | Runs a capture cycle on the devbox with the instance's configuration, as `pa-capture.service` does every 15 minutes ([The live schedule](#the-live-schedule)) |
 | `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, a dreaming run when one is due, the backup, as `pa-nightly.service` does overnight |
 | `install-schedules.sh [--enable]` | Installs the schedules' units and timers (`schedules/`, needs sudo); `--enable` starts both timers once the wiki is seeded |
@@ -113,7 +113,7 @@ What the assistant can't write is root's, outside its home, so no directory abov
 | `/var/lib/pa-capture` | capture, 0700 | The helper's pending prompts |
 | `~/.claude/settings.json` | root, 0644 | `{}`, since no setting turns user settings off |
 | `/srv/pa/scratch` | assistant, 0700 | The one directory the assistant's shell and file tools write |
-| `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
+| `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, and a diagnosis's case and what its session left, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
 
 The home directory is the assistant's, so only the managed settings' deny rules and the sandbox keep its tools out of it; Claude Code itself still writes its state there. `install-assistant-fences.sh` also removes any auto-memory directory left under `~/.claude/projects/`.
 
@@ -246,7 +246,7 @@ To run either job by hand, as its timer does: `deploy/home/capture.sh` (with `--
 
 ## The backup
 
-The nightly job backs up once the schedules are on ([The live schedule](#the-live-schedule)), and `backup.sh` runs `pa backup` by hand. Each takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
+The nightly job backs up once the schedules are on ([The live schedule](#the-live-schedule)), and `backup.sh` runs `pa backup` by hand. Each takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, the private eval directory `evals/` (real-data eval sets, runs and verdicts), and the private diagnoses directory `diagnoses/` (each diagnosis's referral, private analysis, raw output and check notes: [Diagnoses](#diagnoses)). `wiki.git/`, `evals/` and `diagnoses/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). Cuts (`cuts/`) and dreamed copies (`replays/`) aren't in it, so a restored diagnosis keeps its private analysis and not the case it read. `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
 
 - **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
 - **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
@@ -261,7 +261,7 @@ Restic needs the repository and its password. On a new devbox, first install res
 ```sh
 export RESTIC_REPOSITORY=/mnt/pa-backup/restic RESTIC_PASSWORD_FILE=~/.config/pa/restic.password
 restic snapshots                                   # one per backup; the newest is "latest"
-restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/ and evals/, as backed up
+restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/, evals/ and diagnoses/, as backed up
 ```
 
 To bring back a whole data root, start from an empty one. Move the old one aside if it's still there, and stop anything that runs against it.
@@ -627,6 +627,102 @@ deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> \
 A headless session in the assistant's VM reads the cut's L0 (a read-only copy, never the cut's wiki), with exchange capture off, and drafts about 25 questions (`--questions N`), each with an expected answer and evidence episode ids. It's asked at the cut's as-of time, as the owner in the VM's `owner.env`, with the prompt versioned in `evals/src/pa_evals/draft_prompts/`. Questions get opaque ids (`r01`, `r02`, ...), and a draft naming an episode that isn't in the cut is thrown away whole. The draft comes back mode 0600 under `<data root>/evals/drafts/<as-of>/` (or `$PA_EVAL_DRAFTS_DIR/<as-of>/`), and is never written over.
 
 The owner corrects the draft in place, adds questions of their own, and, for a second pass, writes their notes beside it. The second pass revises the draft as the owner left it, keeps the ids of the questions it keeps, and numbers new ones after the last. Drafts and notes are refused inside this checkout, by `draft-evals.sh` and again by `pa-eval draft`; what either prints says how much was drafted, never what. The session may take up to an hour (`--timeout` seconds) before it fails.
+
+## Diagnoses
+
+A development session never reads real content, so it refers a question about it to a diagnostician ([ADR-0010](../../docs/adr/0010-fenced-diagnostician.md)). `diagnose.sh` runs the whole diagnosis with no hand-off to the owner: a session in the assistant's VM reads the case and answers the referral, and a release check on the devbox decides whether its findings and reproductions reach a development session.
+
+```sh
+deploy/home/diagnose.sh --referral <referral>.md --name dreamed-drop \
+  --cut <data root>/cuts/<as-of> --eval-set <data root>/evals/<set>.json \
+  --runs own=<runs with the cut's wiki> --runs dreamed=<runs with its dreamed copy> \
+  --wiki own=<data root>/cuts/<as-of> --wiki dreamed=<replays>/<name> \
+  [--earlier <data root>/diagnoses/<an earlier diagnosis>]
+                                              # private:  <data root>/diagnoses/<UTC time>-dreamed-drop/
+                                              # released: ~/.local/share/pa-released/<UTC time>-dreamed-drop/
+uv run pa-eval reproduction resolve <a copy of a released reproduction>   # after renaming or trimming it
+```
+
+The session uses the code and the diagnostician's project (`diagnostician/`) at the VM's deployed commit, so `update.sh` comes first. It runs as the assistant, under the VM's managed settings and sandbox like every session there, with exchange capture off, and the diagnosis fails if `inbox/assistant_chat/` changed while it ran. It isn't the assistant: its role and instructions are `diagnostician/CLAUDE.md`'s, and its prompts are in `evals/src/pa_evals/diagnose_prompts/`. Claude Code in the VM must be logged in.
+
+### Referring a question
+
+- **The referral** is a Markdown file that holds the question and nothing real: no name, address, question, or answer from the data root. It can ask anything from why some questions' scores fell to whether each change a dreaming run applied was right. It speaks of each set of runs and each wiki by the label the command gives it (`own`, `dreamed`), and the findings count runs under the same labels. The release check passes a run of words that the referral itself holds, so a referral that quoted real content would let the quote out.
+- **The name** is a short one: letters, digits, and hyphens, at most 63. The diagnosis's name is the UTC time and that (`20261124T165821Z-dreamed-drop`), so no diagnosis is ever written over.
+- **The session's model, effort, turn limit, and timeout** are `PA_DIAGNOSTICIAN_MODEL` (`claude-opus-5-5`), `PA_DIAGNOSTICIAN_EFFORT` (`high`), `PA_DIAGNOSTICIAN_MAX_TURNS` (200), and `PA_DIAGNOSTICIAN_TIMEOUT_SECONDS` (3600) in the script's environment, or `--agent-model`, `--effort`, `--max-turns`, and `--timeout`, which the script passes on to `pa-eval diagnose`. The turn limit and the timeout bound the session each time it's started or resumed, not the whole diagnosis.
+- **It refuses to start** while the nightly job runs (its unit is active, or its mark in the status file is fresh), since a diagnosis spends the usage limit the librarian does, and while another diagnosis runs. It checks once, at the start, so start one with time to finish before the nightly job. A dreaming run, an eval run, or a drafting session started by hand spends the same limit and isn't detected. It never takes the data root's lock: a cut holds still.
+
+### The case
+
+The case is what the session reads, all of it frozen. Each part is named by where the devbox holds it:
+
+| Option | Part |
+|---|---|
+| `--cut DIR` | The cut the question is about (`pa cut`); always needed. The live data root is never a case |
+| `--eval-set FILE` | The eval set asked over the cut, with its expected answers |
+| `--runs LABEL=DIR` | A run directory of eval runs over the cut. Repeat it; several under one label make one set of runs. Only each run's `results.json` goes |
+| `--wiki LABEL=DIR` | A wiki: `DIR` is the cut, for the cut's own wiki, or a dreamed copy of it under `replays/`. One wiki a label |
+| `--earlier DIR` | An earlier diagnosis's private directory, of which only the private analysis is read |
+
+- **A label** is lowercase letters, digits, and hyphens, at most 32.
+- **Each wiki's history goes as files**, a file for each run with its commit message and what it changed, since the session has no git directory. The script exports them itself (`pa-eval wiki-history`): the cut's own from the live `wiki.git/` up to the commit the cut holds, a dreamed copy's from its own. So `--history` is refused, and so is `--out`.
+- **A follow-up** names the earlier diagnosis with `--earlier`, and the session builds on its private analysis. That is also how a reproduction that didn't fail goes back: the referral says what was run and what happened.
+- **Every part is refused inside this checkout**, by `diagnose.sh` and again by `pa-eval diagnose` and `pa-eval release`. So is the released directory, which is also refused inside the data root.
+- **In the VM** the cut is pushed once (`/srv/pa/eval/cuts/<as-of>`) and reused, and the referral and the other parts go to `/srv/pa/eval/case`, replacing the last diagnosis's. `pa-eval diagnose` lays the case read-only in a throwaway directory for the session, which also reads the deployed code in `/opt/pa` and writes only its output.
+
+### What comes out
+
+| Where | Holds | For |
+|---|---|---|
+| `<data root>/diagnoses/<name>/`, mode 0700, files 0600 | `referral.md`; `output/` as the session left it (`analysis.md`, the private analysis, with `findings.json` and `reproductions/` unchecked); `reply.md`; `session.json` (the cut, the case's parts, the deployed commit, cost, turns, resumes); `check-notes.md` after a refusal; `session-error.txt` or `output-problems.md` after a failed session | The owner. A development session never reads it. The backup takes it |
+| `~/.local/share/pa-released/<name>/` (or `$PA_RELEASED_DIR/<name>/`) | `findings.json`; `release.json` (the name, the cut, the deployed commit, and every count printed); `reproductions/<finding>/` for each finding that has one | A development session |
+| The VM | The session's own copy in `/srv/pa/eval/diagnoses/<name>/`, and its transcript | Nobody: they stay there |
+
+- **The findings** fit a fixed schema (`evals/src/pa_evals/findings.py`): whether the referral was answered fully, partly, or not, a summary, and at most 10 findings. Each names its kind, the component at fault, the questions and episodes involved by opaque id, the runs affected of those asked under each label, the mechanism, the repository paths it blames, a suggestion, a confidence, and its reproduction or why it has none (`needs-scale`, `variance`, `question-defect`).
+- **A reproduction** is fictional: raw payloads in a directory per source, an optional starting wiki, an eval set, and one line of expectation (what should happen, and what happens instead), all the synthetic corpus's fictional owner's. Its evidence and citations are resolved to the episodes its payloads ingest to, so it runs as it stands: `pa-eval run --corpus <reproduction>/payloads --eval-set <reproduction>/eval_set.json`. It is released untested (`reproduction.json`), since the diagnostician can't run the librarian or the assistant. Running it and seeing it fail is the first step of a fix.
+- **What the script prints** is the diagnosis's name and its cut, the case's parts, the session's cost, turns, and resumes, where the diagnosis was left, and what the release check reports: released or refused, the released directory, the findings by kind, the reproductions and their payloads, and each rule's name with how many problems it found. It never prints a line of the findings. Anything else a command printed (a traceback can quote the case) is kept in the private directory, and the script says only how many lines.
+- **A session that left a malformed output** is resumed with what's wrong, at most twice: findings off the schema, a missing private analysis, a reproduction over its caps or one that doesn't ingest or lint. `resumes:` says how often.
+
+### Exit codes
+
+| Code | Means | What is left |
+|---|---|---|
+| 0 | The findings were released | Both directories |
+| 3 | The release check refused them | The private directory, with the check's notes. Nothing is released |
+| 4 | The session failed, ran out of time or turns, or left an output still malformed after its resumes | What the session left, in the private directory. Nothing was checked |
+| 1 | Anything else: a bad option, a path inside this checkout, the nightly job or another diagnosis running, a case that isn't what its options say, a chat inbox that changed while the session ran, or a release check that couldn't run | Whatever the session left, if one ran. Nothing is released |
+
+### A refusal
+
+The release check runs on the devbox, never in the VM, since whatever ran in the VM could have been steered by what it read. It releases the findings and every reproduction together, or nothing: one problem under any rule refuses the diagnosis. A refusal prints each rule's name with how many problems it found, and never what it found. That is in `check-notes.md`, for the owner.
+
+| Rule | Counts |
+|---|---|
+| `shape` | A file in the output that isn't a regular file of an expected name and kind within the caps, or a link |
+| `schema` | A place where the findings don't fit the schema |
+| `paths` | A path a finding blames that isn't in the repository |
+| `episodes`, `questions`, `labels` | An episode or question id that isn't in the case, one of the case's episode ids in a reproduction, or a count of runs under a label the case doesn't give or over what it holds |
+| `names` | A name of two or more words that the case holds for a person or an organization, or one of the owner's |
+| `addresses` | An address or a domain outside the reserved example domains |
+| `quotes` | Six or more words in a row that the case holds and neither the repository nor the referral does |
+| `digits` | Seven or more digits, in a row or in the groups a phone number is written in. A date isn't one, nor is a time in a reproduction's payload |
+| `reproductions`, `owner` | A reproduction that is missing, unnamed by a finding, or not in form, or whose owner isn't the fictional one |
+| `one-word-names` | In a reproduction, a one-word name the case holds, in the letter case it holds it |
+| `ingest`, `lint` | A reproduction's payload that quarantines, or an error in its wiki |
+
+- **A refused diagnosis is revised automatically**, at most twice: a second session in the VM is given its own output and the check's notes, and the check runs again on what it leaves. The notes hold real content, which is why they go only into the VM. A diagnosis still refused after two revisions ends unreleased with exit code 3, so retries never wear the check down. Every pass's output and notes are kept in the private directory, and the script prints how many revisions were made.
+- **After a refusal** a development session has the counts and nothing else. It can refer the question again, more narrowly, or leave a note for the owner, who has the private analysis whether or not anything was released. It never reads the notes.
+- **The check catches identifiers and quoted text, never meaning.** A paraphrase passes, and so does a one-word name in the findings. That is why a reproduction is read before it's committed.
+
+### Committing a reproduction
+
+A reproduction becomes a fixture: the fault is fixed against it, test-first, and it stays in the repository. Copy `<released>/<name>/reproductions/<finding>/` into this checkout, then:
+
+- **Read every file**, and rename or trim whatever reads like a real matter. This is the last check before publication, and nothing reruns the release check's rules on an edited copy: they need the case.
+- **Resolve it again** with `uv run pa-eval reproduction resolve <copy>`. An edited payload can ingest to another episode (a daily note's id comes from its text, a mail's from its `Message-ID`), and the eval set and the wiki would still name the old one. The command works out which payload each id was from `reproduction.json`, then writes `eval_set.json`, the wiki's citations and index, and `reproduction.json` again, in place. It prints how many payloads have a new episode id.
+- **A payload is recognized** by its file's name, or by an episode id that didn't change. So rename a file or edit it, and resolve between the two. Evidence and citations may also name a payload by its file (`gmail/order.eml`, `{ep:gmail/order.eml}`), as the diagnostician writes them, and are resolved the same way.
+- **A copy that is out of form is refused and left as it was**, with what is wrong and where: evidence or a citation left naming a payload that was removed, a payload that quarantines, a wiki that fails lint, a file that isn't a reproduction's.
+- **The findings' opaque ids stay out** of the fixture, the commit, and the issue. A reproduction's own episode ids are its fictional payloads', and go in with it.
 
 ## Updating and rolling back
 

@@ -18,6 +18,7 @@ from pa_evals.draft_cli import add_draft_command
 from pa_evals.history_cli import add_wiki_history_command
 from pa_evals.questions_cli import add_eval_set_command
 from pa_evals.release_cli import add_release_command
+from pa_evals.reproduction_cli import add_reproduction_command
 from pa_evals.run_cli import add_run_command
 from pa_evals.verdict_cli import add_verdict_command
 
@@ -34,6 +35,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     add_wiki_history_command(commands)
     add_diagnose_command(commands)
     add_release_command(commands)
+    add_reproduction_command(commands)
     add_verdict_command(commands)
     args = parser.parse_args(argv)
     try:

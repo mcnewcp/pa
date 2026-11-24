@@ -138,6 +138,35 @@ def test_a_data_root_without_a_wiki_or_evals_yet_backs_up_l0(
     assert files_under(restored / "l0") == files_under(data_root / "l0")
 
 
+def populate_diagnosis(data_root: Path) -> Path:
+    """One diagnosis's private directory, as the diagnose script leaves a refused one."""
+    diagnosis = data_root / "diagnoses" / "20261124T165821Z-dreamed-drop"
+    (diagnosis / "output").mkdir(parents=True)
+    (diagnosis / "referral.md").write_text("Why do two questions fail more often on `dreamed`?\n")
+    (diagnosis / "output" / "analysis.md").write_text("The hotel block's day page was merged.\n")
+    (diagnosis / "output" / "findings.json").write_text('{"answered": "fully", "findings": []}\n')
+    (diagnosis / "reply.md").write_text("Left an analysis and findings.\n")
+    (diagnosis / "session.json").write_text('{"name": "20261124T165821Z-dreamed-drop"}\n')
+    (diagnosis / "check-notes.md").write_text("## names: 1\n\n- summary: David Kim\n")
+    return diagnosis
+
+
+@requires_restic
+def test_a_restore_reproduces_a_diagnosis_s_private_directory(
+    data_root: Path, restic_repository: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    populate(data_root, monkeypatch)
+    diagnosis = populate_diagnosis(data_root)
+    kept = files_under(diagnosis)
+    assert len(kept) == 6
+
+    assert main(["backup"]) == 0
+    restored = restore_latest(tmp_path / "restored")
+
+    assert sorted(p.name for p in restored.iterdir()) == ["diagnoses", "l0"]
+    assert files_under(restored / "diagnoses" / diagnosis.name) == kept
+
+
 @requires_restic
 def test_a_tree_left_by_an_interrupted_renormalize_is_not_backed_up(
     data_root: Path, restic_repository: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

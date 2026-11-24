@@ -2,7 +2,8 @@
 
 The repository is public, and a development session holds a shell, credentials, web access, and
 push rights, so it must never read real content. Its Claude Code settings deny the real data
-root to the file tools and to the shell's file commands; `pa inspect` is how it sees a payload.
+root to the file tools and to the shell's file commands; `pa inspect` is how it sees a payload,
+and a diagnosis is how it asks about what one says (ADR-0010). Neither changes a rule.
 """
 
 from __future__ import annotations
@@ -56,3 +57,39 @@ def test_the_vault_copy_and_the_sync_clients_state_are_denied_too():
             assert f"Bash({command} *{bare})" in denied()
             assert f"Bash({command} *{bare} *)" in denied()
             assert f"Bash({command} *{bare}/*)" in denied()
+
+
+def rules_for(path: str) -> list[str]:
+    """The ten rules that deny one directory: to the file tools, and to the shell's searches."""
+    bare = path.removeprefix("~/")
+    return [
+        *(f"{tool}({path}{under})" for tool in ("Read", "Edit") for under in ("", "/**")),
+        *(
+            f"Bash({command} *{bare}{rest})"
+            for command in ("grep", "rg")
+            for rest in ("", " *", "/*")
+        ),
+    ]
+
+
+def test_the_diagnostician_changes_no_rule():
+    """A question about real content goes to the diagnostician (ADR-0010), which adds a way to
+    ask and removes no fence: the rules are the ones there were before it, nothing is allowed
+    past them, and the settings hold nothing else."""
+    settings = json.loads((REPOSITORY / ".claude" / "settings.json").read_text())
+
+    assert settings == {
+        "permissions": {
+            "deny": [
+                *rules_for(REAL_DATA_ROOT),
+                *rules_for(VAULT_COPY),
+                *rules_for(SYNC_CLIENT_STATE),
+            ]
+        }
+    }
+
+
+def test_the_released_directory_stays_readable():
+    """What the release check let through is for a development session to read: it is outside
+    the real data root, and no rule denies it."""
+    assert not [rule for rule in denied() if "pa-released" in rule]

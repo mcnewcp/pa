@@ -111,7 +111,8 @@ PA_EVALS=$PA_DATA_ROOT/evals
 # The private diagnoses directory (DataRoot.diagnoses, ADR-0010): a directory per diagnosis,
 # holding its referral, what the diagnostician's session left (the private analysis and the
 # unchecked findings), and the release check's notes. Mode 0700, files 0600. diagnose.sh holds a
-# lock on the directory itself while it runs, so one diagnosis runs at a time.
+# lock on the directory itself while it runs, so one diagnosis runs at a time. The nightly backup
+# takes it whole.
 PA_DIAGNOSES=$PA_DATA_ROOT/diagnoses
 # Where a diagnosis's checked findings are released for a development session to read
 # (pa_home.config.load_released_directory): outside this checkout and the data root. A leading
