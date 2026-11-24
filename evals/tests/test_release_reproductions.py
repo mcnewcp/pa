@@ -1318,8 +1318,8 @@ def test_a_reproduction_with_an_address_or_a_domain_outside_the_reserved_ones_is
 # is a dotted name the repository holds.
 
 HELD_BY_THE_REPOSITORY = {
-    "a link to a host the repository names": "https://github.com/a-private-person/tax-records",
-    "a link without its scheme": "claude.ai/chat/3f2a9c1e",
+    "a link to a host the repository names": "https://github.com/-no-such-account-/records",
+    "a link without its scheme": "claude.ai/chat/no-such-chat",
     "a host the repository names": "gmail.com",
     "a module of the repository": "pa_core.librarian.lint",
     "a file of the repository": "dreaming.py",

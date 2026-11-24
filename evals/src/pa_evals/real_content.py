@@ -5,9 +5,9 @@ The release check (`pa_evals.release_check`) owns the rules. This module gives i
 are made of:
 
 - **what a case holds**: the names of its people and organizations (`Identifier`), and its
-  text (`Passage`), gathered from the case's parts. Each part is a `Source`: `Envelopes`,
+  text (`Passage`), gathered from the case's parts. Each part is a `Part`: `Envelopes`,
   `Wiki`, `History`, `OwnerIdentity`, and `Text` for a part that is text alone (an eval set,
-  runs, an earlier analysis). A case that gains a part gains a `Source` for it, and nothing
+  runs, an earlier analysis). A case that gains a part gains a `Part` for it, and nothing
   else here changes;
 - **what may be repeated**: the text of the repository (`repository_passages`), which is
   public already;
@@ -136,8 +136,9 @@ class Passage:
     text: str
 
 
-class Source(Protocol):
-    """One part of a case, as the release check reads it."""
+class Part(Protocol):
+    """One part of a case, as the release check reads it. Never a source, which is where an
+    episode came from."""
 
     def identifiers(self) -> Iterable[Identifier]:
         """The names it holds for people and organizations."""
@@ -336,15 +337,15 @@ class OwnerIdentity:
 class RealContent:
     """What a case holds, gathered from its parts."""
 
-    sources: Sequence[Source]
+    parts: Sequence[Part]
 
     @functools.cached_property
     def names(self) -> Mapping[Words, str]:
         """Every name the case holds, as the runs of words that are refused (`name_runs`),
         each with what holds it."""
         names: dict[Words, str] = {}
-        for source in self.sources:
-            for identifier in source.identifiers():
+        for part in self.parts:
+            for identifier in part.identifiers():
                 for run in name_runs(identifier.text):
                     names.setdefault(run, identifier.held)
         return names
@@ -353,13 +354,11 @@ class RealContent:
     def single_names(self) -> Mapping[str, str]:
         """Every name of one word the case holds, as it is refused (`single_names`), each
         with what holds it."""
-        return single_names(
-            identifier for source in self.sources for identifier in source.identifiers()
-        )
+        return single_names(identifier for part in self.parts for identifier in part.identifiers())
 
     def passages(self) -> Iterator[Passage]:
-        for source in self.sources:
-            yield from source.passages()
+        for part in self.parts:
+            yield from part.passages()
 
 
 # Names.

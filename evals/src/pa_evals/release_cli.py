@@ -81,22 +81,22 @@ def _release(args: argparse.Namespace) -> int:
         raise ReleaseChoiceError(f"there is no diagnosis named {name} in {data_root.diagnoses}")
     if not args.referral.is_file():
         raise ReleaseChoiceError(f"the referral {args.referral} isn't a file")
-    verdict = release(
+    outcome = release(
         Diagnosis(private),
         case.load(),
         referral=args.referral.read_text(),
         owner=owner,
         released=released,
     )
-    if isinstance(verdict, Refusal):
+    if isinstance(outcome, Refusal):
         print(f"release: {name}: refused, and nothing is released")
-        _print_checks(verdict.checks)
-        print(f"notes: {verdict.notes}")
+        _print_checks(outcome.checks)
+        print(f"notes: {outcome.notes}")
         return REFUSED
-    record = verdict.record
+    record = outcome.record
     kinds = ", ".join(f"{count} {kind}" for kind, count in record.kinds.items())
     print(f"release: {name}: released")
-    print(f"released: {verdict.directory}")
+    print(f"released: {outcome.directory}")
     print(f"findings: {record.findings}" + (f" ({kinds})" if kinds else ""))
     print(f"reproductions: {record.reproductions}" + (", untested" if record.reproductions else ""))
     print(f"payloads: {record.payloads}")

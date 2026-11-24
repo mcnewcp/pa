@@ -349,22 +349,25 @@ def test_an_address_or_a_domain_outside_the_reserved_example_domains_is_refused(
 
 
 def test_an_address_is_refused_though_the_repository_holds_its_domain(desk, leavings, well_formed):
-    # The repository's fixtures hold this domain, so by itself it passes. An address never does.
-    well_formed["summary"] = "Mail from gmail.com is filed twice, as ovarga" + "@gmail.com shows."
+    # This file holds the domain, so by itself it passes. An address never does. It is no
+    # reserved domain, and no mailbox either: nothing outside a private network ends this way.
+    well_formed["summary"] = (
+        "Mail from kiln.internal is filed twice, as ovarga" + "@kiln.internal shows."
+    )
     desk.diagnose(leavings(well_formed))
 
     notes = desk.refused(desk.release(), addresses=1)
 
-    assert "- findings.json: summary: the address 'ovarga@gmail.com' is outside" in notes
+    assert "- findings.json: summary: the address 'ovarga@kiln.internal' is outside" in notes
 
 
 # A link is never excused: the repository names hosts that anyone has pages at. This file is
 # in the repository, so each of these hosts is a dotted name the repository holds.
 
 LINKS = {
-    "a link to a host the repository names": "https://github.com/a-private-person/tax-records",
-    "a link without its scheme": "claude.ai/chat/3f2a9c1e",
-    "a link with a question": "https://www.icloud.com?shared=lease",
+    "a link to a host the repository names": "https://github.com/-no-such-account-/records",
+    "a link without its scheme": "claude.ai/chat/no-such-chat",
+    "a link with a question": "https://www.icloud.com?shared=nothing",
     "a link to a file of the repository's name": "http://dreaming.py",
 }
 

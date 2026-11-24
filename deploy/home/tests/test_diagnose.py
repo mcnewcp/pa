@@ -92,7 +92,7 @@ if command.startswith("bash -s"):
     session = ways[min(len(ran) - 1, len(ways) - 1)]
     name = words[words.index("--name") + 1]
     diagnosis = words[words.index("--out") + 1] + "/" + name
-    # A second pass revises the diagnosis where it is, and keeps the pass it revised by number.
+    # A revision revises the diagnosis where it is, and keeps the pass it revised by number.
     revision = len([c for c in ran if "--revise" in shlex.split(c["argv"][-1])])
     if session["leaves"]:
         with open(vm_dirs, "a") as listed:
@@ -105,7 +105,7 @@ if command.startswith("bash -s"):
     sys.exit(session["exit"])
 if argv[:3] == ["file", "pull", "-r"]:
     # What a session leaves, as a pull brings it back: readable by everyone until tightened.
-    # With it comes each pass a second pass kept there.
+    # With it comes each pass a revision kept there.
     source = argv[-2].split("/", 1)[1]
     target = os.path.join(argv[-1], os.path.basename(source))
     left = ["referral.md", "reply.md", "session.json", "output/analysis.md", "output/findings.json"]
@@ -906,7 +906,7 @@ def test_a_refused_diagnosis_is_revised_by_the_checks_notes_and_released_once_th
     # The refused output and the check's notes go into the VM, which may hold them, on stdin.
     assert pushed(push_output) == ["output/analysis.md", "output/findings.json"]
     assert bytes.fromhex(push_notes["stdin"]).decode() == NOTES.replace("{pass}", "1")
-    # The second pass is asked the same referral over the same case, with the VM's copies.
+    # The revision is asked the same referral over the same case, with the VM's copies.
     assert options_of(revision) == [
         *options_of(first),
         *("--revise", f"{VM_REFUSED}/output"),
@@ -1018,7 +1018,7 @@ def test_a_revision_whose_session_fails_ends_the_diagnosis_with_the_failed_code(
 def test_a_revision_that_never_started_leaves_the_refused_diagnosis_as_it_was(
     tmp_path: Path, calls: Path, cut: Path, referral: Path
 ):
-    """A second pass that fails before it touches the diagnosis left nothing to bring back: the
+    """A revision that fails before it touches the diagnosis left nothing to bring back: the
     devbox's copy, with the check's notes, isn't replaced by the VM's."""
     unstarted = "pa-eval: the diagnosis read another case than the one given\n"
 

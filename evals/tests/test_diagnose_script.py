@@ -276,7 +276,7 @@ def test_findings_the_real_check_refuses_are_revised_in_the_vm_and_released_once
         "payloads: 0",
         *(f"check {rule}: 0" for rule in rules),
     ]
-    # The refused output and the check's notes went into the VM, for the second pass.
+    # The refused output and the check's notes went into the VM, for the revision.
     pushed = tmp_path / "vm" / "srv" / "pa" / "eval" / "case" / "refused"
     assert blamed(pushed / "output" / "findings.json") == [SLIPPED]
     assert f"'{SLIPPED}' isn't in the repository" in (pushed / "check-notes.md").read_text()

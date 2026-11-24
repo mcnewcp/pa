@@ -33,7 +33,7 @@
 # and while another diagnosis runs. It never takes the data root's lock: a cut holds still.
 #
 # A diagnosis the release check refuses is revised without the owner, at most twice: the refused
-# output and the check's notes go back into the VM, a second session there puts right what the
+# output and the check's notes go back into the VM, a new session there puts right what the
 # notes name (`pa-eval diagnose --revise`), and the check runs again on what it left, exactly as
 # strict. The notes quote real content, so they go into the VM on stdin and are never printed.
 # Every pass, and the check's notes on each, is kept in the diagnosis's private directory.
@@ -337,7 +337,7 @@ keep_unshown() {
 # that failed before it started a session. VM_DIR is what a command that got that far made in
 # the VM: the diagnosis's own directory, unless one is given.
 #
-# The VM's copy is the whole diagnosis, every pass with the check's notes on it (a second pass
+# The VM's copy is the whole diagnosis, every pass with the check's notes on it (a revision
 # keeps the pass it revises: pa_evals.diagnosis). So it is pulled beside the devbox's copy and
 # takes its place whole. What only the devbox holds, the output of its commands that wasn't
 # shown, goes with it.
@@ -398,10 +398,10 @@ require_session() {
   exit "$PA_DIAGNOSIS_FAILED"
 }
 
-# revise N has a second pass revise the diagnosis, whose output the release check just refused:
+# revise N has a new session revise the diagnosis, whose output the release check just refused:
 # revision N. It pushes the refused output and the check's notes into the VM, replacing the last
-# revision's, runs the second pass there over the same referral and case, and brings back what
-# it left. The second pass keeps the refused pass in the diagnosis's directory, as refused/N.
+# revision's, runs the revision there over the same referral and case, and brings back what
+# it left. The revision keeps the refused pass in the diagnosis's directory, as refused/N.
 #
 # This is the one place real content goes back into a session, and it goes into the VM, which
 # may hold it: the notes say what the check found, so they travel on stdin, never on a command

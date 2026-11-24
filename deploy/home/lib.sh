@@ -232,7 +232,7 @@ PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
 # (a directory each, by name) until it is pulled.
 PA_VM_EVAL_CASE=$PA_VM_EVAL/case
 PA_VM_EVAL_DIAGNOSES=$PA_VM_EVAL/diagnoses
-# Where it pushes what a second pass revises: the output the release check refused (output/) and
+# Where it pushes what a revision is given: the output the release check refused (output/) and
 # the check's notes, replaced each revision and gone with the case at the next diagnosis.
 PA_VM_EVAL_REFUSED=$PA_VM_EVAL_CASE/refused
 # The diagnostician's configuration (pa_home.config.load_diagnostician_config), which

@@ -9,7 +9,7 @@ A rule is a name and a function from a `Submission` (the diagnosis's output, its
 referral) to the problems it finds. `RULES` lists them, and nothing outside this module knows
 what a rule holds. To add one, write its function and add a `Rule` to `RULES`:
 
-- its name is printed, with how many problems it found, by whoever reports the verdict;
+- its name is printed, with how many problems it found, by whoever reports the check's outcome;
 - each problem says what was found and where, which is private: it goes to the check's notes,
   kept in the diagnosis's directory for the owner alone, and nowhere else.
 
@@ -42,8 +42,8 @@ it, so it is held to more than the findings are:
 - `ingest`: its payloads ingest into a throwaway data root with nothing quarantined.
 - `lint`: its wiki lints without errors.
 
-What the case holds comes from its parts (`_sources`), and what is checked is each piece of
-text a release would hand over. A case that gains a part adds a source; the rules stay as
+What the case holds comes from its parts (`_parts`), and what is checked is each piece of
+text a release would hand over. A case that gains a part adds one there; the rules stay as
 they are.
 
 The thresholds are constants, not configuration. The rules catch identifiers and quoted text,
@@ -86,9 +86,9 @@ from pa_evals.real_content import (
     Envelopes,
     History,
     OwnerIdentity,
+    Part,
     Passage,
     RealContent,
-    Source,
     Text,
     Unreserved,
     Wiki,
@@ -122,7 +122,7 @@ RECORD = "release.json"
 
 class ReleaseError(PaError):
     """A diagnosis that can't be checked, or a release that can't be written. A refusal is not
-    an error: it is a verdict."""
+    an error: it is one of the check's two outcomes."""
 
 
 @dataclass(frozen=True)
@@ -685,7 +685,7 @@ def _submitted(
         repository=repository,
         findings=findings,
         off_schema=off_schema,
-        real=RealContent(_sources(case, owner)),
+        real=RealContent(_parts(case, owner)),
         reproductions=_tried(diagnosis) if findings is not None else (),
     )
 
@@ -695,17 +695,17 @@ def _tried(diagnosis: Diagnosis) -> tuple[Tried, ...]:
     return tuple(try_out(reproduction) for reproduction in read_reproductions(diagnosis.output))
 
 
-def _sources(case: Case, owner: Owner) -> list[Source]:
+def _parts(case: Case, owner: Owner) -> list[Part]:
     """The parts of `case` that hold real content, and the owner's identity. A case that
-    gains a part gains a source here."""
-    sources: list[Source] = [OwnerIdentity(owner), Envelopes(case.cut.l0)]
+    gains a part gains one here."""
+    parts: list[Part] = [OwnerIdentity(owner), Envelopes(case.cut.l0)]
     if case.cut.wiki is not None:
-        sources.append(Wiki(case.cut.wiki))
+        parts.append(Wiki(case.cut.wiki))
     for label, wiki in case.wikis.items():
-        sources.append(Wiki(wiki.tree, name=label))
-        sources.append(History(wiki.history_files(), name=label))
-    sources.append(Text(lambda: _text(case)))
-    return sources
+        parts.append(Wiki(wiki.tree, name=label))
+        parts.append(History(wiki.history_files(), name=label))
+    parts.append(Text(lambda: _text(case)))
+    return parts
 
 
 def _text(case: Case) -> Iterator[Passage]:
