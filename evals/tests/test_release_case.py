@@ -161,6 +161,23 @@ def test_a_name_that_only_a_wikis_history_holds_is_refused(desk, leavings, well_
     assert "in dreamed's history" in notes
 
 
+def test_a_history_with_a_run_that_changed_no_page_is_checked_like_any_other(
+    desk, parts, leavings, well_formed
+):
+    """A wiki's first commit is an empty one (`Start the wiki`), so every real history has a
+    file with no diff in it."""
+    (parts.histories["dreamed"] / "0000-00112233aabb.patch").write_text(
+        "commit 00112233aabbccddeeff00112233aabbccddeeff\n"
+        "date 2026-09-29T03:00:00+00:00\n\nStart the wiki\n"
+    )
+    well_formed["summary"] = "A dreaming run deleted the page of Ignatius Thistlewood."
+    desk.diagnose(leavings(well_formed))
+
+    notes = desk.refused(desk.release(), names=1)
+
+    assert "in dreamed's history" in notes
+
+
 # A finding's counts of runs, and the questions it names.
 
 

@@ -276,7 +276,8 @@ class History:
         held = f"in {self.name}'s history"
         for _, text in self._runs():
             pages = list(_PAGE_IN_A_DIFF.finditer(text))
-            for page, following in zip(pages, [*pages[1:], None], strict=True):
+            # A run that changed no page (the wiki's first commit) has none to pair.
+            for page, following in zip(pages, [*pages[1:], None], strict=False):
                 path = Path(page["path"])
                 if path.parts[0] not in _NAMED_FOLDERS or len(path.parts) == 1:
                     continue
