@@ -73,6 +73,13 @@ RULES = (
 )
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
+
+@pytest.fixture
+def rules() -> tuple[str, ...]:
+    """`RULES`, for a test module that holds another command to the release check's lines."""
+    return RULES
+
+
 NAME = "dreamed-drop"
 """The diagnosis a `desk` makes and releases."""
 REFUSED = 3
@@ -338,16 +345,29 @@ class Ran:
 
 
 @pytest.fixture
-def pa_eval(capsys: pytest.CaptureFixture[str]) -> Callable[..., Ran]:
+def unsalted() -> Callable[[str], None]:
+    """Asserts that a text a command printed holds no word of `SALT`: nothing a session wrote,
+    and nothing that stands in for real content in a case."""
+
+    def check(printed: str) -> None:
+        for word in SALT:
+            assert word not in printed.lower()
+
+    return check
+
+
+@pytest.fixture
+def pa_eval(
+    capsys: pytest.CaptureFixture[str], unsalted: Callable[[str], None]
+) -> Callable[..., Ran]:
     """Runs `pa-eval` with the given arguments, and asserts that nothing it printed holds a
     word a session wrote. Every diagnosis test runs its commands through here."""
 
     def run(*arguments: object) -> Ran:
         code = main([str(argument) for argument in arguments])
         captured = capsys.readouterr()
-        for word in SALT:
-            assert word not in captured.out.lower()
-            assert word not in captured.err.lower()
+        unsalted(captured.out)
+        unsalted(captured.err)
         return Ran(code, captured.out, captured.err)
 
     return run
