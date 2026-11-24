@@ -17,7 +17,7 @@ The first rules hold the output to its form: the files an output may hold, the f
 schema, paths that are in the repository, episodes and questions that are in the case, and
 counts of runs under the labels the case gives its sets of runs. The next are the fence: they
 refuse real content in every piece of the findings' text (`_pieces`) and in every file of
-every reproduction (`pa_evals.reproduction.Tried.texts`), told from fictional by what the case
+every reproduction (`pa_evals.reproduction.Trial.texts`), told from fictional by what the case
 holds (`pa_evals.real_content`).
 
 - `names`: a name of two or more words that the case holds for a person or an organization.
@@ -80,6 +80,7 @@ from pa_evals.diagnosis import (
 )
 from pa_evals.findings import Findings, findings_json
 from pa_evals.models import FrozenModel
+from pa_evals.problem import Problem
 from pa_evals.real_content import (
     EPISODE_ID,
     QUOTED_WORDS,
@@ -109,8 +110,7 @@ from pa_evals.real_content import (
 from pa_evals.reproduction import (
     FICTIONAL_OWNER,
     REPRODUCTIONS,
-    Flaw,
-    Tried,
+    Trial,
     read_reproductions,
     try_out,
     unmatched,
@@ -124,14 +124,6 @@ RECORD = "release.json"
 class ReleaseError(PaError):
     """A diagnosis that can't be checked, or a release that can't be written. A refusal is not
     an error: it is one of the check's two outcomes."""
-
-
-@dataclass(frozen=True)
-class Problem:
-    """One thing a rule found. Private: both fields may quote the session's output."""
-
-    where: str
-    what: str
 
 
 @dataclass(frozen=True)
@@ -151,7 +143,7 @@ class Submission:
     """Where the findings leave the schema, and why."""
     real: RealContent
     """What the case holds, and the owner's identity."""
-    reproductions: tuple[Tried, ...] = ()
+    reproductions: tuple[Trial, ...] = ()
     """Each reproduction the session left, tried out as a development session will."""
 
     def public(self) -> Iterator[Passage]:
@@ -201,16 +193,12 @@ def _of_findings(
 
 
 def _of_reproductions(
-    found: Callable[[Tried], Iterable[Flaw]],
+    found: Callable[[Trial], Iterable[Problem]],
 ) -> Callable[[Submission], Iterable[Problem]]:
     """A rule that hands on what trying each reproduction out found (`pa_evals.reproduction`)."""
 
     def rule(submission: Submission) -> Iterable[Problem]:
-        return [
-            Problem(flaw.where, flaw.what)
-            for tried in submission.reproductions
-            for flaw in found(tried)
-        ]
+        return [problem for trial in submission.reproductions for problem in found(trial)]
 
     return rule
 
@@ -218,10 +206,7 @@ def _of_reproductions(
 def _shape(submission: Submission) -> list[Problem]:
     """The output holds only regular files of the expected names and kinds, within the caps,
     and no links."""
-    return [
-        Problem(problem.path, problem.what)
-        for problem in output_problems(submission.diagnosis.output)
-    ]
+    return output_problems(submission.diagnosis.output)
 
 
 def _schema(submission: Submission) -> list[Problem]:
@@ -272,14 +257,14 @@ they pass in a reproduction, whatever holds them in a case."""
 def _reproduced_pieces(submission: Submission) -> list[Passage]:
     """Every piece of text of every reproduction, in order."""
     return [
-        piece for tried in submission.reproductions for text in tried.texts for piece in text.pieces
+        piece for trial in submission.reproductions for text in trial.texts for piece in text.pieces
     ]
 
 
 def _reproduced_readings(submission: Submission) -> list[Reading]:
     """Each file of each reproduction, read by itself: a name or a quote is looked for across
     a file's lines, never from one file into the next."""
-    return [Reading.of(text.pieces) for tried in submission.reproductions for text in tried.texts]
+    return [Reading.of(text.pieces) for trial in submission.reproductions for text in trial.texts]
 
 
 def _questions(submission: Submission, findings: Findings) -> list[Problem]:
@@ -367,17 +352,17 @@ def _addresses(submission: Submission, findings: Findings) -> list[Problem]:
 
     In a reproduction nothing the repository holds is excused: it becomes a fixture, where
     every address, link, and domain is a choice. Only the reserved example domains pass, and
-    the names of the reproduction's own files (`Tried.file_names`)."""
+    the names of the reproduction's own files (`Trial.file_names`)."""
     found = [(piece, unreserved(piece.text)) for piece in _pieces(findings)]
     dotted = {name for _, outside in found for name in outside.dotted_names}
     held = holding_dotted_names(submission.public(), dotted) if dotted else dotted
     problems = [problem for piece, outside in found for problem in _outside(piece, outside, held)]
-    for tried in submission.reproductions:
+    for trial in submission.reproductions:
         problems += [
             problem
-            for text in tried.texts
+            for text in trial.texts
             for piece in text.pieces
-            for problem in _outside(piece, unreserved(piece.text), tried.file_names)
+            for problem in _outside(piece, unreserved(piece.text), trial.file_names)
         ]
     return problems
 
@@ -453,13 +438,13 @@ def _digits(submission: Submission, findings: Findings) -> list[Problem]:
         for piece in _pieces(findings)
         for number in long_numbers(piece.text, ids=episodes)
     ]
-    for tried in submission.reproductions:
+    for trial in submission.reproductions:
         # In a reproduction, the ids that may be written are its own episodes', which a
         # release writes into its wiki, and a payload may write a time as its format does.
-        own = {envelope.episode_id for envelope in tried.envelopes.values()}
+        own = {envelope.episode_id for envelope in trial.envelopes.values()}
         found += [
             (piece.where, number)
-            for text in tried.texts
+            for text in trial.texts
             for piece in text.pieces
             for number in long_numbers(piece.text, ids=own, times=text.payload)
         ]
@@ -476,11 +461,10 @@ def _reproductions(submission: Submission, findings: Findings) -> list[Problem]:
     """Every finding that names a reproduction has one, every reproduction is named by its
     finding, and each says what a reproduction says: one line of expectation, questions that
     are an eval set, and evidence and citations that name its own payloads."""
-    flaws = [
+    return [
         *unmatched(submission.diagnosis.output, findings.reproduced()),
-        *(flaw for tried in submission.reproductions for flaw in tried.unsaid),
+        *(problem for trial in submission.reproductions for problem in trial.form_problems),
     ]
-    return [Problem(flaw.where, flaw.what) for flaw in flaws]
 
 
 def _one_word_names(submission: Submission) -> list[Problem]:
@@ -512,17 +496,17 @@ RULES: tuple[Rule, ...] = (
     Rule("one-word-names", _one_word_names),
     # Every reproduction is the synthetic corpus's fictional owner's, so nothing in one
     # is the real owner's.
-    Rule("owner", _of_reproductions(lambda tried: tried.not_the_owners)),
+    Rule("owner", _of_reproductions(lambda trial: trial.owner_problems)),
     # Everything in every reproduction can be decoded to text, so all of it was read by
     # the rules above: no part of a payload that isn't text, no encoding or character
     # set nobody knows, and no data in a `data:` URI.
-    Rule("encodings", _of_reproductions(lambda tried: tried.undecoded)),
+    Rule("encodings", _of_reproductions(lambda trial: trial.encoding_problems)),
     # Every reproduction's payloads ingest into a throwaway data root, with nothing
     # quarantined.
-    Rule("ingest", _of_reproductions(lambda tried: tried.quarantined)),
+    Rule("ingest", _of_reproductions(lambda trial: trial.ingest_problems)),
     # Every reproduction's wiki lints without errors, against the episodes its payloads
     # ingest to.
-    Rule("lint", _of_reproductions(lambda tried: tried.unlinted)),
+    Rule("lint", _of_reproductions(lambda trial: trial.lint_problems)),
 )
 """Every rule, in the order its count is reported."""
 
@@ -637,7 +621,7 @@ def release(
         kinds=findings.kinds(),
         checks=checks,
         reproductions=len(submission.reproductions),
-        payloads=sum(len(tried.reproduction.payloads) for tried in submission.reproductions),
+        payloads=sum(len(trial.reproduction.payloads) for trial in submission.reproductions),
         revisions=session.revisions,
     )
     _write(released, findings, submission.reproductions, record)
@@ -656,11 +640,11 @@ def _submitted(
         findings=findings,
         off_schema=off_schema,
         real=RealContent(_parts(case, owner)),
-        reproductions=_tried(diagnosis) if findings is not None else (),
+        reproductions=_trials(diagnosis) if findings is not None else (),
     )
 
 
-def _tried(diagnosis: Diagnosis) -> tuple[Tried, ...]:
+def _trials(diagnosis: Diagnosis) -> tuple[Trial, ...]:
     """Each reproduction in the diagnosis's output, tried out."""
     return tuple(try_out(reproduction) for reproduction in read_reproductions(diagnosis.output))
 
@@ -717,7 +701,7 @@ def _notes(name: str, found: dict[str, list[Problem]]) -> str:
 
 
 def _write(
-    released: Path, findings: Findings, reproductions: Sequence[Tried], record: ReleaseRecord
+    released: Path, findings: Findings, reproductions: Sequence[Trial], record: ReleaseRecord
 ) -> None:
     """Write the released directory through a hidden one renamed into place, so it is there
     whole or not at all."""
@@ -727,8 +711,8 @@ def _write(
     try:
         (building / RELEASED_FINDINGS).write_bytes(findings_json(findings))
         (building / RECORD).write_text(record.model_dump_json(indent=2) + "\n")
-        for tried in reproductions:
-            tried.write(building / REPRODUCTIONS / tried.reproduction.finding)
+        for trial in reproductions:
+            trial.write(building / REPRODUCTIONS / trial.reproduction.finding)
         building.rename(released)
     except BaseException:
         shutil.rmtree(building, ignore_errors=True)

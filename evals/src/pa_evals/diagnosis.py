@@ -71,12 +71,14 @@ from pa_evals.findings import (
     parse_findings,
 )
 from pa_evals.models import FrozenModel
+from pa_evals.plain_files import is_text
+from pa_evals.problem import Problem
 from pa_evals.real_content import LONG_NUMBER_DIGITS, QUOTED_WORDS
 from pa_evals.reproduction import (
     REPRODUCTIONS,
-    flaws_in_form,
+    problems_in_form,
     reproduction_values,
-    shape_flaws,
+    shape_problems,
 )
 from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError
 from pa_home.config import DiagnosticianConfig
@@ -429,33 +431,21 @@ class Diagnosis:
                     (directory / name).chmod(_PRIVATE_FILE)
 
 
-@dataclass(frozen=True)
-class OutputProblem:
-    """One thing wrong with the shape of a session's output. Private: `path` can be a name the
-    session chose."""
-
-    path: str
-    """Which file, from the diagnosis's directory."""
-    what: str
-
-
-def output_problems(output: Path) -> list[OutputProblem]:
+def output_problems(output: Path) -> list[Problem]:
     """What is wrong with the shape of the session's `output`: it holds the files in
     `OUTPUT_FILES`, each a regular file of UTF-8 text within its cap, and nothing else but a
     directory of reproductions, each of the shape and within the caps a reproduction has
-    (`pa_evals.reproduction.shape_flaws`). A link is never followed."""
+    (`pa_evals.reproduction.shape_problems`). A link is never followed."""
     if output.is_symlink() or not output.is_dir():
-        return [OutputProblem(OUTPUT, "isn't a directory")]
-    problems: list[OutputProblem] = []
+        return [Problem(OUTPUT, "isn't a directory")]
+    problems: list[Problem] = []
     for entry in sorted(output.iterdir()):
         status = entry.lstat()
         if stat.S_ISLNK(status.st_mode):
             wrong = "a link in place of a file"
         elif entry.name == REPRODUCTIONS:
             # A reproduction's layout is its own module's.
-            problems += [
-                OutputProblem(f"{OUTPUT}/{flaw.where}", flaw.what) for flaw in shape_flaws(output)
-            ]
+            problems += [problem.under(OUTPUT) for problem in shape_problems(output)]
             continue
         elif entry.name not in OUTPUT_FILES:
             kind = "directory" if stat.S_ISDIR(status.st_mode) else "file"
@@ -464,13 +454,13 @@ def output_problems(output: Path) -> list[OutputProblem]:
             wrong = "not a regular file"
         elif status.st_size > OUTPUT_FILES[entry.name]:
             wrong = f"{status.st_size} bytes, over its cap of {OUTPUT_FILES[entry.name]}"
-        elif not _is_text(entry):
+        elif not is_text(entry):
             wrong = "not UTF-8 text"
         else:
             continue
-        problems.append(OutputProblem(f"{OUTPUT}/{entry.name}", wrong))
+        problems.append(Problem(f"{OUTPUT}/{entry.name}", wrong))
     problems += [
-        OutputProblem(f"{OUTPUT}/{name}", "missing")
+        Problem(f"{OUTPUT}/{name}", "missing")
         for name in OUTPUT_FILES
         if not (output / name).exists(follow_symlinks=False)
     ]
@@ -500,14 +490,6 @@ def read_findings(output: Path) -> tuple[Findings | None, tuple[str, ...]]:
         return parse_findings(data), ()
     except FindingsError as error:
         return None, error.problems
-
-
-def _is_text(path: Path) -> bool:
-    try:
-        path.read_bytes().decode()
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 def require_name(name: str) -> str:
@@ -541,7 +523,7 @@ def diagnose(
     `commit` is the commit of the code running it, for the session's record. A name already
     taken in `directory` is refused: no diagnosis is ever written over.
 
-    A session whose output is malformed (`malformed`) is resumed and told what is wrong, at
+    A session whose output is malformed (`out_of_form`) is resumed and told what is wrong, at
     most `MAX_RESUMES` times. One that still leaves it malformed, or that fails or runs out of
     time or turns, fails the diagnosis (DiagnosisError): what it left is kept, and no session's
     record is written, so there is nothing to release.
@@ -693,17 +675,16 @@ def _clear(directory: Path) -> None:
             entry.unlink()
 
 
-def malformed(output: Path) -> list[OutputProblem]:
+def out_of_form(output: Path) -> list[Problem]:
     """What keeps the session's `output` from being checked for what it says: its shape
     (`output_problems`), findings that don't fit the schema, and reproductions that aren't the
-    ones the findings name or that don't run (`pa_evals.reproduction.flaws_in_form`)."""
+    ones the findings name or that don't run (`pa_evals.reproduction.problems_in_form`)."""
     problems = output_problems(output)
     findings, off_schema = read_findings(output)
-    problems += [OutputProblem(f"{OUTPUT}/{FINDINGS}", what) for what in off_schema]
+    problems += [Problem(f"{OUTPUT}/{FINDINGS}", what) for what in off_schema]
     if findings is not None:
         problems += [
-            OutputProblem(f"{OUTPUT}/{flaw.where}", flaw.what)
-            for flaw in flaws_in_form(output, findings.reproduced())
+            problem.under(OUTPUT) for problem in problems_in_form(output, findings.reproduced())
         ]
     return problems
 
@@ -731,7 +712,7 @@ def _ask(
         )
         replies = [_run(diagnostician, request, diagnosis)]
         session = replies[0].session_id
-        while problems := malformed(diagnosis.output):
+        while problems := out_of_form(diagnosis.output):
             resumes = len(replies) - 1
             if session is None or resumes == MAX_RESUMES:
                 diagnosis.keep(REPLY, replies[-1].text)
@@ -768,9 +749,9 @@ def _run(
         ) from None
 
 
-def _listed(problems: list[OutputProblem]) -> str:
+def _listed(problems: list[Problem]) -> str:
     """The problems as a list, for the session that left them and for the owner."""
-    return "\n".join(f"- {problem.path}: {problem.what}" for problem in problems)
+    return "\n".join(f"- {problem.where}: {problem.what}" for problem in problems)
 
 
 def _total[N: (int, float)](figures: list[N | None]) -> N | None:

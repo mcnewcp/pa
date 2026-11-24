@@ -51,6 +51,7 @@ from pa_evals.comparison import ComparisonError, load_runs, run_files
 from pa_evals.eval_set import EvalSet, load_eval_set
 from pa_evals.findings import LABEL
 from pa_evals.harness import lay_cut, make_read_only
+from pa_evals.plain_files import regular_files
 from pa_evals.results import RunResults
 from pa_home.config import DataRoot, is_live_store
 from pa_home.cut import MANIFEST, Cut, load_cut
@@ -80,7 +81,7 @@ class CaseWiki:
 
     def history_files(self) -> list[Path]:
         """The files of its history, oldest first (none without one)."""
-        return [] if self.history is None else _regular_files(self.history)
+        return [] if self.history is None else regular_files(self.history)
 
 
 @dataclass(frozen=True)
@@ -211,7 +212,7 @@ def lay_case(case: Case, target: Path) -> None:
         for number, file in enumerate(results, start=1):
             _copy(file, target / RUNS / label / f"run-{number}" / file.name)
     for label, wiki in case.wikis.items():
-        for file in _regular_files(wiki.tree):
+        for file in regular_files(wiki.tree):
             _copy(file, target / WIKIS / label / WIKI_TREE / file.relative_to(wiki.tree))
         for file in wiki.history_files():
             _copy(file, target / WIKIS / label / WIKI_HISTORY / file.name)
@@ -238,16 +239,6 @@ def _run_files(directory: Path) -> list[Path]:
 
 def _is_directory(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
-
-
-def _regular_files(top: Path) -> list[Path]:
-    """Every regular file under `top`, in order, without following a link."""
-    return sorted(
-        directory / name
-        for directory, _, names in top.walk()
-        for name in names
-        if not (directory / name).is_symlink() and (directory / name).is_file()
-    )
 
 
 def _copy(source: Path, target: Path) -> None:

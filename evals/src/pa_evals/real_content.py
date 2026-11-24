@@ -51,6 +51,7 @@ from pa_core.librarian.wiki import (
     read_frontmatter,
 )
 from pa_core.owner import Owner
+from pa_evals.plain_files import regular_files
 
 NAME_WORDS = 2
 """The fewest words a name has to be refused wherever it is written. A name of one word is
@@ -237,15 +238,8 @@ class Wiki:
 
     def _files(self) -> Iterator[tuple[Path, str]]:
         """Each regular file in the tree, by its path from the tree's root, with its text."""
-        if self.tree.is_symlink():
-            return
-        for directory, _, names in self.tree.walk():
-            for name in sorted(names):
-                path = directory / name
-                if path.is_symlink() or not path.is_file():
-                    continue
-                text = path.read_text(encoding="utf-8", errors="replace")
-                yield path.relative_to(self.tree), text
+        for path in regular_files(self.tree):
+            yield path.relative_to(self.tree), path.read_text(encoding="utf-8", errors="replace")
 
 
 def _aliases(page: str) -> Sequence[str]:
