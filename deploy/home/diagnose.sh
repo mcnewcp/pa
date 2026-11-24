@@ -24,6 +24,11 @@
 # --agent claude. The diagnostician's model, effort, turn limit, and timeout are the environment's
 # (PA_DIAGNOSTICIAN_MODEL, _EFFORT, _MAX_TURNS, _TIMEOUT_SECONDS), or the options'.
 #
+# The release check lets findings repeat what the referral holds, so the referral it reads on
+# every pass is the devbox's own, as it was when the diagnosis started, and that is the copy kept
+# with the diagnosis. One that comes back from the VM changed fails the diagnosis, with nothing
+# checked.
+#
 # It refuses to start while the nightly job runs, whose librarian spends the same usage limit,
 # and while another diagnosis runs. It never takes the data root's lock: a cut holds still.
 #
@@ -41,7 +46,7 @@
 # revisions: nothing is released, and the check's notes are with the private analysis. 4, a
 # session failed, ran out of time or turns, or left an output that isn't in form: what it left is
 # kept, and it isn't checked. 1, anything else: it didn't start, or the chat inbox changed while
-# a session ran, or the release check couldn't run.
+# a session ran, or the referral came back from the VM changed, or the release check couldn't run.
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 # Every failure this script doesn't name exits 1: the other codes each mean one thing.
@@ -162,9 +167,13 @@ name=$(date -u +%Y%m%dT%H%M%SZ)-$short
 private=$PA_DIAGNOSES/$name
 [[ ! -e $private ]] || die "$private already exists: wait a second and retry"
 vm_diagnosis=$PA_VM_EVAL_DIAGNOSES/$name
-# This diagnosis's own files on the devbox, gone when it ends: each wiki's exported history, and
-# what the VM's command printed.
+# This diagnosis's own files on the devbox, gone when it ends: the referral as it was asked, each
+# wiki's exported history, and what the VM's command printed.
 work=$PA_DIAGNOSES/.work-$name
+# The referral as it is when the diagnosis starts. It is what goes into the VM, what the release
+# check reads on every pass, and what is kept with the diagnosis: never the copy that comes back
+# from the VM, which a session there could have changed to have the check excuse what it holds.
+asked_referral=$work/referral.md
 
 # The case, as each machine holds its copy: the session is given the VM's (vm_case), and the
 # release check the devbox's (devbox_case), part for part. `pushes` is what goes into the VM
@@ -248,6 +257,7 @@ flock -n 9 || die "another diagnosis is running: start this one once it has ende
 rm -rf "$PA_DIAGNOSES"/.work-*
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/history"
+cp -- "$referral" "$asked_referral"
 
 # run_session OPTION... runs `pa-eval diagnose` in the VM, as the assistant, with OPTION... after
 # the options this script was given, between two listings of the chat inbox (`inbox_before`,
@@ -307,6 +317,8 @@ own_errors() {
 keep_unshown() {
   [[ -s $work/unshown ]] || return 0
   mkdir -p "$private"
+  # Never through a link: the private directory came back from the VM.
+  [[ ! -L $private/$1-output.txt ]] || rm -f "$private/$1-output.txt"
   cat "$work/unshown" >>"$private/$1-output.txt"
   log "$(wc -l <"$work/unshown") lines pa-eval $1 printed aren't shown: they are kept in $private/$1-output.txt"
   rm -f "$work/unshown"
@@ -321,15 +333,29 @@ keep_unshown() {
 # keeps the pass it revises: pa_evals.diagnosis). So it is pulled beside the devbox's copy and
 # takes its place whole. What only the devbox holds, the output of its commands that wasn't
 # shown, goes with it.
+#
+# The referral kept with the diagnosis is the devbox's own (`asked_referral`). One that came back
+# changed is kept beside it, for the owner, and sets `referral_changed`: require_session then
+# ends the diagnosis.
+#
+# Nothing here is written through a link the VM's copy holds: a link outside a session's output
+# is dropped as it arrives (one in the output is the release check's to refuse).
 bring_back() {
   local made=${1:-$vm_diagnosis} pulled=$work/pulled
   left=""
+  referral_changed=""
   if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $made" </dev/null; then
     rm -rf "$pulled"
     mkdir -p "$pulled"
     incus file pull -r "$PA_VM$vm_diagnosis" "$pulled/"
+    find "$pulled" -type l -not -path '*/output/*' -delete
     find "$pulled" -type d -exec chmod 0700 {} +
     find "$pulled" -type f -exec chmod 0600 {} +
+    if [[ -e $pulled/$name/referral.md ]] && ! cmp -s "$asked_referral" "$pulled/$name/referral.md"; then
+      mv -T "$pulled/$name/referral.md" "$pulled/$name/referral-from-the-vm.md"
+      referral_changed=1
+    fi
+    cp -- "$asked_referral" "$pulled/$name/referral.md"
     if [[ -e $private ]]; then
       find "$private" -maxdepth 1 -type f -name '*-output.txt' -exec mv -t "$pulled/$name" {} +
       mv -T "$private" "$work/replaced"
@@ -354,6 +380,10 @@ require_session() {
   log "the diagnosis's session left $PA_CHAT_INBOX unchanged"
   [[ -n $left ]] ||
     die "the diagnosis $name started no session: pa-eval diagnose exited $session in the VM, and nothing is released"
+  # The release check lets findings repeat what the referral holds, so a referral changed in the
+  # VM is a way round the check. Nothing is checked: this is a failure, never a refusal.
+  [[ -z $referral_changed ]] ||
+    die "the referral that came back with the diagnosis $name isn't the referral that was pushed: nothing is checked or released. The devbox's own is kept in $private/referral.md, and what came back in $private/referral-from-the-vm.md"
   ((session)) || return 0
   # A session that failed left no record of itself, so there is nothing to check.
   printf 'error: %s\n' "the diagnosis $name failed in its session (pa-eval diagnose exited $session in the VM), and nothing is released: what it left is in $private" >&2
@@ -381,7 +411,7 @@ revise() {
 }
 
 # check_release runs the release check on the devbox, never in the VM, over the devbox's copy of
-# the case and as the instance's owner, whose names it looks for. It prints what the check
+# the case and of the referral, and as the instance's owner, whose names it looks for. It prints what the check
 # reports (its counts are its own to say), and sets `checked` to its exit status: 0 released,
 # $PA_DIAGNOSIS_REFUSED refused.
 check_release() {
@@ -392,7 +422,7 @@ check_release() {
     source "$PA_OWNER_ENV"
     set +a
     export PA_DATA_DIR=$PA_DATA_ROOT
-    exec "$PA_EVAL_BIN" release --name "$name" "${devbox_case[@]}"
+    exec "$PA_EVAL_BIN" release --name "$name" --referral "$asked_referral" "${devbox_case[@]}"
   ) 2>"$work/stderr" || checked=$?
   : >"$work/unshown"
   own_errors
@@ -410,7 +440,7 @@ push_cut "$cut"
 # The last diagnosis's case goes, whatever modes its files came with.
 incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
   "{ [ ! -e $PA_VM_EVAL_CASE ] || chmod -R u+rwX $PA_VM_EVAL_CASE; } && rm -rf $PA_VM_EVAL_CASE && mkdir -p $PA_VM_EVAL_CASE" </dev/null
-push_file "$referral" "$PA_VM_EVAL_CASE/referral.md"
+push_file "$asked_referral" "$PA_VM_EVAL_CASE/referral.md"
 [[ -z $eval_set ]] || push_file "$eval_set" "$PA_VM_EVAL_CASE/eval-set.json"
 for push in "${pushes[@]}"; do
   mapfile -t part <<<"$push"

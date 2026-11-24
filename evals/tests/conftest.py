@@ -445,7 +445,12 @@ def desk(
         return data_root.diagnoses / NAME
 
     def release(*extra: object) -> Ran:
-        return pa_eval("release", "--name", NAME, "--cut", cut.path, *parts.arguments(), *extra)
+        # The referral is the devbox's own, never the copy kept with the diagnosis.
+        return pa_eval(
+            *("release", "--name", NAME, "--referral", referral, "--cut", cut.path),
+            *parts.arguments(),
+            *extra,
+        )
 
     return Desk(data_root.diagnoses / NAME, released / NAME, release, diagnose)
 

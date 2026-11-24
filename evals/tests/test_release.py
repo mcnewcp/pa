@@ -423,10 +423,10 @@ def test_a_private_directory_linked_out_of_the_data_root_is_refused(tmp_path: Pa
     assert not desk.released.exists()
 
 
-def test_a_case_inside_the_repository_is_refused(desk, leavings, pa_eval):
+def test_a_case_inside_the_repository_is_refused(desk, referral, leavings, pa_eval):
     desk.diagnose(leavings())
 
-    ran = pa_eval("release", "--name", NAME, "--cut", INSIDE)
+    ran = pa_eval("release", "--name", NAME, "--referral", referral, "--cut", INSIDE)
 
     assert ran.code == 1
     assert f"--cut ({INSIDE}) is inside the repository" in ran.err

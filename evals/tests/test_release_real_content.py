@@ -505,6 +505,35 @@ def test_only_the_words_the_referral_doesnt_hold_are_refused(desk, referral, lea
     assert "7 words in a row that the case holds" in notes
 
 
+def test_a_referral_changed_where_the_session_ran_excuses_nothing_and_nothing_is_checked(
+    desk, leavings, well_formed
+):
+    # The referral excuses what it holds, so the check takes it from the devbox. The copy kept
+    # with the diagnosis came back from where the session ran, which could have written it.
+    first(well_formed, mechanism=f"The page says: {BODY_LINE}. It is at {STUDIO}.")
+    private = desk.diagnose(leavings(well_formed))
+    with (private / "referral.md").open("a") as came_back:
+        came_back.write(f"\nA run answered: {BODY_LINE}. It is at {STUDIO}.\n")
+
+    ran = desk.release()
+
+    # A failure, never a refusal: nothing was checked, so there are no notes.
+    assert ran.code == 1
+    assert ran.out == ""
+    assert "isn't the referral that was given" in ran.err
+    assert not desk.released.exists()
+    assert not (private / "check-notes.md").exists()
+
+
+def test_the_release_check_needs_the_referral_that_was_asked(desk, cut: Cut, leavings, pa_eval):
+    desk.diagnose(leavings())
+
+    with pytest.raises(SystemExit):
+        pa_eval("release", "--name", "dreamed-drop", "--cut", cut.path)
+
+    assert not desk.released.exists()
+
+
 # Digits.
 
 LONG_NUMBERS = {

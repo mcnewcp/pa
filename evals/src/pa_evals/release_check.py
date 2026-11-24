@@ -606,6 +606,7 @@ def release(
     diagnosis: Diagnosis,
     case: Case,
     *,
+    referral: str,
     owner: Owner,
     released: Path,
     repository: Path = REPOSITORY,
@@ -614,12 +615,17 @@ def release(
     `released` or refuses it.
 
     `case` is the case the diagnosis read, in the devbox's copy, and `owner` the owner whose
-    store it was cut from: what they hold is what the findings may not. A release writes `released`
-    whole; a refusal writes nothing there, and keeps what each rule found in the diagnosis's
-    directory. Either way the diagnosis's directory is left readable by the owner alone.
+    store it was cut from: what they hold is what the findings may not. `referral` is the
+    referral as the devbox asked it, whose words the findings may repeat. It is never read
+    from the diagnosis's directory, which came back from where the session ran.
 
-    Raises ReleaseError when `released` is already there (no release is written over), or when
-    the diagnosis read another case.
+    A release writes `released` whole; a refusal writes nothing there, and keeps what each
+    rule found in the diagnosis's directory. Either way the diagnosis's directory is left
+    readable by the owner alone.
+
+    Raises ReleaseError, with nothing checked, when `released` is already there (no release is
+    written over), when the diagnosis read another case, or when the referral kept with it
+    isn't `referral`.
     """
     session = diagnosis.session()
     if session.name != diagnosis.name:
@@ -643,7 +649,12 @@ def release(
             f"a diagnosis named {diagnosis.name} is already released in {released.parent}: no "
             "release is written over"
         )
-    referral = diagnosis.referral_text()
+    if diagnosis.referral_text() != referral:
+        raise ReleaseError(
+            f"the referral kept with the diagnosis {diagnosis.name} isn't the referral that was "
+            "given: what came back from where the session ran doesn't say what was asked, so "
+            "nothing is checked and nothing is released"
+        )
     diagnosis.make_private()
     submission = _submitted(diagnosis, case, referral, repository, owner)
     found = {rule.name: list(rule.check(submission)) for rule in RULES}
