@@ -7,7 +7,9 @@ from pa_core.owner import Owner
 from pa_home.config import (
     ConfigError,
     DataRoot,
+    DiagnosticianConfig,
     load_capture_config,
+    load_diagnostician_config,
     load_icloud_calendars,
     load_icloud_credentials,
     load_librarian_config,
@@ -193,3 +195,36 @@ def test_a_released_directory_inside_the_data_root_is_refused(tmp_path: Path):
 
     with pytest.raises(ConfigError, match=r"PA_RELEASED_DIR .* must be apart"):
         load_released_directory(data_root, {"PA_RELEASED_DIR": str(data_root.path / "released")})
+
+
+def test_the_diagnosticians_model_effort_turn_limit_and_timeout_are_configuration():
+    configured = load_diagnostician_config(
+        {
+            "PA_DIAGNOSTICIAN_MODEL": " claude-fable-5-2 ",
+            "PA_DIAGNOSTICIAN_EFFORT": "xhigh",
+            "PA_DIAGNOSTICIAN_MAX_TURNS": "400",
+            "PA_DIAGNOSTICIAN_TIMEOUT_SECONDS": "7200",
+        }
+    )
+
+    assert configured == DiagnosticianConfig(
+        model="claude-fable-5-2", effort="xhigh", max_turns=400, timeout_seconds=7200
+    )
+    # Unconfigured, a diagnosis runs on the librarian's model, at a higher effort.
+    assert load_diagnostician_config({}) == DiagnosticianConfig(
+        model="claude-opus-5-5", effort="high", max_turns=200, timeout_seconds=3600
+    )
+
+
+@pytest.mark.parametrize(
+    "var, value",
+    [
+        ("PA_DIAGNOSTICIAN_MAX_TURNS", "0"),
+        ("PA_DIAGNOSTICIAN_MAX_TURNS", "2.5"),
+        ("PA_DIAGNOSTICIAN_TIMEOUT_SECONDS", "0"),
+        ("PA_DIAGNOSTICIAN_TIMEOUT_SECONDS", "an hour"),
+    ],
+)
+def test_a_diagnosticians_turn_limit_or_timeout_that_isnt_one_is_refused(var: str, value: str):
+    with pytest.raises(ConfigError, match=f"{var} must be a "):
+        load_diagnostician_config({var: value})

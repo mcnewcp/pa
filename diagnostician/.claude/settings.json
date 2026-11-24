@@ -9,7 +9,8 @@
     ],
     "additionalDirectories": [
       "${case}",
-      "${output}"
+      "${output}",
+      "${code}"
     ]
   },
   "enableAllProjectMcpServers": false,

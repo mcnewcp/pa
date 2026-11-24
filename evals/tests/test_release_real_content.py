@@ -200,7 +200,8 @@ def test_a_name_in_a_label_for_a_set_of_runs_is_refused(desk, leavings, well_for
     first(well_formed, runs={"ottoline-varga": [1, 3]})
     desk.diagnose(leavings(well_formed))
 
-    notes = desk.refused(desk.release(), names=1)
+    # It is no label of the case's, either.
+    notes = desk.refused(desk.release(), names=1, labels=1)
 
     assert "- findings.json: f1.runs: the name 'ottoline varga'" in notes
 
@@ -537,7 +538,8 @@ def test_digits_in_a_label_for_a_set_of_runs_are_refused(desk, leavings, well_fo
     first(well_formed, runs={"run-5550142": [1, 3]})
     desk.diagnose(leavings(well_formed))
 
-    notes = desk.refused(desk.release(), digits=1)
+    # It is no label of the case's, either.
+    notes = desk.refused(desk.release(), digits=1, labels=1)
 
     assert "- findings.json: f1.runs: a number of 7 digits: '5550142'" in notes
 
@@ -546,7 +548,8 @@ def test_a_long_number_in_place_of_a_count_of_runs_is_refused(desk, leavings, we
     first(well_formed, runs={"own": [3, 5550142]})
     desk.diagnose(leavings(well_formed))
 
-    notes = desk.refused(desk.release(), digits=1)
+    # The label holds three runs, too.
+    notes = desk.refused(desk.release(), digits=1, labels=1)
 
     assert "- findings.json: f1.runs: a number of 7 digits: '5550142'" in notes
 
@@ -567,8 +570,6 @@ SHORT_NUMBERS = {
 def test_short_numbers_dates_and_the_cases_episode_ids_pass(desk, leavings, well_formed, text: str):
     first(
         well_formed,
-        questions=["r0712", "r9999"],
-        runs={"cut-2026": [12, 12], "run-3": [999, 999999]},
         suggestion=f"Have the host note {text}.",
     )
     desk.diagnose(leavings(well_formed))

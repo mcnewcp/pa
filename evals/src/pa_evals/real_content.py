@@ -5,10 +5,10 @@ The release check (`pa_evals.release_check`) owns the rules. This module gives i
 are made of:
 
 - **what a case holds**: the names of its people and organizations (`Identifier`), and its
-  text (`Passage`), gathered from the case's parts. Each part is a `Source`; `Envelopes`,
-  `Wiki`, and `OwnerIdentity` are the three there are. A case that gains a part (a second
-  wiki, an eval set, runs, an earlier analysis) gains a `Source` for it, and nothing else
-  here changes;
+  text (`Passage`), gathered from the case's parts. Each part is a `Source`: `Envelopes`,
+  `Wiki`, `History`, `OwnerIdentity`, and `Text` for a part that is text alone (an eval set,
+  runs, an earlier analysis). A case that gains a part gains a `Source` for it, and nothing
+  else here changes;
 - **what may be repeated**: the text of the repository (`repository_passages`), which is
   public already;
 - **how each kind of real content is found** in a text: `name_runs` and `named` for names,
@@ -30,7 +30,7 @@ import re
 import subprocess
 import sys
 import unicodedata
-from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -254,6 +254,61 @@ def _aliases(page: str) -> Sequence[str]:
             for line in _ALIASES.findall(page)
             for alias in line.strip(" []").split(",")
         ]
+
+
+_PAGE_IN_A_DIFF = re.compile(r"^diff --git a/(?P<path>\S+) b/", re.MULTILINE)
+_TITLE_IN_A_DIFF = re.compile(r"^[-+ ]# (.+)$", re.MULTILINE)
+_ALIASES_IN_A_DIFF = re.compile(r"^[-+ ]aliases:(.*)$", re.MULTILINE)
+
+
+@dataclass(frozen=True)
+class History:
+    """A wiki's history, exported to files (`pa_evals.wiki_history`): the text of every run,
+    which holds lines no wiki holds any more, and the names of the people's and organizations'
+    pages a run changed: each one's slug, and the name and aliases its diff shows. A page a run
+    deleted is named nowhere else."""
+
+    files: Sequence[Path]
+    name: str = "wiki"
+    """What the check's notes call the wiki whose history this is."""
+
+    def identifiers(self) -> Iterator[Identifier]:
+        held = f"in {self.name}'s history"
+        for _, text in self._runs():
+            pages = list(_PAGE_IN_A_DIFF.finditer(text))
+            for page, following in zip(pages, [*pages[1:], None], strict=True):
+                path = Path(page["path"])
+                if path.parts[0] not in _NAMED_FOLDERS or len(path.parts) == 1:
+                    continue
+                diff = text[page.end() : following.start() if following else len(text)]
+                yield Identifier(path.stem, f"the slug of a page {held}")
+                for title in _TITLE_IN_A_DIFF.findall(diff):
+                    yield Identifier(title, f"the name of a page {held}")
+                for line in _ALIASES_IN_A_DIFF.findall(diff):
+                    for alias in line.strip(" []").split(","):
+                        yield Identifier(alias.strip(" \"'"), f"an alias of a page {held}")
+
+    def passages(self) -> Iterator[Passage]:
+        for file, text in self._runs():
+            yield Passage(f"{self.name}'s history, {file.name}", text)
+
+    def _runs(self) -> Iterator[tuple[Path, str]]:
+        for file in self.files:
+            yield file, file.read_text(encoding="utf-8", errors="replace")
+
+
+@dataclass(frozen=True)
+class Text:
+    """Text a case holds that names no one by itself, such as an eval set's questions, a run's
+    answers, and an earlier private analysis: `read` gives each piece when it is asked."""
+
+    read: Callable[[], Iterable[Passage]]
+
+    def identifiers(self) -> Iterator[Identifier]:
+        return iter(())
+
+    def passages(self) -> Iterator[Passage]:
+        yield from self.read()
 
 
 @dataclass(frozen=True)

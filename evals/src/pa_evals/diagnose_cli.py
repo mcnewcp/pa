@@ -9,13 +9,13 @@ findings it leaves are unchecked: `pa-eval release` checks and releases them, on
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from pa_core.errors import PaError
+from pa_evals.case_cli import add_case_arguments, named_case
 from pa_evals.diagnosis import (
-    DEFAULT_TIMEOUT_SECONDS,
-    Case,
     ClaudeDiagnostician,
     Diagnostician,
     ScriptedDiagnostician,
@@ -24,7 +24,13 @@ from pa_evals.diagnosis import (
 )
 from pa_evals.real_data import require_private
 from pa_evals.run_cli import workspace_commit
-from pa_home.cut import load_cut
+from pa_home.config import (
+    DIAGNOSTICIAN_EFFORT_VAR,
+    DIAGNOSTICIAN_MAX_TURNS_VAR,
+    DIAGNOSTICIAN_MODEL_VAR,
+    DIAGNOSTICIAN_TIMEOUT_VAR,
+    load_diagnostician_config,
+)
 
 
 class DiagnoseChoiceError(PaError):
@@ -44,9 +50,7 @@ def add_diagnose_command(commands: Any) -> None:
         metavar="FILE",
         help="The referral: the question, in Markdown. It holds nothing real.",
     )
-    command.add_argument(
-        "--cut", type=Path, required=True, metavar="DIR", help="The case: a cut (`pa cut`)."
-    )
+    add_case_arguments(command)
     command.add_argument(
         "--name",
         required=True,
@@ -65,8 +69,11 @@ def add_diagnose_command(commands: Any) -> None:
     command.add_argument(
         "--leaves",
         type=Path,
+        action="append",
         metavar="DIR",
-        help="For --agent scripted: a directory holding the files the session leaves.",
+        help="For --agent scripted: a directory holding the files the session leaves. Given "
+        "more than once, the first is what it leaves when it is started, and each next one "
+        "what it leaves when it is resumed.",
     )
     command.add_argument(
         "--reply",
@@ -75,14 +82,24 @@ def add_diagnose_command(commands: Any) -> None:
         help="For --agent scripted: a file holding the session's final words.",
     )
     command.add_argument(
-        "--agent-model", help="For --agent claude: the claude model (default: the CLI's default)."
+        "--agent-model",
+        help=f"For --agent claude: the claude model (default: {DIAGNOSTICIAN_MODEL_VAR}'s).",
+    )
+    command.add_argument(
+        "--effort",
+        help=f"For --agent claude: the session's effort (default: {DIAGNOSTICIAN_EFFORT_VAR}'s).",
+    )
+    command.add_argument(
+        "--max-turns",
+        type=_at_least_one,
+        help="For --agent claude: the most turns the session may take, each time it is started "
+        f"or resumed (default: {DIAGNOSTICIAN_MAX_TURNS_VAR}'s).",
     )
     command.add_argument(
         "--timeout",
         type=float,
-        default=DEFAULT_TIMEOUT_SECONDS,
-        help=f"For --agent claude: seconds before the session fails as timed out "
-        f"(default: {DEFAULT_TIMEOUT_SECONDS}).",
+        help="For --agent claude: seconds before the session fails as timed out, each time it "
+        f"is started or resumed (default: {DIAGNOSTICIAN_TIMEOUT_VAR}'s).",
     )
     command.set_defaults(handler=_diagnose)
 
@@ -90,9 +107,8 @@ def add_diagnose_command(commands: Any) -> None:
 def _diagnose(args: argparse.Namespace) -> int:
     name = require_name(args.name)
     # Every path is checked before any is read.
-    cut_dir = require_private(args.cut, "--cut")
     out = require_private(args.out, "--out")
-    case = Case(cut=load_cut(cut_dir))
+    case = named_case(args).load()
     if not args.referral.is_file():
         raise DiagnoseChoiceError(f"the referral {args.referral} isn't a file")
     diagnosis = diagnose(
@@ -105,18 +121,35 @@ def _diagnose(args: argparse.Namespace) -> int:
     )
     session = diagnosis.session()
     print(f"diagnosis: {diagnosis.name}, over the cut {case.cut.name}")
+    print(f"case: {session.case.describe()}")
     print(f"session: {_cost(session.cost_usd)}, {_turns(session.turns)}")
+    print(f"resumes: {session.resumes}")
     print(f"left: {diagnosis.path}")
     return 0
 
 
 def _diagnostician(args: argparse.Namespace) -> Diagnostician:
     if args.agent == "scripted":
-        if args.leaves is None or not args.leaves.is_dir():
+        if not args.leaves or not all(leaves.is_dir() for leaves in args.leaves):
             raise DiagnoseChoiceError("--agent scripted needs --leaves DIR, a directory")
         reply = "Done." if args.reply is None else args.reply.read_text()
-        return ScriptedDiagnostician(args.leaves, reply=reply)
-    return ClaudeDiagnostician(model=args.agent_model, timeout_seconds=args.timeout)
+        return ScriptedDiagnostician(*args.leaves, reply=reply)
+    config = load_diagnostician_config()
+    asked = {
+        "model": args.agent_model,
+        "effort": args.effort,
+        "max_turns": args.max_turns,
+        "timeout_seconds": args.timeout,
+    }
+    return ClaudeDiagnostician(
+        replace(config, **{name: value for name, value in asked.items() if value is not None})
+    )
+
+
+def _at_least_one(value: str) -> int:
+    if not value.isdigit() or int(value) < 1:
+        raise argparse.ArgumentTypeError("a whole number of at least 1")
+    return int(value)
 
 
 def _cost(cost_usd: float | None) -> str:

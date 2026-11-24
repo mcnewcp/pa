@@ -58,8 +58,10 @@ QuestionId = Annotated[str, StringConstraints(pattern=r"^r\d{2,4}$")]
 """An opaque question id, as a real-data eval set numbers its questions (`r07`)."""
 EpisodeId = Annotated[str, StringConstraints(pattern=rf"^({'|'.join(Source)})_[0-9a-f]{{16}}$")]
 """An episode id: its source, then 16 hex characters."""
-Label = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
-"""A label the referral gave a set of runs: lowercase letters, digits, and hyphens."""
+LABEL = r"[a-z0-9][a-z0-9-]{0,31}"
+"""What a label is made of."""
+Label = Annotated[str, StringConstraints(pattern=f"^{LABEL}$")]
+"""A label the referral gave a set of runs, or a wiki: lowercase letters, digits, and hyphens."""
 
 
 class Finding(FrozenModel):

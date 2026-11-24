@@ -53,7 +53,7 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
         "findings": 2,
         "kinds": {"fault": 1, "noise": 1},
         "checks": {
-            **{"shape": 0, "schema": 0, "paths": 0, "episodes": 0},
+            **{"shape": 0, "schema": 0, "paths": 0, "episodes": 0, "questions": 0, "labels": 0},
             **{"names": 0, "addresses": 0, "quotes": 0, "digits": 0},
         },
     }
@@ -66,7 +66,10 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
     assert f"release: {NAME}: released" in ran.out
     assert f"released: {desk.released}" in ran.out
     assert "findings: 2 (1 fault, 1 noise)" in ran.out
-    for rule in ("shape", "schema", "paths", "episodes", "names", "addresses", "quotes", "digits"):
+    for rule in (
+        *("shape", "schema", "paths", "episodes", "questions", "labels"),
+        *("names", "addresses", "quotes", "digits"),
+    ):
         assert f"check {rule}: 0\n" in ran.out
 
 

@@ -45,6 +45,11 @@ LIBRARIAN_NEW_PROPOSALS_VAR = "PA_LIBRARIAN_NEW_PROPOSALS"
 LIBRARIAN_OPEN_PROPOSALS_VAR = "PA_LIBRARIAN_OPEN_PROPOSALS"
 # Dreaming in the nightly job: how many days apart its runs are, and 0 for never.
 LIBRARIAN_DREAMING_INTERVAL_VAR = "PA_LIBRARIAN_DREAMING_INTERVAL_DAYS"
+# The diagnostician: its model and effort, and the caps on each of its sessions.
+DIAGNOSTICIAN_MODEL_VAR = "PA_DIAGNOSTICIAN_MODEL"
+DIAGNOSTICIAN_EFFORT_VAR = "PA_DIAGNOSTICIAN_EFFORT"
+DIAGNOSTICIAN_MAX_TURNS_VAR = "PA_DIAGNOSTICIAN_MAX_TURNS"
+DIAGNOSTICIAN_TIMEOUT_VAR = "PA_DIAGNOSTICIAN_TIMEOUT_SECONDS"
 # Backup is configured with restic's own variables, so an off-box repository's credentials
 # (also restic's own variables) need no translation.
 BACKUP_REPOSITORY_VARS = ("RESTIC_REPOSITORY", "RESTIC_REPOSITORY_FILE")
@@ -185,6 +190,18 @@ class LibrarianConfig:
     def loop_age_days(self) -> int:
         """How long a loop may stay open before lint warns about it."""
         return self.dreaming.loop_age_days
+
+
+@dataclass(frozen=True)
+class DiagnosticianConfig:
+    """How a diagnostician's session runs (`pa_evals.diagnosis`)."""
+
+    model: str = "claude-opus-5-5"
+    effort: str = "high"
+    max_turns: int = 200
+    """The most turns the session may take, each time it is started or resumed."""
+    timeout_seconds: float = 3600
+    """The longest the session may run, each time it is started or resumed."""
 
 
 @dataclass(frozen=True)
@@ -398,6 +415,18 @@ def load_librarian_config(environ: Mapping[str, str] = os.environ) -> LibrarianC
         dreaming_interval_days=_whole_number(
             environ, LIBRARIAN_DREAMING_INTERVAL_VAR, default.dreaming_interval_days
         ),
+    )
+
+
+def load_diagnostician_config(environ: Mapping[str, str] = os.environ) -> DiagnosticianConfig:
+    """The diagnostician's configuration: the librarian's model at high effort unless
+    configured otherwise, so a hard question can be given a stronger session."""
+    default = DiagnosticianConfig()
+    return DiagnosticianConfig(
+        model=environ.get(DIAGNOSTICIAN_MODEL_VAR, "").strip() or default.model,
+        effort=environ.get(DIAGNOSTICIAN_EFFORT_VAR, "").strip() or default.effort,
+        max_turns=_positive_integer(environ, DIAGNOSTICIAN_MAX_TURNS_VAR, default.max_turns),
+        timeout_seconds=_positive(environ, DIAGNOSTICIAN_TIMEOUT_VAR, default.timeout_seconds),
     )
 
 
