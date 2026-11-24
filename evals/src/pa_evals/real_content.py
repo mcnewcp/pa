@@ -110,6 +110,11 @@ def words(text: str) -> list[str]:
     return _WORD.findall(plain(text).casefold())
 
 
+def cased_words(text: str) -> list[str]:
+    """The words of `text`, in order, in the letter case they are written in."""
+    return _WORD.findall(plain(text))
+
+
 # What a case holds.
 
 
@@ -344,6 +349,14 @@ class RealContent:
                     names.setdefault(run, identifier.held)
         return names
 
+    @functools.cached_property
+    def single_names(self) -> Mapping[str, str]:
+        """Every name of one word the case holds, as it is refused (`single_names`), each
+        with what holds it."""
+        return single_names(
+            identifier for source in self.sources for identifier in source.identifiers()
+        )
+
     def passages(self) -> Iterator[Passage]:
         for source in self.sources:
             yield from source.passages()
@@ -413,6 +426,24 @@ def named(text: Sequence[str], names: Mapping[Words, str]) -> list[tuple[int, in
     return places
 
 
+def single_names(identifiers: Iterable[Identifier]) -> dict[str, str]:
+    """Every name of one word among `identifiers`, as it is refused, each with what holds it.
+
+    A name of one word is mostly an ordinary word too ("will", "may", "mark"), so it is
+    matched by letter case, as the case writes it. One the case writes without a capital
+    counts with one: a slug is always lower case, and `will` the slug is "Will" the name,
+    never the word. An initial and a number are no one's name.
+    """
+    names: dict[str, str] = {}
+    for identifier in identifiers:
+        written = cased_words(identifier.text)
+        if len(written) != 1 or len(written[0]) < NAME_WORDS or written[0].isdigit():
+            continue
+        name = written[0]
+        names.setdefault(name.capitalize() if name == name.lower() else name, identifier.held)
+    return names
+
+
 def held_by(name: Words, names: Mapping[Words, str]) -> str:
     """What in the case holds `name`, which `named` found: its words in a row, or run
     together."""
@@ -424,8 +455,11 @@ def held_by(name: Words, names: Mapping[Words, str]) -> str:
 # Addresses and domains.
 
 _LABEL = r"[\w-]+"
-_ADDRESS = re.compile(rf"[^\s@]+@(?P<domain>{_LABEL}(?:\.{_LABEL})*)")
-_DOTTED = re.compile(rf"{_LABEL}(?:\.{_LABEL})+")
+# Each is looked for only from where a run of its characters starts, which is where the
+# leftmost match starts anyway. Without that, a long line with no space in it (a payload's
+# encoded body) is searched again from each of its characters.
+_ADDRESS = re.compile(rf"(?<![^\s@])[^\s@]+@(?P<domain>{_LABEL}(?:\.{_LABEL})*)")
+_DOTTED = re.compile(rf"(?<![\w-]){_LABEL}(?:\.{_LABEL})+")
 _TOP_LEVEL = re.compile(r"[^\W\d_][\w-]+")
 """What a domain can end with: two characters or more, starting with a letter. So an
 abbreviation (`e.g.`), a figure (`2.5`), and a version (`v0.14.1`) aren't domains."""
@@ -519,14 +553,23 @@ _NUMBER = re.compile(r"\d(?:[()]?[ \t.\u2010-\u2015-]?[()]?\d)*")
 bracket between them, as a phone or a card number is."""
 
 
-def long_numbers(text: str, *, ids: Collection[str] = ()) -> list[str]:
+def long_numbers(text: str, *, ids: Collection[str] = (), times: bool = False) -> list[str]:
     """Each number in `text` of `LONG_NUMBER_DIGITS` digits or more, as it is written: digits
     in a row, or in the groups a phone or a card number is written in.
 
     A date written `2026-10-05` isn't a number. Neither is one of `ids`, the episode ids that
     may be named, though 16 hex characters can hold as many digits.
+
+    With `times`, for a raw payload, neither is a date or a time as a payload's format writes
+    one: a calendar's `20261017` and `20261017T090000Z`, and a time to a fraction of a second
+    after its date, `2026-10-08T01:12:04.512345Z`.
     """
     text = _ID.sub(lambda match: "id" if match[0] in ids else match[0], plain(text))
+    if times:
+        text = _DATED_TIME.sub(lambda match: "time" if _is_date(match[1]) else match[0], text)
+        text = _CALENDAR_TIME.sub(
+            lambda match: "time" if _is_calendar_time(*match.groups()) else match[0], text
+        )
     text = _DATE.sub(lambda match: "date" if _is_date(match[0]) else match[0], text)
     return [
         match[0]
@@ -541,6 +584,23 @@ def _is_date(text: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+_DATED_TIME = re.compile(
+    r"(?<!\d)(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d{1,9})?)?"
+    r"(?:Z|[+-]\d{2}:?\d{2})?(?!\d)"
+)
+"""A time after its date, to the minute or finer, with or without its offset."""
+_CALENDAR_TIME = re.compile(r"(?<![0-9A-Za-z])(\d{8})(?:T(\d{6})Z?)?(?![0-9A-Za-z])")
+"""A date, or a date and a time, as a calendar file writes one."""
+
+
+def _is_calendar_time(day: str, time: str | None) -> bool:
+    """Whether a calendar file's `day`, and its `time` if it has one, are a date and a time
+    of day: a number that only looks like one is still a number."""
+    if not _is_date(f"{day[:4]}-{day[4:6]}-{day[6:]}") or not 1900 <= int(day[:4]) < 2200:
+        return False
+    return time is None or (int(time[:2]) < 24 and int(time[2:4]) < 60 and int(time[4:]) <= 60)
 
 
 # The repository, which is public already.

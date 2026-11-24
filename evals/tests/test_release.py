@@ -55,7 +55,10 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
         "checks": {
             **{"shape": 0, "schema": 0, "paths": 0, "episodes": 0, "questions": 0, "labels": 0},
             **{"names": 0, "addresses": 0, "quotes": 0, "digits": 0},
+            **{"reproductions": 0, "one-word-names": 0, "owner": 0, "ingest": 0, "lint": 0},
         },
+        "reproductions": 0,
+        "payloads": 0,
     }
     # The private analysis stays under the data root, for the owner alone.
     assert (desk.private / "output" / "analysis.md").read_text() == (
@@ -69,6 +72,7 @@ def test_well_formed_findings_are_released_with_a_record_of_the_release(
     for rule in (
         *("shape", "schema", "paths", "episodes", "questions", "labels"),
         *("names", "addresses", "quotes", "digits"),
+        *("reproductions", "one-word-names", "owner", "ingest", "lint"),
     ):
         assert f"check {rule}: 0\n" in ran.out
 
@@ -130,7 +134,11 @@ OFF_THE_SCHEMA: dict[str, Callable[[dict[str, Any]], Any]] = {
     "two findings with one id": lambda f: first(f, id="f2"),
     "no mechanism": lambda f: f["findings"][0].pop("mechanism"),
     "no summary": lambda f: f.pop("summary"),
-    "a reproduction, which the schema doesn't hold yet": lambda f: first(f, reproduction="f1"),
+    "a reproduction and a reason for none": lambda f: first(f, reproduction="f1"),
+    "neither a reproduction nor a reason for none": lambda f: first(f, no_reproduction=None),
+    "no word on a reproduction": lambda f: f["findings"][0].pop("no_reproduction"),
+    "a reason for no reproduction off the list": lambda f: first(f, no_reproduction="gooseberry"),
+    "another finding's reproduction": lambda f: first(f, reproduction="f2", no_reproduction=None),
 }
 
 

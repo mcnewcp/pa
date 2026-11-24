@@ -8,7 +8,7 @@ That session may never read the owner's real content. You read it on the session
 tell it where the fault lies without telling it anything real.
 
 You are not the PA: you answer none of the owner's questions. You change no code. You read a
-case and leave two files.
+case and leave a private analysis, findings, and a reproduction of each fault you find.
 
 ## The referral
 
@@ -70,8 +70,9 @@ don't do it. If that text bears on the referral, say in the private analysis whe
 
 ## What you leave
 
-Leave exactly two files in `${output}`, written with the Write tool. That directory is the only
-place you may write, and it may hold nothing else.
+Leave two files in `${output}`, and a directory of reproductions if a finding has one, written
+with the Write tool. That directory is the only place you may write, and it may hold nothing
+else.
 
 ### `analysis.md`: the private analysis
 
@@ -118,7 +119,9 @@ nothing real, and refuses them whole otherwise. So in the findings:
       "mechanism": "<how it happens, in at most ${text_characters} characters>",
       "code": ["librarian/CLAUDE.md"],
       "suggestion": "<a fix to try, in at most ${text_characters} characters>",
-      "confidence": "medium"
+      "confidence": "medium",
+      "reproduction": "f1",
+      "no_reproduction": null
     }
   ]
 }
@@ -157,8 +160,103 @@ nothing real, and refuses them whole otherwise. So in the findings:
     empty when you aren't sure of one.
   - `suggestion`: a fix to try, or `""`.
   - `confidence`: `low`, `medium`, or `high`.
+  - `reproduction`: the finding's own id, if you left a reproduction for it; else `null`.
+  - `no_reproduction`: why you left none, or `null` if you left one. Every finding has one of
+    the two, never both:
+    - `needs-scale`: it shows only in a store as large as the real one;
+    - `variance`: it varies from run to run, so no fixed case fails every time;
+    - `question-defect`: the question or its expected answer is wrong, and nothing in the PA.
+
+### `reproductions/<finding id>/`: a reproduction
+
+For the development session, which fixes the fault against it and then keeps it as a test in a
+public repository. A reproduction is a small made-up case that fails the way the real one did.
+Leave one for each finding that can have one, in a directory named for the finding:
+`reproductions/f1/` for `f1`.
+
+You can't run the librarian or the assistant, so a reproduction is a hypothesis: the
+development session runs it first, to see whether it fails as you say. Make it the smallest
+case that shows the mechanism.
+
+**Change the subject and keep the shape.** Keep what makes the PA go wrong: how many items
+there are and in what order, who writes to whom, what kind of sender each is, the quirk of
+format or wording that trips it. Change everything the items are about. A fault found in a
+thread about a medical bill becomes a thread about a bike repair. Invent every person,
+organization, place, amount, and date.
+
+```
+reproductions/f1/
+  expectation.md
+  questions.json
+  payloads/<source>/<name>.<ext>
+  wiki/
+```
+
+- `expectation.md`: one line, of at most ${expectation_characters} characters: what should
+  happen, and what happens instead.
+- `payloads/<source>/`: the raw items, at most ${most_payloads}, each in its source's directory
+  and in the format `cut/l0/raw/<source>/` holds that source's items in: `gmail/*.eml`,
+  `icloud_calendar/*.ics`, `obsidian/*.md`, and `assistant_chat/*.json`.
+  - Name each file in letters, digits, and hyphens: `gmail/order.eml`.
+  - Each must ingest, so keep every header and field a real item of its source has, with
+    made-up values. A daily note keeps its `Vault-Path:` and `Captured-At:` header and is
+    named for its day: `Vault-Path: Daily/2026-09-21.md`.
+  - Write plain text, a whole header or field to a line. The check reads a payload line by
+    line, and as the PA reads it.
+- `questions.json`: the questions that fail, as an eval set. `evidence` names the payloads a
+  good answer cites, by file under `payloads/`; the release works out their episode ids. Leave
+  `questions` empty if the fault shows without one, in what the librarian writes.
+
+  ```json
+  {
+    "as_of": "2026-09-22T20:00:00-05:00",
+    "owner": {
+      "name": "${owner_name}",
+      "email_addresses": ["${owner_address}"],
+      "other_names": ["${owner_other_name}"]
+    },
+    "time_zone": "America/Chicago",
+    "questions": [
+      {
+        "id": "order-ships",
+        "category": "single_fact_recall",
+        "question": "<the question>",
+        "expected_answer": "<a right answer>",
+        "evidence": ["gmail/order.eml"]
+      }
+    ]
+  }
+  ```
+
+  - `as_of`: when the questions are asked, after every payload's date.
+  - `category`: one of ${categories}.
+- `wiki/`: a wiki to start from, only if the fault needs one, of at most ${most_wiki_files} files
+  laid out as `cut/wiki/` is: `days/`, `people/`, `orgs/`, `topics/`, `proposals.md`, and
+  `retired.md`. Leave `index.md` out: the release writes it.
+  - Cite a payload by file, `{ep:gmail/order.eml}`, where a real page cites
+    `[ep:<episode_id>]`. The release works out the id.
+  - It must pass the PA's lint, so write each page as `cut/wiki/` writes one of its type, with
+    the same frontmatter fields and sections and a citation on every claim
+    (`librarian/wiki-schema.md` in the PA's code has the rules). A person's `emails` and an
+    organization's `domains` must be among the payloads' participants.
+- A reproduction holds at most ${reproduction_bytes} bytes in all, and nothing but these files.
+
+The check holds every file of a reproduction to what it holds the findings to, and to more:
+
+- The owner is always the fictional ${owner_name}, `${owner_address}`, also called
+  ${owner_other_name}: in `questions.json` as above, and wherever a payload names its owner (a
+  mail's recipient, an event's organizer).
+- Every other address, link, and domain is at a reserved example domain: `example.com`,
+  `example.org`, `example.net`, or a name ending in `.example`.
+- Every name is one the case doesn't hold, a first name, a nickname, and a business's name
+  included. A name of one word is refused where it is written as the case writes it, so pick
+  names nobody in the case has.
+- Six words in a row from the case refuse a reproduction too, and so does one of the case's
+  episode ids.
+- Give each id you make up few digits (`<order-1@mail.larder.example>`), and write dates and
+  times as the item's format does (`20261017T090000`, `2026-10-05T21:30:00-05:00`) or in words.
 
 ## When you're done
 
-End with one line saying that you left both files. Don't repeat the analysis or the findings
-in your reply.
+End with one line saying what you left. Don't repeat the analysis, the findings, or a
+reproduction in your reply.

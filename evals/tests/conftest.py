@@ -69,6 +69,7 @@ directory's path, which a command prints."""
 RULES = (
     *("shape", "schema", "paths", "episodes", "questions", "labels"),
     *("names", "addresses", "quotes", "digits"),
+    *("reproductions", "one-word-names", "owner", "ingest", "lint"),
 )
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
@@ -158,6 +159,8 @@ def well_formed() -> dict[str, Any]:
                 "code": ["librarian/CLAUDE.md", "core/src/pa_core/librarian/dreaming.py"],
                 "suggestion": "Have the host refuse a merge whose pages disagree on a wombat.",
                 "confidence": "medium",
+                "reproduction": None,
+                "no_reproduction": "needs-scale",
             },
             {
                 "id": "f2",
@@ -170,6 +173,8 @@ def well_formed() -> dict[str, Any]:
                 "code": [],
                 "suggestion": "",
                 "confidence": "low",
+                "reproduction": None,
+                "no_reproduction": "variance",
             },
         ],
     }

@@ -9,9 +9,10 @@ root, where a development session may read it.
 The findings are checked against what the case holds and against the owner's identity
 (`PA_OWNER_NAME`, `PA_OWNER_EMAILS`, `PA_OWNER_OTHER_NAMES`), so it refuses to run without one.
 
-What it prints is the diagnosis's name, the released directory, and counts: each rule by name
-with how many problems it found. Never a line of the findings, or what a rule found; that is in
-the check's notes, kept with the private analysis.
+What it prints is the diagnosis's name, the released directory, and counts: the findings by
+kind, the reproductions released with them and the payloads those hold, and each rule by name
+with how many problems it found. Never a line of the findings or of a reproduction, or what a
+rule found; that is in the check's notes, kept with the private analysis.
 """
 
 from __future__ import annotations
@@ -46,7 +47,8 @@ class ReleaseChoiceError(PaError):
 def add_release_command(commands: Any) -> None:
     command = commands.add_parser(
         "release",
-        help="Check a diagnosis, and release its findings to the released directory or refuse it.",
+        help="Check a diagnosis, and release its findings and reproductions to the released "
+        "directory or refuse it.",
     )
     command.add_argument("--name", required=True, help="The diagnosis's name.")
     # The case the diagnosis read, part for part, in this machine's copy.
@@ -76,6 +78,8 @@ def _release(args: argparse.Namespace) -> int:
     print(f"release: {name}: released")
     print(f"released: {verdict.directory}")
     print(f"findings: {record.findings}" + (f" ({kinds})" if kinds else ""))
+    print(f"reproductions: {record.reproductions}" + (", untested" if record.reproductions else ""))
+    print(f"payloads: {record.payloads}")
     _print_checks(record.checks)
     return 0
 
