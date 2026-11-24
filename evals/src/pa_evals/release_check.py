@@ -68,6 +68,7 @@ from pa_core.owner import Owner
 from pa_evals.case import Case
 from pa_evals.diagnosis import (
     FINDINGS,
+    NOTES,
     CaseRecord,
     Diagnosis,
     output_problems,
@@ -109,8 +110,6 @@ from pa_evals.reproduction import (
 )
 from pa_home.project import REPOSITORY
 
-NOTES = "check-notes.md"
-"""In a diagnosis's directory: what the check found, and where, when it refused."""
 RELEASED_FINDINGS = "findings.json"
 RECORD = "release.json"
 
@@ -564,6 +563,9 @@ class ReleaseRecord(FrozenModel):
     """How many reproductions were released with the findings, each untested."""
     payloads: int = 0
     """How many raw payloads the reproductions hold between them."""
+    revisions: int = 0
+    """How many times the diagnosis was revised after the check refused it, before this
+    release: each time it was held to every rule again."""
 
 
 @dataclass(frozen=True)
@@ -643,6 +645,7 @@ def release(
         checks=checks,
         reproductions=len(submission.reproductions),
         payloads=sum(len(tried.reproduction.payloads) for tried in submission.reproductions),
+        revisions=session.revisions,
     )
     _write(released, findings, submission.reproductions, record)
     return Release(released, record)

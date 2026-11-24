@@ -146,6 +146,7 @@ def test_a_diagnosis_over_a_whole_case_is_released_by_the_real_commands(
         "wikis own (2 runs of history), dreamed (2 runs of history)",
         "session: cost not reported, turns not reported",
         "resumes: 0",
+        "revisions: 0",
         f"left: {private}",
         f"release: {name}: released",
         f"released: {released}",
@@ -202,31 +203,134 @@ def test_a_follow_up_diagnosis_is_given_the_earlier_ones_private_analysis(
     assert len(list((tmp_path / "released").iterdir())) == 2
 
 
-def test_findings_the_real_check_refuses_end_the_diagnosis_unreleased_with_the_refused_code(
+SLIPPED = "core/src/pa_core/gooseberry.py"
+"""A path no file in the repository has. A finding that blames it is refused, and the check's
+notes quote it: it holds a word nothing the script prints may hold."""
+
+
+def session_says(private: Path, cut: Cut, *, revisions: int) -> list[str]:
+    """What the script prints of a scripted session over the desk's case, and of bringing back
+    what it left."""
+    return [
+        f"diagnosis: {private.name}, over the cut {cut.name}",
+        "case: an eval set; runs own (3), dreamed (6)",
+        "session: cost not reported, turns not reported",
+        "resumes: 0",
+        f"revisions: {revisions}",
+        f"left: {private}",
+    ]
+
+
+def refusal_says(private: Path, rules: tuple[str, ...]) -> list[str]:
+    counts = {**dict.fromkeys(rules, 0), "paths": 1}
+    return [
+        f"release: {private.name}: refused, and nothing is released",
+        *(f"check {rule}: {count}" for rule, count in counts.items()),
+        f"notes: {private}/check-notes.md",
+    ]
+
+
+def blamed(findings: Path) -> list[str]:
+    """The paths the first finding in a findings file blames."""
+    return json.loads(findings.read_text())["findings"][0]["code"]
+
+
+def test_findings_the_real_check_refuses_are_revised_in_the_vm_and_released_once_it_passes(
     tmp_path: Path,
     data_root: DataRoot,
+    cut: Cut,
     parts: Any,
     leavings: Callable[..., Path],
     well_formed: dict[str, Any],
     rules: tuple[str, ...],
     diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
 ):
-    well_formed["findings"][0]["code"] = ["core/src/pa_core/no_such_module.py"]
+    revised = leavings()
+    well_formed["findings"][0]["code"] = [SLIPPED]
 
+    result = diagnose_sh(
+        *parts.arguments(),
+        *("--agent", "scripted", "--leaves", leavings(well_formed), "--revised", revised),
+    )
+
+    assert result.returncode == 0, result.stderr
+    [private] = data_root.diagnoses.iterdir()
+    released = tmp_path / "released" / private.name
+    # One revision, and each pass's counts: never what the check found.
+    assert result.stdout.splitlines() == [
+        *session_says(private, cut, revisions=0),
+        *refusal_says(private, rules),
+        *session_says(private, cut, revisions=1),
+        f"release: {private.name}: released",
+        f"released: {released}",
+        "findings: 2 (1 fault, 1 noise)",
+        "reproductions: 0",
+        "payloads: 0",
+        *(f"check {rule}: 0" for rule in rules),
+    ]
+    # The refused output and the check's notes went into the VM, for the second pass.
+    pushed = tmp_path / "vm" / "srv" / "pa" / "eval" / "case" / "refused"
+    assert blamed(pushed / "output" / "findings.json") == [SLIPPED]
+    assert f"'{SLIPPED}' isn't in the repository" in (pushed / "check-notes.md").read_text()
+    # What is released is the revision, with its count; the notes and the refused pass aren't.
+    assert SLIPPED not in (released / "findings.json").read_text()
+    assert json.loads((released / "release.json").read_text())["revisions"] == 1
+    assert sorted(path.name for path in released.iterdir()) == ["findings.json", "release.json"]
+    assert not [path for path in released.rglob("*") if "gooseberry" in path.read_text()]
+    # Both passes are kept with the private analysis: the refused one with the check's notes.
+    assert sorted(path.name for path in private.iterdir()) == [
+        "output",
+        "referral.md",
+        "refused",
+        "reply.md",
+        "session.json",
+    ]
+    assert blamed(private / "refused" / "1" / "output" / "findings.json") == [SLIPPED]
+    assert (private / "refused" / "1" / "check-notes.md").read_text() == (
+        pushed / "check-notes.md"
+    ).read_text()
+    assert blamed(private / "output" / "findings.json") == blamed(revised / "findings.json")
+    assert modes(private) == PRIVATE
+    assert list(data_root.diagnoses.iterdir()) == [private]
+
+
+def test_findings_the_real_check_refuses_three_times_end_the_diagnosis_unreleased(
+    tmp_path: Path,
+    data_root: DataRoot,
+    cut: Cut,
+    parts: Any,
+    leavings: Callable[..., Path],
+    well_formed: dict[str, Any],
+    rules: tuple[str, ...],
+    diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
+):
+    well_formed["findings"][0]["code"] = [SLIPPED]
+
+    # A scripted session leaves the same output each time it revises.
     result = diagnose_sh(
         *parts.arguments(), *("--agent", "scripted", "--leaves", leavings(well_formed))
     )
 
     assert result.returncode == REFUSED, result.stderr
     [private] = data_root.diagnoses.iterdir()
-    counts = {**dict.fromkeys(rules, 0), "paths": 1}
-    assert result.stdout.splitlines()[5:] == [
-        f"release: {private.name}: refused, and nothing is released",
-        *(f"check {rule}: {count}" for rule, count in counts.items()),
-        f"notes: {private}/check-notes.md",
+    assert result.stdout.splitlines() == [
+        *session_says(private, cut, revisions=0),
+        *refusal_says(private, rules),
+        *session_says(private, cut, revisions=1),
+        *refusal_says(private, rules),
+        *session_says(private, cut, revisions=2),
+        *refusal_says(private, rules),
     ]
+    assert "is still refused after 2 revisions, and nothing is released" in result.stderr
     assert not (tmp_path / "released").exists() or not list((tmp_path / "released").iterdir())
-    assert (private / "check-notes.md").is_file()
+    # Every pass's output is kept with the check's notes on it: two that were revised, and the
+    # last.
+    passes = [private / "refused" / "1", private / "refused" / "2", private]
+    for kept in passes:
+        assert blamed(kept / "output" / "findings.json") == [SLIPPED]
+        assert f"'{SLIPPED}' isn't in the repository" in (kept / "check-notes.md").read_text()
+    assert sorted(path.name for path in (private / "refused").iterdir()) == ["1", "2"]
+    assert json.loads((private / "session.json").read_text())["revisions"] == 2
     assert modes(private) == PRIVATE
 
 

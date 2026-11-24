@@ -26,6 +26,17 @@ A diagnosis's directory, private to the owner (0700, every file 0600):
         session-error.txt         a failed session's whole error, which may quote its words
         output-problems.md        what was still wrong with the output after the last resume
         check-notes.md            what the release check found, when it refused
+        refused/<n>/              each pass the release check refused and a later one revised,
+                                  whole: 1 is the first session's, 2 the first revision's
+            output/               what that pass left, as the check read it
+            check-notes.md        what the check found in it
+            reply.md, session.json
+
+A refused diagnosis is revised (`revise`): a second session is given the refused output and the
+check's notes, and what it leaves becomes the diagnosis's output. Every pass is kept, so the
+owner can see what was caught and how it was put right. The notes quote real content: they
+reach a session only here, where one may read it, and never an exception or what a command
+prints.
 
 The output is unchecked here: findings reach a development session only through the release
 check (`pa_evals.release_check`), on the devbox. Nothing here ever puts a line of the output, of
@@ -38,7 +49,7 @@ import re
 import shutil
 import stat
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from string import Template
@@ -75,8 +86,17 @@ PROMPT = Path(__file__).parent / "diagnose_prompts" / "diagnose.md"
 """What a diagnostician's session is asked: the referral, and where to read and write."""
 FIX_PROMPT = PROMPT.parent / "fix.md"
 """What a session is told when it is resumed: what is wrong with the output it left."""
+REVISE_PROMPT = PROMPT.parent / "revise.md"
+"""What a second pass's session is asked: the referral again, and the release check's notes on
+the output it finds in its output directory."""
 MAX_RESUMES = 2
 """The most times a session is resumed over a malformed output, before the diagnosis fails."""
+MAX_REVISIONS = 2
+"""The most times a refused diagnosis is revised. One the check still refuses after that ends
+unreleased: the check is never worn down by retries."""
+NOTES_CHARACTERS = 100_000
+"""The most of the check's notes a second pass's session is told, so that it has room left to
+work in. A constant, not configuration."""
 
 ROLE = (
     "In this session you are not a coding assistant, and you are not a personal assistant. You "
@@ -102,6 +122,10 @@ REPLY = "reply.md"
 SESSION = "session.json"
 SESSION_ERROR = "session-error.txt"
 OUTPUT_PROBLEMS = "output-problems.md"
+NOTES = "check-notes.md"
+"""What the release check found, and where, when it refused (`pa_evals.release_check`)."""
+REFUSED = "refused"
+"""In a diagnosis's directory: each pass that was refused and then revised, by number."""
 
 OUTPUT_FILES: Mapping[str, int] = {ANALYSIS: 200_000, FINDINGS: 64_000}
 """What an output holds: each file by name, with the most bytes it may hold. Both are UTF-8
@@ -134,6 +158,9 @@ class DiagnosisRequest:
     """The PA's code as deployed: the checkout this runs from."""
     resume: str | None = None
     """The session to resume, by its id, which is then told `prompt`; None starts one."""
+    revision: int = 0
+    """Which revision of the diagnosis this session makes: 0 for the first pass, which finds
+    its output directory empty. A revision finds the refused output there."""
 
 
 class Diagnostician(Protocol):
@@ -192,23 +219,26 @@ class ScriptedDiagnostician:
     """A fake diagnostician that leaves a copy of the files in a directory as its output, and
     ends by saying `reply`. With more directories than one, it leaves the first when its
     session is started and the next each time it is resumed (the last again, after that), in
-    place of what it left before."""
+    place of what it left before, or of the refused output a revision finds.
+
+    `revised` is what it leaves when it revises instead: the first directory in a diagnosis's
+    first revision, the next in its second (the last again, after that)."""
 
     SESSION = "scripted"
 
-    def __init__(self, *leaves: Path, reply: str = "Done.") -> None:
+    def __init__(self, *leaves: Path, reply: str = "Done.", revised: Sequence[Path] = ()) -> None:
         self._leaves = leaves
         self._reply = reply
+        self._revised = revised
         self._asked = 0
 
     def diagnose(self, request: DiagnosisRequest) -> SessionReply:
-        leaves = self._leaves[min(self._asked, len(self._leaves) - 1)]
+        if request.revision and self._revised:
+            leaves = self._revised[min(request.revision, len(self._revised)) - 1]
+        else:
+            leaves = self._leaves[min(self._asked, len(self._leaves) - 1)]
         self._asked += 1
-        for entry in request.output.iterdir():
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
+        _clear(request.output)
         shutil.copytree(leaves, request.output, symlinks=True, dirs_exist_ok=True)
         return SessionReply(
             text=self._reply,
@@ -312,7 +342,10 @@ class SessionRecord(FrozenModel):
     turns: int | None
     duration_ms: int | None
     resumes: NonNegativeInt = 0
-    """How many times the session was resumed over a malformed output."""
+    """How many times a session was resumed over a malformed output."""
+    revisions: Annotated[int, Field(ge=0, le=MAX_REVISIONS)] = 0
+    """How many times the diagnosis was revised after the release check refused it. The cost,
+    turns, duration, and resumes are every pass's together."""
 
 
 @dataclass(frozen=True)
@@ -351,6 +384,11 @@ class Diagnosis:
         if self.referral.is_symlink() or not self.referral.is_file():
             raise DiagnosisError(f"{self.path} isn't a diagnosis: it has no {REFERRAL}")
         return self.referral.read_text()
+
+    def refused(self, number: int) -> Path:
+        """Where the pass that revision `number` revised is kept: the output the release check
+        refused, the check's notes on it, and that pass's reply and record."""
+        return self.path / REFUSED / str(number)
 
     def keep(self, name: str, text: str) -> Path:
         """Keeps `text` in the diagnosis's directory as the file `name`, for the owner alone,
@@ -486,23 +524,141 @@ def diagnose(
     diagnosis.output.mkdir(mode=_PRIVATE_DIRECTORY)
     try:
         diagnosis.keep(REFERRAL, referral)
-        replies = _ask(referral, case, diagnostician, diagnosis)
-        diagnosis.keep(REPLY, replies[-1].text)
-        record = SessionRecord(
-            name=name,
-            cut=case.cut.name,
-            case=CaseRecord.of(case),
-            commit=commit,
-            cost_usd=_total([reply.cost_usd for reply in replies]),
-            turns=_total([reply.turns for reply in replies]),
-            duration_ms=_total([reply.duration_ms for reply in replies]),
-            resumes=len(replies) - 1,
-        )
-        diagnosis.keep(SESSION, record.model_dump_json(indent=2) + "\n")
+        prompt = Template(PROMPT.read_text()).substitute(referral=referral.strip())
+        replies = _ask(prompt, case, diagnostician, diagnosis)
+        _record(diagnosis, case, replies, commit=commit)
     finally:
         # Whatever the session left, and however it ended, is the owner's alone.
         diagnosis.make_private()
     return diagnosis
+
+
+def revise(
+    referral: str,
+    case: Case,
+    diagnostician: Diagnostician,
+    *,
+    name: str,
+    directory: Path,
+    refused: Path,
+    notes: str,
+    commit: str,
+) -> Diagnosis:
+    """The second pass: revises the diagnosis `name` in `directory`, whose output the release
+    check refused, and returns it.
+
+    `refused` is that output, as the check read it, and `notes` what the check found in it and
+    where. A new session is asked the same `referral` over the same `case`, finds a copy of
+    `refused` in its output directory, and is told the notes. What it leaves is the diagnosis's
+    output from then on, held to its form as a first pass's is.
+
+    The refused pass is kept whole in the diagnosis's directory (`Diagnosis.refused`): its
+    output, the notes, its session's reply and its record. The new record counts the revision,
+    and its cost, turns, duration, and resumes are every pass's together.
+
+    Raises DiagnosisError, before anything is changed, when `directory` holds no such
+    diagnosis, when it answered another referral or read another case, or when it has been
+    revised `MAX_REVISIONS` times already. A session that fails, or leaves its output
+    malformed, fails the diagnosis as a first pass's does: no session's record is left, so
+    there is nothing to release.
+    """
+    diagnosis = Diagnosis(directory / require_name(name))
+    before = diagnosis.session()
+    if before.revisions >= MAX_REVISIONS:
+        raise DiagnosisError(
+            f"the diagnosis {name} has been revised {before.revisions} times already, and no "
+            "diagnosis is revised more: it ends unreleased"
+        )
+    if before.cut != case.cut.name or before.case != CaseRecord.of(case):
+        raise DiagnosisError(
+            f"the diagnosis {name} read another case than the one given: it is revised over the "
+            f"case it read. It read: the cut {before.cut}; {before.case.describe()}. Given: the "
+            f"cut {case.cut.name}; {CaseRecord.of(case).describe()}"
+        )
+    if referral != diagnosis.referral_text():
+        raise DiagnosisError(
+            f"the diagnosis {name} answered another referral than the one given: it is revised "
+            "over the referral it answered"
+        )
+    if refused.is_symlink() or not refused.is_dir():
+        raise DiagnosisError(f"the refused output {refused} isn't a directory")
+    revision = before.revisions + 1
+    kept = diagnosis.refused(revision)
+    if kept.exists(follow_symlinks=False):
+        raise DiagnosisError(f"{kept} already exists: no pass of a diagnosis is written over")
+    try:
+        # The refused pass goes aside whole before anything of it is changed. `refused` may be
+        # the diagnosis's own output, so it is copied before that is replaced.
+        kept.mkdir(parents=True, mode=_PRIVATE_DIRECTORY)
+        shutil.copytree(refused, kept / OUTPUT, symlinks=True)
+        write_atomically(kept / NOTES, notes.encode(), mode=_PRIVATE_FILE)
+        for moved in (REPLY, SESSION):
+            if (diagnosis.path / moved).exists(follow_symlinks=False):
+                (diagnosis.path / moved).replace(kept / moved)
+        (diagnosis.path / NOTES).unlink(missing_ok=True)
+        _clear(diagnosis.output)
+        shutil.copytree(kept / OUTPUT, diagnosis.output, symlinks=True, dirs_exist_ok=True)
+        prompt = Template(REVISE_PROMPT.read_text()).substitute(
+            referral=referral.strip(), notes=_told(notes)
+        )
+        replies = _ask(prompt, case, diagnostician, diagnosis, revision=revision)
+        _record(diagnosis, case, replies, commit=commit, before=before)
+    finally:
+        diagnosis.make_private()
+    return diagnosis
+
+
+def _told(notes: str) -> str:
+    """The check's notes as a second pass's session is told them: whole, or their first lines
+    within `NOTES_CHARACTERS` and how many lines were left out. What is kept with the
+    diagnosis is always whole."""
+    notes = notes.strip()
+    if len(notes) <= NOTES_CHARACTERS:
+        return notes
+    lines = notes.splitlines()
+    told, length = 0, 0
+    while told < len(lines) and length + len(lines[told]) + 1 <= NOTES_CHARACTERS:
+        length += len(lines[told]) + 1
+        told += 1
+    return "\n".join(lines[:told]) + (
+        f"\n\n(The notes go on for {len(lines) - told} more lines, left out here for their "
+        "length. Put right what these name: the check runs again on what you leave.)"
+    )
+
+
+def _record(
+    diagnosis: Diagnosis,
+    case: Case,
+    replies: list[SessionReply],
+    *,
+    commit: str,
+    before: SessionRecord | None = None,
+) -> None:
+    """Keeps the last reply and the session's record: what `replies` cost, on top of the passes
+    `before` this one, which this one revised."""
+    diagnosis.keep(REPLY, replies[-1].text)
+    spent: list[SessionRecord | SessionReply] = [*([before] if before else []), *replies]
+    record = SessionRecord(
+        name=diagnosis.name,
+        cut=case.cut.name,
+        case=CaseRecord.of(case),
+        commit=commit,
+        cost_usd=_total([each.cost_usd for each in spent]),
+        turns=_total([each.turns for each in spent]),
+        duration_ms=_total([each.duration_ms for each in spent]),
+        resumes=(before.resumes if before else 0) + len(replies) - 1,
+        revisions=before.revisions + 1 if before else 0,
+    )
+    diagnosis.keep(SESSION, record.model_dump_json(indent=2) + "\n")
+
+
+def _clear(directory: Path) -> None:
+    """Empties `directory`, following no link."""
+    for entry in directory.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
 
 
 def malformed(output: Path) -> list[OutputProblem]:
@@ -525,17 +681,25 @@ def malformed(output: Path) -> list[OutputProblem]:
 
 
 def _ask(
-    referral: str, case: Case, diagnostician: Diagnostician, diagnosis: Diagnosis
+    prompt: str,
+    case: Case,
+    diagnostician: Diagnostician,
+    diagnosis: Diagnosis,
+    *,
+    revision: int = 0,
 ) -> list[SessionReply]:
-    """What the session ended with each time it was started or resumed, asked over a read-only
-    copy of the case. It is resumed while its output is malformed, at most `MAX_RESUMES`
-    times, and told what is wrong: after that the diagnosis fails."""
-    prompt = Template(PROMPT.read_text()).substitute(referral=referral.strip())
+    """What the session ended with each time it was started or resumed, asked `prompt` over a
+    read-only copy of the case. It is resumed while its output is malformed, at most
+    `MAX_RESUMES` times, and told what is wrong: after that the diagnosis fails."""
     with tempfile.TemporaryDirectory(prefix="pa-diagnosis-") as throwaway:
         laid = Path(throwaway) / "case"
         lay_case(case, laid)
         request = DiagnosisRequest(
-            prompt=prompt, case=laid, output=diagnosis.output, project=Path(throwaway) / "project"
+            prompt=prompt,
+            case=laid,
+            output=diagnosis.output,
+            project=Path(throwaway) / "project",
+            revision=revision,
         )
         replies = [_run(diagnostician, request, diagnosis)]
         session = replies[0].session_id

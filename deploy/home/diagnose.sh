@@ -27,14 +27,21 @@
 # It refuses to start while the nightly job runs, whose librarian spends the same usage limit,
 # and while another diagnosis runs. It never takes the data root's lock: a cut holds still.
 #
-# It prints the diagnosis's name, the session's cost, turns and resumes, where the diagnosis was
-# left, and what the release check reports: counts and names of checks, never content.
+# A diagnosis the release check refuses is revised without the owner, at most twice: the refused
+# output and the check's notes go back into the VM, a second session there puts right what the
+# notes name (`pa-eval diagnose --revise`), and the check runs again on what it left, exactly as
+# strict. The notes quote real content, so they go into the VM on stdin and are never printed.
+# Every pass, and the check's notes on each, is kept in the diagnosis's private directory.
 #
-# Exit codes: 0, the findings were released. 3, the release check refused them: nothing is
-# released, and the check's notes are with the private analysis. 4, the session failed, ran out
-# of time or turns, or left an output that isn't in form: what it left is kept, and nothing is
-# checked. 1, anything else: it didn't start, or the chat inbox changed while the session ran,
-# or the release check couldn't run.
+# It prints the diagnosis's name, the session's cost, turns, resumes and revisions, where the
+# diagnosis was left, and what the release check reports: counts and names of checks, never
+# content. A revised diagnosis prints them once for each pass, the figures every pass's together.
+#
+# Exit codes: 0, the findings were released. 3, the release check refused them, and refused both
+# revisions: nothing is released, and the check's notes are with the private analysis. 4, a
+# session failed, ran out of time or turns, or left an output that isn't in form: what it left is
+# kept, and it isn't checked. 1, anything else: it didn't start, or the chat inbox changed while
+# a session ran, or the release check couldn't run.
 set -Eeuo pipefail
 source "$(dirname "$0")/lib.sh"
 # Every failure this script doesn't name exits 1: the other codes each mean one thing.
@@ -92,6 +99,9 @@ while (($#)); do
     --out | --out=*) die "diagnose.sh says where a diagnosis is left itself: drop --out" ;;
     --history | --history=*)
       die "diagnose.sh exports the history of each --wiki itself: drop --history"
+      ;;
+    --revise | --revise=* | --notes | --notes=*)
+      die "diagnose.sh revises a refused diagnosis itself, by the release check's notes: drop ${1%%=*}"
       ;;
     *)
       args+=("$1")
@@ -276,7 +286,7 @@ EOF
   # Whatever runs in the VM read real content. Of what its command printed, only what
   # `pa-eval diagnose` is written to say is shown: its counts and its own errors. Where it left
   # the diagnosis in the VM isn't: bring_back says where it is on the devbox.
-  local says='^(diagnosis|case|session|resumes): '
+  local says='^(diagnosis|case|session|resumes|revisions): '
   grep -E "$says" "$work/stdout" || true
   grep -vE "$says|^left: " "$work/stdout" >"$work/unshown" || true
   own_errors
@@ -292,23 +302,40 @@ own_errors() {
 }
 
 # keep_unshown COMMAND keeps what `pa-eval COMMAND` printed and wasn't shown ($work/unshown)
-# with the diagnosis, for the owner, and says how much there is of it.
+# with the diagnosis, for the owner, after what an earlier pass's left there, and says how much
+# there is of it.
 keep_unshown() {
   [[ -s $work/unshown ]] || return 0
   mkdir -p "$private"
-  mv "$work/unshown" "$private/$1-output.txt"
-  log "$(wc -l <"$private/$1-output.txt") lines pa-eval $1 printed aren't shown: they are kept in $private/$1-output.txt"
+  cat "$work/unshown" >>"$private/$1-output.txt"
+  log "$(wc -l <"$work/unshown") lines pa-eval $1 printed aren't shown: they are kept in $private/$1-output.txt"
+  rm -f "$work/unshown"
 }
 
-# bring_back pulls what the session left in the VM to the private directory, for the owner
+# bring_back [VM_DIR] pulls the diagnosis from the VM to the private directory, for the owner
 # alone, and sets `left` to where it is, or to nothing when the VM's command left nothing: one
-# that failed before it started a session.
+# that failed before it started a session. VM_DIR is what a command that got that far made in
+# the VM: the diagnosis's own directory, unless one is given.
+#
+# The VM's copy is the whole diagnosis, every pass with the check's notes on it (a second pass
+# keeps the pass it revises: pa_evals.diagnosis). So it is pulled beside the devbox's copy and
+# takes its place whole. What only the devbox holds, the output of its commands that wasn't
+# shown, goes with it.
 bring_back() {
+  local made=${1:-$vm_diagnosis} pulled=$work/pulled
   left=""
-  if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $vm_diagnosis" </dev/null; then
-    incus file pull -r "$PA_VM$vm_diagnosis" "$PA_DIAGNOSES/"
-    find "$private" -type d -exec chmod 0700 {} +
-    find "$private" -type f -exec chmod 0600 {} +
+  if incus exec "$PA_VM" -- runuser -l "$PA_USER" -c "test -d $made" </dev/null; then
+    rm -rf "$pulled"
+    mkdir -p "$pulled"
+    incus file pull -r "$PA_VM$vm_diagnosis" "$pulled/"
+    find "$pulled" -type d -exec chmod 0700 {} +
+    find "$pulled" -type f -exec chmod 0600 {} +
+    if [[ -e $private ]]; then
+      find "$private" -maxdepth 1 -type f -name '*-output.txt' -exec mv -t "$pulled/$name" {} +
+      mv -T "$private" "$work/replaced"
+    fi
+    mv -T "$pulled/$name" "$private"
+    rm -rf "$work/replaced"
     left=$private
     echo "left: $private"
   fi
@@ -325,12 +352,32 @@ require_session() {
     die "the diagnosis's session changed $PA_CHAT_INBOX: nothing is released"
   fi
   log "the diagnosis's session left $PA_CHAT_INBOX unchanged"
-  ((session)) || return 0
   [[ -n $left ]] ||
-    die "the diagnosis $name started no session: pa-eval diagnose exited $session in the VM"
+    die "the diagnosis $name started no session: pa-eval diagnose exited $session in the VM, and nothing is released"
+  ((session)) || return 0
   # A session that failed left no record of itself, so there is nothing to check.
   printf 'error: %s\n' "the diagnosis $name failed in its session (pa-eval diagnose exited $session in the VM), and nothing is released: what it left is in $private" >&2
   exit "$PA_DIAGNOSIS_FAILED"
+}
+
+# revise N has a second pass revise the diagnosis, whose output the release check just refused:
+# revision N. It pushes the refused output and the check's notes into the VM, replacing the last
+# revision's, runs the second pass there over the same referral and case, and brings back what
+# it left. The second pass keeps the refused pass in the diagnosis's directory, as refused/N.
+#
+# This is the one place real content goes back into a session, and it goes into the VM, which
+# may hold it: the notes say what the check found, so they travel on stdin, never on a command
+# line, and nothing here prints them.
+revise() {
+  local vm_notes=$PA_VM_EVAL_REFUSED/$PA_DIAGNOSIS_NOTES
+  log "the release check refused the diagnosis $name: revising the diagnosis by the check's notes (revision $1 of at most $PA_DIAGNOSIS_REVISIONS)"
+  incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+    "rm -rf $PA_VM_EVAL_REFUSED && mkdir -p $PA_VM_EVAL_REFUSED" </dev/null
+  push_tree "$private" "$PA_VM_EVAL_REFUSED" output
+  push_file "$private/$PA_DIAGNOSIS_NOTES" "$vm_notes"
+  run_session "${asked[@]}" --revise "$PA_VM_EVAL_REFUSED/output" --notes "$vm_notes"
+  bring_back "$vm_diagnosis/refused/$1"
+  require_session
 }
 
 # check_release runs the release check on the devbox, never in the VM, over the devbox's copy of
@@ -372,18 +419,29 @@ done
 log "pushed the referral and the rest of the case to $PA_VM_EVAL_CASE"
 
 log "starting the diagnosis $name"
-run_session --referral "$PA_VM_EVAL_CASE/referral.md" --name "$name" \
-  --out "$PA_VM_EVAL_DIAGNOSES" "${vm_case[@]}"
+# What every pass is asked: the referral and the case, as the VM holds them.
+asked=(--referral "$PA_VM_EVAL_CASE/referral.md" --name "$name"
+  --out "$PA_VM_EVAL_DIAGNOSES" "${vm_case[@]}")
+run_session "${asked[@]}"
 # What a session left is the owner's to read however the diagnosis ends.
 bring_back
 require_session
-check_release
-case $checked in
-  0) ;;
-  "$PA_DIAGNOSIS_REFUSED")
-    # A refusal ends the diagnosis unreleased: the private analysis and the check's notes stay
-    # in $private.
-    exit "$PA_DIAGNOSIS_REFUSED"
-    ;;
-  *) die "the release check couldn't run (pa-eval release exited $checked): nothing is released, and the diagnosis is kept in $private" ;;
-esac
+# Every pass is checked by the same check over the same case: a revision is held to every rule
+# again, and a diagnosis still refused after the last one ends unreleased.
+revisions=0
+while :; do
+  check_release
+  case $checked in
+    0) break ;;
+    "$PA_DIAGNOSIS_REFUSED")
+      if ((revisions == PA_DIAGNOSIS_REVISIONS)); then
+        # Every pass and the check's notes on each stay in $private.
+        printf 'error: %s\n' "the diagnosis $name is still refused after $revisions revisions, and nothing is released: every pass, and the check's notes on each, are kept in $private" >&2
+        exit "$PA_DIAGNOSIS_REFUSED"
+      fi
+      revisions=$((revisions + 1))
+      revise "$revisions"
+      ;;
+    *) die "the release check couldn't run (pa-eval release exited $checked): nothing is released, and the diagnosis is kept in $private" ;;
+  esac
+done
