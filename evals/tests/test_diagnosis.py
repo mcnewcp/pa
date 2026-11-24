@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import stat
 import sys
 import textwrap
@@ -19,7 +20,8 @@ from typing import Any, get_args
 import pytest
 
 from pa_evals import diagnosis as diagnosis_module
-from pa_evals.diagnosis import Case, DiagnosisRequest
+from pa_evals.case import Case
+from pa_evals.diagnosis import DiagnosisRequest
 from pa_evals.diagnosis import diagnose as diagnose_over
 from pa_evals.findings import Component, Kind
 from pa_home import agent
@@ -113,10 +115,14 @@ def test_a_diagnosis_keeps_the_sessions_reply_and_says_which_cut_it_read(
 
 
 class Looking:
-    """A diagnostician that looks at what it was given, and leaves nothing."""
+    """A diagnostician that looks at what it was given, and leaves the files of `leaves`."""
+
+    def __init__(self, leaves: Path) -> None:
+        self.leaves = leaves
 
     def diagnose(self, request: DiagnosisRequest) -> SessionReply:
         self.request = request
+        shutil.copytree(self.leaves, request.output, dirs_exist_ok=True)
         case = request.case
         self.files = sorted(str(p.relative_to(case)) for p in case.rglob("*") if p.is_file())
         self.writable = [str(p) for p in (case, *case.rglob("*")) if os.access(p, os.W_OK)]
@@ -127,9 +133,9 @@ class Looking:
 
 
 def test_the_session_is_given_the_referral_and_the_cut_laid_read_only(
-    tmp_path: Path, cut: Cut, referral: Path
+    tmp_path: Path, cut: Cut, referral: Path, leavings
 ):
-    looking = Looking()
+    looking = Looking(leavings())
 
     diagnosis = diagnose_over(
         referral.read_text(),
@@ -166,7 +172,7 @@ import json, os, sys, time
 from pathlib import Path
 argv = sys.argv[1:]
 settings = json.loads(Path(".claude/settings.json").read_text())
-case, output = settings["permissions"]["additionalDirectories"]
+case, output, code = settings["permissions"]["additionalDirectories"]
 try:
     (Path(case) / "cut" / "planted.md").write_text("changed")
     wrote_the_case = True
@@ -247,7 +253,7 @@ def test_the_session_runs_in_the_diagnosticians_project_without_the_assistants_r
     # It is asked the referral.
     assert referral.read_text().strip() in seen["prompt"]
     # It reads the case, which it can't change, and writes its output; no web, no connectors.
-    case, output = seen["settings"]["permissions"]["additionalDirectories"]
+    case, output, _ = seen["settings"]["permissions"]["additionalDirectories"]
     assert output == str(data_root.diagnoses / "dreamed-drop" / "output")
     assert "cut/cut.json" in seen["case_files"]
     assert not seen["wrote_the_case"]

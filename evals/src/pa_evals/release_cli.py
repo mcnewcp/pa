@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from pa_core.errors import PaError
-from pa_evals.diagnosis import Case, Diagnosis, require_name
+from pa_evals.case_cli import add_case_arguments, named_case
+from pa_evals.diagnosis import Diagnosis, require_name
 from pa_evals.real_data import require_private
 from pa_evals.release_check import Refusal, release
 from pa_home.config import (
@@ -32,7 +33,6 @@ from pa_home.config import (
     load_released_directory,
     require_outside_repository,
 )
-from pa_home.cut import load_cut
 
 REFUSED = 3
 """The exit code of a refusal: a diagnosis that was checked and not released. A failure (a
@@ -49,13 +49,8 @@ def add_release_command(commands: Any) -> None:
         help="Check a diagnosis, and release its findings to the released directory or refuse it.",
     )
     command.add_argument("--name", required=True, help="The diagnosis's name.")
-    command.add_argument(
-        "--cut",
-        type=Path,
-        required=True,
-        metavar="DIR",
-        help="The case the diagnosis read: the cut (`pa cut`), in this machine's copy.",
-    )
+    # The case the diagnosis read, part for part, in this machine's copy.
+    add_case_arguments(command)
     command.set_defaults(handler=_release)
 
 
@@ -65,14 +60,12 @@ def _release(args: argparse.Namespace) -> int:
     data_root = load_data_root()
     owner = load_owner()
     released_root = load_released_directory(data_root)
-    cut_dir = require_private(args.cut, "--cut")
+    case = named_case(args)
     private = _private(data_root, name)
     released = _released(released_root, data_root, name)
     if not private.is_dir():
         raise ReleaseChoiceError(f"there is no diagnosis named {name} in {data_root.diagnoses}")
-    verdict = release(
-        Diagnosis(private), Case(cut=load_cut(cut_dir)), owner=owner, released=released
-    )
+    verdict = release(Diagnosis(private), case.load(), owner=owner, released=released)
     if isinstance(verdict, Refusal):
         print(f"release: {name}: refused, and nothing is released")
         _print_checks(verdict.checks)

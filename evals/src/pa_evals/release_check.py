@@ -14,7 +14,8 @@ what a rule holds. To add one, write its function and add a `Rule` to `RULES`:
   kept in the diagnosis's directory for the owner alone, and nowhere else.
 
 The first rules hold the output to its form: the files an output may hold, the findings
-schema, paths that are in the repository, and episodes that are in the case. The rest are the
+schema, paths that are in the repository, episodes and questions that are in the case, and
+counts of runs under the labels the case gives its sets of runs. The rest are the
 fence: they refuse real content in every piece of the findings' text (`_pieces`), told from
 fictional by what the case holds (`pa_evals.real_content`).
 
@@ -50,16 +51,25 @@ from pathlib import Path, PurePosixPath
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
-from pa_evals.diagnosis import FINDINGS, Case, Diagnosis, output_problems, read_output
+from pa_evals.case import Case
+from pa_evals.diagnosis import (
+    FINDINGS,
+    CaseRecord,
+    Diagnosis,
+    output_problems,
+    read_output,
+)
 from pa_evals.findings import Findings, FindingsError, findings_json, parse_findings
 from pa_evals.models import FrozenModel
 from pa_evals.real_content import (
     QUOTED_WORDS,
     Envelopes,
+    History,
     OwnerIdentity,
     Passage,
     RealContent,
     Source,
+    Text,
     Wiki,
     held_by,
     holding_dotted_names,
@@ -195,6 +205,38 @@ def _episodes(submission: Submission) -> list[Problem]:
     ]
 
 
+def _questions(submission: Submission) -> list[Problem]:
+    """Every question a finding names is in the case: in its eval set, or asked in its runs."""
+    if submission.findings is None:
+        return []
+    held = submission.case.question_ids()
+    return [
+        Problem(f"{FINDINGS}: {finding.id}.questions", f"{question!r} isn't a question in the case")
+        for finding in submission.findings.findings
+        for question in finding.questions
+        if question not in held
+    ]
+
+
+def _labels(submission: Submission) -> list[Problem]:
+    """A finding counts runs only under a label the case gives a set of runs, and never more
+    runs than that set holds: a count is a number the session chose."""
+    if submission.findings is None:
+        return []
+    case = submission.case
+    problems: list[Problem] = []
+    for finding in submission.findings.findings:
+        where = f"{FINDINGS}: {finding.id}.runs"
+        for label, (_, asked) in finding.runs.items():
+            if label not in case.runs:
+                problems.append(Problem(where, f"{label!r} isn't a label of a set of runs"))
+            elif asked > (held := case.runs_under(label)):
+                problems.append(
+                    Problem(where, f"{asked} runs asked under {label!r}, which holds {held}")
+                )
+    return problems
+
+
 def _pieces(findings: Findings) -> list[Piece]:
     """Every piece of the findings' text that a session wrote freely, in the order the
     released file holds it.
@@ -315,6 +357,8 @@ RULES: tuple[Rule, ...] = (
     Rule("schema", _schema),
     Rule("paths", _paths),
     Rule("episodes", _episodes),
+    Rule("questions", _questions),
+    Rule("labels", _labels),
     Rule("names", _names),
     Rule("addresses", _addresses),
     Rule("quotes", _quotes),
@@ -388,6 +432,12 @@ def release(
             f"the diagnosis {diagnosis.name} read the cut {session.cut}, not {case.cut.name}: "
             "it is checked against the case it read"
         )
+    if session.case != CaseRecord.of(case):
+        raise ReleaseError(
+            f"the diagnosis {diagnosis.name} read a case of other parts than the one given: it "
+            f"is checked against the case it read. It read: {session.case.describe()}. Given: "
+            f"{CaseRecord.of(case).describe()}"
+        )
     if released.exists(follow_symlinks=False):
         raise ReleaseError(
             f"a diagnosis named {diagnosis.name} is already released in {released.parent}: no "
@@ -440,7 +490,35 @@ def _sources(case: Case, owner: Owner) -> list[Source]:
     sources: list[Source] = [OwnerIdentity(owner), Envelopes(case.cut.l0)]
     if case.cut.wiki is not None:
         sources.append(Wiki(case.cut.wiki))
+    for label, wiki in case.wikis.items():
+        sources.append(Wiki(wiki.tree, name=label))
+        sources.append(History(wiki.history_files(), name=label))
+    sources.append(Text(lambda: _text(case)))
     return sources
+
+
+def _text(case: Case) -> Iterator[Passage]:
+    """The text of the case's parts that are text alone: the eval set's questions and
+    expected answers, each run's answers, errors, and judge's reasoning, and the earlier
+    diagnoses' private analyses."""
+    eval_set = case.read_eval_set()
+    for question in eval_set.questions if eval_set else ():
+        yield Passage(f"the eval set's question {question.id}", question.question)
+        yield Passage(f"the eval set's expected answer to {question.id}", question.expected_answer)
+    for label in case.runs:
+        for number, run in enumerate(case.results(label), start=1):
+            for asked in run.questions:
+                of = f"{asked.id} in run {number} under {label}"
+                yield Passage(f"the question {of}", asked.question)
+                yield Passage(f"the expected answer to {of}", asked.expected_answer)
+                yield Passage(f"the answer to {of}", asked.answer or "")
+                yield Passage(f"the judge's reasoning on {of}", asked.judge_reasoning or "")
+                yield Passage(f"the error on {of}", asked.error or "")
+    for name, analysis in case.earlier.items():
+        yield Passage(
+            f"the earlier diagnosis {name}'s analysis",
+            analysis.read_text(encoding="utf-8", errors="replace"),
+        )
 
 
 def _notes(name: str, found: dict[str, list[Problem]]) -> str:
