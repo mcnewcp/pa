@@ -56,8 +56,9 @@ FINDING_ID = r"f[1-9]\d?"
 """What a finding's id is made of."""
 FindingId = Annotated[str, StringConstraints(pattern=f"^{FINDING_ID}$")]
 """A finding's id: `f1`, `f2`, ..."""
-QuestionId = Annotated[str, StringConstraints(pattern=r"^r\d{2,4}$")]
-"""An opaque question id, as a real-data eval set numbers its questions (`r07`)."""
+QuestionId = Annotated[str, StringConstraints(pattern=r"^[a-z]\d{2,4}$")]
+"""An opaque question id, as a real-data eval set numbers its questions: a letter and a number
+(`r07`, `q32`). A set's descriptive ids say what a question is about, so they aren't one."""
 EpisodeId = Annotated[str, StringConstraints(pattern=rf"^({'|'.join(Source)})_[0-9a-f]{{16}}$")]
 """An episode id: its source, then 16 hex characters."""
 LABEL = r"[a-z0-9][a-z0-9-]{0,31}"
