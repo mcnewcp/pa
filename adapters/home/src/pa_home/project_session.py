@@ -49,6 +49,8 @@ class SessionReply:
     """The session's wall-clock time in milliseconds (`duration_ms`)."""
     tool_calls: tuple[ToolCall, ...]
     """The session's tool calls, in the order it made them."""
+    session_id: str | None = None
+    """The id the session is resumed by; None unless it kept its transcript and reported one."""
 
 
 def run_project_session(
@@ -57,28 +59,42 @@ def run_project_session(
     prompt: str,
     system_prompt: str,
     model: str | None = None,
+    effort: str | None = None,
+    max_turns: int | None = None,
     timeout_seconds: float,
     executable: str = "claude",
+    keep_transcript: bool = False,
+    resume: str | None = None,
 ) -> SessionReply:
     """Runs one `claude -p` session in the rendered `project`, and returns what it ended with.
 
     The session's working directory is `project`, and it is told `prompt` and, appended to
-    Claude Code's system prompt, `system_prompt`, both as given. It runs on `model` (default:
-    the CLI's own) for at most `timeout_seconds`.
+    Claude Code's system prompt, `system_prompt`, both as given. It runs on `model` at `effort`
+    (default: the CLI's own) for at most `timeout_seconds` and, if given, `max_turns` turns.
 
     What the session may do comes from the project's settings.json in auto permission mode, as
     in chat, and in the home VM from its managed settings and sandbox too, which every session
     there runs under. Exchange capture is always off: the session's environment drops its
-    settings, whatever the caller's environment says. The session keeps no transcript to
-    resume from.
+    settings, whatever the caller's environment says.
+
+    The session keeps no transcript to resume from unless `keep_transcript` is set; its reply
+    then carries its id. `resume` is the id of a session that kept one, started in this same
+    `project`: it is told `prompt` next, and goes on keeping its transcript.
 
     Raises ClaudeCliTimeoutError when the session runs out of time, and ClaudeCliError when
     it cannot be started or fails.
     """
     # Auto, the mode the Claude app starts sessions in, so these sessions run as the owner's do.
-    args = ["--no-session-persistence", "--permission-mode", "auto"]
+    kept = keep_transcript or resume is not None
+    args = ["--resume", resume] if resume is not None else []
+    args += [] if kept else ["--no-session-persistence"]
+    args += ["--permission-mode", "auto"]
     if model:
         args += ["--model", model]
+    if effort:
+        args += ["--effort", effort]
+    if max_turns is not None:
+        args += ["--max-turns", str(max_turns)]
     args += ["--append-system-prompt", system_prompt]
     # claude -p never trusts a folder, so it drops a project's allow rules and additional
     # directories. Passing the same file as flag settings keeps them.
@@ -93,12 +109,14 @@ def run_project_session(
         env=without_capture(os.environ),
     )
     result = session.result
+    session_id = result.get("session_id")
     return SessionReply(
         text=str(result.get("result", "")),
         cost_usd=result_number(result, "total_cost_usd", float),
         turns=result_number(result, "num_turns", int),
         duration_ms=result_number(result, "duration_ms", int),
         tool_calls=tool_calls(session.events),
+        session_id=session_id if kept and isinstance(session_id, str) else None,
     )
 
 

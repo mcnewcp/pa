@@ -37,6 +37,7 @@ def _stand_in_claude(tmp_path: Path, body: str = "") -> Path:
                 "argv": argv, "prompt": prompt, "cwd": os.getcwd(), "environ": dict(os.environ),
             }}))
             reply = "The fault is in consolidation."
+            events_id = None
             """
         )
         + textwrap.dedent(body)
@@ -51,7 +52,8 @@ def _stand_in_claude(tmp_path: Path, body: str = "") -> Path:
                     {"type": "tool_result", "tool_use_id": "toolu_1",
                      "content": "Only in own: days", "is_error": False}]}},
                 {"type": "result", "subtype": "success", "is_error": False, "result": reply,
-                 "total_cost_usd": 2.75, "num_turns": 31, "duration_ms": 412000},
+                 "total_cost_usd": 2.75, "num_turns": 31, "duration_ms": 412000,
+                 **({"session_id": events_id} if events_id else {})},
             ]
             for event in events:
                 print(json.dumps(event))
@@ -229,3 +231,81 @@ def test_a_session_that_runs_too_long_is_stopped_with_a_timeout_error(
             timeout_seconds=0.5,
             executable=str(claude),
         )
+
+
+def test_a_session_keeps_no_transcript_and_has_no_effort_or_turn_limit_unless_asked(
+    tmp_path: Path, project: Path
+):
+    reply = run_project_session(
+        project,
+        prompt=REFERRAL,
+        system_prompt=INSTRUCTIONS,
+        timeout_seconds=30,
+        executable=str(_stand_in_claude(tmp_path)),
+    )
+
+    # As an eval run's, a drafting session's, and every session before these options ran.
+    assert _seen(tmp_path)["argv"] == [
+        "-p",
+        *("--output-format", "stream-json", "--verbose"),
+        "--no-session-persistence",
+        *("--permission-mode", "auto"),
+        *("--append-system-prompt", INSTRUCTIONS),
+        *("--settings", str(project / ".claude/settings.json")),
+    ]
+    assert reply.session_id is None
+
+
+def test_the_session_runs_at_the_effort_and_within_the_turns_it_is_given(
+    tmp_path: Path, project: Path
+):
+    run_project_session(
+        project,
+        prompt=REFERRAL,
+        system_prompt=INSTRUCTIONS,
+        effort="high",
+        max_turns=120,
+        timeout_seconds=30,
+        executable=str(_stand_in_claude(tmp_path)),
+    )
+
+    argv = _seen(tmp_path)["argv"]
+    assert _flag_values(argv, "--effort") == ["high"]
+    assert _flag_values(argv, "--max-turns") == ["120"]
+
+
+def test_a_session_that_keeps_its_transcript_says_which_session_it_was(
+    tmp_path: Path, project: Path
+):
+    reply = run_project_session(
+        project,
+        prompt=REFERRAL,
+        system_prompt=INSTRUCTIONS,
+        keep_transcript=True,
+        timeout_seconds=30,
+        executable=str(_stand_in_claude(tmp_path, 'events_id = "s-7c1"\n')),
+    )
+
+    argv = _seen(tmp_path)["argv"]
+    assert "--no-session-persistence" not in argv
+    assert "--resume" not in argv
+    assert reply.session_id == "s-7c1"
+
+
+def test_a_session_is_resumed_in_its_project_by_its_id(tmp_path: Path, project: Path):
+    reply = run_project_session(
+        project,
+        prompt="Your findings don't fit the schema.",
+        system_prompt=INSTRUCTIONS,
+        resume="s-7c1",
+        timeout_seconds=30,
+        executable=str(_stand_in_claude(tmp_path, 'events_id = "s-7c1"\n')),
+    )
+
+    seen = _seen(tmp_path)
+    assert _flag_values(seen["argv"], "--resume") == ["s-7c1"]
+    # A resumed session goes on keeping its transcript, in the project it was started in.
+    assert "--no-session-persistence" not in seen["argv"]
+    assert seen["cwd"] == str(project)
+    assert seen["prompt"] == "Your findings don't fit the schema."
+    assert reply.session_id == "s-7c1"
