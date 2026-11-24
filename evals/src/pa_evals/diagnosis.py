@@ -25,6 +25,8 @@ A diagnosis's directory, private to the owner (0700, every file 0600):
         output/                   what the session left, as it left it
             analysis.md           the private analysis, for the owner
             findings.json         the findings, unchecked (`pa_evals.findings`)
+            reproductions/        a reproduction for each finding that has one, unchecked
+                                  (`pa_evals.reproduction`, which owns their layout)
         reply.md                  the session's final words
         session.json              the session's record (`SessionRecord`)
         session-error.txt         a failed session's whole error, which may quote its words
@@ -54,6 +56,7 @@ from pa_core.errors import PaError
 from pa_evals.findings import MOST_FINDINGS, SUMMARY_CHARACTERS, TEXT_CHARACTERS
 from pa_evals.harness import lay_cut, make_read_only
 from pa_evals.models import FrozenModel
+from pa_evals.reproduction import REPRODUCTIONS, reproduction_values, shape_flaws
 from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError
 from pa_home.config import DataRoot
 from pa_home.cut import MANIFEST, Cut
@@ -94,7 +97,8 @@ SESSION_ERROR = "session-error.txt"
 
 OUTPUT_FILES: Mapping[str, int] = {ANALYSIS: 200_000, FINDINGS: 64_000}
 """What an output holds: each file by name, with the most bytes it may hold. Both are UTF-8
-text, and an output holds nothing else. The caps are constants, not configuration."""
+text, and an output holds nothing else but its reproductions (`pa_evals.reproduction`). The
+caps are constants, not configuration."""
 
 _PRIVATE_DIRECTORY = 0o700
 _PRIVATE_FILE = 0o600
@@ -198,6 +202,7 @@ def render_diagnostician_project(
             "summary_characters": str(SUMMARY_CHARACTERS),
             "text_characters": str(TEXT_CHARACTERS),
             "most_findings": str(MOST_FINDINGS),
+            **reproduction_values(),
         },
         name="the diagnostician project",
     )
@@ -294,8 +299,9 @@ class OutputProblem:
 
 def output_problems(output: Path) -> list[OutputProblem]:
     """What is wrong with the shape of the session's `output`: it holds the files in
-    `OUTPUT_FILES`, each a regular file of UTF-8 text within its cap, and nothing else. A link
-    is never followed."""
+    `OUTPUT_FILES`, each a regular file of UTF-8 text within its cap, and nothing else but a
+    directory of reproductions, each of the shape and within the caps a reproduction has
+    (`pa_evals.reproduction.shape_flaws`). A link is never followed."""
     if output.is_symlink() or not output.is_dir():
         return [OutputProblem(OUTPUT, "isn't a directory")]
     problems: list[OutputProblem] = []
@@ -303,6 +309,12 @@ def output_problems(output: Path) -> list[OutputProblem]:
         status = entry.lstat()
         if stat.S_ISLNK(status.st_mode):
             wrong = "a link in place of a file"
+        elif entry.name == REPRODUCTIONS:
+            # A reproduction's layout is its own module's.
+            problems += [
+                OutputProblem(f"{OUTPUT}/{flaw.where}", flaw.what) for flaw in shape_flaws(output)
+            ]
+            continue
         elif entry.name not in OUTPUT_FILES:
             kind = "directory" if stat.S_ISDIR(status.st_mode) else "file"
             wrong = f"an unexpected {kind}"

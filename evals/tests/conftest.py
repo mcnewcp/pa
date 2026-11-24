@@ -61,7 +61,10 @@ for real content in a case. `gooseberry` is for what a test plants itself: a fil
 field's name, a path. No test's name holds one of them: a test's name is in its temporary
 directory's path, which a command prints."""
 
-RULES = ("shape", "schema", "paths", "episodes", "names", "addresses", "quotes", "digits")
+RULES = (
+    *("shape", "schema", "paths", "episodes", "names", "addresses", "quotes", "digits"),
+    *("reproductions", "one-word-names", "owner", "ingest", "lint"),
+)
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
 NAME = "dreamed-drop"
@@ -150,6 +153,8 @@ def well_formed() -> dict[str, Any]:
                 "code": ["librarian/CLAUDE.md", "core/src/pa_core/librarian/dreaming.py"],
                 "suggestion": "Have the host refuse a merge whose pages disagree on a wombat.",
                 "confidence": "medium",
+                "reproduction": None,
+                "no_reproduction": "needs-scale",
             },
             {
                 "id": "f2",
@@ -162,6 +167,8 @@ def well_formed() -> dict[str, Any]:
                 "code": [],
                 "suggestion": "",
                 "confidence": "low",
+                "reproduction": None,
+                "no_reproduction": "variance",
             },
         ],
     }

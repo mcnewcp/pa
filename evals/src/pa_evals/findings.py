@@ -60,6 +60,9 @@ EpisodeId = Annotated[str, StringConstraints(pattern=rf"^({'|'.join(Source)})_[0
 """An episode id: its source, then 16 hex characters."""
 Label = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
 """A label the referral gave a set of runs: lowercase letters, digits, and hyphens."""
+NoReproduction = Literal["needs-scale", "variance", "question-defect"]
+"""Why a finding has no reproduction: it shows only at the corpus's scale, it is run-to-run
+variance, or it is a defect in a question."""
 
 
 class Finding(FrozenModel):
@@ -81,11 +84,23 @@ class Finding(FrozenModel):
     suggestion: str = Field(max_length=TEXT_CHARACTERS)
     """A suggested fix ("" for none)."""
     confidence: Confidence
+    reproduction: FindingId | None = None
+    """Its reproduction, which is named for it: the finding's own id, or None for none."""
+    no_reproduction: NoReproduction | None = None
+    """Why it has no reproduction, or None when it has one."""
 
     @model_validator(mode="after")
     def _no_more_runs_affected_than_asked(self) -> Finding:
         if any(affected > asked for affected, asked in self.runs.values()):
             raise ValueError("a label counts more runs affected than asked")
+        return self
+
+    @model_validator(mode="after")
+    def _a_reproduction_or_a_reason_for_none(self) -> Finding:
+        if (self.reproduction is None) == (self.no_reproduction is None):
+            raise ValueError("a finding has a reproduction or a reason for none, never both")
+        if self.reproduction not in (None, self.id):
+            raise ValueError("a finding's reproduction is named for it, by its own id")
         return self
 
 
@@ -102,6 +117,10 @@ class Findings(FrozenModel):
         if len(set(ids)) != len(ids):
             raise ValueError("two findings share an id")
         return self
+
+    def reproduced(self) -> list[str]:
+        """The reproductions the findings name, in the findings' order."""
+        return [finding.reproduction for finding in self.findings if finding.reproduction]
 
     def kinds(self) -> dict[str, int]:
         """How many findings there are of each kind that has any."""

@@ -14,35 +14,49 @@ what a rule holds. To add one, write its function and add a `Rule` to `RULES`:
   kept in the diagnosis's directory for the owner alone, and nowhere else.
 
 The first rules hold the output to its form: the files an output may hold, the findings
-schema, paths that are in the repository, and episodes that are in the case. The rest are the
-fence: they refuse real content in every piece of the findings' text (`_pieces`), told from
-fictional by what the case holds (`pa_evals.real_content`).
+schema, paths that are in the repository, and episodes that are in the case. The next are the
+fence: they refuse real content in every piece of the findings' text (`_pieces`) and in every
+file of every reproduction (`pa_evals.reproduction.Tried.texts`), told from fictional by what
+the case holds (`pa_evals.real_content`).
 
 - `names`: a name of two or more words that the case holds for a person or an organization.
 - `addresses`: an address or a domain outside the reserved example domains.
 - `quotes`: six or more words in a row that the case holds, unless the repository or the
   referral holds them too.
 - `digits`: a number of seven or more digits, in a row or in the groups a phone number is
-  written in.
+  written in. In a reproduction's payloads, a date or a time isn't one.
+
+The last are a reproduction's own. A development session runs one as it stands and commits
+it, so it is held to more than the findings are:
+
+- `reproductions`: each finding that names a reproduction has one, and each says what a
+  reproduction says.
+- `one-word-names`: a name of one word that the case holds, in the letter case it holds it.
+- `owner`: its owner is the synthetic corpus's fictional owner.
+- `ingest`: its payloads ingest into a throwaway data root with nothing quarantined.
+- `lint`: its wiki lints without errors.
 
 What the case holds comes from its parts (`_sources`), and what is checked is each piece of
-text a release would hand over (`_pieces`). A diagnosis that gains an output (a reproduction)
-adds its pieces, and a case that gains a part adds a source; the rules stay as they are.
+text a release would hand over. A case that gains a part adds a source; the rules stay as
+they are.
 
 The thresholds are constants, not configuration. The rules catch identifiers and quoted text,
-never meaning: a paraphrase passes, and so does a name of one word.
+never meaning: a paraphrase passes, and so does a name of one word in the findings.
 
 A release writes the released directory, whole or not at all:
 
     <released>/<name>/
         findings.json             the findings, as the schema holds them, written afresh
         release.json              the record of the release (`ReleaseRecord`)
+        reproductions/<finding>/  each finding's reproduction, as `pa_evals.reproduction`
+                                  releases one
 
 Nothing here puts what a rule found in an exception or a return value's printable fields.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -61,15 +75,28 @@ from pa_evals.real_content import (
     RealContent,
     Source,
     Wiki,
+    Words,
+    cased_words,
     held_by,
     holding_dotted_names,
     long_numbers,
+    name_runs,
     named,
     repeated,
     repository_passages,
+    single_names,
     tracked_files,
     unreserved,
     words,
+)
+from pa_evals.reproduction import (
+    FICTIONAL_OWNER,
+    REPRODUCTIONS,
+    Tried,
+    is_left,
+    read_reproductions,
+    reproductions_left,
+    try_out,
 )
 from pa_home.project import REPOSITORY
 
@@ -109,6 +136,8 @@ class Submission:
     """Where the findings leave the schema, and why."""
     real: RealContent
     """What the case holds, and the owner's identity."""
+    reproductions: tuple[Tried, ...] = ()
+    """Each reproduction the session left, tried out as a development session will."""
 
     def public(self) -> Iterator[Passage]:
         """What is public already, so findings may repeat it: the referral, which holds
@@ -182,16 +211,57 @@ def _paths(submission: Submission) -> list[Problem]:
 
 
 def _episodes(submission: Submission) -> list[Problem]:
-    """Every episode a finding names is in the case. An id's 16 hex characters could spell
-    anything else."""
+    """Every episode a finding names is in the case: an id's 16 hex characters could spell
+    anything else. And no reproduction names one of them."""
     if submission.findings is None:
         return []
     held = submission.case.cut.episode_ids()
     return [
-        Problem(f"{FINDINGS}: {finding.id}.episodes", f"{episode!r} isn't an episode in the case")
-        for finding in submission.findings.findings
-        for episode in finding.episodes
-        if episode not in held
+        *(
+            Problem(
+                f"{FINDINGS}: {finding.id}.episodes", f"{episode!r} isn't an episode in the case"
+            )
+            for finding in submission.findings.findings
+            for episode in finding.episodes
+            if episode not in held
+        ),
+        # A reproduction names none of them: it becomes a fixture, and their ids stay out.
+        *(
+            Problem(piece.where, f"{episode!r} is an episode in the case")
+            for piece in _reproduced_pieces(submission)
+            for episode in _EPISODE.findall(piece.text)
+            if episode in held
+        ),
+    ]
+
+
+_EPISODE = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
+"""Something of an episode id's shape: a source, then 16 hex characters."""
+_FICTIONAL = OwnerIdentity(FICTIONAL_OWNER)
+"""The fictional owner's names, which every reproduction holds and the repository does too:
+they pass in a reproduction, whatever holds them in a case."""
+_DAILY_NOTE = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
+"""A daily note's file name, which a note's payload says it was captured from: a dotted name
+that is no domain."""
+
+
+def _reproduced_pieces(submission: Submission) -> list[Piece]:
+    """Every piece of text of every reproduction, in order."""
+    return [
+        Piece(piece.where, piece.text)
+        for tried in submission.reproductions
+        for text in tried.texts
+        for piece in text.pieces
+    ]
+
+
+def _reproduced_readings(submission: Submission) -> list[Reading]:
+    """Each file of each reproduction, read by itself: a name or a quote is looked for across
+    a file's lines, never from one file into the next."""
+    return [
+        Reading.of([Piece(piece.where, piece.text) for piece in text.pieces])
+        for tried in submission.reproductions
+        for text in tried.texts
     ]
 
 
@@ -219,34 +289,53 @@ def _pieces(findings: Findings) -> list[Piece]:
 
 def _names(submission: Submission) -> list[Problem]:
     """No name of two or more words that the case holds for a person or an organization: a
-    participant's display name, a page's slug, alias, or name, or one of the owner's names."""
+    participant's display name, a page's slug, alias, or name, or one of the owner's names.
+    In the findings, and in each file of a reproduction, where the fictional owner's own
+    names pass."""
     if submission.findings is None:
         return []
-    reading = Reading.of(_pieces(submission.findings))
     names = submission.real.names
+    fictional: set[Words] = set()
+    for identifier in _FICTIONAL.identifiers():
+        fictional |= name_runs(identifier.text)
+    in_a_reproduction = {run: held for run, held in names.items() if run not in fictional}
+    read = [
+        (Reading.of(_pieces(submission.findings)), names),
+        *((reading, in_a_reproduction) for reading in _reproduced_readings(submission)),
+    ]
     return [
         Problem(
             reading.where(start),
             f"the name {' '.join(reading.words[start:end])!r}, which the case holds "
-            f"({held_by(tuple(reading.words[start:end]), names)})",
+            f"({held_by(tuple(reading.words[start:end]), held)})",
         )
-        for start, end in named(reading.words, names)
+        for reading, held in read
+        for start, end in named(reading.words, held)
     ]
 
 
 def _addresses(submission: Submission) -> list[Problem]:
     """No address, and no domain, outside the reserved example domains, whether or not the
     case holds it. A dotted name the repository or the referral holds is code or a file's
-    name, not a domain; an address is never excused."""
+    name, not a domain; an address is never excused. In a reproduction, a daily note's file
+    name is no domain either."""
     if submission.findings is None:
         return []
-    found = [(piece, unreserved(piece.text)) for piece in _pieces(submission.findings)]
-    dotted = {name for _, outside in found for name in outside.dotted_names}
+    found = [
+        *((piece, unreserved(piece.text), False) for piece in _pieces(submission.findings)),
+        *((piece, unreserved(piece.text), True) for piece in _reproduced_pieces(submission)),
+    ]
+    dotted = {
+        name
+        for _, outside, reproduced in found
+        for name in outside.dotted_names
+        if not (reproduced and _DAILY_NOTE.fullmatch(name))
+    }
     domains = dotted - holding_dotted_names(submission.public(), dotted) if dotted else dotted
     outside_them = "is outside the reserved example domains"
     return [
         problem
-        for piece, outside in found
+        for piece, outside, _ in found
         for problem in (
             *(Problem(piece.where, f"the address {a!r} {outside_them}") for a in outside.addresses),
             *(
@@ -261,16 +350,31 @@ def _addresses(submission: Submission) -> list[Problem]:
 def _quotes(submission: Submission) -> list[Problem]:
     """No six words in a row that the case holds in an episode's subject or body or in a wiki
     file, unless the referral or the repository holds the same six: those are public already.
-    Words that go on past six are one quote."""
+    Words that go on past six are one quote. In the findings, and in each file of a
+    reproduction."""
     if submission.findings is None:
         return []
-    reading = Reading.of(_pieces(submission.findings))
-    runs = [
+    readings = [Reading.of(_pieces(submission.findings)), *_reproduced_readings(submission)]
+    # The case and the repository are each read once, for every reading's words.
+    every = {run for reading in readings for run in _runs(reading)}
+    held = repeated(submission.real.passages(), every)
+    public = repeated(submission.public(), set(held))
+    return [problem for reading in readings for problem in _quoted(reading, held, public.keys())]
+
+
+def _runs(reading: Reading) -> list[Words]:
+    """Every run of `QUOTED_WORDS` words in `reading`, by the word it starts at."""
+    return [
         tuple(reading.words[start : start + QUOTED_WORDS])
         for start in range(len(reading.words) - QUOTED_WORDS + 1)
     ]
-    held = repeated(submission.real.passages(), set(runs))
-    public = repeated(submission.public(), set(held))
+
+
+def _quoted(reading: Reading, held: dict[Words, str], public: Iterable[Words]) -> list[Problem]:
+    """Each quote in `reading`: words in a row that are `held` by the case and aren't
+    `public`."""
+    runs = _runs(reading)
+    public = set(public)
     quoted = [run in held and run not in public for run in runs]
     problems: list[Problem] = []
     start = 0
@@ -296,17 +400,102 @@ def _quotes(submission: Submission) -> list[Problem]:
 def _digits(submission: Submission) -> list[Problem]:
     """No number of seven digits or more, which could be a phone, an account, or a
     confirmation number. An id of one of the case's episodes isn't one, and neither is a
-    date."""
+    date. In the findings, and in each file of a reproduction."""
     if submission.findings is None:
         return []
     episodes = submission.case.cut.episode_ids()
-    return [
-        Problem(
-            piece.where,
-            f"a number of {sum(character.isdigit() for character in number)} digits: {number!r}",
-        )
+    found = [
+        (piece.where, number)
         for piece in _pieces(submission.findings)
         for number in long_numbers(piece.text, ids=episodes)
+    ]
+    for tried in submission.reproductions:
+        # In a reproduction, the ids that may be written are its own episodes', which a
+        # release writes into its wiki, and a payload may write a time as its format does.
+        own = {envelope.episode_id for envelope in tried.envelopes.values()}
+        found += [
+            (piece.where, number)
+            for text in tried.texts
+            for piece in text.pieces
+            for number in long_numbers(piece.text, ids=own, times=text.payload)
+        ]
+    return [
+        Problem(
+            where,
+            f"a number of {sum(character.isdigit() for character in number)} digits: {number!r}",
+        )
+        for where, number in found
+    ]
+
+
+def _reproductions(submission: Submission) -> list[Problem]:
+    """Every finding that names a reproduction has one, every reproduction is named by its
+    finding, and each says what a reproduction says: one line of expectation, questions that
+    are an eval set, and evidence and citations that name its own payloads."""
+    if submission.findings is None:
+        return []
+    named = submission.findings.reproduced()
+    left = reproductions_left(submission.diagnosis.output)
+    return [
+        *(
+            Problem(f"{FINDINGS}: {finding}.reproduction", f"there is no {REPRODUCTIONS}/{finding}")
+            for finding in named
+            if not is_left(submission.diagnosis.output, finding)
+        ),
+        *(
+            Problem(f"{REPRODUCTIONS}/{finding}", "no finding names it as its reproduction")
+            for finding in left
+            if finding not in named
+        ),
+        *(
+            Problem(flaw.where, flaw.what)
+            for tried in submission.reproductions
+            for flaw in tried.unsaid
+        ),
+    ]
+
+
+def _one_word_names(submission: Submission) -> list[Problem]:
+    """No reproduction holds a name of one word that the case holds for a person or an
+    organization, in the letter case it is a name in. Only a reproduction is held to this:
+    every name in one is a choice, where findings are prose about code."""
+    names = submission.real.single_names
+    fictional = single_names(_FICTIONAL.identifiers())
+    return [
+        Problem(piece.where, f"the name {word!r}, which the case holds ({names[word]})")
+        for piece in _reproduced_pieces(submission)
+        for word in cased_words(piece.text)
+        if word in names and word not in fictional
+    ]
+
+
+def _owner(submission: Submission) -> list[Problem]:
+    """Every reproduction is the synthetic corpus's fictional owner's, so nothing in one is
+    the real owner's."""
+    return [
+        Problem(flaw.where, flaw.what)
+        for tried in submission.reproductions
+        for flaw in tried.not_the_owners
+    ]
+
+
+def _ingest(submission: Submission) -> list[Problem]:
+    """Every reproduction's payloads ingest into a throwaway data root, with nothing
+    quarantined."""
+    return [
+        Problem(flaw.where, flaw.what)
+        for tried in submission.reproductions
+        for flaw in tried.quarantined
+    ]
+
+
+def _lint(submission: Submission) -> list[Problem]:
+    """Every reproduction's wiki lints without errors, against the episodes its payloads
+    ingest to."""
+    return [
+        Problem(flaw.where, flaw.what)
+        for tried in submission.reproductions
+        for flaw in tried.unlinted
     ]
 
 
@@ -319,6 +508,11 @@ RULES: tuple[Rule, ...] = (
     Rule("addresses", _addresses),
     Rule("quotes", _quotes),
     Rule("digits", _digits),
+    Rule("reproductions", _reproductions),
+    Rule("one-word-names", _one_word_names),
+    Rule("owner", _owner),
+    Rule("ingest", _ingest),
+    Rule("lint", _lint),
 )
 """Every rule, in the order its count is reported."""
 
@@ -337,6 +531,10 @@ class ReleaseRecord(FrozenModel):
     """How many findings there are of each kind."""
     checks: dict[str, int]
     """Each rule, with how many problems it found."""
+    reproductions: int = 0
+    """How many reproductions were released with the findings, each untested."""
+    payloads: int = 0
+    """How many raw payloads the reproductions hold between them."""
 
 
 @dataclass(frozen=True)
@@ -408,8 +606,10 @@ def release(
         findings=len(findings.findings),
         kinds=findings.kinds(),
         checks=checks,
+        reproductions=len(submission.reproductions),
+        payloads=sum(len(tried.reproduction.payloads) for tried in submission.reproductions),
     )
-    _write(released, findings, record)
+    _write(released, findings, submission.reproductions, record)
     return Release(released, record)
 
 
@@ -431,7 +631,13 @@ def _submitted(
         findings=findings,
         off_schema=off_schema,
         real=RealContent(_sources(case, owner)),
+        reproductions=_tried(diagnosis) if findings is not None else (),
     )
+
+
+def _tried(diagnosis: Diagnosis) -> tuple[Tried, ...]:
+    """Each reproduction in the diagnosis's output, tried out."""
+    return tuple(try_out(reproduction) for reproduction in read_reproductions(diagnosis.output))
 
 
 def _sources(case: Case, owner: Owner) -> list[Source]:
@@ -457,7 +663,9 @@ def _notes(name: str, found: dict[str, list[Problem]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _write(released: Path, findings: Findings, record: ReleaseRecord) -> None:
+def _write(
+    released: Path, findings: Findings, reproductions: Sequence[Tried], record: ReleaseRecord
+) -> None:
     """Write the released directory through a hidden one renamed into place, so it is there
     whole or not at all."""
     building = released.parent / f".{released.name}.partial"
@@ -466,6 +674,8 @@ def _write(released: Path, findings: Findings, record: ReleaseRecord) -> None:
     try:
         (building / RELEASED_FINDINGS).write_bytes(findings_json(findings))
         (building / RECORD).write_text(record.model_dump_json(indent=2) + "\n")
+        for tried in reproductions:
+            tried.write(building / REPRODUCTIONS / tried.reproduction.finding)
         building.rename(released)
     except BaseException:
         shutil.rmtree(building, ignore_errors=True)
