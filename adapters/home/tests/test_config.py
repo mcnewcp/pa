@@ -6,11 +6,13 @@ import pytest
 from pa_core.owner import Owner
 from pa_home.config import (
     ConfigError,
+    DataRoot,
     load_capture_config,
     load_icloud_calendars,
     load_icloud_credentials,
     load_librarian_config,
     load_owner,
+    load_released_directory,
 )
 
 
@@ -176,3 +178,18 @@ def test_icloud_calendar_isnt_captured_until_its_calendars_are_named():
     assert load_capture_config({}).icloud_calendars == ()
     with pytest.raises(ConfigError, match="PA_ICLOUD_CALENDARS is not set"):
         load_icloud_calendars({})
+
+
+def test_the_released_directory_is_beside_the_data_root_unless_configured(tmp_path: Path):
+    data_root = DataRoot(tmp_path / "pa-home")
+
+    assert load_released_directory(data_root, {}) == Path("~/.local/share/pa-released").expanduser()
+    configured = load_released_directory(data_root, {"PA_RELEASED_DIR": str(tmp_path / "out")})
+    assert configured == tmp_path / "out"
+
+
+def test_a_released_directory_inside_the_data_root_is_refused(tmp_path: Path):
+    data_root = DataRoot(tmp_path / "pa-home")
+
+    with pytest.raises(ConfigError, match=r"PA_RELEASED_DIR .* must be apart"):
+        load_released_directory(data_root, {"PA_RELEASED_DIR": str(data_root.path / "released")})

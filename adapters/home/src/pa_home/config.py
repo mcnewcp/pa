@@ -18,6 +18,10 @@ from pa_core.librarian.wiki import TREE as WIKI_TREE
 from pa_core.owner import Owner
 
 DATA_DIR_VAR = "PA_DATA_DIR"
+# Where a diagnosis's checked findings are released for a development session to read: outside
+# the repository and outside the data root.
+RELEASED_DIR_VAR = "PA_RELEASED_DIR"
+DEFAULT_RELEASED_DIR = "~/.local/share/pa-released"
 OWNER_NAME_VAR = "PA_OWNER_NAME"
 OWNER_EMAILS_VAR = "PA_OWNER_EMAILS"
 OWNER_OTHER_NAMES_VAR = "PA_OWNER_OTHER_NAMES"
@@ -108,6 +112,13 @@ class DataRoot:
         """The private eval directory: real-data eval sets, cuts, runs, and verdicts, which
         never go in the repository."""
         return self.path / "evals"
+
+    @property
+    def diagnoses(self) -> Path:
+        """The private diagnoses directory: one directory per diagnosis, holding its referral,
+        the session's output (a private analysis and the findings as it left them), and the
+        session's record. It quotes real content, so no command prints any of it."""
+        return self.path / "diagnoses"
 
     @property
     def run_errors(self) -> Path:
@@ -271,6 +282,30 @@ def require_outside_repository(path: Path, name: str, reason: str) -> None:
         repository = _repository_root(start)
         if repository is not None and path.is_relative_to(repository):
             raise ConfigError(f"{name} ({path}) is inside the repository ({repository}). {reason}")
+
+
+def load_released_directory(data_root: DataRoot, environ: Mapping[str, str] = os.environ) -> Path:
+    """The configured released directory, where a diagnosis's checked findings go, one
+    directory per diagnosis, for a development session to read.
+
+    It is outside the repository, so nothing in it is committed by accident, and outside the
+    data root, which a development session never reads: refuses one inside either, or one that
+    holds the data root.
+    """
+    value = environ.get(RELEASED_DIR_VAR, "").strip() or DEFAULT_RELEASED_DIR
+    path = Path(value).expanduser().resolve()
+    require_outside_repository(
+        path,
+        RELEASED_DIR_VAR,
+        "Released findings name opaque ids, which stay out of the repository.",
+    )
+    root = data_root.path.resolve()
+    if path.is_relative_to(root) or root.is_relative_to(path):
+        raise ConfigError(
+            f"{RELEASED_DIR_VAR} ({path}) and the data root ({root}) must be apart: a "
+            "development session reads released findings, and never the data root."
+        )
+    return path
 
 
 def load_owner(environ: Mapping[str, str] = os.environ) -> Owner:

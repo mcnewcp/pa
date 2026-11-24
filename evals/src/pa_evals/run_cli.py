@@ -406,7 +406,7 @@ def _setup(args: argparse.Namespace, corpus: tuple[Path, ...] | Cut) -> dict[str
         else {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
     )
     return {
-        "commit": _workspace_commit(),
+        "commit": workspace_commit(),
         **asked,
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
@@ -415,7 +415,7 @@ def _setup(args: argparse.Namespace, corpus: tuple[Path, ...] | Cut) -> dict[str
     }
 
 
-def _workspace_commit() -> str:
+def workspace_commit() -> str:
     """The commit of the workspace the run's code comes from, so a report says what it ran.
 
     That commit also pins the agent project and the eval set. Changes to tracked files are
