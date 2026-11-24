@@ -125,9 +125,7 @@ def test_the_reply_carries_the_sessions_cost_turns_duration_and_tool_calls(
     )
 
 
-def test_the_session_is_given_the_projects_settings_as_flag_settings(
-    tmp_path: Path, project: Path
-):
+def test_the_session_is_given_the_projects_settings_as_flag_settings(tmp_path: Path, project: Path):
     run_project_session(
         project,
         prompt=REFERRAL,

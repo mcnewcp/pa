@@ -2,26 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 from pa_core.errors import PaError
 from pa_core.owner import Owner
 from pa_home.agent_project import AGENT_PROJECT, render_agent_project
-from pa_home.claude_cli import (
-    ClaudeCliError,
-    ClaudeCliTimeoutError,
-    result_number,
-    run_print_stream,
-    without_capture,
-)
-from pa_home.project import SETTINGS
+from pa_home.claude_cli import ClaudeCliError, ClaudeCliTimeoutError
+from pa_home.project_session import ToolCall as ToolCall  # an answer's tool calls are these
+from pa_home.project_session import run_project_session
 
 DEFAULT_TIMEOUT_SECONDS = 600
 
@@ -45,20 +38,6 @@ class AgentError(PaError):
 
 class AgentTimeoutError(AgentError):
     """The agent took longer than it is allowed."""
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    """One tool the session called on its way to the answer."""
-
-    tool: str
-    """The tool's name, as Claude Code names it (`Read`, `Bash`, `Grep`, ...)."""
-    input: Mapping[str, Any]
-    """What the tool was called with, as the session passed it."""
-    errored: bool = False
-    """Whether the tool's result was an error."""
-    output: str = ""
-    """What the tool returned to the session, as text ("" if it returned none)."""
 
 
 @dataclass(frozen=True)
@@ -129,11 +108,9 @@ class ClaudeAgent:
 
     Each question runs in a fresh rendering of the agent project (see `render_agent_project`)
     in the system temporary directory, outside the repository, so no other CLAUDE.md is picked
-    up, with a fresh scratch directory beside it. What the session may do comes from the
-    project's settings.json in auto permission mode, as in chat, and in the home VM from its
-    managed settings and sandbox too, which every session there runs under. Exchange capture
-    is always off: the session's environment drops its settings, whatever the caller's
-    environment says.
+    up, with a fresh scratch directory beside it. The session is told the assistant's role and
+    what "now" is, and runs as `run_project_session` runs any session: under the project's
+    settings in auto permission mode, as in chat, with exchange capture always off.
     """
 
     def __init__(
@@ -174,16 +151,11 @@ class ClaudeAgent:
         now = now or self._clock()
         statement = as_of_statement(now)
         prompt = question
-        # Auto, the mode the Claude app starts sessions in, so eval sessions run as the owner's do.
-        args = ["--no-session-persistence", "--permission-mode", "auto"]
-        if self._model:
-            args += ["--model", self._model]
         system_prompt = ROLE
         if self._as_of_method in (AsOfMethod.SYSTEM_PROMPT, AsOfMethod.BOTH):
             system_prompt += f"\n\n{statement}"
         if self._as_of_method in (AsOfMethod.PREAMBLE, AsOfMethod.BOTH):
             prompt = f"{statement}\n\n{question}"
-        args += ["--append-system-prompt", system_prompt]
         with tempfile.TemporaryDirectory(prefix="pa-agent-") as directory:
             workdir = Path(directory) / "project"
             scratch = Path(directory) / "scratch"
@@ -197,84 +169,23 @@ class ClaudeAgent:
                 status=status,
                 source=self._project,
             )
-            # claude -p never trusts a folder, so it drops a project's allow rules and
-            # additional directories. Passing the same file as flag settings keeps them.
-            args += ["--settings", str(workdir / SETTINGS)]
             try:
-                session = run_print_stream(
-                    self._executable,
-                    args,
+                reply = run_project_session(
+                    workdir,
                     prompt=prompt,
-                    cwd=workdir,
+                    system_prompt=system_prompt,
+                    model=self._model,
                     timeout_seconds=self._timeout_seconds,
-                    # An eval session's exchanges are never captured.
-                    env=without_capture(os.environ),
+                    executable=self._executable,
                 )
             except ClaudeCliTimeoutError as error:
                 raise AgentTimeoutError(str(error)) from error
             except ClaudeCliError as error:
                 raise AgentError(str(error)) from error
-        result = session.result
         return AgentAnswer(
-            text=str(result.get("result", "")),
-            cost_usd=result_number(result, "total_cost_usd", float),
-            turns=result_number(result, "num_turns", int),
-            duration_ms=result_number(result, "duration_ms", int),
-            tool_calls=tool_calls(session.events),
+            text=reply.text,
+            cost_usd=reply.cost_usd,
+            turns=reply.turns,
+            duration_ms=reply.duration_ms,
+            tool_calls=reply.tool_calls,
         )
-
-
-def tool_calls(events: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
-    """The tool calls in a session's stream-JSON `events`, in the order they were made.
-
-    A call errored when its result says so; a call left without a result did not, and has no
-    output.
-    """
-    calls: list[tuple[str, ToolCall]] = []
-    results: dict[str, Mapping[str, Any]] = {}
-    for event in events:
-        for block in _content(event):
-            if block.get("type") == "tool_use":
-                name, arguments = block.get("name"), block.get("input")
-                calls.append(
-                    (
-                        str(block.get("id")),
-                        ToolCall(
-                            str(name),
-                            dict(arguments) if isinstance(arguments, Mapping) else {},
-                        ),
-                    )
-                )
-            elif block.get("type") == "tool_result":
-                results[str(block.get("tool_use_id"))] = block
-    return tuple(
-        ToolCall(
-            call.tool,
-            call.input,
-            errored=results.get(call_id, {}).get("is_error") is True,
-            output=_text(results.get(call_id, {}).get("content")),
-        )
-        for call_id, call in calls
-    )
-
-
-def _text(content: Any) -> str:
-    """A tool result's content as text: a string as it is, or a list's text blocks joined."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            str(block.get("text", ""))
-            for block in content
-            if isinstance(block, Mapping) and block.get("type") == "text"
-        )
-    return ""
-
-
-def _content(event: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    """The content blocks of an assistant or user message event (none for any other event)."""
-    message = event.get("message")
-    content = message.get("content") if isinstance(message, Mapping) else None
-    if not isinstance(content, list):
-        return []
-    return [block for block in content if isinstance(block, Mapping)]
