@@ -8,6 +8,7 @@ ${problems}
 
 Put it right where it is, with the Write tool. Leave exactly the files CLAUDE.md names, each
 within its size, and findings that keep to the schema: a field it doesn't name, or text over a
-cap, is refused. Change nothing that isn't wrong.
+cap, is refused. A reproduction is laid out as CLAUDE.md says, its payloads ingest, and its
+wiki passes lint. Change nothing that isn't wrong.
 
 End with one line saying what you put right.
