@@ -231,6 +231,23 @@ class Tried:
         )
 
     @functools.cached_property
+    def file_names(self) -> frozenset[str]:
+        """The names of its own files, in lower case, which it may cite (`order.eml`): its
+        payloads', each with the name of the file a note says it was captured from, and its
+        wiki's, with those a release writes. Dotted names that are no domains."""
+        files = [
+            *self.reproduction.payloads,
+            *(
+                envelope.native_id
+                for envelope in self.envelopes.values()
+                if envelope.source == Source.OBSIDIAN
+            ),
+            *self.reproduction.wiki,
+            *(EXPECTATION, QUESTIONS, EVAL_SET, RECORD, INDEX),
+        ]
+        return frozenset(PurePosixPath(file).name.lower() for file in files)
+
+    @functools.cached_property
     def undecoded(self) -> tuple[Flaw, ...]:
         """Where it holds something that can't be decoded to text, and so can't be checked:
         a part of a payload that isn't text, or is in an encoding or a character set nobody

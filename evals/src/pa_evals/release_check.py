@@ -21,7 +21,9 @@ every reproduction (`pa_evals.reproduction.Tried.texts`), told from fictional by
 holds (`pa_evals.real_content`).
 
 - `names`: a name of two or more words that the case holds for a person or an organization.
-- `addresses`: an address or a domain outside the reserved example domains.
+- `addresses`: an address, a link, or a domain outside the reserved example domains. A
+  dotted name the repository or the referral holds is no domain in the findings, unless it is
+  written as a link; in a reproduction only the names of its own files are excused.
 - `quotes`: six or more words in a row that the case holds, unless the repository or the
   referral holds them too.
 - `digits`: a number of seven or more digits, in a row or in the groups a phone number is
@@ -62,7 +64,7 @@ from __future__ import annotations
 
 import re
 import shutil
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -88,6 +90,7 @@ from pa_evals.real_content import (
     RealContent,
     Source,
     Text,
+    Unreserved,
     Wiki,
     Words,
     cased_words,
@@ -158,26 +161,17 @@ class Submission:
 
 
 @dataclass(frozen=True)
-class Piece:
-    """A piece of the text a release would hand a development session."""
-
-    where: str
-    """Which file and field it is, for the notes: `findings.json: f1.mechanism`."""
-    text: str
-
-
-@dataclass(frozen=True)
 class Reading:
     """Pieces read one after another, as words. A name or a quote is looked for across them,
     so one split between two fields is still found."""
 
-    pieces: Sequence[Piece]
+    pieces: Sequence[Passage]
     words: Sequence[str]
     piece_of: Sequence[int]
     """For each word, the index of the piece it is in."""
 
     @classmethod
-    def of(cls, pieces: Sequence[Piece]) -> Reading:
+    def of(cls, pieces: Sequence[Passage]) -> Reading:
         read = [(word, index) for index, piece in enumerate(pieces) for word in words(piece.text)]
         return cls(pieces, [word for word, _ in read], [index for _, index in read])
 
@@ -251,29 +245,19 @@ _EPISODE = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z]
 _FICTIONAL = OwnerIdentity(FICTIONAL_OWNER)
 """The fictional owner's names, which every reproduction holds and the repository does too:
 they pass in a reproduction, whatever holds them in a case."""
-_DAILY_NOTE = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
-"""A daily note's file name, which a note's payload says it was captured from: a dotted name
-that is no domain."""
 
 
-def _reproduced_pieces(submission: Submission) -> list[Piece]:
+def _reproduced_pieces(submission: Submission) -> list[Passage]:
     """Every piece of text of every reproduction, in order."""
     return [
-        Piece(piece.where, piece.text)
-        for tried in submission.reproductions
-        for text in tried.texts
-        for piece in text.pieces
+        piece for tried in submission.reproductions for text in tried.texts for piece in text.pieces
     ]
 
 
 def _reproduced_readings(submission: Submission) -> list[Reading]:
     """Each file of each reproduction, read by itself: a name or a quote is looked for across
     a file's lines, never from one file into the next."""
-    return [
-        Reading.of([Piece(piece.where, piece.text) for piece in text.pieces])
-        for tried in submission.reproductions
-        for text in tried.texts
-    ]
+    return [Reading.of(text.pieces) for tried in submission.reproductions for text in tried.texts]
 
 
 def _questions(submission: Submission) -> list[Problem]:
@@ -308,7 +292,7 @@ def _labels(submission: Submission) -> list[Problem]:
     return problems
 
 
-def _pieces(findings: Findings) -> list[Piece]:
+def _pieces(findings: Findings) -> list[Passage]:
     """Every piece of the findings' text that a session wrote freely, in the order the
     released file holds it.
 
@@ -317,15 +301,15 @@ def _pieces(findings: Findings) -> list[Piece]:
     schema, a finding's id and its questions by their patterns, its episodes by the `episodes`
     rule, and its paths by the `paths` rule.
     """
-    pieces = [Piece(f"{FINDINGS}: summary", findings.summary)]
+    pieces = [Passage(f"{FINDINGS}: summary", findings.summary)]
     for finding in findings.findings:
         pieces += [
-            Piece(f"{FINDINGS}: {finding.id}.runs", f"{label}: {affected} of {asked}")
+            Passage(f"{FINDINGS}: {finding.id}.runs", f"{label}: {affected} of {asked}")
             for label, (affected, asked) in finding.runs.items()
         ]
         pieces += [
-            Piece(f"{FINDINGS}: {finding.id}.mechanism", finding.mechanism),
-            Piece(f"{FINDINGS}: {finding.id}.suggestion", finding.suggestion),
+            Passage(f"{FINDINGS}: {finding.id}.mechanism", finding.mechanism),
+            Passage(f"{FINDINGS}: {finding.id}.suggestion", finding.suggestion),
         ]
     return pieces
 
@@ -358,36 +342,43 @@ def _names(submission: Submission) -> list[Problem]:
 
 
 def _addresses(submission: Submission) -> list[Problem]:
-    """No address, and no domain, outside the reserved example domains, whether or not the
-    case holds it. A dotted name the repository or the referral holds is code or a file's
-    name, not a domain; an address is never excused. In a reproduction, a daily note's file
-    name is no domain either."""
+    """No address, no link, and no domain outside the reserved example domains, whether or not
+    the case holds it.
+
+    In the findings, which are prose about code, a dotted name the repository or the referral
+    holds is code or a file's name, not a domain. That excuses a name written by itself, never
+    an address or a link: the repository names hosts that anyone has pages at.
+
+    In a reproduction nothing the repository holds is excused: it becomes a fixture, where
+    every address, link, and domain is a choice. Only the reserved example domains pass, and
+    the names of the reproduction's own files (`Tried.file_names`)."""
     if submission.findings is None:
         return []
-    found = [
-        *((piece, unreserved(piece.text), False) for piece in _pieces(submission.findings)),
-        *((piece, unreserved(piece.text), True) for piece in _reproduced_pieces(submission)),
-    ]
-    dotted = {
-        name
-        for _, outside, reproduced in found
-        for name in outside.dotted_names
-        if not (reproduced and _DAILY_NOTE.fullmatch(name))
-    }
-    domains = dotted - holding_dotted_names(submission.public(), dotted) if dotted else dotted
+    found = [(piece, unreserved(piece.text)) for piece in _pieces(submission.findings)]
+    dotted = {name for _, outside in found for name in outside.dotted_names}
+    held = holding_dotted_names(submission.public(), dotted) if dotted else dotted
+    problems = [problem for piece, outside in found for problem in _outside(piece, outside, held)]
+    for tried in submission.reproductions:
+        problems += [
+            problem
+            for text in tried.texts
+            for piece in text.pieces
+            for problem in _outside(piece, unreserved(piece.text), tried.file_names)
+        ]
+    return problems
+
+
+def _outside(piece: Passage, outside: Unreserved, excused: Collection[str]) -> Iterator[Problem]:
+    """What a piece of text holds outside the reserved example domains: every address, every
+    link, and every dotted name but the `excused`."""
     outside_them = "is outside the reserved example domains"
-    return [
-        problem
-        for piece, outside, _ in found
-        for problem in (
-            *(Problem(piece.where, f"the address {a!r} {outside_them}") for a in outside.addresses),
-            *(
-                Problem(piece.where, f"the domain {name!r} {outside_them}")
-                for name in outside.dotted_names
-                if name in domains
-            ),
-        )
-    ]
+    for address in outside.addresses:
+        yield Problem(piece.where, f"the address {address!r} {outside_them}")
+    for host in outside.links:
+        yield Problem(piece.where, f"the link to {host!r} {outside_them}")
+    for name in outside.dotted_names:
+        if name not in excused:
+            yield Problem(piece.where, f"the domain {name!r} {outside_them}")
 
 
 def _quotes(submission: Submission) -> list[Problem]:

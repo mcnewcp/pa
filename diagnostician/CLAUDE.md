@@ -95,7 +95,8 @@ nothing real, and refuses them whole otherwise. So in the findings:
   person's page", "the two pages that were merged".
 - Never write an address, a link, or a domain, unless it is at a reserved example domain
   such as `example.com`. A dotted name that the PA's repository doesn't hold reads as a
-  domain, so name code as the repository does and files by their paths.
+  domain, so name code as the repository does and files by their paths. A link is refused
+  whatever host it names.
 - Never write a number of seven digits or more, such as a phone or an account number,
   however it is broken up. A date written `2026-10-05` is fine.
 - Never repeat words from the case: six words in a row from mail, a note, a chat, a wiki
@@ -252,7 +253,9 @@ The check holds every file of a reproduction to what it holds the findings to, a
   ${owner_other_name}: in `questions.json` as above, and wherever a payload names its owner (a
   mail's recipient, an event's organizer).
 - Every other address, link, and domain is at a reserved example domain: `example.com`,
-  `example.org`, `example.net`, or a name ending in `.example`.
+  `example.org`, `example.net`, or a name ending in `.example`. Here nothing the PA's
+  repository holds is excused: any other name with a dot in it reads as a domain, but the
+  names of the reproduction's own files (`order.eml`).
 - Every name is one the case doesn't hold, a first name, a nickname, and a business's name
   included. A name of one word is refused where it is written as the case writes it, so pick
   names nobody in the case has.

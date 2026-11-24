@@ -358,6 +358,30 @@ def test_an_address_is_refused_though_the_repository_holds_its_domain(desk, leav
     assert "- findings.json: summary: the address 'ovarga@gmail.com' is outside" in notes
 
 
+# A link is never excused: the repository names hosts that anyone has pages at. This file is
+# in the repository, so each of these hosts is a dotted name the repository holds.
+
+LINKS = {
+    "a link to a host the repository names": "https://github.com/a-private-person/tax-records",
+    "a link without its scheme": "claude.ai/chat/3f2a9c1e",
+    "a link with a question": "https://www.icloud.com?shared=lease",
+    "a link to a file of the repository's name": "http://dreaming.py",
+}
+
+
+@pytest.mark.parametrize("text", LINKS.values(), ids=LINKS.keys())
+def test_a_link_is_refused_in_the_findings_though_the_repository_holds_its_host(
+    desk, leavings, well_formed, text: str
+):
+    first(well_formed, suggestion=f"Compare it with {text} first.")
+    desk.diagnose(leavings(well_formed))
+
+    notes = desk.refused(desk.release(), addresses=1)
+
+    assert "- findings.json: f1.suggestion: the link to " in notes
+    assert "is outside the reserved example domains" in notes
+
+
 INSIDE_THE_RESERVED_DOMAINS_OR_NO_DOMAIN = {
     "an address at a reserved domain": "argus@example.com",
     "an address under a reserved domain": "desk@mail.example.org",
@@ -365,6 +389,10 @@ INSIDE_THE_RESERVED_DOMAINS_OR_NO_DOMAIN = {
     "the other reserved names": "a@example.net, b@host.test, and c@pa.invalid",
     "a reserved domain": "www.example.com and POTTERY.EXAMPLE",
     "a file in the repository": "librarian/CLAUDE.md and dreaming.py",
+    "a file in the repository, by its line": "core/src/pa_core/librarian/dreaming.py:120",
+    "a directory of the repository": "the copy's wiki.git/ and deploy/home/",
+    "a link to a reserved domain": "https://pottery.example/classes?term=autumn",
+    "a host the repository names, by itself": "gmail.com",
     "a module in the repository": "pa_core.librarian.lint",
     "code the repository holds": "cut.episode_ids() and Path.is_file()",
     "a dotted name the referral holds": "kiln_report.final",

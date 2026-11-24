@@ -465,24 +465,42 @@ _TOP_LEVEL = re.compile(r"[^\W\d_][\w-]+")
 abbreviation (`e.g.`), a figure (`2.5`), and a version (`v0.14.1`) aren't domains."""
 
 
+_SCHEME = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*:)?//$")
+"""What is written before a link's host: its scheme (`https://`), or the two slashes alone."""
+_PATH = re.compile(r"/[^\s/]|\?[\w%]")
+"""What is written after a link's host: a path, or a question."""
+
+
 @dataclass(frozen=True)
 class Unreserved:
     """What a text holds that is outside the reserved example domains."""
 
     addresses: Sequence[str]
     """Each address, which is refused whatever else holds its domain."""
+    links: Sequence[str]
+    """Each link, by its host, in lower case: a dotted name with a scheme before it or a path
+    after it. A link is refused whatever else holds its host."""
     dotted_names: Sequence[str]
-    """Each dotted name that could be a domain, in lower case. One is a domain unless it is
-    code or a file's name, which only the repository can say (`holding_dotted_names`)."""
+    """Each other dotted name that could be a domain, in lower case. One is a domain unless
+    it is code or a file's name, which only whoever knows the files can say
+    (`holding_dotted_names`)."""
 
 
 def unreserved(text: str) -> Unreserved:
-    """The addresses and the dotted names in `text` that are outside the reserved example
-    domains. An address is anything written around an `@`, whatever its host."""
+    """The addresses, the links, and the dotted names in `text` that are outside the reserved
+    example domains. An address is anything written around an `@`, whatever its host."""
     text = plain(text).replace("\u3002", ".")  # An ideographic full stop reads as a dot.
     addresses = [match[0] for match in _ADDRESS.finditer(text) if not _is_reserved(match["domain"])]
-    dotted = [_domain(match[0]) for match in _DOTTED.finditer(_ADDRESS.sub(" ", text))]
-    return Unreserved(addresses, [name for name in dotted if name and not _is_reserved(name)])
+    links: list[str] = []
+    dotted: list[str] = []
+    text = _ADDRESS.sub(" ", text)
+    for match in _DOTTED.finditer(text):
+        name = _domain(match[0])
+        if not name or _is_reserved(name):
+            continue
+        linked = _SCHEME.search(text, 0, match.start()) or _PATH.match(text, match.end())
+        (links if linked else dotted).append(name)
+    return Unreserved(addresses, links, dotted)
 
 
 def _domain(dotted: str) -> str | None:

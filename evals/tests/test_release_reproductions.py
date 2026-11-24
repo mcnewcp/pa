@@ -1313,6 +1313,47 @@ def test_a_reproduction_with_an_address_or_a_domain_outside_the_reserved_ones_is
     assert "is outside the reserved example domains" in notes
 
 
+# What the repository holds excuses nothing in a reproduction: it becomes a fixture, where
+# every address, link, and domain is a choice. This file is in the repository, so each of these
+# is a dotted name the repository holds.
+
+HELD_BY_THE_REPOSITORY = {
+    "a link to a host the repository names": "https://github.com/a-private-person/tax-records",
+    "a link without its scheme": "claude.ai/chat/3f2a9c1e",
+    "a host the repository names": "gmail.com",
+    "a module of the repository": "pa_core.librarian.lint",
+    "a file of the repository": "dreaming.py",
+    "a link whose host is named as one of its own files is": "https://order.eml/receipts",
+}
+
+
+@pytest.mark.parametrize("place", [in_a_mail, in_a_page, in_a_question, in_the_expectation])
+@pytest.mark.parametrize("text", HELD_BY_THE_REPOSITORY.values(), ids=HELD_BY_THE_REPOSITORY.keys())
+def test_a_dotted_name_is_refused_in_a_reproduction_though_the_repository_holds_it(
+    desk, leave, reproduction, place, text: str
+):
+    where = place(reproduction, f"It is all at {text} now")
+    desk.diagnose(leave(reproduction))
+
+    notes = desk.refused(desk.release(), addresses=1)
+
+    assert f"- reproductions/f1/{where}: the " in notes
+    assert "is outside the reserved example domains" in notes
+
+
+def test_a_reproduction_may_name_its_own_files(desk, leave, reproduction):
+    # A note is captured from a file of the vault, which its payload names.
+    reproduction["payloads/obsidian/pantry.md"] = NOTE.replace("2026-09-21", "2026-09-20")
+    in_a_mail(reproduction, "The receipt is in order.eml, and pickup.ics has the time.")
+    in_the_expectation(reproduction, "order.eml and pru-tanager.md say so, as 2026-09-21.md does")
+    desk.diagnose(leave(reproduction))
+
+    ran = desk.release()
+
+    assert ran.code == 0
+    assert "payloads: 4\n" in ran.out
+
+
 def test_a_mail_from_an_address_outside_the_reserved_domains_is_refused(desk, leave, reproduction):
     reproduction["payloads/gmail/order.eml"] = ORDER.replace("@larder.example", "@" + STUDIO)
     # The page would list an address no payload holds, which is lint's to refuse.
