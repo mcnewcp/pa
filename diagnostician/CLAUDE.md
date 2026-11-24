@@ -97,12 +97,12 @@ nothing real, and refuses them whole otherwise. So in the findings:
   such as `example.com`. A dotted name that the PA's repository doesn't hold reads as a
   domain, so name code as the repository does and files by their paths. A link is refused
   whatever host it names.
-- Never write a number of seven digits or more, such as a phone or an account number,
-  however it is broken up. A date written `2026-10-05` is fine.
-- Never repeat words from the case: six words in a row from mail, a note, a chat, a wiki
-  page or its history, an eval question, an answer, the judge's reasoning, or an earlier
-  analysis refuse the findings. Describe what happened in your own words, in terms of the PA's
-  code and instructions.
+- Never write a number of ${long_number_digits} digits or more, such as a phone or an account
+  number, however it is broken up. A date written `2026-10-05` is fine.
+- Never repeat words from the case: ${quoted_words} words in a row from mail, a note, a chat,
+  a wiki page or its history, an eval question, an answer, the judge's reasoning, or an
+  earlier analysis refuse the findings. Describe what happened in your own words, in terms of
+  the PA's code and instructions.
 - Keep to the schema. A field it doesn't name, or text over a cap, refuses the findings.
 
 ```json
@@ -259,8 +259,8 @@ The check holds every file of a reproduction to what it holds the findings to, a
 - Every name is one the case doesn't hold, a first name, a nickname, and a business's name
   included. A name of one word is refused where it is written as the case writes it, so pick
   names nobody in the case has.
-- Six words in a row from the case refuse a reproduction too, and so does one of the case's
-  episode ids.
+- A run of ${quoted_words} words from the case refuses a reproduction too, and so does one of
+  the case's episode ids.
 - Give each id you make up few digits (`<order-1@mail.larder.example>`), and write dates and
   times as the item's format does (`20261017T090000`, `2026-10-05T21:30:00-05:00`) or in words.
 

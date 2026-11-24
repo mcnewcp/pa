@@ -65,11 +65,13 @@ from pa_evals.findings import (
     MOST_FINDINGS,
     SUMMARY_CHARACTERS,
     TEXT_CHARACTERS,
+    Findings,
     FindingsError,
     Label,
     parse_findings,
 )
 from pa_evals.models import FrozenModel
+from pa_evals.real_content import LONG_NUMBER_DIGITS, QUOTED_WORDS
 from pa_evals.reproduction import (
     REPRODUCTIONS,
     flaws_in_form,
@@ -159,8 +161,6 @@ class DiagnosisRequest:
     project: Path
     """Where the session's project is rendered: a directory of its own, not there yet, which
     lasts for as long as the session may be resumed."""
-    code: Path = REPOSITORY
-    """The PA's code as deployed: the checkout this runs from."""
     resume: str | None = None
     """The session to resume, by its id, which is then told `prompt`; None starts one."""
     revision: int = 0
@@ -203,7 +203,6 @@ class ClaudeDiagnostician:
                 request.project,
                 case=request.case,
                 output=request.output,
-                code=request.code,
                 source=self._project,
             )
         return run_project_session(
@@ -285,6 +284,8 @@ def render_diagnostician_project(
             "summary_characters": str(SUMMARY_CHARACTERS),
             "text_characters": str(TEXT_CHARACTERS),
             "most_findings": str(MOST_FINDINGS),
+            "quoted_words": str(QUOTED_WORDS),
+            "long_number_digits": str(LONG_NUMBER_DIGITS),
             **reproduction_values(),
         },
         name="the diagnostician project",
@@ -488,6 +489,19 @@ def read_output(output: Path, name: str) -> bytes | None:
     return path.read_bytes()
 
 
+def read_findings(output: Path) -> tuple[Findings | None, tuple[str, ...]]:
+    """The findings in the session's `output`, and where they leave the schema: None, with why,
+    when they don't fit it, and None with nothing to say when the file can't be read at all,
+    which is a problem of the output's shape (`output_problems`)."""
+    data = read_output(output, FINDINGS)
+    if data is None:
+        return None, ()
+    try:
+        return parse_findings(data), ()
+    except FindingsError as error:
+        return None, error.problems
+
+
 def _is_text(path: Path) -> bool:
     try:
         path.read_bytes().decode()
@@ -617,7 +631,7 @@ def revise(
         _clear(diagnosis.output)
         shutil.copytree(kept / OUTPUT, diagnosis.output, symlinks=True, dirs_exist_ok=True)
         prompt = Template(REVISE_PROMPT.read_text()).substitute(
-            referral=referral.strip(), notes=_told(notes)
+            referral=referral.strip(), notes=_abridged(notes)
         )
         replies = _ask(prompt, case, diagnostician, diagnosis, revision=revision)
         _record(diagnosis, case, replies, commit=commit, before=before)
@@ -626,7 +640,7 @@ def revise(
     return diagnosis
 
 
-def _told(notes: str) -> str:
+def _abridged(notes: str) -> str:
     """The check's notes as a revision's session is told them: whole, or their first lines
     within `NOTES_CHARACTERS` and how many lines were left out. What is kept with the
     diagnosis is always whole."""
@@ -684,17 +698,13 @@ def malformed(output: Path) -> list[OutputProblem]:
     (`output_problems`), findings that don't fit the schema, and reproductions that aren't the
     ones the findings name or that don't run (`pa_evals.reproduction.flaws_in_form`)."""
     problems = output_problems(output)
-    data = read_output(output, FINDINGS)
-    if data is not None:
-        try:
-            findings = parse_findings(data)
-        except FindingsError as error:
-            problems += [OutputProblem(f"{OUTPUT}/{FINDINGS}", what) for what in error.problems]
-        else:
-            problems += [
-                OutputProblem(f"{OUTPUT}/{flaw.where}", flaw.what)
-                for flaw in flaws_in_form(output, findings.reproduced())
-            ]
+    findings, off_schema = read_findings(output)
+    problems += [OutputProblem(f"{OUTPUT}/{FINDINGS}", what) for what in off_schema]
+    if findings is not None:
+        problems += [
+            OutputProblem(f"{OUTPUT}/{flaw.where}", flaw.what)
+            for flaw in flaws_in_form(output, findings.reproduced())
+        ]
     return problems
 
 

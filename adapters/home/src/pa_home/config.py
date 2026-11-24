@@ -166,6 +166,8 @@ def is_live_store(path: Path) -> bool:
     )
 
 
+DEFAULT_SESSION_MODEL = "claude-opus-5-5"
+"""The model the librarian's and the diagnostician's sessions run on, unless configured."""
 DREAMING_INTERVAL_DAYS = 7
 """How many days apart the nightly job's dreaming runs are, unless configured otherwise."""
 
@@ -174,7 +176,7 @@ DREAMING_INTERVAL_DAYS = 7
 class LibrarianConfig:
     """How the librarian's sessions run."""
 
-    model: str = "claude-opus-5-5"
+    model: str = DEFAULT_SESSION_MODEL
     effort: str = "medium"
     max_turns: int = 200
     """The most turns one session may take."""
@@ -209,7 +211,7 @@ class LibrarianConfig:
 class DiagnosticianConfig:
     """How a diagnostician's session runs (`pa_evals.diagnosis`)."""
 
-    model: str = "claude-opus-5-5"
+    model: str = DEFAULT_SESSION_MODEL
     effort: str = "high"
     max_turns: int = 200
     """The most turns the session may take, each time it is started or resumed."""

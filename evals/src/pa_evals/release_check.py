@@ -62,7 +62,6 @@ Nothing here puts what a rule found in an exception or a return value's printabl
 
 from __future__ import annotations
 
-import re
 import shutil
 from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -77,11 +76,12 @@ from pa_evals.diagnosis import (
     CaseRecord,
     Diagnosis,
     output_problems,
-    read_output,
+    read_findings,
 )
-from pa_evals.findings import Findings, FindingsError, findings_json, parse_findings
+from pa_evals.findings import Findings, findings_json
 from pa_evals.models import FrozenModel
 from pa_evals.real_content import (
+    EPISODE_ID,
     QUOTED_WORDS,
     Envelopes,
     History,
@@ -109,6 +109,7 @@ from pa_evals.real_content import (
 from pa_evals.reproduction import (
     FICTIONAL_OWNER,
     REPRODUCTIONS,
+    Flaw,
     Tried,
     read_reproductions,
     try_out,
@@ -187,6 +188,33 @@ class Rule:
     check: Callable[[Submission], Iterable[Problem]]
 
 
+def _of_findings(
+    check: Callable[[Submission, Findings], Iterable[Problem]],
+) -> Callable[[Submission], Iterable[Problem]]:
+    """A rule that reads the findings. It has nothing to say of findings that can't be read or
+    don't fit the schema: that diagnosis is refused already."""
+
+    def rule(submission: Submission) -> Iterable[Problem]:
+        return [] if submission.findings is None else check(submission, submission.findings)
+
+    return rule
+
+
+def _of_reproductions(
+    found: Callable[[Tried], Iterable[Flaw]],
+) -> Callable[[Submission], Iterable[Problem]]:
+    """A rule that hands on what trying each reproduction out found (`pa_evals.reproduction`)."""
+
+    def rule(submission: Submission) -> Iterable[Problem]:
+        return [
+            Problem(flaw.where, flaw.what)
+            for tried in submission.reproductions
+            for flaw in found(tried)
+        ]
+
+    return rule
+
+
 def _shape(submission: Submission) -> list[Problem]:
     """The output holds only regular files of the expected names and kinds, within the caps,
     and no links."""
@@ -201,32 +229,28 @@ def _schema(submission: Submission) -> list[Problem]:
     return [Problem(FINDINGS, problem) for problem in submission.off_schema]
 
 
-def _paths(submission: Submission) -> list[Problem]:
+def _paths(submission: Submission, findings: Findings) -> list[Problem]:
     """Every path a finding names is in the repository: a tracked file, or a directory holding
     one."""
-    if submission.findings is None:
-        return []
     tracked = _tracked(submission.repository)
     return [
         Problem(f"{FINDINGS}: {finding.id}.code", f"{path!r} isn't in the repository")
-        for finding in submission.findings.findings
+        for finding in findings.findings
         for path in finding.code
         if not _is_in(path, tracked)
     ]
 
 
-def _episodes(submission: Submission) -> list[Problem]:
+def _episodes(submission: Submission, findings: Findings) -> list[Problem]:
     """Every episode a finding names is in the case: an id's 16 hex characters could spell
     anything else. And no reproduction names one of them."""
-    if submission.findings is None:
-        return []
     held = submission.case.cut.episode_ids()
     return [
         *(
             Problem(
                 f"{FINDINGS}: {finding.id}.episodes", f"{episode!r} isn't an episode in the case"
             )
-            for finding in submission.findings.findings
+            for finding in findings.findings
             for episode in finding.episodes
             if episode not in held
         ),
@@ -234,14 +258,12 @@ def _episodes(submission: Submission) -> list[Problem]:
         *(
             Problem(piece.where, f"{episode!r} is an episode in the case")
             for piece in _reproduced_pieces(submission)
-            for episode in _EPISODE.findall(piece.text)
+            for episode in EPISODE_ID.findall(piece.text)
             if episode in held
         ),
     ]
 
 
-_EPISODE = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
-"""Something of an episode id's shape: a source, then 16 hex characters."""
 _FICTIONAL = OwnerIdentity(FICTIONAL_OWNER)
 """The fictional owner's names, which every reproduction holds and the repository does too:
 they pass in a reproduction, whatever holds them in a case."""
@@ -260,27 +282,23 @@ def _reproduced_readings(submission: Submission) -> list[Reading]:
     return [Reading.of(text.pieces) for tried in submission.reproductions for text in tried.texts]
 
 
-def _questions(submission: Submission) -> list[Problem]:
+def _questions(submission: Submission, findings: Findings) -> list[Problem]:
     """Every question a finding names is in the case: in its eval set, or asked in its runs."""
-    if submission.findings is None:
-        return []
     held = submission.case.question_ids()
     return [
         Problem(f"{FINDINGS}: {finding.id}.questions", f"{question!r} isn't a question in the case")
-        for finding in submission.findings.findings
+        for finding in findings.findings
         for question in finding.questions
         if question not in held
     ]
 
 
-def _labels(submission: Submission) -> list[Problem]:
+def _labels(submission: Submission, findings: Findings) -> list[Problem]:
     """A finding counts runs only under a label the case gives a set of runs, and never more
     runs than that set holds: a count is a number the session chose."""
-    if submission.findings is None:
-        return []
     case = submission.case
     problems: list[Problem] = []
-    for finding in submission.findings.findings:
+    for finding in findings.findings:
         where = f"{FINDINGS}: {finding.id}.runs"
         for label, (_, asked) in finding.runs.items():
             if label not in case.runs:
@@ -314,20 +332,18 @@ def _pieces(findings: Findings) -> list[Passage]:
     return pieces
 
 
-def _names(submission: Submission) -> list[Problem]:
+def _names(submission: Submission, findings: Findings) -> list[Problem]:
     """No name of two or more words that the case holds for a person or an organization: a
     participant's display name, a page's slug, alias, or name, or one of the owner's names.
     In the findings, and in each file of a reproduction, where the fictional owner's own
     names pass."""
-    if submission.findings is None:
-        return []
     names = submission.real.names
     fictional: set[Words] = set()
     for identifier in _FICTIONAL.identifiers():
         fictional |= name_runs(identifier.text)
     in_a_reproduction = {run: held for run, held in names.items() if run not in fictional}
     read = [
-        (Reading.of(_pieces(submission.findings)), names),
+        (Reading.of(_pieces(findings)), names),
         *((reading, in_a_reproduction) for reading in _reproduced_readings(submission)),
     ]
     return [
@@ -341,7 +357,7 @@ def _names(submission: Submission) -> list[Problem]:
     ]
 
 
-def _addresses(submission: Submission) -> list[Problem]:
+def _addresses(submission: Submission, findings: Findings) -> list[Problem]:
     """No address, no link, and no domain outside the reserved example domains, whether or not
     the case holds it.
 
@@ -352,9 +368,7 @@ def _addresses(submission: Submission) -> list[Problem]:
     In a reproduction nothing the repository holds is excused: it becomes a fixture, where
     every address, link, and domain is a choice. Only the reserved example domains pass, and
     the names of the reproduction's own files (`Tried.file_names`)."""
-    if submission.findings is None:
-        return []
-    found = [(piece, unreserved(piece.text)) for piece in _pieces(submission.findings)]
+    found = [(piece, unreserved(piece.text)) for piece in _pieces(findings)]
     dotted = {name for _, outside in found for name in outside.dotted_names}
     held = holding_dotted_names(submission.public(), dotted) if dotted else dotted
     problems = [problem for piece, outside in found for problem in _outside(piece, outside, held)]
@@ -381,22 +395,20 @@ def _outside(piece: Passage, outside: Unreserved, excused: Collection[str]) -> I
             yield Problem(piece.where, f"the domain {name!r} {outside_them}")
 
 
-def _quotes(submission: Submission) -> list[Problem]:
+def _quotes(submission: Submission, findings: Findings) -> list[Problem]:
     """No six words in a row that the case holds in an episode's subject or body or in a wiki
     file, unless the referral or the repository holds the same six: those are public already.
     Words that go on past six are one quote. In the findings, and in each file of a
     reproduction."""
-    if submission.findings is None:
-        return []
-    readings = [Reading.of(_pieces(submission.findings)), *_reproduced_readings(submission)]
+    readings = [Reading.of(_pieces(findings)), *_reproduced_readings(submission)]
     # The case and the repository are each read once, for every reading's words.
-    every = {run for reading in readings for run in _runs(reading)}
+    every = {run for reading in readings for run in _word_runs(reading)}
     held = repeated(submission.real.passages(), every)
     public = repeated(submission.public(), set(held))
     return [problem for reading in readings for problem in _quoted(reading, held, public.keys())]
 
 
-def _runs(reading: Reading) -> list[Words]:
+def _word_runs(reading: Reading) -> list[Words]:
     """Every run of `QUOTED_WORDS` words in `reading`, by the word it starts at."""
     return [
         tuple(reading.words[start : start + QUOTED_WORDS])
@@ -407,7 +419,7 @@ def _runs(reading: Reading) -> list[Words]:
 def _quoted(reading: Reading, held: dict[Words, str], public: Iterable[Words]) -> list[Problem]:
     """Each quote in `reading`: words in a row that are `held` by the case and aren't
     `public`."""
-    runs = _runs(reading)
+    runs = _word_runs(reading)
     public = set(public)
     quoted = [run in held and run not in public for run in runs]
     problems: list[Problem] = []
@@ -431,16 +443,14 @@ def _quoted(reading: Reading, held: dict[Words, str], public: Iterable[Words]) -
     return problems
 
 
-def _digits(submission: Submission) -> list[Problem]:
+def _digits(submission: Submission, findings: Findings) -> list[Problem]:
     """No number of seven digits or more, which could be a phone, an account, or a
     confirmation number. An id of one of the case's episodes isn't one, and neither is a
     date. In the findings, and in each file of a reproduction."""
-    if submission.findings is None:
-        return []
     episodes = submission.case.cut.episode_ids()
     found = [
         (piece.where, number)
-        for piece in _pieces(submission.findings)
+        for piece in _pieces(findings)
         for number in long_numbers(piece.text, ids=episodes)
     ]
     for tried in submission.reproductions:
@@ -462,14 +472,12 @@ def _digits(submission: Submission) -> list[Problem]:
     ]
 
 
-def _reproductions(submission: Submission) -> list[Problem]:
+def _reproductions(submission: Submission, findings: Findings) -> list[Problem]:
     """Every finding that names a reproduction has one, every reproduction is named by its
     finding, and each says what a reproduction says: one line of expectation, questions that
     are an eval set, and evidence and citations that name its own payloads."""
-    if submission.findings is None:
-        return []
     flaws = [
-        *unmatched(submission.diagnosis.output, submission.findings.reproduced()),
+        *unmatched(submission.diagnosis.output, findings.reproduced()),
         *(flaw for tried in submission.reproductions for flaw in tried.unsaid),
     ]
     return [Problem(flaw.where, flaw.what) for flaw in flaws]
@@ -489,64 +497,32 @@ def _one_word_names(submission: Submission) -> list[Problem]:
     ]
 
 
-def _owner(submission: Submission) -> list[Problem]:
-    """Every reproduction is the synthetic corpus's fictional owner's, so nothing in one is
-    the real owner's."""
-    return [
-        Problem(flaw.where, flaw.what)
-        for tried in submission.reproductions
-        for flaw in tried.not_the_owners
-    ]
-
-
-def _encodings(submission: Submission) -> list[Problem]:
-    """Everything in every reproduction can be decoded to text, so all of it was read by the
-    rules above: no part of a payload that isn't text, no encoding or character set nobody
-    knows, and no data in a `data:` URI."""
-    return [
-        Problem(flaw.where, flaw.what)
-        for tried in submission.reproductions
-        for flaw in tried.undecoded
-    ]
-
-
-def _ingest(submission: Submission) -> list[Problem]:
-    """Every reproduction's payloads ingest into a throwaway data root, with nothing
-    quarantined."""
-    return [
-        Problem(flaw.where, flaw.what)
-        for tried in submission.reproductions
-        for flaw in tried.quarantined
-    ]
-
-
-def _lint(submission: Submission) -> list[Problem]:
-    """Every reproduction's wiki lints without errors, against the episodes its payloads
-    ingest to."""
-    return [
-        Problem(flaw.where, flaw.what)
-        for tried in submission.reproductions
-        for flaw in tried.unlinted
-    ]
-
-
 RULES: tuple[Rule, ...] = (
     Rule("shape", _shape),
     Rule("schema", _schema),
-    Rule("paths", _paths),
-    Rule("episodes", _episodes),
-    Rule("questions", _questions),
-    Rule("labels", _labels),
-    Rule("names", _names),
-    Rule("addresses", _addresses),
-    Rule("quotes", _quotes),
-    Rule("digits", _digits),
-    Rule("reproductions", _reproductions),
+    Rule("paths", _of_findings(_paths)),
+    Rule("episodes", _of_findings(_episodes)),
+    Rule("questions", _of_findings(_questions)),
+    Rule("labels", _of_findings(_labels)),
+    Rule("names", _of_findings(_names)),
+    Rule("addresses", _of_findings(_addresses)),
+    Rule("quotes", _of_findings(_quotes)),
+    Rule("digits", _of_findings(_digits)),
+    Rule("reproductions", _of_findings(_reproductions)),
     Rule("one-word-names", _one_word_names),
-    Rule("owner", _owner),
-    Rule("encodings", _encodings),
-    Rule("ingest", _ingest),
-    Rule("lint", _lint),
+    # Every reproduction is the synthetic corpus's fictional owner's, so nothing in one
+    # is the real owner's.
+    Rule("owner", _of_reproductions(lambda tried: tried.not_the_owners)),
+    # Everything in every reproduction can be decoded to text, so all of it was read by
+    # the rules above: no part of a payload that isn't text, no encoding or character
+    # set nobody knows, and no data in a `data:` URI.
+    Rule("encodings", _of_reproductions(lambda tried: tried.undecoded)),
+    # Every reproduction's payloads ingest into a throwaway data root, with nothing
+    # quarantined.
+    Rule("ingest", _of_reproductions(lambda tried: tried.quarantined)),
+    # Every reproduction's wiki lints without errors, against the episodes its payloads
+    # ingest to.
+    Rule("lint", _of_reproductions(lambda tried: tried.unlinted)),
 )
 """Every rule, in the order its count is reported."""
 
@@ -671,13 +647,7 @@ def release(
 def _submitted(
     diagnosis: Diagnosis, case: Case, referral: str, repository: Path, owner: Owner
 ) -> Submission:
-    findings, off_schema = None, ()
-    data = read_output(diagnosis.output, FINDINGS)
-    if data is not None:
-        try:
-            findings = parse_findings(data)
-        except FindingsError as error:
-            off_schema = error.problems
+    findings, off_schema = read_findings(diagnosis.output)
     return Submission(
         diagnosis=diagnosis,
         case=case,

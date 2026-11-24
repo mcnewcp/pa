@@ -92,7 +92,8 @@ from pa_evals.decodings import (
     text_decodings,
 )
 from pa_evals.eval_set import CATEGORIES, EvalSet
-from pa_evals.models import FrozenModel
+from pa_evals.findings import FINDING_ID
+from pa_evals.models import FrozenModel, problems_of
 from pa_evals.real_content import Passage
 from pa_home.config import DataRoot
 from pa_home.filesystem_l0 import FilesystemL0
@@ -124,7 +125,7 @@ reproduction a minimal fixture, never a copy of the case. Constants, not configu
 EXPECTATION_CHARACTERS = 400
 """The most characters the line of expectation may hold."""
 
-_FINDING = re.compile(r"f[1-9]\d?")
+_FINDING = re.compile(FINDING_ID)
 """A reproduction's directory is named for its finding, by id."""
 _PAYLOAD_STEM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
 """A payload's file name, before its source's extension."""
@@ -540,9 +541,11 @@ def _read(directory: Path) -> Reproduction:
 # Trying one out.
 
 
-def try_out(reproduction: Reproduction, *, owner: Owner = FICTIONAL_OWNER) -> Tried:
-    """`reproduction`, ingested into a throwaway data root as `owner`'s, with its questions'
-    evidence and its wiki's citations resolved to the episodes its payloads ingest to."""
+def try_out(reproduction: Reproduction) -> Tried:
+    """`reproduction`, ingested into a throwaway data root as the fictional owner's, with its
+    questions' evidence and its wiki's citations resolved to the episodes its payloads ingest
+    to."""
+    owner = FICTIONAL_OWNER
     unsaid = list(_expectation_flaws(reproduction))
     asked, unread = _questions(reproduction)
     unsaid += unread
@@ -671,12 +674,7 @@ def _questions(reproduction: Reproduction) -> tuple[EvalSet | None, list[Flaw]]:
         return EvalSet.model_validate_json(reproduction.questions), []
     except ValidationError as error:
         return None, [
-            Flaw(
-                f"{reproduction.where}/{QUESTIONS}",
-                f"{'.'.join(str(part) for part in problem['loc']) or 'the whole'}: "
-                f"{problem['msg']}",
-            )
-            for problem in error.errors(include_input=False, include_url=False)
+            Flaw(f"{reproduction.where}/{QUESTIONS}", what) for what in problems_of(error)
         ]
 
 

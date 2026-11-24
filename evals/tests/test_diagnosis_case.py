@@ -145,8 +145,6 @@ def test_each_part_of_the_case_is_laid_read_only_under_its_label(
     assert "cut/cut.json" in looking.files
     assert looking.writable == []
     assert not looking.request.case.exists()
-    # The code as deployed isn't laid: the session is pointed at it.
-    assert looking.request.code == REPOSITORY
 
 
 def diagnose(pa_eval, referral: Path, cut: Cut, out: Path, *extra: object):

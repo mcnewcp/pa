@@ -562,7 +562,7 @@ def repeated(passages: Iterable[Passage], runs: Collection[Words]) -> dict[Words
 
 # Long numbers.
 
-_ID = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
+EPISODE_ID = re.compile(r"(?<![0-9A-Za-z_])[a-z][a-z_]*_[0-9a-f]{16}(?![0-9A-Za-z])")
 """Something of an episode id's shape: a source, then 16 hex characters."""
 _DATE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
 _NUMBER = re.compile(r"\d(?:[()]?[ \t.\u2010-\u2015-]?[()]?\d)*")
@@ -581,7 +581,7 @@ def long_numbers(text: str, *, ids: Collection[str] = (), times: bool = False) -
     one: a calendar's `20261017` and `20261017T090000Z`, and a time to a fraction of a second
     after its date, `2026-10-08T01:12:04.512345Z`.
     """
-    text = _ID.sub(lambda match: "id" if match[0] in ids else match[0], plain(text))
+    text = EPISODE_ID.sub(lambda match: "id" if match[0] in ids else match[0], plain(text))
     if times:
         text = _DATED_TIME.sub(lambda match: "time" if _is_date(match[1]) else match[0], text)
         text = _CALENDAR_TIME.sub(
