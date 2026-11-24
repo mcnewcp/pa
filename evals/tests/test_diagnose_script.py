@@ -31,11 +31,6 @@ DIAGNOSE = REPOSITORY / "deploy" / "home" / "diagnose.sh"
 
 REFUSED = 3
 FAILED = 4
-RULES = (
-    *("shape", "schema", "paths", "episodes", "questions", "labels"),
-    *("names", "addresses", "quotes", "digits"),
-)
-"""Every rule of the release check, by the name its count is printed under."""
 
 PLAYED_VM = """\
 import os, shutil, subprocess, sys
@@ -124,6 +119,7 @@ def test_a_diagnosis_over_a_whole_case_is_released_by_the_real_commands(
     parts: Any,
     leavings: Callable[..., Path],
     well_formed: dict[str, Any],
+    rules: tuple[str, ...],
     diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
 ):
     assert cut.wiki is not None
@@ -154,7 +150,9 @@ def test_a_diagnosis_over_a_whole_case_is_released_by_the_real_commands(
         f"release: {name}: released",
         f"released: {released}",
         "findings: 2 (1 fault, 1 noise)",
-        *(f"check {rule}: 0" for rule in RULES),
+        "reproductions: 0",
+        "payloads: 0",
+        *(f"check {rule}: 0" for rule in rules),
     ]
     # The private analysis stays under the data root, for the owner alone; the findings a
     # development session reads are the checked ones.
@@ -210,6 +208,7 @@ def test_findings_the_real_check_refuses_end_the_diagnosis_unreleased_with_the_r
     parts: Any,
     leavings: Callable[..., Path],
     well_formed: dict[str, Any],
+    rules: tuple[str, ...],
     diagnose_sh: Callable[..., subprocess.CompletedProcess[str]],
 ):
     well_formed["findings"][0]["code"] = ["core/src/pa_core/no_such_module.py"]
@@ -220,7 +219,7 @@ def test_findings_the_real_check_refuses_end_the_diagnosis_unreleased_with_the_r
 
     assert result.returncode == REFUSED, result.stderr
     [private] = data_root.diagnoses.iterdir()
-    counts = {**dict.fromkeys(RULES, 0), "paths": 1}
+    counts = {**dict.fromkeys(rules, 0), "paths": 1}
     assert result.stdout.splitlines()[5:] == [
         f"release: {private.name}: refused, and nothing is released",
         *(f"check {rule}: {count}" for rule, count in counts.items()),

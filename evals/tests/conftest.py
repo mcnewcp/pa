@@ -73,6 +73,13 @@ RULES = (
 )
 """Every rule of the release check, by the name its count is printed and recorded under."""
 
+
+@pytest.fixture
+def rules() -> tuple[str, ...]:
+    """`RULES`, for a test module that holds another command to the release check's lines."""
+    return RULES
+
+
 NAME = "dreamed-drop"
 """The diagnosis a `desk` makes and releases."""
 REFUSED = 3

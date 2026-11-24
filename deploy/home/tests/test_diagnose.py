@@ -56,6 +56,11 @@ RULES = (
     "addresses",
     "quotes",
     "digits",
+    "reproductions",
+    "one-word-names",
+    "owner",
+    "ingest",
+    "lint",
 )
 
 STAND_IN_INCUS = """\
@@ -146,6 +151,8 @@ RELEASE_SAYS = f"""\
 release: {{name}}: released
 released: {{released}}/{{name}}
 findings: 2 (1 fault, 1 noise)
+reproductions: 1, untested
+payloads: 3
 {CHECKS}"""
 
 
@@ -389,7 +396,9 @@ def test_a_diagnosis_runs_in_the_vm_comes_back_private_and_is_released_on_the_de
         f"left: {private}\n"
         f"release: {name}: released\n"
         f"released: {tmp_path / 'released'}/{name}\n"
-        "findings: 2 (1 fault, 1 noise)\n" + CHECKS
+        "findings: 2 (1 fault, 1 noise)\n"
+        "reproductions: 1, untested\n"
+        "payloads: 3\n" + CHECKS
     )
 
 
@@ -895,7 +904,9 @@ def test_what_it_prints_is_counts_and_names_of_checks_and_never_what_the_vms_com
         f"left: {private}\n"
         f"release: {name}: released\n"
         f"released: {tmp_path / 'released'}/{name}\n"
-        "findings: 2 (1 fault, 1 noise)\n" + CHECKS
+        "findings: 2 (1 fault, 1 noise)\n"
+        "reproductions: 1, untested\n"
+        "payloads: 3\n" + CHECKS
     )
     assert not [word for word in SALT if word in result.stdout + result.stderr]
     # The owner can still read what wasn't shown, and the developer is told how much there is.
