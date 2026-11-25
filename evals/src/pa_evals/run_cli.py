@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,11 +35,19 @@ from pa_evals.configurations import (
     Configuration,
 )
 from pa_evals.eval_set import EvalSet, load_eval_set
-from pa_evals.eval_wiki import EvalWiki, cut_wiki, dreamed_cut_wiki, load_eval_wiki
+from pa_evals.eval_wiki import (
+    EvalWiki,
+    cut_wiki,
+    dreamed_cut_wiki,
+    dreamed_reproduction_wiki,
+    load_eval_wiki,
+    reproduction_wiki,
+)
 from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.real_data import require_private
 from pa_evals.report import format_cost, format_score
+from pa_evals.reproduction import Released, read_released
 from pa_evals.results import RunResults
 from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
@@ -244,6 +252,15 @@ def add_run_command(commands: Any) -> None:
         "the repository.",
     )
     run.add_argument(
+        "--reproduction",
+        type=Path,
+        metavar="DIR",
+        help="Ask a released reproduction (a diagnosis's, or a copy of one) instead of a corpus: "
+        "its own questions over its own payloads, so it goes without --corpus, --cut, and "
+        "--eval-set. files-plus-wiki asks with its starting wiki, or with a dreamed copy of "
+        "it in --wiki.",
+    )
+    run.add_argument(
         "--eval-set",
         type=Path,
         help="Eval set JSON file (default: the named corpus's own; needed with --corpus DIR).",
@@ -281,7 +298,8 @@ def add_run_command(commands: Any) -> None:
         help="For --configuration files-plus-wiki: the eval wiki, a replay's wiki/ and "
         "run-log.jsonl (kept in evals/wikis/<corpus>/<librarian version>/), or a dreamed copy "
         "of one (pa librarian dream DIR --corpus …). With --cut: a dreamed copy of the cut's "
-        "wiki (pa librarian dream DIR --cut …), kept under the data root.",
+        "wiki (pa librarian dream DIR --cut …), kept under the data root. With "
+        "--reproduction: a dreamed copy of its starting wiki (pa-eval reproduction dream …).",
     )
     run.add_argument(
         "--runs",
@@ -300,18 +318,24 @@ def add_run_command(commands: Any) -> None:
 def _run(args: argparse.Namespace) -> int:
     configuration = CONFIGURATIONS[args.configuration]
     corpus: tuple[Path, ...] | Cut
-    if args.cut is not None:
+    if args.reproduction is not None:
+        reproduction, eval_set = _over_reproduction(args)
+        corpus, asked = (reproduction.payloads,), {"reproduction": reproduction.finding}
+        wiki = _reproduction_wiki(configuration, reproduction, eval_set, args.wiki)
+    elif args.cut is not None:
         corpus, eval_set = _over_cut(args)
+        asked = {"cut": corpus.name}
         wiki = _cut_wiki(configuration, corpus, args.wiki)
     else:
-        corpus, eval_set_path = _corpus(args.corpus or frozen.DEFAULT_CORPUS, args.eval_set)
+        asked = {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
+        corpus, eval_set_path = _corpus(asked["corpus"], args.eval_set)
         eval_set = load_eval_set(eval_set_path)
         wiki = _wiki(configuration, args.wiki)
     if args.only:
         eval_set = eval_set.only(*args.only)
     agent = AGENTS[args.agent].build(args)
     judge = JUDGES[args.judge].build(args)
-    setup = _setup(args, corpus)
+    setup = _setup(args, asked)
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
         results = run_eval(
@@ -343,6 +367,41 @@ def _run(args: argparse.Namespace) -> int:
         print(f"comparison: {run_dir / COMPARISON}")
     print(f"run directory: {run_dir}")
     return 0
+
+
+def _over_reproduction(args: argparse.Namespace) -> tuple[Released, EvalSet]:
+    """The released reproduction in `--reproduction` and its own eval set, asked over its own
+    payloads, so nothing else is asked with it."""
+    for option, given in (
+        ("--corpus", args.corpus),
+        ("--cut", args.cut),
+        ("--eval-set", args.eval_set),
+    ):
+        if given is not None:
+            raise CorpusChoiceError(
+                f"--reproduction goes without {option}: a reproduction is asked its own "
+                "questions, over its own payloads"
+            )
+    reproduction = read_released(args.reproduction.expanduser().resolve())
+    return reproduction, load_eval_set(reproduction.eval_set)
+
+
+def _reproduction_wiki(
+    configuration: Configuration,
+    reproduction: Released,
+    eval_set: EvalSet,
+    directory: Path | None,
+) -> EvalWiki | None:
+    """The wiki a run of `configuration` over `reproduction` asks with: its starting wiki, or
+    the dreamed copy of it in `--wiki DIR`, which no configuration without a wiki takes."""
+    if not configuration.wiki:
+        configuration.require_wiki_choice(wiki_given=directory is not None)
+        return None
+    if directory is None:
+        return reproduction_wiki(reproduction)
+    return dreamed_reproduction_wiki(
+        reproduction, directory.expanduser().resolve(), as_of=eval_set.as_of
+    )
 
 
 def _over_cut(args: argparse.Namespace) -> tuple[Cut, EvalSet]:
@@ -398,13 +457,10 @@ def _wiki(configuration: Configuration, directory: Path | None) -> EvalWiki | No
     return None if directory is None else load_eval_wiki(directory)
 
 
-def _setup(args: argparse.Namespace, corpus: tuple[Path, ...] | Cut) -> dict[str, str]:
-    """How the run was set up, as shown at the top of the report."""
-    asked = (
-        {"cut": corpus.name}
-        if isinstance(corpus, Cut)
-        else {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
-    )
+def _setup(args: argparse.Namespace, asked: Mapping[str, str]) -> dict[str, str]:
+    """How the run was set up, as shown at the top of the report. `asked` names what it asked:
+    the corpus, the cut, or the reproduction, by its finding (its directory is wherever it was
+    copied to, which means nothing later)."""
     return {
         "commit": workspace_commit(),
         **asked,

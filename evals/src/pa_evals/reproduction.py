@@ -27,8 +27,18 @@ As it is released, beside the findings:
                                       payload ingests to (`ReproductionRecord`)
 
 A payload's episode id is the one ingest gives it for the synthetic corpus's fictional owner
-(`FICTIONAL_OWNER`), whose every reproduction is. So a released reproduction runs as it stands:
-`pa-eval run --corpus payloads --eval-set eval_set.json`.
+(`FICTIONAL_OWNER`), whose every reproduction is. So a released reproduction is run as a
+reproduction, by its directory (`read_released` gives a command its parts):
+
+- `pa-eval run --reproduction DIR` asks its questions over its payloads, and with
+  `--configuration files-plus-wiki` over its starting wiki, which needs no run log;
+- `pa-eval reproduction dream DIR COPY` dreams a copy of its starting wiki, as its eval set's
+  owner and as of its eval set's as-of time, and `pa-eval run --reproduction DIR --wiki COPY`
+  asks with that copy.
+
+The release refuses a starting wiki that fails lint (`Trial.lint_problems`), so a fault that
+starts from a page lint fails can't be released as a reproduction: its finding describes the
+state instead.
 
 A development session renames or trims a released reproduction before it commits it, and an
 edited payload can ingest to another episode. `resolve_again` puts the questions and the wiki
@@ -799,6 +809,10 @@ def _as_ingest_reads(envelope: Envelope) -> list[Decoding]:
 # After an edit: a released reproduction, resolved again.
 
 
+class NotReleasedError(PaError):
+    """A directory that isn't a released reproduction."""
+
+
 class UnresolvedError(PaError):
     """A directory that can't be resolved again as a released reproduction. Its message says
     how much is wrong; `problems` says what and where, in the reproduction's own words."""
@@ -829,7 +843,7 @@ def resolve_again(directory: Path) -> ResolvedAgain:
     An episode id is the payload's that ingests to it now, or else the payload's that the
     record says it was. Evidence and citations that name a payload by its file, as a session
     writes them, are resolved too. Raises UnresolvedError, and leaves the directory as it was,
-    when anything is wrong with it.
+    when anything is wrong with it, and NotReleasedError when it has no record.
     """
     was = _record(directory)
     with tempfile.TemporaryDirectory(prefix="pa-reproduction-") as scratch:
@@ -865,7 +879,7 @@ def _record(directory: Path) -> ReproductionRecord:
     except (OSError, ValidationError):
         record = None
     if record is None or not _FINDING.fullmatch(record.finding):
-        raise UnresolvedError(
+        raise NotReleasedError(
             f"{directory} isn't a released reproduction: it has no {RECORD} that says which "
             "finding it is for and which episode each payload was"
         )
@@ -965,3 +979,39 @@ def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, s
             for name, envelope in _envelopes(now, FICTIONAL_OWNER, datetime.now(UTC)).items()
         },
     }
+
+
+# As it is run: a released reproduction's parts, for whatever asks or dreams it.
+
+
+@dataclass(frozen=True)
+class Released:
+    """A released reproduction, as a run over it or a dreaming run of its wiki takes it."""
+
+    finding: str
+    """The finding it is for, by id: what a report names it by, since its directory is
+    wherever it was copied to."""
+    payloads: Path
+    """Its raw payloads, laid out as a corpus is: a directory per source."""
+    eval_set: Path
+    """Its questions, their evidence named by episode id."""
+    wiki: Path | None
+    """Its starting wiki's tree, which the diagnostician wrote and no librarian built; None
+    when its fault needs none."""
+
+
+def read_released(directory: Path) -> Released:
+    """The released reproduction in `directory`: a release's, or a development session's copy
+    of one. Raises NotReleasedError for a directory that isn't one."""
+    record = _record(directory)
+    payloads, eval_set, wiki = directory / PAYLOADS, directory / EVAL_SET, directory / WIKI
+    missing = [
+        name
+        for name, there in ((f"{PAYLOADS}/", payloads.is_dir()), (EVAL_SET, eval_set.is_file()))
+        if not there
+    ]
+    if missing:
+        raise NotReleasedError(
+            f"{directory} isn't a released reproduction: it has no {' and no '.join(missing)}"
+        )
+    return Released(record.finding, payloads, eval_set, wiki if wiki.is_dir() else None)
