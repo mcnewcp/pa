@@ -35,7 +35,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-command=(pa librarian "$@")
+to_run=(pa librarian "$@")
 # Its own PA_LIBRARIAN_COMMAND, not one from the environment, which could run claude elsewhere.
 without=(-u PA_LIBRARIAN_COMMAND)
 reproduction=""
@@ -53,11 +53,12 @@ if [[ -n $reproduction ]]; then
   [[ -z ${PA_LIBRARIAN_OWNER_ENV:-} ]] ||
     die "PA_LIBRARIAN_OWNER_ENV doesn't go with --reproduction: a reproduction's owner is its eval set's"
   # Checked before the command copies the reproduction's wiki there. The sandbox refuses a wiki
-  # on any filesystem but the wiki's and the replays' (librarian-sandbox.sh start), too late.
+  # on any filesystem but the wiki's and the replays' (librarian-sandbox.sh start), but only once
+  # the copy is made.
   copy=$(realpath -m -- "$2")
   [[ $copy/ == "$(realpath -m -- "$PA_REPLAYS")"/?* ]] ||
     die "the copy ($copy) must be under $PA_REPLAYS, the replays' filesystem (install-wiki.sh)"
-  command=(pa-eval reproduction dream "$reproduction" "$2")
+  to_run=(pa-eval reproduction dream "$reproduction" "$2")
   without+=(-u PA_OWNER_NAME -u PA_OWNER_EMAILS -u PA_OWNER_OTHER_NAMES)
 fi
 
@@ -79,4 +80,4 @@ set -a
 source "$owner_env"
 set +a
 PA_DATA_DIR=$PA_DATA_ROOT PA_LIBRARIAN_SANDBOX=$DEPLOY_DIR/librarian-sandbox.sh \
-  env "${without[@]}" uv run --project "$REPO_DIR" "${command[@]}"
+  env "${without[@]}" uv run --project "$REPO_DIR" "${to_run[@]}"
