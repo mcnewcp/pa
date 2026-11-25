@@ -6,7 +6,7 @@ and with a dreamed copy of it. The copy is laid out as a replay target is
 (`pa_core.librarian.replay.ReplayTarget`): the wiki's tree, its git directory, and the run log.
 
 A copy starts as a tree alone: an eval wiki is kept without its git directory, a cut holds its
-wiki as a bare tree, and a wiki written by hand for a corpus is nothing else. So its first
+wiki as a bare tree, and a wiki no librarian built is nothing else. So its first
 dreaming run commits the tree as it is before anything else, with what its source
 (`CopySource`) says of it: the version of the librarian whose runs built it, if one did, and a
 cut's cursor. The dreaming commit carries those forward as it does in the live wiki. The git
@@ -104,8 +104,8 @@ def stated_source(
 
     - a copy of a cut's wiki: `as_of` is the cut's as-of time, and `librarian_version` and
       `cursor` are those of the wiki commit it holds;
-    - a copy of a wiki no librarian built, written by hand over a corpus: `as_of` is the time
-      given for it, and it has no librarian version and no cursor.
+    - a copy of a wiki no librarian built, such as one a person wrote over a corpus: `as_of`
+      is the time given for it, and it has no librarian version and no cursor.
 
     Refuses (DreamCopyError) a run log with a replay's runs, which is a copy of a replay
     target's, and one whose dreaming runs were as of another time or of a wiki another

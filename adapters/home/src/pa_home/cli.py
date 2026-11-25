@@ -13,7 +13,6 @@ from pa_core.catalog import open_catalog, rebuild_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
-from pa_core.librarian.dreaming import DreamingOutcome
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
 from pa_core.librarian.run import (
     RunOutcome,
@@ -581,7 +580,7 @@ def _nightly(data_root: DataRoot) -> int:
     if outcome.librarian_failure is not None:
         print(f"pa: nightly: librarian: {outcome.librarian_failure}", file=sys.stderr)
     if outcome.dreaming is not None:
-        _report_dreaming(outcome.dreaming, "nightly: dreaming")
+        print(f"nightly: dreaming: {librarian.dreaming_report(outcome.dreaming)}")
     if outcome.dreaming_failure is not None:
         print(f"pa: nightly: dreaming: {outcome.dreaming_failure}", file=sys.stderr)
     if outcome.snapshot is not None:
@@ -804,7 +803,7 @@ def _dream(data_root: DataRoot) -> None:
         return
     except LibrarianRunError as error:
         raise _failed_run(error, data_root.run_errors / librarian.DREAMING_ERROR) from None
-    _report_dreaming(outcome, "librarian dream")
+    print(f"librarian dream: {librarian.dreaming_report(outcome)}")
 
 
 def _count_candidates(data_root: DataRoot) -> None:
@@ -879,12 +878,7 @@ def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> No
         raise PaError(
             f"{librarian.run_failure_reason(error)}; its error is in {target / RUN_LOG}"
         ) from None
-    _report_dreaming(outcome, "librarian dream")
-
-
-def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
-    """Print what a dreaming run did, as `name`: counts, never content."""
-    print(f"{name}: {librarian.dreaming_report(outcome)}")
+    print(f"librarian dream: {librarian.dreaming_report(outcome)}")
 
 
 def _seed(data_root: DataRoot, eval_wiki: Path, captured_through: datetime | None) -> None:

@@ -4,11 +4,10 @@ wired to its home adapters.
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. A dreaming run reviews the
-data root's wiki (`dream`), or a copy of a replay target, of a cut's wiki, or of a wiki written
-by hand over a corpus, laid out as a replay's target is (`dream_copy`). Each run (each replay)
-renders the librarian project as committed (the project its librarian version names) into a
-temporary directory, the sessions' working directory, and runs the sessions with the configured
-command.
+data root's wiki (`dream`), or a copy of a replay target, of a cut's wiki, or of a wiki no
+librarian built, laid out as a replay's target is (`dream_copy`). Each run (each replay) renders
+the librarian project as committed (the project its librarian version names) into a temporary
+directory, the sessions' working directory, and runs the sessions with the configured command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -293,9 +292,10 @@ def dream_copy(
       time is the end of the replay's last run.
     - `cut`'s wiki. It is dreamed over the cut's L0, at the cut's as-of time, and gets a run
       log with its first run.
-    - a wiki no librarian built, written by hand over `corpus`. It is dreamed over the corpus,
-      ingested the same way, as of `as_of`, the time given for it, and gets a run log with
-      its first run too.
+    - a wiki no librarian built, over `corpus`. It is dreamed over the corpus, ingested the
+      same way, as of `as_of`, the time given for it, and gets a run log with its first run
+      too. Nothing here tells such a copy from any other wiki: the caller answers for what
+      `target` holds.
 
     The copy's git directory is made beside it on its first run and kept, so a later run
     finds the earlier ones. The run is `dream`'s otherwise: the same project, sandbox, model,
@@ -305,13 +305,13 @@ def dream_copy(
     if not layout.tree.is_dir():
         raise DreamCopyError(
             f"{target} has no {layout.tree.name}/: it isn't a copy of a replay target, of a "
-            "cut's wiki, or of a wiki written by hand"
+            "cut's wiki, or of a wiki no librarian built"
         )
     if as_of is not None:
         if cut is not None or not corpus:
             raise DreamCopyError(
-                f"{target} is dreamed as of a time given for it only as a copy of a wiki "
-                "written by hand over a corpus: give the corpus, and no cut, whose as-of time "
+                f"{target} is dreamed as of a time given for it only as a copy of a wiki no "
+                "librarian built, over a corpus: give the corpus, and no cut, whose as-of time "
                 "is its own"
             )
         source = stated_source(layout.run_log, as_of=as_of)

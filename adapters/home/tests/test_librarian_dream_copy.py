@@ -840,14 +840,14 @@ def test_a_cut_without_a_wiki_has_no_copy_to_dream(data_root: Path, capsys):
     assert "holds no wiki" in capsys.readouterr().err
 
 
-# A copy of a wiki no librarian built, written by hand over a corpus (#168). No `pa` command
+# A copy of a wiki no librarian built, over a corpus (#168). No `pa` command
 # dreams one: the eval harness does, for a reproduction, through `pa_home.librarian.dream_copy`.
 
 
-def written_by_hand(data_root: Path) -> Path:
-    """A copy of a wiki written by hand over the wedding's mail: the wedding's pages and the
-    day Dave wrote, with no run log and no history."""
-    target = data_root.parent / "by-hand"
+def built_by_no_librarian(data_root: Path) -> Path:
+    """A copy of a wiki no librarian built, over the wedding's mail: the wedding's pages and
+    the day Dave wrote, with no run log and no history."""
+    target = data_root.parent / "no-librarians"
     day = f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL}]\n"
     for path, text in {**PAGES, "days/2026-10-12.md": day}.items():
         (target / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
@@ -867,13 +867,13 @@ def dream_as_of(target: Path, as_of: datetime, **given):
 
 
 UNENGAGED = {"candidate": "c02", "outcome": "dismissed"}
-"""Dave's page, which no day log of a wiki written by hand links from the owner's own mail."""
+"""Dave's page, which no day log of this wiki links from the owner's own mail."""
 
 
-def test_a_wiki_written_by_hand_is_dreamed_over_its_corpus_as_of_the_time_given_for_it(
+def test_a_wiki_no_librarian_built_is_dreamed_over_its_corpus_as_of_the_time_given_for_it(
     data_root: Path, corpus: Path
 ):
-    target = written_by_hand(data_root)
+    target = built_by_no_librarian(data_root)
     script(
         data_root,
         dreaming=[{"write": TOPIC, "text": CLOSED}, {"outcomes": [APPLIED, UNENGAGED]}],
@@ -905,10 +905,10 @@ def test_a_wiki_written_by_hand_is_dreamed_over_its_corpus_as_of_the_time_given_
     assert not data_root.exists()
 
 
-def test_a_wiki_written_by_hand_isnt_dreamed_again_as_of_another_time(
+def test_a_wiki_no_librarian_built_isnt_dreamed_again_as_of_another_time(
     data_root: Path, corpus: Path
 ):
-    target = written_by_hand(data_root)
+    target = built_by_no_librarian(data_root)
     script(data_root, dreaming=[{"outcomes": [DISMISSED, UNENGAGED]}])
     dream_as_of(target, CUT_AS_OF, corpus=[corpus])
     before = tree_state(target)
@@ -923,10 +923,10 @@ def test_a_wiki_written_by_hand_isnt_dreamed_again_as_of_another_time(
 def test_a_time_is_given_only_for_a_copy_over_a_corpus(data_root: Path, corpus: Path):
     cut = cut_of_a_live_wiki(data_root)
     of_the_cut = copy_of_the_cuts_wiki(cut, data_root)
-    by_hand = written_by_hand(data_root)
+    built_by_none = built_by_no_librarian(data_root)
 
     # A cut's as-of time is its own, and a wiki with no corpus has no L0 to be judged over.
-    for target, given in ((of_the_cut, {"cut": cut}), (by_hand, {})):
+    for target, given in ((of_the_cut, {"cut": cut}), (built_by_none, {})):
         with pytest.raises(DreamCopyError, match="is dreamed as of a time given for it only"):
             dream_as_of(target, CUT_AS_OF, **given)
 
