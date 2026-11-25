@@ -20,27 +20,37 @@
 # own (`librarian.sh dream DIR --cut CUT` leaves one in DIR, under $PA_REPLAYS), pushed as an eval
 # wiki is. The cut, the set, the run directory, and that copy are refused inside this checkout,
 # so nothing real is ever committed.
+#
+# A run over a released reproduction (--reproduction DIR: a diagnosis's reproductions/<finding>,
+# or a copy of one) pushes the reproduction into the VM, replacing the last run's, and asks its
+# own questions over its own payloads there, so it goes without --cut and --eval-set. A
+# files-plus-wiki run asks with its starting wiki, or, with --wiki DIR, with a dreamed copy of
+# it (`librarian.sh dream DIR --reproduction REPRODUCTION` leaves one in DIR, under
+# $PA_REPLAYS), pushed as an eval wiki is. A reproduction is fictional, so the run directory
+# comes back to evals/runs/ in this checkout (or $PA_EVAL_RUNS_DIR), as a corpus run's does.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 (($#)) || set -- --agent claude --judge model
 
 # Take out the options that name devbox paths: --wiki is pointed at the VM's copy where it was
-# given, and a cut and its eval set are given again at the end, as the VM's copies.
+# given, and a cut and its eval set, or a reproduction, are given again at the end, as the VM's
+# copies.
 wiki=""
 cut=""
 eval_set=""
+reproduction=""
 args=()
 while (($#)); do
   case $1 in
-    --wiki | --cut | --eval-set)
+    --wiki | --cut | --eval-set | --reproduction)
       (($# >= 2)) || die "$1 needs a path"
       option=${1#--}
       printf -v "${option//-/_}" '%s' "$2"
       [[ $1 != --wiki ]] || args+=(--wiki "$PA_VM_EVAL_WIKI")
       shift 2
       ;;
-    --wiki=* | --cut=* | --eval-set=*)
+    --wiki=* | --cut=* | --eval-set=* | --reproduction=*)
       option=${1%%=*}
       option=${option#--}
       printf -v "${option//-/_}" '%s' "${1#*=}"
@@ -53,7 +63,16 @@ while (($#)); do
       ;;
   esac
 done
-if [[ -n $cut ]]; then
+if [[ -n $reproduction ]]; then
+  [[ -z $cut ]] || die "--reproduction goes without --cut: a run asks one or other"
+  [[ -z $eval_set ]] ||
+    die "--reproduction goes without --eval-set: a reproduction is asked its own questions"
+  # The record a release writes (pa_evals.reproduction, which owns the rest of the layout).
+  [[ -f $reproduction/reproduction.json ]] ||
+    die "$reproduction isn't a released reproduction: it has no reproduction.json"
+  runs_dir=${PA_EVAL_RUNS_DIR:-$REPO_DIR/evals/runs}
+  args+=(--reproduction "$PA_VM_EVAL_REPRODUCTION" --runs-dir "$PA_VM_EVAL_RUNS")
+elif [[ -n $cut ]]; then
   [[ -n $eval_set ]] || die "--cut needs --eval-set FILE: the real-data eval set asked over it"
   runs_dir=${PA_EVAL_RUNS_DIR:-$PA_EVALS/runs}
   require_private cut "$cut"
@@ -81,6 +100,15 @@ if [[ -n $wiki ]]; then
     incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
       "rm -rf $PA_VM_EVAL_WIKI && mkdir -p $PA_VM_EVAL_WIKI && tar -C $PA_VM_EVAL_WIKI -xf -"
   log "pushed the eval wiki in $wiki to $PA_VM_EVAL_WIKI"
+fi
+
+if [[ -n $reproduction ]]; then
+  # Whole, as it was released; owned by the assistant.
+  vm_copy=$PA_VM_EVAL_REPRODUCTION
+  tar -C "$reproduction" -cf - . |
+    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+      "rm -rf $vm_copy && mkdir -p $vm_copy && tar -C $vm_copy -xf -"
+  log "pushed the reproduction in $reproduction to $vm_copy"
 fi
 
 if [[ -n $cut ]]; then

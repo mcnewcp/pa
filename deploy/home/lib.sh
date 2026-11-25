@@ -224,6 +224,8 @@ PA_VM_EVAL_WIKI=$PA_VM_EVAL/eval-wiki
 PA_VM_EVAL_CUTS=$PA_VM_EVAL/cuts
 PA_VM_EVAL_SET=$PA_VM_EVAL/eval-set.json
 PA_VM_EVAL_RUNS=$PA_VM_EVAL/runs
+# Where it pushes the released reproduction a run over one asks (ADR-0010), replaced each run.
+PA_VM_EVAL_REPRODUCTION=$PA_VM_EVAL/reproduction
 # Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
 # owner's notes a second pass revises.
 PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts

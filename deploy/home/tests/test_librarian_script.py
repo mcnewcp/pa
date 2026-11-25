@@ -196,10 +196,97 @@ def test_an_owner_file_that_isnt_there_stops_the_run(home: Path, tmp_path: Path)
     assert f"{missing} is missing" in result.stderr
 
 
+# Dreaming a released reproduction's starting wiki (#168): the eval harness's command, which
+# knows a reproduction's layout, with its sessions in the librarian's VM all the same.
+
+REPRODUCTION = "/srv/released/20261120T101500Z-made-up/reproductions/f1"
+
+
+def replays(home: Path) -> Path:
+    return home / ".local" / "share" / "pa-home" / "replays"
+
+
+@pytest.mark.parametrize(
+    "named", [("--reproduction", REPRODUCTION), (f"--reproduction={REPRODUCTION}",)], ids=len
+)
+def test_dreaming_a_reproduction_is_handed_to_the_eval_harness_with_its_sessions_in_the_vm(
+    home: Path, tmp_path: Path, named: tuple[str, ...]
+):
+    (home / ".local" / "share" / "pa-home" / "owner.env").write_text(
+        REAL_OWNER + "PA_OWNER_OTHER_NAMES=Ri\nPA_TIME_ZONE=Europe/Lisbon\n"
+    )
+    copy = replays(home) / "f1-dreamed"
+
+    call = run_script(
+        home, tmp_path, "dream", str(copy), *named, env={"PA_LIBRARIAN_COMMAND": "claude"}
+    )
+
+    assert call["argv"] == [
+        *("run", "--project", str(REPO)),
+        *("pa-eval", "reproduction", "dream", REPRODUCTION, str(copy)),
+    ]
+    env = call["env"]
+    assert env["PA_LIBRARIAN_SANDBOX"] == str(DEPLOY / "librarian-sandbox.sh")
+    assert "PA_LIBRARIAN_COMMAND" not in env
+    # The time zone is the instance's, which the command reads from the environment. The owner
+    # is the reproduction's eval set's, so nothing else of the data root's owner reaches it.
+    assert env["PA_TIME_ZONE"] == "Europe/Lisbon"
+    assert not {"PA_OWNER_NAME", "PA_OWNER_EMAILS", "PA_OWNER_OTHER_NAMES"} & env.keys()
+
+
+def test_a_reproductions_owner_is_never_named_by_a_file(home: Path, tmp_path: Path):
+    fictional = tmp_path / "argus.env"
+    fictional.write_text(FICTIONAL_OWNER)
+    args = ("dream", str(replays(home) / "f1-dreamed"), "--reproduction", REPRODUCTION)
+
+    result = librarian_sh(home, tmp_path, *args, env={"PA_LIBRARIAN_OWNER_ENV": str(fictional)})
+
+    assert result.returncode != 0
+    assert "PA_LIBRARIAN_OWNER_ENV doesn't go with --reproduction" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "copy", ["{home}/f1-dreamed", "{replays}", "{replays}/../wiki/f1-dreamed"], ids=str
+)
+def test_a_copy_of_a_reproductions_wiki_outside_the_replays_is_refused(
+    home: Path, tmp_path: Path, copy: str
+):
+    copy = copy.format(home=home, replays=replays(home))
+
+    result = librarian_sh(home, tmp_path, "dream", copy, "--reproduction", REPRODUCTION, env={})
+
+    assert result.returncode != 0
+    assert f"must be under {replays(home)}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("dream", "--reproduction", REPRODUCTION),
+        ("dream", "COPY", "--reproduction"),
+        ("dream", "COPY", "--reproduction", REPRODUCTION, "--corpus", "evals/corpus/payloads"),
+        ("dream", "COPY", f"--reproduction={REPRODUCTION}", "--cut", "/srv/cuts/20261118T202737Z"),
+        ("replay", "COPY", "--reproduction", REPRODUCTION),
+    ],
+    ids=" ".join,
+)
+def test_a_reproduction_is_dreamed_by_one_form_of_the_command(
+    home: Path, tmp_path: Path, args: tuple[str, ...]
+):
+    copy = str(replays(home) / "f1-dreamed")
+    args = tuple(copy if arg == "COPY" else arg for arg in args)
+
+    result = librarian_sh(home, tmp_path, *args, env={})
+
+    assert result.returncode != 0
+    assert "usage: librarian.sh dream <copy> --reproduction <dir>" in result.stderr
+
+
 def test_the_scripts_usage_and_the_readme_name_every_librarian_command():
     usage = (DEPLOY / "librarian.sh").read_text().split("set -euo pipefail")[0]
     readme = (DEPLOY / "README.md").read_text()
 
+    assert "librarian.sh dream <copy> --reproduction <dir>" in usage
     for command in ("run", "dream", "replay", "seed"):
         assert f"librarian.sh {command}" in usage
     assert "`librarian.sh run\\|dream\\|replay\\|seed …`" in readme
