@@ -137,15 +137,17 @@ def _require_dreamed_as(history: RunHistory, source: CopySource, run_log: Path) 
             f"{run_log} has a dreaming run as of {utc(other.as_of)}, "
             f"and this one would be as of {utc(source.as_of)}: {not_this}"
         )
-    if other.librarian_version is None:
-        builders = f"no librarian version built, not {source.librarian_version}"
-    elif source.librarian_version is None:
-        builders = f"built by librarian version {other.librarian_version}, not one that none built"
-    else:
-        builders = (
-            f"built by librarian version {other.librarian_version}, not {source.librarian_version}"
-        )
-    raise DreamCopyError(f"{run_log} has a dreaming run of a wiki {builders}: {not_this}")
+    raise DreamCopyError(
+        f"{run_log} has a dreaming run of a wiki {_built(other.librarian_version)}, and this "
+        f"one would be of a wiki {_built(source.librarian_version)}: {not_this}"
+    )
+
+
+def _built(librarian_version: str | None) -> str:
+    """How a refusal says who built a wiki: a librarian version, or none."""
+    if librarian_version is None:
+        return "no librarian built"
+    return f"built by librarian version {librarian_version}"
 
 
 COPY_AS_OF_FIELD = "Copy-As-Of"

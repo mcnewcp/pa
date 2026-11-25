@@ -108,9 +108,10 @@ def test_a_copy_of_a_wiki_a_librarian_built_isnt_dreamed_as_one_none_did(tmp_pat
     with pytest.raises(DreamCopyError) as refused:
         stated_source(run_log, as_of=AS_OF)
 
-    assert f"of a wiki built by librarian version {BUILT_BY}, not one that none built" in str(
-        refused.value
-    )
+    assert (
+        f"has a dreaming run of a wiki built by librarian version {BUILT_BY}, and this one "
+        "would be of a wiki no librarian built"
+    ) in str(refused.value)
 
 
 def test_a_copy_of_a_wiki_no_librarian_built_isnt_dreamed_as_a_cuts(tmp_path: Path):
@@ -120,4 +121,20 @@ def test_a_copy_of_a_wiki_no_librarian_built_isnt_dreamed_as_a_cuts(tmp_path: Pa
     with pytest.raises(DreamCopyError) as refused:
         stated_source(run_log, as_of=AS_OF, librarian_version=BUILT_BY)
 
-    assert f"of a wiki no librarian version built, not {BUILT_BY}" in str(refused.value)
+    assert (
+        "has a dreaming run of a wiki no librarian built, and this one would be of a wiki "
+        f"built by librarian version {BUILT_BY}"
+    ) in str(refused.value)
+
+
+def test_a_copy_of_a_wiki_another_librarian_built_isnt_dreamed_as_this_ones(tmp_path: Path):
+    run_log = tmp_path / "run-log.jsonl"
+    append_to_run_log(run_log, dreaming_run(librarian_version="fedcba987654"))
+
+    with pytest.raises(DreamCopyError) as refused:
+        stated_source(run_log, as_of=AS_OF, librarian_version=BUILT_BY)
+
+    assert (
+        "has a dreaming run of a wiki built by librarian version fedcba987654, and this one "
+        f"would be of a wiki built by librarian version {BUILT_BY}"
+    ) in str(refused.value)
