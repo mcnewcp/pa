@@ -23,11 +23,12 @@
 #
 # A run over a released reproduction (--reproduction DIR: a diagnosis's reproductions/<finding>,
 # or a copy of one) pushes the reproduction into the VM, replacing the last run's, and asks its
-# own questions over its own payloads there, so it goes without --cut and --eval-set. A
-# files-plus-wiki run asks with its starting wiki, or, with --wiki DIR, with a dreamed copy of
-# it (`librarian.sh dream DIR --reproduction REPRODUCTION` leaves one in DIR, under
-# $PA_REPLAYS), pushed as an eval wiki is. A reproduction is fictional, so the run directory
-# comes back to evals/runs/ in this checkout (or $PA_EVAL_RUNS_DIR), as a corpus run's does.
+# own questions over its own payloads there, so it goes without --corpus, --cut, and
+# --eval-set. A files-plus-wiki run asks with its starting wiki, or, with --wiki DIR, with a
+# dreamed copy of it (`librarian.sh dream DIR --reproduction REPRODUCTION` leaves one in DIR,
+# under $PA_REPLAYS), pushed as an eval wiki is, with the reproduction's record that the copy
+# carries and the run checks it by. A reproduction is fictional, so the run directory comes
+# back to evals/runs/ in this checkout (or $PA_EVAL_RUNS_DIR), as a corpus run's does.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -40,6 +41,7 @@ wiki=""
 cut=""
 eval_set=""
 reproduction=""
+over_corpus=""
 args=()
 while (($#)); do
   case $1 in
@@ -58,6 +60,7 @@ while (($#)); do
       shift
       ;;
     *)
+      [[ $1 != --corpus && $1 != --corpus=* ]] || over_corpus=yes
       args+=("$1")
       shift
       ;;
@@ -65,6 +68,7 @@ while (($#)); do
 done
 if [[ -n $reproduction ]]; then
   [[ -z $cut ]] || die "--reproduction goes without --cut: a run asks one or other"
+  [[ -z $over_corpus ]] || die "--reproduction goes without --corpus: a run asks one or other"
   [[ -z $eval_set ]] ||
     die "--reproduction goes without --eval-set: a reproduction is asked its own questions"
   # The record a release writes (pa_evals.reproduction, which owns the rest of the layout).
@@ -96,19 +100,22 @@ if [[ -n $wiki ]]; then
   [[ -d $wiki/wiki && -f $wiki/run-log.jsonl ]] ||
     die "$wiki isn't an eval wiki: it needs wiki/ and run-log.jsonl"
   # Its tree and run log only, never a replay's wiki.git/; owned by the assistant.
-  tar -C "$wiki" -cf - wiki run-log.jsonl |
-    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
-      "rm -rf $PA_VM_EVAL_WIKI && mkdir -p $PA_VM_EVAL_WIKI && tar -C $PA_VM_EVAL_WIKI -xf -"
+  wiki_parts=(wiki run-log.jsonl)
+  if [[ -n $reproduction ]]; then
+    # A copy of a reproduction's starting wiki carries the reproduction's record, which the run
+    # checks it by (pa_evals.reproduction.copied_wiki).
+    [[ -f $wiki/reproduction.json ]] ||
+      die "$wiki isn't a dreamed copy of a reproduction's starting wiki: it has no reproduction.json (librarian.sh dream DIR --reproduction REPRODUCTION makes one)"
+    wiki_parts+=(reproduction.json)
+  fi
+  push_tree "$wiki" "$PA_VM_EVAL_WIKI" "${wiki_parts[@]}"
   log "pushed the eval wiki in $wiki to $PA_VM_EVAL_WIKI"
 fi
 
 if [[ -n $reproduction ]]; then
   # Whole, as it was released; owned by the assistant.
-  vm_copy=$PA_VM_EVAL_REPRODUCTION
-  tar -C "$reproduction" -cf - . |
-    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
-      "rm -rf $vm_copy && mkdir -p $vm_copy && tar -C $vm_copy -xf -"
-  log "pushed the reproduction in $reproduction to $vm_copy"
+  push_tree "$reproduction" "$PA_VM_EVAL_REPRODUCTION" .
+  log "pushed the reproduction in $reproduction to $PA_VM_EVAL_REPRODUCTION"
 fi
 
 if [[ -n $cut ]]; then

@@ -413,6 +413,8 @@ def dreamed_reproduction(tmp_path: Path) -> Path:
     (copy / "wiki.git").mkdir()
     (copy / "wiki.git" / "HEAD").write_text("ref: refs/heads/main\n")
     (copy / "run-log.jsonl").write_text('{"run": "dreaming"}\n')
+    # The reproduction's record, which says whose copy it is.
+    (copy / "reproduction.json").write_text("{}\n")
     return copy
 
 
@@ -482,8 +484,14 @@ def test_a_run_over_a_reproduction_with_a_dreamed_copy_of_its_wiki_pushes_both(
 
     assert result.returncode == 0, result.stderr
     push_wiki, push, ask, _ = recorded(calls)
-    # The copy's tree and run log, as an eval wiki is pushed: never its git directory.
-    assert pushed(push_wiki) == ["run-log.jsonl", "wiki/index.md", "wiki/topics/choir.md"]
+    # The copy's tree and run log, as an eval wiki is pushed, with the record the run checks
+    # it by: never its git directory.
+    assert pushed(push_wiki) == [
+        "reproduction.json",
+        "run-log.jsonl",
+        "wiki/index.md",
+        "wiki/topics/choir.md",
+    ]
     assert f"tar -C {VM_EVAL_WIKI} -xf -" in push_wiki["argv"][-1]
     assert f"tar -C {VM_REPRODUCTION} -xf -" in push["argv"][-1]
     assert pa_eval_args(ask) == [
@@ -502,18 +510,37 @@ def test_a_run_over_a_reproduction_with_a_dreamed_copy_of_its_wiki_pushes_both(
     ]
 
 
-@pytest.mark.parametrize("option", ["--cut", "--eval-set"])
+@pytest.mark.parametrize("option", ["--cut", "--eval-set", "--corpus"])
+@pytest.mark.parametrize("joined", [False, True], ids=["apart", "with an equals sign"])
 def test_a_reproduction_is_run_alone(
-    tmp_path: Path, calls: Path, reproduction: Path, cut: Path, eval_set: Path, option: str
+    tmp_path: Path,
+    calls: Path,
+    reproduction: Path,
+    cut: Path,
+    eval_set: Path,
+    option: str,
+    joined: bool,
 ):
-    another = {"--cut": cut, "--eval-set": eval_set}[option]
+    another = {"--cut": cut, "--eval-set": eval_set, "--corpus": "scale"}[option]
+    given = [f"{option}={another}"] if joined else [option, str(another)]
 
-    result = run_evals(
-        tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), option, str(another)
-    )
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), *given)
 
     assert result.returncode != 0
     assert f"--reproduction goes without {option}" in result.stderr
+    assert recorded(calls) == []
+
+
+def test_a_wiki_without_the_reproductions_record_stops_before_the_vm_is_touched(
+    tmp_path: Path, calls: Path, reproduction: Path, dreamed_reproduction: Path
+):
+    (dreamed_reproduction / "reproduction.json").unlink()
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(dreamed_reproduction)]
+
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), *wiki)
+
+    assert result.returncode != 0
+    assert "isn't a dreamed copy of a reproduction's starting wiki" in result.stderr
     assert recorded(calls) == []
 
 

@@ -445,6 +445,17 @@ push_cut() {
   fi
 }
 
+# push_tree DIR VM_DIR PART... pushes PARTs of DIR (files and directories, by their paths in
+# it; `.` for all of it) to VM_DIR in the VM, as the assistant's, in place of whatever VM_DIR
+# held. A link among them goes as a link, never as what it names.
+push_tree() {
+  local from=$1 vm_dir=$2
+  shift 2
+  tar -C "$from" -cf - "$@" |
+    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+      "rm -rf $vm_dir && mkdir -p $vm_dir && tar -C $vm_dir -xf -"
+}
+
 # push_file FILE VM_PATH writes FILE's contents to VM_PATH in the VM, as the assistant.
 push_file() {
   incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
