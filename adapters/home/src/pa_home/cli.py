@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -718,17 +718,12 @@ def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
     held_back = f", {run.held_back} held back" if run.held_back else ""
     if not run.candidates:
         return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
-    counts = _counts_text(run.outcomes)
+    counts = librarian.outcome_counts(run.outcomes)
     left_over = f", {run.left_over} over the cap" if run.left_over else ""
     return (
         f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
         f"{held_back}{left_over}"
     )
-
-
-def _counts_text(counts: Mapping[str, int]) -> str:
-    """A dreaming run's count per outcome, as a run's report and `pa status` both show it."""
-    return ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
@@ -889,18 +884,7 @@ def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> No
 
 def _report_dreaming(outcome: DreamingOutcome, name: str) -> None:
     """Print what a dreaming run did, as `name`: counts, never content."""
-    if outcome.commit is None and outcome.held_back:
-        print(f"{name}: nothing to judge; every candidate is held back ({outcome.held_back})")
-        return
-    if outcome.commit is None:
-        print(f"{name}: no candidates in the wiki")
-        return
-    counts = _counts_text(outcome.counts)
-    left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
-    print(
-        f"{name}: judged {len(outcome.candidates)} candidates ({counts}); "
-        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings{left_over}"
-    )
+    print(f"{name}: {librarian.dreaming_report(outcome)}")
 
 
 def _seed(data_root: DataRoot, eval_wiki: Path, captured_through: datetime | None) -> None:

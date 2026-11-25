@@ -4,10 +4,11 @@ wired to its home adapters.
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
 the data root's L0 or a corpus ingested into a throwaway data root. A dreaming run reviews the
-data root's wiki (`dream`), or a copy of a replay target or of a cut's wiki, laid out as a
-replay's target is (`dream_copy`). Each run (each replay) renders the librarian project as
-committed (the project its librarian version names) into a temporary directory, the sessions'
-working directory, and runs the sessions with the configured command.
+data root's wiki (`dream`), or a copy of a replay target, of a cut's wiki, or of a wiki written
+by hand over a corpus, laid out as a replay's target is (`dream_copy`). Each run (each replay)
+renders the librarian project as committed (the project its librarian version names) into a
+temporary directory, the sessions' working directory, and runs the sessions with the configured
+command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -42,9 +43,9 @@ from pa_core.ingest import ingest, is_hidden
 from pa_core.librarian import dreaming
 from pa_core.librarian.dream_copy import (
     DreamCopyError,
-    cut_source,
     replayed_source,
     run_copy_dreaming,
+    stated_source,
 )
 from pa_core.librarian.dreaming import (
     CandidateCounts,
@@ -251,11 +252,31 @@ def dreaming_due(
     return (today - last.astimezone(time_zone).date()).days >= config.dreaming_interval_days
 
 
+def outcome_counts(counts: Mapping[str, int]) -> str:
+    """A dreaming run's count per outcome, as a run's report and `pa status` both show it."""
+    return ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
+
+
+def dreaming_report(outcome: DreamingOutcome) -> str:
+    """What a dreaming run did, as the command that ran it prints it after its own name:
+    counts, never content."""
+    if outcome.commit is None and outcome.held_back:
+        return f"nothing to judge; every candidate is held back ({outcome.held_back})"
+    if outcome.commit is None:
+        return "no candidates in the wiki"
+    left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
+    return (
+        f"judged {len(outcome.candidates)} candidates ({outcome_counts(outcome.counts)}); "
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings{left_over}"
+    )
+
+
 def dream_copy(
     target: Path,
     *,
     corpus: Sequence[Path] = (),
     cut: Cut | None = None,
+    as_of: datetime | None = None,
     owner: Owner,
     time_zone: ZoneInfo,
     config: LibrarianConfig,
@@ -265,13 +286,16 @@ def dream_copy(
     session is told is now, and appends the run to the copy's run log.
 
     `target` is laid out as a replay's target is (`ReplayTarget`), and its `wiki/` is a copy
-    of one of two things:
+    of one of three things:
 
     - a replay target's wiki, with its run log beside it, replayed over `corpus`: directories
       of raw payloads, ingested into a throwaway data root as a replay ingests them. Its as-of
       time is the end of the replay's last run.
     - `cut`'s wiki. It is dreamed over the cut's L0, at the cut's as-of time, and gets a run
       log with its first run.
+    - a wiki no librarian built, written by hand over `corpus`. It is dreamed over the corpus,
+      ingested the same way, as of `as_of`, the time given for it, and gets a run log with
+      its first run too.
 
     The copy's git directory is made beside it on its first run and kept, so a later run
     finds the earlier ones. The run is `dream`'s otherwise: the same project, sandbox, model,
@@ -280,13 +304,21 @@ def dream_copy(
     layout = ReplayTarget(target)
     if not layout.tree.is_dir():
         raise DreamCopyError(
-            f"{target} has no {layout.tree.name}/: it isn't a copy of a replay target, or of "
-            "a cut's wiki"
+            f"{target} has no {layout.tree.name}/: it isn't a copy of a replay target, of a "
+            "cut's wiki, or of a wiki written by hand"
         )
-    if cut is not None:
+    if as_of is not None:
+        if cut is not None or not corpus:
+            raise DreamCopyError(
+                f"{target} is dreamed as of a time given for it only as a copy of a wiki "
+                "written by hand over a corpus: give the corpus, and no cut, whose as-of time "
+                "is its own"
+            )
+        source = stated_source(layout.run_log, as_of=as_of)
+    elif cut is not None:
         if cut.manifest.wiki is None:
             raise DreamCopyError(f"the cut {cut.name} holds no wiki, so {target} isn't its copy")
-        source = cut_source(
+        source = stated_source(
             layout.run_log,
             as_of=cut.as_of,
             librarian_version=cut.manifest.wiki.librarian_version,

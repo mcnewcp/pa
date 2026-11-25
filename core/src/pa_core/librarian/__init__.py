@@ -18,7 +18,7 @@
 - `dreaming`: one dreaming run, the librarian's review of the whole wiki, over the same ports.
 - `retirement`: the pages dreaming cleared: which slugs stay retired, and `retired.md`.
 - `replay`: L0 run through the librarian a week at a time, into a fresh wiki.
-- `dream_copy`: a dreaming run over a copy of a replay target or of a cut's wiki, at its as-of
-  time.
+- `dream_copy`: a dreaming run over a copy of a replay target, of a cut's wiki, or of a wiki no
+  librarian built, at its as-of time.
 - `version`: the librarian version a run records.
 """

@@ -21,8 +21,10 @@ import pytest
 
 from pa_core.catalog import open_catalog
 from pa_core.ingest import ingest
+from pa_core.librarian.dream_copy import DreamCopyError
+from pa_home import librarian
 from pa_home.cli import main
-from pa_home.config import DataRoot, load_owner
+from pa_home.config import DataRoot, load_librarian_config, load_owner
 from pa_home.cut import Cut, take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 
@@ -836,3 +838,96 @@ def test_a_cut_without_a_wiki_has_no_copy_to_dream(data_root: Path, capsys):
     assert dream(target, "--cut", cut.path) == 1
 
     assert "holds no wiki" in capsys.readouterr().err
+
+
+# A copy of a wiki no librarian built, written by hand over a corpus (#168). No `pa` command
+# dreams one: the eval harness does, for a reproduction, through `pa_home.librarian.dream_copy`.
+
+
+def written_by_hand(data_root: Path) -> Path:
+    """A copy of a wiki written by hand over the wedding's mail: the wedding's pages and the
+    day Dave wrote, with no run log and no history."""
+    target = data_root.parent / "by-hand"
+    day = f"- email about Hotel block with [[david-kim]] and [[wedding]] [ep:{HOTEL}]\n"
+    for path, text in {**PAGES, "days/2026-10-12.md": day}.items():
+        (target / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
+        (target / "wiki" / path).write_text(text)
+    return target
+
+
+def dream_as_of(target: Path, as_of: datetime, **given):
+    return librarian.dream_copy(
+        target,
+        as_of=as_of,
+        owner=load_owner(),
+        time_zone=CHICAGO,
+        config=load_librarian_config(),
+        **given,
+    )
+
+
+UNENGAGED = {"candidate": "c02", "outcome": "dismissed"}
+"""Dave's page, which no day log of a wiki written by hand links from the owner's own mail."""
+
+
+def test_a_wiki_written_by_hand_is_dreamed_over_its_corpus_as_of_the_time_given_for_it(
+    data_root: Path, corpus: Path
+):
+    target = written_by_hand(data_root)
+    script(
+        data_root,
+        dreaming=[{"write": TOPIC, "text": CLOSED}, {"outcomes": [APPLIED, UNENGAGED]}],
+    )
+
+    outcome = dream_as_of(target, CUT_AS_OF, corpus=[corpus])
+
+    # The session was told the time given, and judged the wiki over the corpus's episodes.
+    [session] = sessions(data_root, "dreaming")
+    assert told_now(session) == "2026-10-14T20:00:00-05:00"
+    assert [candidate["kind"] for candidate in session["candidates"]] == [
+        "loop-aging",
+        "unengaged",
+    ]
+    assert session["candidates"][0]["episodes"] == [HOTEL]
+    # The copy starts from the time alone: no librarian version built it, and it has no cursor.
+    dreamed, start, _ = commit_messages(target)
+    assert fields(start) == {"Copy-As-Of": AS_OF_UTC}
+    assert "Librarian-Version" not in fields(dreamed) and "Cursor" not in fields(dreamed)
+    assert (target / "wiki" / TOPIC).read_text() == CLOSED
+    # It gets a run log, which holds its dreaming run alone and names no builder.
+    [entry] = run_log(target)
+    assert (entry["run"], entry["status"], entry["commit"]) == (
+        "dreaming",
+        "committed",
+        outcome.commit,
+    )
+    assert (entry["as_of"], entry["librarian_version"]) == (AS_OF_UTC, None)
+    assert not data_root.exists()
+
+
+def test_a_wiki_written_by_hand_isnt_dreamed_again_as_of_another_time(
+    data_root: Path, corpus: Path
+):
+    target = written_by_hand(data_root)
+    script(data_root, dreaming=[{"outcomes": [DISMISSED, UNENGAGED]}])
+    dream_as_of(target, CUT_AS_OF, corpus=[corpus])
+    before = tree_state(target)
+
+    with pytest.raises(DreamCopyError, match="has a dreaming run as of 2026-10-15T01:00:00"):
+        dream_as_of(target, datetime(2026, 10, 20, 1, tzinfo=CUT_AS_OF.tzinfo), corpus=[corpus])
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    assert tree_state(target) == before
+
+
+def test_a_time_is_given_only_for_a_copy_over_a_corpus(data_root: Path, corpus: Path):
+    cut = cut_of_a_live_wiki(data_root)
+    of_the_cut = copy_of_the_cuts_wiki(cut, data_root)
+    by_hand = written_by_hand(data_root)
+
+    # A cut's as-of time is its own, and a wiki with no corpus has no L0 to be judged over.
+    for target, given in ((of_the_cut, {"cut": cut}), (by_hand, {})):
+        with pytest.raises(DreamCopyError, match="is dreamed as of a time given for it only"):
+            dream_as_of(target, CUT_AS_OF, **given)
+
+    assert sessions(data_root, "dreaming") == []
