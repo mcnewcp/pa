@@ -47,7 +47,7 @@ from pa_evals.harness import DEFAULT_CONCURRENCY, run_eval
 from pa_evals.judge import Judge, ModelJudge, ScriptedJudge, Verdict
 from pa_evals.real_data import require_private
 from pa_evals.report import format_cost, format_score
-from pa_evals.reproduction import Released, read_released
+from pa_evals.reproduction import ReleasedReproduction, read_released
 from pa_evals.results import RunResults
 from pa_home.agent import DEFAULT_AS_OF_METHOD, DEFAULT_TIMEOUT_SECONDS, AsOfMethod, ClaudeAgent
 from pa_home.claude_model import ClaudeCliBackend
@@ -319,23 +319,35 @@ def _run(args: argparse.Namespace) -> int:
     configuration = CONFIGURATIONS[args.configuration]
     corpus: tuple[Path, ...] | Cut
     if args.reproduction is not None:
-        reproduction, eval_set = _over_reproduction(args)
-        corpus, asked = (reproduction.payloads,), {"reproduction": reproduction.finding}
-        wiki = _reproduction_wiki(configuration, reproduction, eval_set, args.wiki)
+        reproduction = _reproduction(args)
+        corpus, eval_set = (reproduction.payloads,), reproduction.eval_set
+        over = {"reproduction": reproduction.finding}
+        wiki = _own_or_dreamed(
+            configuration,
+            args.wiki,
+            own=lambda: reproduction_wiki(reproduction),
+            # Not resolved: a copy that is a link is refused, not followed.
+            dreamed=lambda copy: dreamed_reproduction_wiki(reproduction, copy.absolute()),
+        )
     elif args.cut is not None:
-        corpus, eval_set = _over_cut(args)
-        asked = {"cut": corpus.name}
-        wiki = _cut_wiki(configuration, corpus, args.wiki)
+        cut, eval_set = _over_cut(args)
+        corpus, over = cut, {"cut": cut.name}
+        wiki = _own_or_dreamed(
+            configuration,
+            args.wiki,
+            own=lambda: cut_wiki(cut),
+            dreamed=lambda copy: dreamed_cut_wiki(cut, copy.resolve()),
+        )
     else:
-        asked = {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
-        corpus, eval_set_path = _corpus(asked["corpus"], args.eval_set)
+        over = {"corpus": args.corpus or frozen.DEFAULT_CORPUS}
+        corpus, eval_set_path = _corpus(over["corpus"], args.eval_set)
         eval_set = load_eval_set(eval_set_path)
         wiki = _wiki(configuration, args.wiki)
     if args.only:
         eval_set = eval_set.only(*args.only)
     agent = AGENTS[args.agent].build(args)
     judge = JUDGES[args.judge].build(args)
-    setup = _setup(args, asked)
+    setup = _setup(args, over)
     runs: list[RunResults] = []
     for number in range(1, args.runs + 1):
         results = run_eval(
@@ -369,9 +381,9 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _over_reproduction(args: argparse.Namespace) -> tuple[Released, EvalSet]:
-    """The released reproduction in `--reproduction` and its own eval set, asked over its own
-    payloads, so nothing else is asked with it."""
+def _reproduction(args: argparse.Namespace) -> ReleasedReproduction:
+    """The released reproduction in `--reproduction`, which is asked its own eval set over its
+    own payloads, so nothing else is asked with it."""
     for option, given in (
         ("--corpus", args.corpus),
         ("--cut", args.cut),
@@ -382,26 +394,23 @@ def _over_reproduction(args: argparse.Namespace) -> tuple[Released, EvalSet]:
                 f"--reproduction goes without {option}: a reproduction is asked its own "
                 "questions, over its own payloads"
             )
-    reproduction = read_released(args.reproduction.expanduser().resolve())
-    return reproduction, load_eval_set(reproduction.eval_set)
+    return read_released(args.reproduction.expanduser().resolve())
 
 
-def _reproduction_wiki(
+def _own_or_dreamed(
     configuration: Configuration,
-    reproduction: Released,
-    eval_set: EvalSet,
     directory: Path | None,
+    *,
+    own: Callable[[], EvalWiki],
+    dreamed: Callable[[Path], EvalWiki],
 ) -> EvalWiki | None:
-    """The wiki a run of `configuration` over `reproduction` asks with: its starting wiki, or
-    the dreamed copy of it in `--wiki DIR`, which no configuration without a wiki takes."""
+    """The wiki a run of `configuration` asks with, over what holds a wiki of its `own` (a cut,
+    or a reproduction): that wiki, or the `dreamed` copy of it in `--wiki DIR`, which no
+    configuration without a wiki takes."""
     if not configuration.wiki:
         configuration.require_wiki_choice(wiki_given=directory is not None)
         return None
-    if directory is None:
-        return reproduction_wiki(reproduction)
-    return dreamed_reproduction_wiki(
-        reproduction, directory.expanduser().resolve(), as_of=eval_set.as_of
-    )
+    return own() if directory is None else dreamed(directory.expanduser())
 
 
 def _over_cut(args: argparse.Namespace) -> tuple[Cut, EvalSet]:
@@ -419,17 +428,6 @@ def _over_cut(args: argparse.Namespace) -> tuple[Cut, EvalSet]:
         require_private(args.wiki, "--wiki")
     cut = load_cut(cut_dir)
     return cut, load_eval_set(eval_set_path, cut=cut)
-
-
-def _cut_wiki(configuration: Configuration, cut: Cut, directory: Path | None) -> EvalWiki | None:
-    """The wiki a run of `configuration` over `cut` asks with: the cut's own, or the dreamed
-    copy of it in `--wiki DIR`, which no configuration without a wiki takes."""
-    if not configuration.wiki:
-        configuration.require_wiki_choice(wiki_given=directory is not None)
-        return None
-    if directory is None:
-        return cut_wiki(cut)
-    return dreamed_cut_wiki(cut, directory.expanduser().resolve())
 
 
 def _corpus(corpus: str, eval_set: Path | None) -> tuple[tuple[Path, ...], Path]:
@@ -457,13 +455,13 @@ def _wiki(configuration: Configuration, directory: Path | None) -> EvalWiki | No
     return None if directory is None else load_eval_wiki(directory)
 
 
-def _setup(args: argparse.Namespace, asked: Mapping[str, str]) -> dict[str, str]:
-    """How the run was set up, as shown at the top of the report. `asked` names what it asked:
-    the corpus, the cut, or the reproduction, by its finding (its directory is wherever it was
-    copied to, which means nothing later)."""
+def _setup(args: argparse.Namespace, over: Mapping[str, str]) -> dict[str, str]:
+    """How the run was set up, as shown at the top of the report. `over` names what it asked
+    over: the corpus, the cut, or the reproduction, by its finding (its directory is wherever
+    it was copied to, which means nothing later)."""
     return {
         "commit": workspace_commit(),
-        **asked,
+        **over,
         "agent": args.agent,
         **AGENTS[args.agent].setup(args),
         "judge": args.judge,

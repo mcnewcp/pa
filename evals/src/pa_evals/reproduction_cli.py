@@ -6,8 +6,10 @@ it where it reads like a real matter. An edited payload can ingest to another ep
 the questions' evidence and the wiki's citations don't name. This puts them right, in place.
 
 `dream` dreams a copy of one's starting wiki, for a fault in dreaming: over its payloads, as
-its eval set's owner, as of its eval set's as-of time. `pa-eval run --reproduction DIR --wiki
-COPY` then asks its questions with the dreamed copy. The home adapter runs the dreaming
+its eval set's owner, in its eval set's time zone, as of its eval set's as-of time. The first
+run makes the copy, and nothing the command didn't make is dreamed as one
+(`pa_evals.reproduction.copy_to_dream`). `pa-eval run --reproduction DIR --wiki COPY` then
+asks its questions with the dreamed copy. The home adapter runs the dreaming
 (`pa_home.librarian.dream_copy`) and knows nothing of a reproduction's layout (ADR-0010), so
 the command is here.
 
@@ -18,22 +20,13 @@ they print may say what is wrong with one and where.
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from pa_core.errors import PaError
-from pa_core.librarian.replay import ReplayTarget
-from pa_evals.eval_set import load_eval_set
-from pa_evals.reproduction import UnresolvedError, read_released, resolve_again
+from pa_evals.reproduction import UnresolvedError, copy_to_dream, read_released, resolve_again
 from pa_home import librarian
-from pa_home.config import load_librarian_config, load_time_zone
-
-
-class ReproductionCopyError(PaError):
-    """A reproduction with no starting wiki to dream, or a directory that can't hold a copy of
-    it."""
+from pa_home.config import load_librarian_config
 
 
 def add_reproduction_command(commands: Any) -> None:
@@ -59,11 +52,14 @@ def add_reproduction_command(commands: Any) -> None:
         "dream",
         help="Dream a copy of a released reproduction's starting wiki.",
         description="Run dreaming once over a copy of a released reproduction's starting wiki, "
-        "over its payloads, as its eval set's owner and as of its eval set's as-of time. The "
-        "first run makes the copy; a later run dreams the copy as it stands. The time zone "
-        "(PA_TIME_ZONE) and the librarian's configuration come from the environment, as they "
-        "do for `pa librarian dream`. Ask its questions with the copy afterwards: "
-        "`pa-eval run --reproduction DIR --configuration files-plus-wiki --wiki COPY`.",
+        "over its payloads, as its eval set's owner, in its eval set's time zone, and as of "
+        "its eval set's as-of time. The first run makes the copy, in a directory that doesn't "
+        "exist yet (or is empty), with the reproduction's record beside it; a later run "
+        "dreams the copy as it stands. A directory the command didn't make as this "
+        "reproduction's copy is refused. The librarian's configuration comes from the "
+        "environment, as it does for `pa librarian dream`. Ask its questions with the copy "
+        "afterwards: `pa-eval run --reproduction DIR --configuration files-plus-wiki --wiki "
+        "COPY`.",
     )
     dream.add_argument(
         "directory",
@@ -75,8 +71,8 @@ def add_reproduction_command(commands: Any) -> None:
         "copy",
         type=Path,
         metavar="COPY",
-        help="Where the copy is kept, laid out as a replay's target is: wiki/, its git "
-        "directory, and run-log.jsonl.",
+        help="Where the copy is kept, laid out as a replay's target is (wiki/, its git "
+        "directory, and run-log.jsonl), with the reproduction's reproduction.json.",
     )
     dream.set_defaults(handler=_dream)
 
@@ -98,29 +94,16 @@ def _resolve(args: argparse.Namespace) -> int:
 
 def _dream(args: argparse.Namespace) -> int:
     reproduction = read_released(args.directory.expanduser().resolve())
-    if reproduction.wiki is None:
-        raise ReproductionCopyError(
-            f"the reproduction {reproduction.finding} holds no starting wiki, so there is "
-            "nothing to dream"
-        )
-    eval_set = load_eval_set(reproduction.eval_set)
-    time_zone, config = load_time_zone(), load_librarian_config()
-    copy = args.copy.expanduser().resolve()
-    layout = ReplayTarget(copy)
-    if not layout.tree.exists():
-        if layout.run_log.exists() or layout.git_dir.exists():
-            raise ReproductionCopyError(
-                f"{copy} has no {layout.tree.name}/, but holds what a dreaming run leaves "
-                "beside one: it isn't a copy this command can start"
-            )
-        # Nothing is copied through a link: the copy goes to the librarian's sessions.
-        shutil.copytree(reproduction.wiki, layout.tree, symlinks=True)
+    config = load_librarian_config()
+    # Not resolved: a copy that is a link is refused, not followed.
+    copy = args.copy.expanduser().absolute()
+    copy_to_dream(reproduction, copy)
     outcome = librarian.dream_copy(
         copy,
         corpus=[reproduction.payloads],
-        as_of=eval_set.as_of,
-        owner=eval_set.owner.to_owner(),
-        time_zone=time_zone,
+        as_of=reproduction.eval_set.as_of,
+        owner=reproduction.eval_set.owner.to_owner(),
+        time_zone=reproduction.eval_set.zone,
         config=config,
     )
     print(f"reproduction dream: {librarian.dreaming_report(outcome)}")

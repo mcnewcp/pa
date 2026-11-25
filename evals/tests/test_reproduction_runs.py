@@ -259,7 +259,7 @@ def test_the_agent_is_given_the_reproductions_starting_wiki_as_it_was_released(r
     parts = read_released(reproduction)
     run_eval(
         parts.payloads,
-        asked(reproduction),
+        parts.eval_set,
         LookingAgent(),
         ScriptedJudge({}),
         configuration=FILES_PLUS_WIKI,
@@ -333,9 +333,9 @@ def test_files_alone_over_a_reproduction_takes_no_wiki(tmp_path, released, scrip
 @pytest.fixture
 def librarian(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stand_in_claude: Path) -> Path:
     """The librarian as the environment configures it: the stand-in `claude` for its sessions,
-    a time zone, and an instance owner who isn't the reproduction's. Returns the directory the
-    stand-in keeps its script and its log in."""
-    monkeypatch.setenv("PA_TIME_ZONE", "America/Chicago")
+    and an instance whose owner and time zone aren't the reproduction's. Returns the directory
+    the stand-in keeps its script and its log in."""
+    monkeypatch.setenv("PA_TIME_ZONE", "Europe/Lisbon")
     monkeypatch.setenv("PA_LIBRARIAN_COMMAND", str(stand_in_claude))
     monkeypatch.setenv("PA_OWNER_NAME", "Riley Real")
     monkeypatch.setenv("PA_OWNER_EMAILS", "riley@example.org")
@@ -423,13 +423,19 @@ def test_dreaming_a_reproduction_copies_its_starting_wiki_and_dreams_the_copy(
         "reproduction dream: judged 1 candidates (1 applied, 0 proposed, 0 dismissed); "
         f"committed {head[:8]}; 0 lint warnings\n"
     )
-    # The session was told the eval set's as-of time, and judged the wiki as it stood then.
+    # The session was told the eval set's as-of time, in the eval set's time zone, whatever
+    # the environment's is, and judged the wiki as it stood then.
     [session] = sessions(librarian)
     assert told_now(session) == AS_OF
     assert [candidate["kind"] for candidate in session["candidates"]] == ["loop-aging"]
     # It ran as the eval set's owner, whoever the environment names.
     assert "Argus McNevans" in session["claude_md"]
     assert "Riley Real" not in session["claude_md"]
+    # The copy carries the reproduction's record, which says whose copy it is, and nothing is
+    # left beside it.
+    record = (reproduction / "reproduction.json").read_bytes()
+    assert (copy / "reproduction.json").read_bytes() == record
+    assert [entry.name for entry in copy.parent.iterdir()] == [copy.name]
     # The copy holds the wiki as dreamed, and its run log the dreaming run alone: as of the
     # eval set's as-of time, of a wiki no librarian version built.
     assert (copy / "wiki" / TOPIC).read_text() == closed(reproduction)
@@ -485,23 +491,205 @@ def test_a_reproduction_without_a_starting_wiki_has_nothing_to_dream(
     assert sessions(librarian) == []
 
 
-def test_a_directory_that_holds_a_run_log_and_no_wiki_isnt_started_as_a_copy(
+# A copy is the reproduction's only if the command made it: nothing else is dreamed as one, and
+# least of all a live wiki.
+
+
+def test_a_directory_the_command_didnt_make_is_never_dreamed_as_a_copy(
     tmp_path, librarian, released, capsys
 ):
+    reproduction = released()
+    # Laid out as a data root is, as far as dreaming a copy goes: a wiki, and no record.
+    live = tmp_path / "pa-data"
+    (live / "wiki" / "topics").mkdir(parents=True)
+    (live / "wiki" / "topics" / "choir.md").write_text("# The owner's own page\n")
+    before = files_under(live)
+
+    assert dream(reproduction, live) == 1
+
+    error = capsys.readouterr().err
+    assert f"{live} isn't a copy of the reproduction f1's starting wiki" in error
+    assert "it has no reproduction.json" in error
+    assert files_under(live) == before
+    assert sorted(entry.name for entry in live.iterdir()) == ["wiki"]
+    assert sessions(librarian) == []
+
+
+def test_an_empty_directory_is_started_as_a_copy(tmp_path, librarian, released):
+    reproduction = released()
+    copy = tmp_path / "replays" / "f1-dreamed"
+    copy.mkdir(parents=True)
+    script(librarian, {"outcomes": [DISMISSED]})
+
+    assert dream(reproduction, copy) == 0
+
+    assert [entry["status"] for entry in run_log(copy)] == ["committed"]
+    record = (reproduction / "reproduction.json").read_bytes()
+    assert (copy / "reproduction.json").read_bytes() == record
+
+
+def test_a_copy_that_stopped_part_way_is_never_taken_for_one(tmp_path, librarian, released):
+    reproduction = released()
+    copy = tmp_path / "replays" / "f1-dreamed"
+    # What an interrupted first run leaves: its copy beside where the copy goes, part made.
+    partial = copy.parent / f".{copy.name}.partial"
+    (partial / "wiki" / "topics").mkdir(parents=True)
+    (partial / "wiki" / "topics" / "half-written.md").write_text("# Half\n")
+    script(librarian, {"outcomes": [DISMISSED]})
+
+    assert dream(reproduction, copy) == 0
+
+    # The next run starts the copy again, whole, and takes nothing from the part-made one.
+    assert not (copy / "wiki" / "topics" / "half-written.md").exists()
+    assert sorted(files_under(copy / "wiki")) == sorted(files_under(reproduction / "wiki"))
+    assert [entry.name for entry in copy.parent.iterdir()] == [copy.name]
+
+
+def another_reproductions(copy: Path) -> None:
+    """Makes the copy's record another reproduction's: one for the finding `f2`."""
+    record = json.loads((copy / "reproduction.json").read_text())
+    (copy / "reproduction.json").write_text(json.dumps({**record, "finding": "f2"}))
+
+
+def without_its_record(copy: Path) -> None:
+    (copy / "reproduction.json").unlink()
+
+
+def without_its_wiki(copy: Path) -> None:
+    shutil.rmtree(copy / "wiki")
+
+
+def with_a_linked_wiki(copy: Path) -> None:
+    """Puts a link to a wiki elsewhere where the copy's own was."""
+    elsewhere = copy.parent.parent / "elsewhere" / "wiki"
+    elsewhere.parent.mkdir()
+    (copy / "wiki").rename(elsewhere)
+    (copy / "wiki").symlink_to(elsewhere)
+
+
+NOT_ITS_COPIES = {
+    "another reproduction's copy": (another_reproductions, "isn't this reproduction's"),
+    "a copy without its record": (without_its_record, "it has no reproduction.json"),
+    "a copy without its wiki": (without_its_wiki, "it has no wiki/"),
+    "a copy whose wiki is a link": (with_a_linked_wiki, "wiki is a symbolic link"),
+}
+"""What isn't a copy of this reproduction's starting wiki, though it was one: how to spoil it,
+and why it's refused."""
+
+
+@pytest.fixture
+def dreamed_once(tmp_path: Path, librarian: Path, released) -> tuple[Path, Path]:
+    """A reproduction, and a copy of its starting wiki that one dreaming run committed in."""
     reproduction = released()
     copy = tmp_path / "replays" / "f1-dreamed"
     script(librarian, {"outcomes": [DISMISSED]})
     assert dream(reproduction, copy) == 0
-    shutil.rmtree(copy / "wiki")
-    before = files_under(copy)
+    return reproduction, copy
+
+
+@pytest.mark.parametrize(("spoil", "reason"), NOT_ITS_COPIES.values(), ids=list(NOT_ITS_COPIES))
+def test_a_directory_that_isnt_this_reproductions_copy_is_neither_dreamed_nor_asked_with(
+    tmp_path, librarian, dreamed_once, scripts, capsys, spoil, reason
+):
+    reproduction, copy = dreamed_once
+    spoil(copy)
+    answers = scripts(reproduction)
+    before = files_under(tmp_path)
+    runs = tmp_path / "runs"
     capsys.readouterr()
 
-    # Starting it again would put the starting wiki under a run log that says it was dreamed.
     assert dream(reproduction, copy) == 1
 
-    assert "isn't a copy this command can start" in capsys.readouterr().err
-    assert files_under(copy) == before
+    refused = capsys.readouterr().err
+    assert reason in refused and "a copy of the reproduction f1's starting wiki" in refused
     assert len(sessions(librarian)) == 1
+
+    assert run_over(reproduction, runs, answers, *WITH_WIKI, "--wiki", copy) == 1
+
+    refused = capsys.readouterr().err
+    assert reason in refused and "a copy of the reproduction f1's starting wiki" in refused
+    assert not runs.exists()
+    assert files_under(tmp_path) == before
+
+
+def test_a_link_to_a_copy_is_neither_dreamed_nor_asked_with(
+    tmp_path, librarian, dreamed_once, scripts, capsys
+):
+    reproduction, copy = dreamed_once
+    link = tmp_path / "replays" / "linked"
+    link.symlink_to(copy)
+    runs = tmp_path / "runs"
+    capsys.readouterr()
+
+    assert dream(reproduction, link) == 1
+
+    assert f"{link} is a symbolic link" in capsys.readouterr().err
+    assert len(sessions(librarian)) == 1
+
+    assert run_over(reproduction, runs, scripts(reproduction), *WITH_WIKI, "--wiki", link) == 1
+
+    assert f"{link} is a symbolic link" in capsys.readouterr().err
+    assert not runs.exists()
+
+
+def test_a_reproduction_resolved_again_takes_a_new_copy(tmp_path, librarian, dreamed_once, capsys):
+    reproduction, copy = dreamed_once
+    mail = reproduction / "payloads" / "gmail" / "rehearsal.eml"
+    mail.write_text(mail.read_text().replace("rehearsal-1@", "rehearsal-2@"))
+    assert main(["reproduction", "resolve", str(reproduction)]) == 0
+    script(librarian, {"outcomes": [DISMISSED]})
+    capsys.readouterr()
+
+    # The old copy cites the episode the payload was, so it isn't this reproduction's any more.
+    assert dream(reproduction, copy) == 1
+    assert "isn't this reproduction's" in capsys.readouterr().err
+
+    assert dream(reproduction, tmp_path / "replays" / "f1-dreamed-again") == 0
+
+
+# A released reproduction holds regular files and directories only: nothing is read, copied,
+# or pushed through a link.
+
+
+def a_linked_page(reproduction: Path, outside: Path) -> str:
+    (reproduction / "wiki" / "topics" / "linked.md").symlink_to(outside / "page.md")
+    return "wiki/topics/linked.md"
+
+
+def a_linked_wiki(reproduction: Path, outside: Path) -> str:
+    (reproduction / "wiki").rename(outside / "wiki")
+    (reproduction / "wiki").symlink_to(outside / "wiki")
+    return "wiki"
+
+
+def a_linked_payload(reproduction: Path, outside: Path) -> str:
+    (reproduction / "payloads" / "gmail" / "linked.eml").symlink_to(outside / "page.md")
+    return "payloads/gmail/linked.eml"
+
+
+@pytest.mark.parametrize("link", [a_linked_page, a_linked_wiki, a_linked_payload])
+def test_a_reproduction_that_holds_a_link_is_neither_asked_nor_dreamed(
+    tmp_path, librarian, released, scripts, capsys, link
+):
+    reproduction = released()
+    answers = scripts(reproduction)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "page.md").write_text("# Someone's own page\n")
+    linked = link(reproduction, outside)
+    runs, copy = tmp_path / "runs", tmp_path / "replays" / "f1-dreamed"
+
+    assert run_over(reproduction, runs, answers, *WITH_WIKI) == 1
+
+    refused = f"{reproduction} isn't a released reproduction: {linked} is a symbolic link"
+    assert refused in capsys.readouterr().err
+    assert not runs.exists()
+
+    assert dream(reproduction, copy) == 1
+
+    assert refused in capsys.readouterr().err
+    assert not copy.parent.exists()
+    assert sessions(librarian) == []
 
 
 # Asking with a dreamed copy: `pa-eval run --reproduction DIR --wiki COPY`.
@@ -549,14 +737,14 @@ def test_the_agent_is_given_the_dreamed_copy_in_place_of_the_starting_wiki(
             pages.append((request.wiki / TOPIC).read_text())
             return AgentAnswer("Thursday.")
 
-    parts, eval_set = read_released(reproduction), asked(reproduction)
+    parts = read_released(reproduction)
     run_eval(
         parts.payloads,
-        eval_set,
+        parts.eval_set,
         LookingAgent(),
         ScriptedJudge({}),
         configuration=FILES_PLUS_WIKI,
-        wiki=dreamed_reproduction_wiki(parts, copy, as_of=eval_set.as_of),
+        wiki=dreamed_reproduction_wiki(parts, copy),
     )
 
     assert pages == [closed(reproduction)]
@@ -588,15 +776,19 @@ def dreaming_run(**changes) -> DreamingLogEntry:
 
 
 def copy_with(reproduction: Path, directory: Path, *runs: DreamingLogEntry) -> Path:
-    """A copy of the reproduction's starting wiki in `directory`, with `runs` in its run log."""
+    """A copy of the reproduction's starting wiki in `directory`, as the command makes one,
+    with `runs` in its run log."""
     shutil.copytree(reproduction / "wiki", directory / "wiki")
+    shutil.copy(reproduction / "reproduction.json", directory / "reproduction.json")
     for run in runs:
         append_to_run_log(directory / "run-log.jsonl", run)
     return directory
 
 
 def _replayed(reproduction: Path, directory: Path) -> Path:
-    return shutil.copytree(FIXTURES / "eval-wiki", directory)
+    copy_with(reproduction, directory)
+    shutil.copy(FIXTURES / "eval-wiki" / "run-log.jsonl", directory / "run-log.jsonl")
+    return directory
 
 
 def _never_dreamed(reproduction: Path, directory: Path) -> Path:
@@ -617,13 +809,8 @@ def _of_a_wiki_a_librarian_built(reproduction: Path, directory: Path) -> Path:
     return copy_with(reproduction, directory, dreaming_run(librarian_version="0123456789ab"))
 
 
-def _without_a_tree(reproduction: Path, directory: Path) -> Path:
-    append_to_run_log(directory / "run-log.jsonl", dreaming_run())
-    return directory
-
-
 NOT_DREAMED_COPIES = {
-    "an eval wiki replayed from a corpus": (_replayed, "has a replay's runs"),
+    "a copy with a replay's run log": (_replayed, "has a replay's runs"),
     "a copy that was never dreamed": (_never_dreamed, r"has no run-log.jsonl"),
     "a copy whose dreaming runs all failed": (_only_failed, "has no committed dreaming run"),
     "a copy dreamed as of another time": (
@@ -634,12 +821,11 @@ NOT_DREAMED_COPIES = {
     "a copy of a wiki a librarian built": (
         _of_a_wiki_a_librarian_built,
         "has a dreaming run of a wiki built by librarian version 0123456789ab, and no "
-        "librarian version built a reproduction's starting wiki",
+        "librarian built a reproduction's starting wiki",
     ),
-    "a directory without a wiki": (_without_a_tree, "has no wiki/"),
 }
-"""What isn't a dreamed copy of a reproduction's starting wiki: how to make one, and why it's
-refused."""
+"""A copy of the reproduction's starting wiki whose run log isn't that of one that was
+dreamed: how to make one, and why it's refused."""
 
 
 @pytest.mark.parametrize(

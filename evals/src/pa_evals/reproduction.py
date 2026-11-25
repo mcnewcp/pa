@@ -33,8 +33,12 @@ reproduction, by its directory (`read_released` gives a command its parts):
 - `pa-eval run --reproduction DIR` asks its questions over its payloads, and with
   `--configuration files-plus-wiki` over its starting wiki, which needs no run log;
 - `pa-eval reproduction dream DIR COPY` dreams a copy of its starting wiki, as its eval set's
-  owner and as of its eval set's as-of time, and `pa-eval run --reproduction DIR --wiki COPY`
-  asks with that copy.
+  owner, in its eval set's time zone, and as of its eval set's as-of time, and
+  `pa-eval run --reproduction DIR --wiki COPY` asks with that copy.
+
+The copy is the reproduction's only if the command made it (`copy_to_dream`): it carries the
+reproduction's record, and nothing without that record is dreamed or asked with as one
+(`copied_wiki`).
 
 The release refuses a starting wiki that fails lint (`Trial.lint_problems`), so a fault that
 starts from a page lint fails can't be released as a reproduction: its finding describes the
@@ -81,6 +85,7 @@ from pa_core.l0 import QuarantineRecord
 from pa_core.librarian.index import write_index
 from pa_core.librarian.lint import Thresholds, lint
 from pa_core.librarian.metadata import L0Metadata
+from pa_core.librarian.replay import ReplayTarget
 from pa_core.librarian.run import LOOP_AGE_DAYS, PAGE_THRESHOLD
 from pa_core.librarian.wiki import (
     CITATION,
@@ -101,7 +106,7 @@ from pa_evals.decodings import (
     embedded_data,
     text_decodings,
 )
-from pa_evals.eval_set import CATEGORIES, EvalSet
+from pa_evals.eval_set import CATEGORIES, EvalSet, load_eval_set
 from pa_evals.findings import FINDING_ID
 from pa_evals.models import FrozenModel, problems_of
 from pa_evals.plain_files import is_text, regular_files
@@ -984,8 +989,13 @@ def _payloads_by_episode(payloads: Path, was: ReproductionRecord) -> dict[str, s
 # As it is run: a released reproduction's parts, for whatever asks or dreams it.
 
 
+class StartingWikiError(PaError):
+    """A released reproduction with no starting wiki where one is needed, or a directory that
+    isn't a copy of its starting wiki."""
+
+
 @dataclass(frozen=True)
-class Released:
+class ReleasedReproduction:
     """A released reproduction, as a run over it or a dreaming run of its wiki takes it."""
 
     finding: str
@@ -993,25 +1003,123 @@ class Released:
     wherever it was copied to."""
     payloads: Path
     """Its raw payloads, laid out as a corpus is: a directory per source."""
-    eval_set: Path
-    """Its questions, their evidence named by episode id."""
+    eval_set: EvalSet
+    """Its questions, their evidence named by episode id. It also says whose the reproduction
+    is, in which time zone, and as of when."""
     wiki: Path | None
     """Its starting wiki's tree, which the diagnostician wrote and no librarian built; None
     when its fault needs none."""
+    record: bytes
+    """Its record as it is written, which a copy of its starting wiki carries
+    (`copy_to_dream`)."""
+
+    def starting_wiki(self) -> Path:
+        """Its starting wiki's tree, for what can't go on without one."""
+        if self.wiki is None:
+            raise StartingWikiError(
+                f"the reproduction {self.finding} holds no starting wiki: its fault needs "
+                "none, so it is asked with files alone, and there is nothing to dream"
+            )
+        return self.wiki
 
 
-def read_released(directory: Path) -> Released:
+def read_released(directory: Path) -> ReleasedReproduction:
     """The released reproduction in `directory`: a release's, or a development session's copy
-    of one. Raises NotReleasedError for a directory that isn't one."""
+    of one. Raises NotReleasedError for a directory that isn't one, or that holds anything but
+    regular files and directories: nothing of one is read, copied, or pushed through a link."""
     record = _record(directory)
-    payloads, eval_set, wiki = directory / PAYLOADS, directory / EVAL_SET, directory / WIKI
-    missing = [
-        name
-        for name, there in ((f"{PAYLOADS}/", payloads.is_dir()), (EVAL_SET, eval_set.is_file()))
-        if not there
-    ]
-    if missing:
-        raise NotReleasedError(
-            f"{directory} isn't a released reproduction: it has no {' and no '.join(missing)}"
+    payloads, wiki = directory / PAYLOADS, directory / WIKI
+    for parent, directories, files in directory.walk():
+        for name in sorted([*directories, *files]):
+            entry = parent / name
+            what = (
+                "is a symbolic link"
+                if entry.is_symlink()
+                else None
+                if entry.is_dir() or entry.is_file()
+                else "is no regular file"
+            )
+            if what is not None:
+                raise NotReleasedError(
+                    f"{directory} isn't a released reproduction: "
+                    f"{entry.relative_to(directory).as_posix()} {what}, and one holds regular "
+                    "files and directories only"
+                )
+    if not payloads.is_dir():
+        raise NotReleasedError(f"{directory} isn't a released reproduction: it has no {PAYLOADS}/")
+    return ReleasedReproduction(
+        finding=record.finding,
+        payloads=payloads,
+        eval_set=load_eval_set(directory / EVAL_SET),
+        wiki=wiki if wiki.is_dir() else None,
+        record=(directory / RECORD).read_bytes(),
+    )
+
+
+# A copy of its starting wiki, for a fault in dreaming: dreaming changes the wiki it runs
+# over, so it runs over a copy, laid out as a replay's target is
+# (`pa_core.librarian.replay.ReplayTarget`) with the reproduction's record beside the tree.
+
+
+def copy_to_dream(reproduction: ReleasedReproduction, copy: Path) -> Path:
+    """The tree of the copy of `reproduction`'s starting wiki in `copy`, for a dreaming run:
+    made on the first run, and held to `copied_wiki` on a later one.
+
+    The first run is the one that finds no `copy`, or an empty directory. It builds the copy
+    whole beside `copy` and moves it into place, so a copy that stopped part way is never
+    taken for one. Raises StartingWikiError for any other directory that isn't the
+    reproduction's copy: a wiki this didn't make is never dreamed as one, and least of all a
+    live one.
+    """
+    wiki = reproduction.starting_wiki()
+    _refuse_link(copy)
+    empty = copy.is_dir() and not any(copy.iterdir())
+    if copy.exists() and not empty:
+        return copied_wiki(reproduction, copy)
+    partial = copy.with_name(f".{copy.name}.partial")
+    if partial.is_symlink() or partial.is_file():
+        partial.unlink()
+    shutil.rmtree(partial, ignore_errors=True)
+    shutil.copytree(wiki, ReplayTarget(partial).tree)
+    (partial / RECORD).write_bytes(reproduction.record)
+    partial.rename(copy)
+    return ReplayTarget(copy).tree
+
+
+def copied_wiki(reproduction: ReleasedReproduction, copy: Path) -> Path:
+    """The tree of the copy of `reproduction`'s starting wiki in `copy`, as `copy_to_dream`
+    made it: a directory holding `wiki/` and the reproduction's record, byte for byte.
+
+    Raises StartingWikiError for anything else: a directory with no record, or with another
+    reproduction's (or this one's from before it was resolved again, whose wiki cites other
+    episodes), and a `copy` or a `wiki/` that is a symbolic link, which would be someone
+    else's wiki under this one's record.
+    """
+    reproduction.starting_wiki()
+    _refuse_link(copy)
+    not_its_copy = f"{copy} isn't a copy of the reproduction {reproduction.finding}'s starting wiki"
+    made = "`pa-eval reproduction dream` makes its copy in a directory that doesn't exist yet"
+    try:
+        record = (copy / RECORD).read_bytes()
+    except OSError:
+        raise StartingWikiError(f"{not_its_copy}: it has no {RECORD} ({made})") from None
+    if record != reproduction.record:
+        raise StartingWikiError(
+            f"{not_its_copy}: its {RECORD} isn't this reproduction's, so it is another's "
+            f"copy, or this one's from before it was resolved again ({made})"
         )
-    return Released(record.finding, payloads, eval_set, wiki if wiki.is_dir() else None)
+    tree = ReplayTarget(copy).tree
+    if tree.is_symlink():
+        raise StartingWikiError(f"{not_its_copy}: its {tree.name} is a symbolic link")
+    if not tree.is_dir():
+        raise StartingWikiError(f"{not_its_copy}: it has no {tree.name}/")
+    return tree
+
+
+def _refuse_link(copy: Path) -> None:
+    """Refuses a `copy` that is a symbolic link, which could name anyone's wiki."""
+    if copy.is_symlink():
+        raise StartingWikiError(
+            f"{copy} is a symbolic link: a copy of a reproduction's starting wiki is a "
+            "directory of its own"
+        )
