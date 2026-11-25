@@ -419,7 +419,16 @@ def dreamed_reproduction(tmp_path: Path) -> Path:
 def test_a_run_over_a_reproduction_pushes_it_and_asks_with_the_vms_copy(
     tmp_path: Path, calls: Path, reproduction: Path
 ):
-    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), runs_dir=DEFAULT)
+    checkout_runs = DEPLOY.parents[1] / "evals" / "runs"
+    there_already = checkout_runs.exists()
+    try:
+        result = run_evals(
+            tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), runs_dir=DEFAULT
+        )
+    finally:
+        # The script makes the checkout's evals/runs/, which git ignores, for the run to land in.
+        if not there_already and checkout_runs.is_dir() and not any(checkout_runs.iterdir()):
+            checkout_runs.rmdir()
 
     assert result.returncode == 0, result.stderr
     push, ask, pull = recorded(calls)
@@ -447,7 +456,7 @@ def test_a_run_over_a_reproduction_pushes_it_and_asks_with_the_vms_copy(
         VM_RUNS,
     ]
     # A reproduction is fictional, so its run comes back to the checkout, as a corpus run's does.
-    assert pull["argv"][-1] == f"{DEPLOY.parents[1] / 'evals' / 'runs'}/"
+    assert pull["argv"][-1] == f"{checkout_runs}/"
 
 
 def test_the_reproduction_option_can_be_given_with_an_equals_sign(
