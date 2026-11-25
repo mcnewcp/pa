@@ -231,7 +231,7 @@ What the assistant is given besides L0's files in an eval run: nothing (files al
 _Avoid_: Mode, variant, arm
 
 **Eval wiki**:
-The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, or of a cut's wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it and the one that dreamed it.
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, of a cut's wiki, or of a reproduction's starting wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it, where one did, and the one that dreamed it.
 _Avoid_: Test wiki, fixture wiki
 
 **Cut**:
@@ -274,6 +274,10 @@ _Avoid_: Report, scrubbed report, results
 **Reproduction**:
 Fictional raw payloads, wiki pages, and eval questions that fail the way the case did, released with the findings. Committed, it becomes a fixture.
 _Avoid_: Repro case, synthetic copy, anonymized data
+
+**Starting wiki**:
+The wiki pages a reproduction holds, when its fault needs a wiki to start from. The diagnostician wrote them, so no librarian built it. A run over the reproduction asks with it, and a fault in dreaming is shown by dreaming a copy of it.
+_Avoid_: Seed wiki, initial wiki, fixture wiki
 
 **Label**:
 The name a referral gives a set of eval runs, or a wiki, in the case. Findings count runs under labels, so they say which runs without naming anything real.

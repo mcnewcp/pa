@@ -39,7 +39,8 @@ ends: a JSON object per line, with these keys in this order.
 Entries written before `resumes`, `lint_warnings` and `window_start` were recorded read with
 them null.
 
-A copy of a replay target, or of a cut's wiki, can be dreamed (`pa_core.librarian.dream_copy`).
+A copy of a replay target, of a cut's wiki, or of a wiki no librarian built can be dreamed
+(`pa_core.librarian.dream_copy`).
 Each dreaming run that had candidates to judge is appended to the copy's run log as an entry of
 its own shape (`DreamingLogEntry`), told apart by its first key, `run`:
 
@@ -48,13 +49,13 @@ its own shape (`DreamingLogEntry`), told apart by its first key, `run`:
   above. `model` and `effort` are those of the librarian that dreamed.
 - `as_of`: the copy's as-of time, UTC ISO 8601, which the session was told is now.
 - `librarian_version`: the version of the librarian whose runs built the wiki, or null when
-  nothing names it (a cut whose wiki commit names none).
+  nothing names it (a cut whose wiki commit names none, or a wiki no librarian built).
 - `dreaming_version`: the version of the librarian that dreamed.
 - `candidates`: how many candidates the run judged; `outcomes`: how many got each outcome, by
   the outcome's name. Both null when the run failed.
 
 So a run log holds a replay's runs, then the dreaming runs of its copy; the log of a copy of a
-cut's wiki holds dreaming runs alone.
+cut's wiki, or of a wiki no librarian built, holds dreaming runs alone.
 """
 
 from __future__ import annotations

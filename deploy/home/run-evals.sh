@@ -20,27 +20,39 @@
 # own (`librarian.sh dream DIR --cut CUT` leaves one in DIR, under $PA_REPLAYS), pushed as an eval
 # wiki is. The cut, the set, the run directory, and that copy are refused inside this checkout,
 # so nothing real is ever committed.
+#
+# A run over a released reproduction (--reproduction DIR: a diagnosis's reproductions/<finding>,
+# or a copy of one) pushes the reproduction into the VM, replacing the last run's, and asks its
+# own questions over its own payloads there, so it goes without --corpus, --cut, and
+# --eval-set. A files-plus-wiki run asks with its starting wiki, or, with --wiki DIR, with a
+# dreamed copy of it (`librarian.sh dream DIR --reproduction REPRODUCTION` leaves one in DIR,
+# under $PA_REPLAYS), pushed as an eval wiki is, with the reproduction's record that the copy
+# carries and the run checks it by. A reproduction is fictional, so the run directory comes
+# back to evals/runs/ in this checkout (or $PA_EVAL_RUNS_DIR), as a corpus run's does.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 (($#)) || set -- --agent claude --judge model
 
 # Take out the options that name devbox paths: --wiki is pointed at the VM's copy where it was
-# given, and a cut and its eval set are given again at the end, as the VM's copies.
+# given, and a cut and its eval set, or a reproduction, are given again at the end, as the VM's
+# copies.
 wiki=""
 cut=""
 eval_set=""
+reproduction=""
+over_corpus=""
 args=()
 while (($#)); do
   case $1 in
-    --wiki | --cut | --eval-set)
+    --wiki | --cut | --eval-set | --reproduction)
       (($# >= 2)) || die "$1 needs a path"
       option=${1#--}
       printf -v "${option//-/_}" '%s' "$2"
       [[ $1 != --wiki ]] || args+=(--wiki "$PA_VM_EVAL_WIKI")
       shift 2
       ;;
-    --wiki=* | --cut=* | --eval-set=*)
+    --wiki=* | --cut=* | --eval-set=* | --reproduction=*)
       option=${1%%=*}
       option=${option#--}
       printf -v "${option//-/_}" '%s' "${1#*=}"
@@ -48,12 +60,23 @@ while (($#)); do
       shift
       ;;
     *)
+      [[ $1 != --corpus && $1 != --corpus=* ]] || over_corpus=yes
       args+=("$1")
       shift
       ;;
   esac
 done
-if [[ -n $cut ]]; then
+if [[ -n $reproduction ]]; then
+  [[ -z $cut ]] || die "--reproduction goes without --cut: a run asks one or other"
+  [[ -z $over_corpus ]] || die "--reproduction goes without --corpus: a run asks one or other"
+  [[ -z $eval_set ]] ||
+    die "--reproduction goes without --eval-set: a reproduction is asked its own questions"
+  # The record a release writes (pa_evals.reproduction, which owns the rest of the layout).
+  [[ -f $reproduction/reproduction.json ]] ||
+    die "$reproduction isn't a released reproduction: it has no reproduction.json"
+  runs_dir=${PA_EVAL_RUNS_DIR:-$REPO_DIR/evals/runs}
+  args+=(--reproduction "$PA_VM_EVAL_REPRODUCTION" --runs-dir "$PA_VM_EVAL_RUNS")
+elif [[ -n $cut ]]; then
   [[ -n $eval_set ]] || die "--cut needs --eval-set FILE: the real-data eval set asked over it"
   runs_dir=${PA_EVAL_RUNS_DIR:-$PA_EVALS/runs}
   require_private cut "$cut"
@@ -77,10 +100,22 @@ if [[ -n $wiki ]]; then
   [[ -d $wiki/wiki && -f $wiki/run-log.jsonl ]] ||
     die "$wiki isn't an eval wiki: it needs wiki/ and run-log.jsonl"
   # Its tree and run log only, never a replay's wiki.git/; owned by the assistant.
-  tar -C "$wiki" -cf - wiki run-log.jsonl |
-    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
-      "rm -rf $PA_VM_EVAL_WIKI && mkdir -p $PA_VM_EVAL_WIKI && tar -C $PA_VM_EVAL_WIKI -xf -"
+  wiki_parts=(wiki run-log.jsonl)
+  if [[ -n $reproduction ]]; then
+    # A copy of a reproduction's starting wiki carries the reproduction's record, which the run
+    # checks it by (pa_evals.reproduction.copied_wiki).
+    [[ -f $wiki/reproduction.json ]] ||
+      die "$wiki isn't a dreamed copy of a reproduction's starting wiki: it has no reproduction.json (librarian.sh dream DIR --reproduction REPRODUCTION makes one)"
+    wiki_parts+=(reproduction.json)
+  fi
+  push_tree "$wiki" "$PA_VM_EVAL_WIKI" "${wiki_parts[@]}"
   log "pushed the eval wiki in $wiki to $PA_VM_EVAL_WIKI"
+fi
+
+if [[ -n $reproduction ]]; then
+  # Whole, as it was released; owned by the assistant.
+  push_tree "$reproduction" "$PA_VM_EVAL_REPRODUCTION" .
+  log "pushed the reproduction in $reproduction to $PA_VM_EVAL_REPRODUCTION"
 fi
 
 if [[ -n $cut ]]; then

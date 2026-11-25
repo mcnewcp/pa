@@ -36,8 +36,15 @@ def home(tmp_path: Path) -> Path:
     return home
 
 
-def run_script(home: Path, tmp_path: Path, *args: str, env: dict[str, str] | None = None) -> dict:
-    """Runs librarian.sh with `args`, and returns what its `uv` was called with."""
+def run_script(
+    home: Path,
+    tmp_path: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> dict:
+    """Runs librarian.sh with `args` (in `cwd`, if given), and returns what its `uv` was called
+    with."""
     stand_ins = tmp_path / "bin"
     stand_ins.mkdir()
     uv = stand_ins / "uv"
@@ -55,6 +62,7 @@ def run_script(home: Path, tmp_path: Path, *args: str, env: dict[str, str] | Non
             "UV_LOG": str(log),
             **(env or {}),
         },
+        cwd=cwd,
         check=False,
     )
     assert result.returncode == 0, result.stderr
@@ -196,10 +204,153 @@ def test_an_owner_file_that_isnt_there_stops_the_run(home: Path, tmp_path: Path)
     assert f"{missing} is missing" in result.stderr
 
 
+# Dreaming a released reproduction's starting wiki (#168): the eval harness's command, which
+# knows a reproduction's layout, with its sessions in the librarian's VM all the same.
+
+REPRODUCTION = "/srv/released/20261120T101500Z-made-up/reproductions/f1"
+
+
+def replays(home: Path) -> Path:
+    return home / ".local" / "share" / "pa-home" / "replays"
+
+
+@pytest.mark.parametrize(
+    "named", [("--reproduction", REPRODUCTION), (f"--reproduction={REPRODUCTION}",)], ids=len
+)
+def test_dreaming_a_reproduction_is_handed_to_the_eval_harness_with_its_sessions_in_the_vm(
+    home: Path, tmp_path: Path, named: tuple[str, ...]
+):
+    (home / ".local" / "share" / "pa-home" / "owner.env").write_text(
+        REAL_OWNER + "PA_OWNER_OTHER_NAMES=Ri\nPA_TIME_ZONE=Europe/Lisbon\n"
+    )
+    copy = replays(home) / "f1-dreamed"
+
+    call = run_script(
+        home, tmp_path, "dream", str(copy), *named, env={"PA_LIBRARIAN_COMMAND": "claude"}
+    )
+
+    assert call["argv"] == [
+        *("run", "--project", str(REPO)),
+        *("pa-eval", "reproduction", "dream", REPRODUCTION, str(copy)),
+    ]
+    env = call["env"]
+    assert env["PA_LIBRARIAN_SANDBOX"] == str(DEPLOY / "librarian-sandbox.sh")
+    assert "PA_LIBRARIAN_COMMAND" not in env
+    # The owner and the time zone are the reproduction's eval set's, so nothing of the data
+    # root's owner.env reaches the command.
+    assert (
+        not {
+            "PA_OWNER_NAME",
+            "PA_OWNER_EMAILS",
+            "PA_OWNER_OTHER_NAMES",
+            "PA_TIME_ZONE",
+        }
+        & env.keys()
+    )
+
+
+def test_dreaming_a_reproduction_needs_no_owner_of_the_data_roots(home: Path, tmp_path: Path):
+    (home / ".local" / "share" / "pa-home" / "owner.env").unlink()
+    copy = replays(home) / "f1-dreamed"
+
+    call = run_script(home, tmp_path, "dream", str(copy), "--reproduction", REPRODUCTION)
+
+    assert call["argv"][-5:] == ["pa-eval", "reproduction", "dream", REPRODUCTION, str(copy)]
+
+
+def test_the_copy_handed_over_is_the_path_that_was_checked(home: Path, tmp_path: Path):
+    """What the script checks is under the replays is what the command is given: never a path
+    the command would read another way, through `..`, a link, or a `~` of its own."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    replays(home).mkdir()
+    (elsewhere / "into-the-replays").symlink_to(replays(home))
+    given = f"{elsewhere}/into-the-replays/sub/../f1-dreamed"
+
+    call = run_script(home, tmp_path, "dream", given, "--reproduction", REPRODUCTION)
+
+    assert call["argv"][-1] == str(replays(home) / "f1-dreamed")
+
+
+def test_a_tilde_the_shell_didnt_expand_is_never_handed_over_to_be_expanded(
+    home: Path, tmp_path: Path
+):
+    """From inside the replays, `~/wiki` is a directory named `~` there, and passes the check.
+    Handed over as it was given, the command would expand it to the home directory's."""
+    replays(home).mkdir()
+
+    call = run_script(
+        home, tmp_path, "dream", "~/wiki", "--reproduction", REPRODUCTION, cwd=replays(home)
+    )
+
+    assert call["argv"][-1] == str(replays(home) / "~" / "wiki")
+
+
+def test_a_reproductions_owner_is_never_named_by_a_file(home: Path, tmp_path: Path):
+    fictional = tmp_path / "argus.env"
+    fictional.write_text(FICTIONAL_OWNER)
+    args = ("dream", str(replays(home) / "f1-dreamed"), "--reproduction", REPRODUCTION)
+
+    result = librarian_sh(home, tmp_path, *args, env={"PA_LIBRARIAN_OWNER_ENV": str(fictional)})
+
+    assert result.returncode != 0
+    assert "PA_LIBRARIAN_OWNER_ENV doesn't go with --reproduction" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "{home}/f1-dreamed",
+        "{replays}",
+        "{replays}/../wiki/f1-dreamed",
+        # A `~` the shell never expanded: Python would read it as the home directory.
+        "~/.local/share/pa-home/replays/f1-dreamed",
+        "{replays}/linked",
+    ],
+    ids=str,
+)
+def test_a_copy_of_a_reproductions_wiki_outside_the_replays_is_refused(
+    home: Path, tmp_path: Path, copy: str
+):
+    replays(home).mkdir()
+    # A link under the replays to the data root's own wiki.
+    (replays(home) / "linked").symlink_to(replays(home).parent / "wiki")
+    copy = copy.format(home=home, replays=replays(home))
+
+    result = librarian_sh(home, tmp_path, "dream", copy, "--reproduction", REPRODUCTION, env={})
+
+    assert result.returncode != 0
+    assert f"must be under {replays(home)}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("dream", "--reproduction", REPRODUCTION),
+        ("dream", "COPY", "--reproduction"),
+        ("dream", "COPY", "--reproduction", REPRODUCTION, "--corpus", "evals/corpus/payloads"),
+        ("dream", "COPY", f"--reproduction={REPRODUCTION}", "--cut", "/srv/cuts/20261118T202737Z"),
+        ("replay", "COPY", "--reproduction", REPRODUCTION),
+    ],
+    ids=" ".join,
+)
+def test_a_reproduction_is_dreamed_by_one_form_of_the_command(
+    home: Path, tmp_path: Path, args: tuple[str, ...]
+):
+    copy = str(replays(home) / "f1-dreamed")
+    args = tuple(copy if arg == "COPY" else arg for arg in args)
+
+    result = librarian_sh(home, tmp_path, *args, env={})
+
+    assert result.returncode != 0
+    assert "usage: librarian.sh dream <copy> --reproduction <dir>" in result.stderr
+
+
 def test_the_scripts_usage_and_the_readme_name_every_librarian_command():
     usage = (DEPLOY / "librarian.sh").read_text().split("set -euo pipefail")[0]
     readme = (DEPLOY / "README.md").read_text()
 
+    assert "librarian.sh dream <copy> --reproduction <dir>" in usage
     for command in ("run", "dream", "replay", "seed"):
         assert f"librarian.sh {command}" in usage
     assert "`librarian.sh run\\|dream\\|replay\\|seed …`" in readme

@@ -1,16 +1,17 @@
-"""Dreaming a copy: a dreaming run over a copy of a replay target, or of a cut's wiki, at the
-copy's as-of time (spec #140).
+"""Dreaming a copy: a dreaming run over a copy of a replay target, of a cut's wiki, or of a
+wiki no librarian built, at the copy's as-of time (spec #140).
 
 It is how dreaming's effect is measured: the eval harness asks the same questions with a wiki
 and with a dreamed copy of it. The copy is laid out as a replay target is
 (`pa_core.librarian.replay.ReplayTarget`): the wiki's tree, its git directory, and the run log.
 
-A copy starts as a tree alone: an eval wiki is kept without its git directory, and a cut holds
-its wiki as a bare tree. So its first dreaming run commits the tree as it is before anything
-else, with what its source (`CopySource`) says of it: the version of the librarian whose runs
-built it, and a cut's cursor. The dreaming commit carries those forward as it does in the live
-wiki. The git directory then stays beside the copy, so a later dreaming run of the same copy
-finds the earlier ones in its history.
+A copy starts as a tree alone: an eval wiki is kept without its git directory, a cut holds its
+wiki as a bare tree, and a wiki no librarian built is nothing else. So its first
+dreaming run commits the tree as it is before anything else, with what its source
+(`CopySource`) says of it: the version of the librarian whose runs built it, if one did, and a
+cut's cursor. The dreaming commit carries those forward as it does in the live wiki. The git
+directory then stays beside the copy, so a later dreaming run of the same copy finds the
+earlier ones in its history.
 
 The run itself is the live wiki's (`pa_core.librarian.dreaming.run_dreaming`), told the copy's
 as-of time as now, so it does to a copy whatever it does to the live wiki: a page it retires
@@ -91,16 +92,24 @@ def replayed_source(run_log: Path) -> CopySource:
     return source
 
 
-def cut_source(
-    run_log: Path, *, as_of: datetime, librarian_version: str | None, cursor: str | None
+def stated_source(
+    run_log: Path,
+    *,
+    as_of: datetime,
+    librarian_version: str | None = None,
+    cursor: str | None = None,
 ) -> CopySource:
-    """What a cut says of a copy of its wiki, whose run log, once it has been dreamed, is at
-    `run_log`: the cut's as-of time, and the librarian version and cursor of the wiki commit
-    it holds.
+    """What is stated of a copy that no replay's run log describes, whose own run log, once it
+    has been dreamed, is at `run_log`. Such a copy is one of two things:
+
+    - a copy of a cut's wiki: `as_of` is the cut's as-of time, and `librarian_version` and
+      `cursor` are those of the wiki commit it holds;
+    - a copy of a wiki no librarian built, such as one a person wrote over a corpus: `as_of`
+      is the time given for it, and it has no librarian version and no cursor.
 
     Refuses (DreamCopyError) a run log with a replay's runs, which is a copy of a replay
-    target's, and one whose dreaming runs were as of another time: a copy of another cut's
-    wiki.
+    target's, and one whose dreaming runs were as of another time or of a wiki another
+    librarian version built: a copy of another wiki.
     """
     source = CopySource(as_of=as_of, librarian_version=librarian_version, cursor=cursor)
     if run_log.is_file():
@@ -108,7 +117,7 @@ def cut_source(
         if history.replays:
             raise DreamCopyError(
                 f"{run_log} has a replay's runs: it is the run log of a copy of a replay "
-                "target, not of a cut's wiki"
+                "target, whose as-of time is its replay's, not one stated for it"
             )
         _require_dreamed_as(history, source, run_log)
     return source
@@ -129,9 +138,16 @@ def _require_dreamed_as(history: RunHistory, source: CopySource, run_log: Path) 
             f"and this one would be as of {utc(source.as_of)}: {not_this}"
         )
     raise DreamCopyError(
-        f"{run_log} has a dreaming run of a wiki built by librarian version "
-        f"{other.librarian_version}, not {source.librarian_version}: {not_this}"
+        f"{run_log} has a dreaming run of a wiki {_built(other.librarian_version)}, and this "
+        f"one would be of a wiki {_built(source.librarian_version)}: {not_this}"
     )
+
+
+def _built(librarian_version: str | None) -> str:
+    """How a refusal says who built a wiki: a librarian version, or none."""
+    if librarian_version is None:
+        return "no librarian built"
+    return f"built by librarian version {librarian_version}"
 
 
 COPY_AS_OF_FIELD = "Copy-As-Of"

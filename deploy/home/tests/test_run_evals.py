@@ -377,3 +377,178 @@ def test_real_data_paths_inside_the_repository_stop_before_the_vm_is_touched(
     assert result.returncode != 0
     assert "is inside the repository" in result.stderr
     assert recorded(calls) == []
+
+
+# Runs over a released reproduction (#168): it is pushed into the VM each run, and asked there.
+
+VM_REPRODUCTION = "/srv/pa/eval/reproduction"
+OVER_A_REPRODUCTION = ["--agent", "claude", "--judge", "model", "--reproduction"]
+
+
+@pytest.fixture
+def reproduction(tmp_path: Path) -> Path:
+    """A released reproduction, as a diagnosis's release lays one out (its contents made up)."""
+    path = tmp_path / "released" / "20261120T101500Z-made-up" / "reproductions" / "f1"
+    for name in (
+        "reproduction.json",
+        "eval_set.json",
+        "expectation.md",
+        "payloads/gmail/rehearsal.eml",
+        "wiki/index.md",
+        "wiki/topics/choir.md",
+    ):
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
+        (path / name).write_text("{}\n")
+    return path
+
+
+@pytest.fixture
+def dreamed_reproduction(tmp_path: Path) -> Path:
+    """A dreamed copy of the reproduction's starting wiki, as
+    `librarian.sh dream DIR --reproduction REPRODUCTION` leaves one under the replays."""
+    copy = data_root(tmp_path) / "replays" / "f1-dreamed"
+    (copy / "wiki" / "topics").mkdir(parents=True)
+    (copy / "wiki" / "index.md").write_text("# Index\n")
+    (copy / "wiki" / "topics" / "choir.md").write_text("# Choir\n")
+    (copy / "wiki.git").mkdir()
+    (copy / "wiki.git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (copy / "run-log.jsonl").write_text('{"run": "dreaming"}\n')
+    # The reproduction's record, which says whose copy it is.
+    (copy / "reproduction.json").write_text("{}\n")
+    return copy
+
+
+def test_a_run_over_a_reproduction_pushes_it_and_asks_with_the_vms_copy(
+    tmp_path: Path, calls: Path, reproduction: Path
+):
+    checkout_runs = DEPLOY.parents[1] / "evals" / "runs"
+    there_already = checkout_runs.exists()
+    try:
+        result = run_evals(
+            tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), runs_dir=DEFAULT
+        )
+    finally:
+        # The script makes the checkout's evals/runs/, which git ignores, for the run to land in.
+        if not there_already and checkout_runs.is_dir() and not any(checkout_runs.iterdir()):
+            checkout_runs.rmdir()
+
+    assert result.returncode == 0, result.stderr
+    push, ask, pull = recorded(calls)
+    # The whole reproduction, as the assistant's, in place of the last run's.
+    assert pushed(push) == [
+        "./eval_set.json",
+        "./expectation.md",
+        "./payloads/gmail/rehearsal.eml",
+        "./reproduction.json",
+        "./wiki/index.md",
+        "./wiki/topics/choir.md",
+    ]
+    assert push["argv"][:6] == ["exec", "pa-home", "--", "runuser", "-l", "assistant"]
+    assert push["argv"][-1] == (
+        f"rm -rf {VM_REPRODUCTION} && mkdir -p {VM_REPRODUCTION} && tar -C {VM_REPRODUCTION} -xf -"
+    )
+    assert pa_eval_args(ask) == [
+        "--agent",
+        "claude",
+        "--judge",
+        "model",
+        "--reproduction",
+        VM_REPRODUCTION,
+        "--runs-dir",
+        VM_RUNS,
+    ]
+    # A reproduction is fictional, so its run comes back to the checkout, as a corpus run's does.
+    assert pull["argv"][-1] == f"{checkout_runs}/"
+
+
+def test_the_reproduction_option_can_be_given_with_an_equals_sign(
+    tmp_path: Path, calls: Path, reproduction: Path
+):
+    options = ["--agent", "claude", "--judge", "model", f"--reproduction={reproduction}"]
+
+    result = run_evals(tmp_path, calls, *options)
+
+    assert result.returncode == 0, result.stderr
+    push, ask, pull = recorded(calls)
+    assert "./reproduction.json" in pushed(push)
+    assert pa_eval_args(ask)[-4:] == ["--reproduction", VM_REPRODUCTION, "--runs-dir", VM_RUNS]
+    assert pull["argv"][-1] == f"{tmp_path / 'runs'}/"
+
+
+def test_a_run_over_a_reproduction_with_a_dreamed_copy_of_its_wiki_pushes_both(
+    tmp_path: Path, calls: Path, reproduction: Path, dreamed_reproduction: Path
+):
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(dreamed_reproduction)]
+
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), *wiki)
+
+    assert result.returncode == 0, result.stderr
+    push_wiki, push, ask, _ = recorded(calls)
+    # The copy's tree and run log, as an eval wiki is pushed, with the record the run checks
+    # it by: never its git directory.
+    assert pushed(push_wiki) == [
+        "reproduction.json",
+        "run-log.jsonl",
+        "wiki/index.md",
+        "wiki/topics/choir.md",
+    ]
+    assert f"tar -C {VM_EVAL_WIKI} -xf -" in push_wiki["argv"][-1]
+    assert f"tar -C {VM_REPRODUCTION} -xf -" in push["argv"][-1]
+    assert pa_eval_args(ask) == [
+        "--agent",
+        "claude",
+        "--judge",
+        "model",
+        "--configuration",
+        "files-plus-wiki",
+        "--wiki",
+        VM_EVAL_WIKI,
+        "--reproduction",
+        VM_REPRODUCTION,
+        "--runs-dir",
+        VM_RUNS,
+    ]
+
+
+@pytest.mark.parametrize("option", ["--cut", "--eval-set", "--corpus"])
+@pytest.mark.parametrize("joined", [False, True], ids=["apart", "with an equals sign"])
+def test_a_reproduction_is_run_alone(
+    tmp_path: Path,
+    calls: Path,
+    reproduction: Path,
+    cut: Path,
+    eval_set: Path,
+    option: str,
+    joined: bool,
+):
+    another = {"--cut": cut, "--eval-set": eval_set, "--corpus": "scale"}[option]
+    given = [f"{option}={another}"] if joined else [option, str(another)]
+
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), *given)
+
+    assert result.returncode != 0
+    assert f"--reproduction goes without {option}" in result.stderr
+    assert recorded(calls) == []
+
+
+def test_a_wiki_without_the_reproductions_record_stops_before_the_vm_is_touched(
+    tmp_path: Path, calls: Path, reproduction: Path, dreamed_reproduction: Path
+):
+    (dreamed_reproduction / "reproduction.json").unlink()
+    wiki = ["--configuration", "files-plus-wiki", "--wiki", str(dreamed_reproduction)]
+
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction), *wiki)
+
+    assert result.returncode != 0
+    assert "isn't a dreamed copy of a reproduction's starting wiki" in result.stderr
+    assert recorded(calls) == []
+
+
+def test_a_directory_that_isnt_a_released_reproduction_stops_before_the_vm_is_touched(
+    tmp_path: Path, calls: Path, reproduction: Path
+):
+    result = run_evals(tmp_path, calls, *OVER_A_REPRODUCTION, str(reproduction / "payloads"))
+
+    assert result.returncode != 0
+    assert f"{reproduction / 'payloads'} isn't a released reproduction" in result.stderr
+    assert recorded(calls) == []

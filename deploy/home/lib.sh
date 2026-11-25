@@ -224,6 +224,8 @@ PA_VM_EVAL_WIKI=$PA_VM_EVAL/eval-wiki
 PA_VM_EVAL_CUTS=$PA_VM_EVAL/cuts
 PA_VM_EVAL_SET=$PA_VM_EVAL/eval-set.json
 PA_VM_EVAL_RUNS=$PA_VM_EVAL/runs
+# Where it pushes the released reproduction a run over one asks (ADR-0010), replaced each run.
+PA_VM_EVAL_REPRODUCTION=$PA_VM_EVAL/reproduction
 # Where draft-evals.sh has a draft of the real-data eval set written, and pushes the draft and the
 # owner's notes a second pass revises.
 PA_VM_EVAL_DRAFTS=$PA_VM_EVAL/drafts
@@ -441,6 +443,17 @@ push_cut() {
         "rm -rf $partial && mkdir -p $partial && tar -C $partial -xf - && mv -T $partial $vm_cut"
     log "pushed the cut $name to $vm_cut"
   fi
+}
+
+# push_tree DIR VM_DIR PART... pushes PARTs of DIR (files and directories, by their paths in
+# it; `.` for all of it) to VM_DIR in the VM, as the assistant's, in place of whatever VM_DIR
+# held. A link among them goes as a link, never as what it names.
+push_tree() {
+  local from=$1 vm_dir=$2
+  shift 2
+  tar -C "$from" -cf - "$@" |
+    incus exec "$PA_VM" -- runuser -l "$PA_USER" -c \
+      "rm -rf $vm_dir && mkdir -p $vm_dir && tar -C $vm_dir -xf -"
 }
 
 # push_file FILE VM_PATH writes FILE's contents to VM_PATH in the VM, as the assistant.
