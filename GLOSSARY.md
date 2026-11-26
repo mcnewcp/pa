@@ -159,7 +159,7 @@ Rebuilding a wiki from scratch by running L0 through the librarian a week of occ
 _Avoid_: Rebuild run, backfill
 
 **Dreaming**:
-The librarian's weekly review of the whole wiki, a step of the nightly job and one commit of its own. It judges each candidate against a re-read of L0 and gives it one outcome: applied (L0 settles it, so the wiki is fixed), proposed (it needs the owner's knowledge), or dismissed (it isn't a problem).
+The librarian's weekly review of the whole wiki, a step of the nightly job and one commit of its own. It judges each candidate against a re-read of L0 and gives it one outcome: applied (L0 settles it, so the wiki is fixed), proposed (it needs the owner's knowledge), or dismissed (it isn't a problem). It takes a page out of the wiki in two ways only: merging two pages a duplicate candidate names, and retiring one. It is held to what it changed: a lint error the wiki already had is left for the next librarian run.
 _Avoid_: Consolidation, cleanup
 
 **Candidate**:

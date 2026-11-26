@@ -18,7 +18,16 @@ fails. It differs in what it asks and what it records:
   on a run's new proposals and on how many are open at once;
 - the session may retire a page, by emptying it and naming its slug in an applied outcome: the
   host removes the page and lists the slug in `retired.md`, which only the host writes
-  (`pa_core.librarian.retirement`);
+  (`pa_core.librarian.retirement`). A page that an open loop on any page names as a party
+  is never retired;
+- the session may merge a page into another only to settle a duplicate candidate that names
+  both. Those are the two ways a dreaming run takes a page out of the wiki: an emptied page
+  that is neither fails lint, and a merge under any other candidate resumes the session to
+  take it back;
+- it is held to what it changed. A lint error the last commit already had (a rule tightened
+  since, or a seeded wiki) neither resumes its session nor fails the run: dreaming has rules
+  for its candidates and none for such an error, so it is committed again as it was, for
+  the next librarian run, whose consolidation is handed it;
 - its commit carries the librarian's cursor and version forward from the last commit, so the
   next librarian run and a cut still find them there, and records the candidates and outcomes.
 
@@ -54,9 +63,11 @@ from pa_core.librarian.candidates import (
     PastOutcome,
     PastRun,
     candidates,
+    open_loop_holders,
     unengaged_without_loops,
 )
 from pa_core.librarian.index import write_index
+from pa_core.librarian.kinds import CandidateKind
 from pa_core.librarian.links import rewrite_alias_links
 from pa_core.librarian.lint import (
     QUIET_DAYS,
@@ -93,8 +104,8 @@ from pa_core.librarian.session import (
     fields_paragraph,
     findings_text,
     in_pages,
+    merged_pages,
     open_proposals_section,
-    remove_merged_pages,
     run_reporting_session,
     session_fields,
     tree_state,
@@ -313,10 +324,12 @@ def run_dreaming(
         rewrite_alias_links(tree)
         write_index(tree)
         report = linter(tree)
-        if report.errors:
+        # An error the last commit already had isn't this run's: it is committed again as it
+        # was, for the next librarian run.
+        caused = [error for error in report.errors if not committed.had(error)]
+        if caused:
             raise LibrarianRunError(
-                f"the wiki has {len(report.errors)} lint errors"
-                f"{committed.blame(report.errors)}:\n" + findings_text(report.errors)
+                f"the wiki has {len(caused)} lint errors:\n" + findings_text(caused)
             )
         carried = last_run_fields(repository)
         judged = DreamingOutcome(
@@ -408,6 +421,7 @@ def _dream(
     before = tree_state(tree)
     as_committed = read_proposals(tree)
     retirements = _Retirements(tree, before, now.date())
+    merges = _Merges(tree, before)
 
     def require_bounds() -> None:
         after = tree_state(tree)
@@ -445,6 +459,7 @@ def _dream(
                 outcomes,
                 offered,
                 changed,
+                merged=merges.merged,
                 open_ids=[proposal.id for proposal in left if proposal.is_open],
                 added=[proposal.id for proposal in _added(as_committed, left)],
             )
@@ -464,8 +479,14 @@ def _dream(
             )
         return Refused(problems) if problems else outcomes
 
-    # Dreaming may change only pages and the proposals, so it's judged only on the errors in
-    # them.
+    def its_own(finding: Finding) -> bool:
+        """Dreaming may change only pages and the proposals, so it's judged only on the errors
+        in them, and of those only on the ones its run caused. An error the last commit
+        already had is the next librarian run's: consolidation has a rule for it, and
+        dreaming has rules only for its candidates."""
+        mine = in_pages(finding) or finding.path == PROPOSALS
+        return mine and not committed.had(finding)
+
     result, outcomes = run_reporting_session(
         Phase.DREAMING,
         dreaming_prompt(offered, runner.paths)
@@ -474,13 +495,13 @@ def _dream(
         + "\n"
         + retired_prompt(read_retired(tree), runner.paths),
         require_bounds,
-        lambda finding: in_pages(finding) or finding.path == PROPOSALS,
+        its_own,
         tree,
         runner,
         now,
         linter,
         committed,
-        tidy=partial(remove_merged_pages, tree),
+        tidy=merges.remove,
         act_on_report=carry_out,
         reminder=OUTCOMES_REMINDER,
     )
@@ -491,6 +512,40 @@ def _dream(
         tuple(judged[candidate.id] for candidate in offered),
         suggestion if isinstance(suggestion, Proposed) else None,
     )
+
+
+class _Merges:
+    """The host's side of the merges a dreaming session makes: removing each page merged away
+    (`pa_core.librarian.session.merged_pages`), and keeping which they were, for the outcomes
+    to be checked against (`check_outcomes`).
+
+    Like a retirement, a merge the host carried out for one attempt is undone before the
+    next: a page it removed is an emptied file again. So what is committed follows from the
+    wiki as the session left it, and a session resumed to take a merge back finds its page
+    where it emptied it. Left emptied with its name off the other page's aliases, it fails
+    lint, as any emptied file does.
+    """
+
+    def __init__(self, tree: Path, before: Mapping[str, tuple[str, ...]]) -> None:
+        """Over the wiki at `tree`, whose state as last committed is `before` (`tree_state`)."""
+        self._tree, self._before = tree, before
+        self._removed: list[Path] = []
+        """The emptied pages the host removed for the last attempt."""
+        self.merged: Mapping[str, tuple[str, ...]] = {}
+        """The pages the last attempt merged away that the wiki had as last committed, each
+        with the pages it was merged into, by their paths."""
+
+    def remove(self) -> None:
+        """Removes the pages the session's last attempt merged away, after putting back those
+        removed for the attempt before it, unless the session has written them again."""
+        for file in self._removed:
+            if not file.exists():
+                file.write_bytes(b"")
+        found = merged_pages(self._tree)
+        self._removed = [self._tree / path for path in found]
+        for file in self._removed:
+            file.unlink()
+        self.merged = {path: into for path, into in found.items() if path in self._before}
 
 
 class _Retirements:
@@ -547,19 +602,23 @@ class _Retirements:
         with them, and returns what's wrong with the retirements the host can't carry out.
 
         A retirement can't be carried out when its slug had no page as last committed, when
-        the page still has content, and when the page held an open loop that no page holds
-        now, open or closed: a loop is never dropped with its page, though it may move to the
-        page it belongs on. The page of such a retirement stays as the session left it. A
-        retired page its outcome doesn't name among its `pages` goes, and is a problem too.
+        the page still has content, when the page held an open loop that no page holds now,
+        open or closed, and when an open loop on any page, as the session left the wiki, names
+        the slug as a party. A loop is never dropped with its page, though it may move to the
+        page it belongs on, and a loop's party is never retired, wherever the loop is. The
+        page of such a retirement stays as the session left it. A retired page its outcome
+        doesn't name among its `pages` goes, and is a problem too.
         """
         problems: list[str] = []
         retiring: list[str] = []
-        carried = [set(loop.citations) for page in pages(self._tree) for loop in page.loops]
+        left = pages(self._tree)
+        carried = [set(loop.citations) for page in left for loop in page.loops]
+        owed = open_loop_holders(left)
         for outcome in reported:
             if not isinstance(outcome, Applied):
                 continue
             for slug in outcome.retired:
-                found = self._retire(slug, carried)
+                found = self._retire(slug, carried, owed.get(slug, ()))
                 if isinstance(found, str):
                     problems.append(f"{outcome.candidate} retires `{slug}`, {found}")
                     continue
@@ -575,10 +634,13 @@ class _Retirements:
         self._left = tree_state(self._tree).get(RETIRED)
         return problems
 
-    def _retire(self, slug: str, carried: Sequence[set[str]]) -> list[str] | str:
+    def _retire(
+        self, slug: str, carried: Sequence[set[str]], owed: Sequence[str]
+    ) -> list[str] | str:
         """Removes the emptied pages of `slug`, and returns their paths; or, when the
         retirement can't be carried out, why not. `carried` is the opening citations of each
-        loop the wiki's pages hold now."""
+        loop the wiki's pages hold now, and `owed` the pages now holding an open loop that
+        names `slug` as a party."""
         paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in self._before]
         if not paths:
             return (
@@ -600,6 +662,12 @@ class _Retirements:
                         "was and propose or dismiss the candidate, or move the loop to the "
                         "page it belongs on"
                     )
+        if owed:
+            return (
+                f"but an open loop on {', '.join(dict.fromkeys(owed))} names it as a party. A "
+                f"loop's party is never retired: write {emptied[0]} back as it was and propose "
+                "or dismiss the candidate"
+            )
         for path in emptied:
             file = self._tree / path
             if file.is_file():
@@ -750,17 +818,21 @@ def check_outcomes(
     *,
     open_ids: Collection[str],
     added: Collection[str],
+    merged: Mapping[str, Collection[str]],
 ) -> None:
     """Checks the `outcomes` a dreaming session reported (`_reported`) against the candidates
-    it was `offered`, the paths it `changed`, relative to the wiki, and the proposals in
-    `proposals.md` as the session left it: the ids of the open ones (`open_ids`), and of those
-    the session `added`.
+    it was `offered`, the paths it `changed`, relative to the wiki, the proposals in
+    `proposals.md` as the session left it (the ids of the open ones, `open_ids`, and of those
+    the session `added`), and the pages it `merged` away, each with the pages it was merged
+    into.
 
     Raises InvalidOutcomesError unless every candidate has exactly one outcome, and none is
     for anything else but one template suggestion (a proposed outcome with no candidate); each
     applied outcome names pages, all of which changed; each proposed outcome names an open
-    proposal, the suggestion one of its own that the session added; and every proposal the
-    session added is named.
+    proposal, the suggestion one of its own that the session added; every proposal the
+    session added is named; and every merged page is named by an applied outcome whose
+    candidate is a duplicate naming it and a page it was merged into. Dreaming merges two
+    pages only to settle the candidate that asks whether they are one.
     """
     problems: list[str] = []
     given = Counter(outcome.candidate for outcome in outcomes if outcome.candidate is not None)
@@ -821,6 +893,33 @@ def check_outcomes(
                     f"{outcome.candidate} names {page}, which this session didn't change: name "
                     "only pages you changed, by their paths relative to the wiki"
                 )
+    kinds = {candidate.id: candidate for candidate in offered}
+    for path, into in merged.items():
+        naming = [o for o in outcomes if isinstance(o, Applied) and path in o.pages]
+        if any(
+            (candidate := kinds.get(outcome.candidate)) is not None
+            and candidate.kind is CandidateKind.DUPLICATE
+            and path in candidate.pages
+            and any(page in candidate.pages for page in into)
+            for outcome in naming
+        ):
+            continue
+        took = ", ".join(into)
+        if naming:
+            who = naming[0].candidate
+            said = f"{who} merges {path} into {took}, but isn't a"
+            then = f", and propose or dismiss {who}"
+        else:
+            said = (
+                f"{path} was merged into {took} (it is emptied, and its name is among that "
+                "page's aliases), under no"
+            )
+            then = ""
+        problems.append(
+            f"{said} `{CandidateKind.DUPLICATE}` candidate that names both pages: dreaming "
+            f"merges two pages only to settle such a candidate. Write {path} back as it was, "
+            f"take its name off {took}'s aliases{then}"
+        )
     if problems:
         raise InvalidOutcomesError(problems)
 

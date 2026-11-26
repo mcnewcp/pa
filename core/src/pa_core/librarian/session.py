@@ -9,7 +9,8 @@
   times. A run that can't go on raises `LibrarianRunError`.
 - **Tree states**: `tree_state` and `changed_paths`, which a phase's bounds are checked with.
 - **The run's date**: `misdated`, the pages a session dated another day than the run's.
-- **The host's tidying**: `remove_merged_pages`.
+- **The host's tidying**: `merged_pages`, the pages a session merged away, and
+  `remove_merged_pages`.
 - **The open proposals** as a section of a prompt: `open_proposals_section`, which each
   phase ends with what it may do about them.
 - **The commit message's fields**: the `Field: value` paragraph that ends a run's commit
@@ -115,15 +116,21 @@ type Linter = Callable[[Path], LintReport]
 
 @dataclass(frozen=True)
 class Committed:
-    """The lint errors the wiki had as last committed, before this run changed anything."""
+    """The lint errors the wiki had as last committed, before this run changed anything. A
+    librarian run hands consolidation those in the pages, and fails while any is left; a
+    dreaming run leaves them all as they are (`had`)."""
 
     errors: Sequence[Finding]
+
+    def had(self, finding: Finding) -> bool:
+        """Whether the last commit already had `finding` (`finding_key`): this run didn't
+        cause it."""
+        return finding_key(finding) in {finding_key(e) for e in self.errors}
 
     def blame(self, errors: Sequence[Finding]) -> str:
         """What a failure over `errors` adds: that the last commit already had them all, when
         it did."""
-        already = {finding_key(e) for e in self.errors}
-        if errors and all(finding_key(e) in already for e in errors):
+        if errors and all(self.had(e) for e in errors):
             return (
                 ", all of them already in the wiki's last commit (this run didn't cause them; "
                 "a rule may have been tightened since, or the wiki was seeded with them)"
@@ -359,20 +366,34 @@ def changed_paths(before: TreeState, after: TreeState) -> list[str]:
     )
 
 
-def remove_merged_pages(tree: Path) -> None:
-    """Removes the pages a consolidation session merged away. Its file tools can't remove a
-    file, so it deletes a page merged into another by writing it with nothing in it, and the
-    page it was merged into takes its name as an alias.
+def merged_pages(tree: Path) -> dict[str, tuple[str, ...]]:
+    """The pages a session merged away in the wiki at `tree`, each with the pages it was merged
+    into, by their paths. A session's file tools can't remove a file, so it deletes a page
+    merged into another by writing it with nothing in it, and the page it was merged into
+    takes its name as an alias: a merged page is an emptied one whose slug is now an alias of
+    a page that's still there."""
+    took: dict[str, list[str]] = {}
+    for page in pages(tree):
+        for slug in dict.fromkeys(slugify(alias) for alias in page.aliases):
+            took.setdefault(slug, []).append(page.path)
+    return {
+        f"{folder}/{entry.name}": tuple(took[entry.stem])
+        for folder in PAGE_FOLDERS
+        for entry in folder_files(tree, folder)
+        if is_page_name(entry.name) and entry.stem in took and not entry.read_bytes().strip()
+    }
 
-    Only an emptied page whose slug is now an alias of a page that's still there goes; any
-    other emptied file stays for lint to fail (an empty page no merge explains, a dotfile, a
-    `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
+
+def remove_merged_pages(tree: Path) -> None:
+    """Removes the pages a session merged away (`merged_pages`).
+
+    Any other emptied file stays for lint to fail (an empty page no merge explains, a
+    dotfile, a `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
+    A dreaming run holds a merge to more (`pa_core.librarian.dreaming`): there a page is
+    merged away only to settle a duplicate candidate.
     """
-    merged = {slugify(alias) for page in pages(tree) for alias in page.aliases}
-    for folder in PAGE_FOLDERS:
-        for entry in folder_files(tree, folder):
-            if is_page_name(entry.name) and entry.stem in merged and not entry.read_bytes().strip():
-                entry.unlink()
+    for path in merged_pages(tree):
+        (tree / path).unlink()
 
 
 def as_json(value: object) -> str:

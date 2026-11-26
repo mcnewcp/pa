@@ -25,6 +25,7 @@ from pa_core.librarian.kinds import CandidateKind
 from pa_home.cli import main
 from pa_home.config import DataRoot
 from pa_home.cut import take_cut
+from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import LIBRARIAN_PROJECT
 from pa_home.lock import data_root_lock
 
@@ -841,6 +842,75 @@ def test_a_dreaming_session_that_leaves_lint_errors_is_resumed_with_the_findings
     assert wiki_files(data_root)[TOPIC] == closed(room_list)
     recorded = fields(commit_messages(data_root)[0])
     assert (recorded["Dreaming-Resumes"], recorded["Dreaming-Applied"]) == ("1", "1")
+
+
+def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
+    """Commits `files` into the wiki under the last run's message, so the cursor stays."""
+    repository = GitWikiRepository.open(data_root / "wiki", data_root / "wiki.git")
+    for path, text in files.items():
+        (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
+        (data_root / "wiki" / path).write_text(text)
+    repository.commit(repository.commits()[0].message)
+
+
+BEGGED = f"- [ ] me → [[david-kim]]: a gift · begged {days_ago(1)} [ep:{HOTEL}]"
+BROKEN_PERSON = wedding_pages()[PERSON].replace("## Open loops\n", f"## Open loops\n{BEGGED}\n")
+"""David Kim's page with a loop lint can't read: an error the wiki is committed with, on a page
+no candidate names."""
+
+
+def test_a_lint_error_the_wiki_already_had_is_left_for_the_next_librarian_run(data_root: Path):
+    run_with_pages(data_root)
+    commit_by_hand(data_root, {PERSON: BROKEN_PERSON})
+    script(data_root, dreaming=[reporting(DISMISSED)])
+
+    assert dream() == 0
+
+    # The session was never resumed for it, and the run committed with it still there.
+    [session] = sessions(data_root, "dreaming")
+    assert [candidate["pages"] for candidate in session["candidates"]] == [[TOPIC]]
+    assert fields(commit_messages(data_root)[0])["Dreaming-Resumes"] == "0"
+    assert wiki_files(data_root)[PERSON] == BROKEN_PERSON
+    assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
+    # The next librarian run's consolidation is handed it.
+    ingest(
+        data_root,
+        {"gmail/gift.eml": email(message_id="wedding-0003@example.net", subject="Gift")},
+    )
+    script(data_root, consolidation=[{"write": PERSON, "text": wedding_pages()[PERSON]}])
+    assert run_librarian() == 0
+    [error] = sessions(data_root, "consolidation")[-1]["errors"]
+    assert error["path"] == PERSON and "malformed loop" in error["message"]
+
+
+def test_a_dreaming_run_is_resumed_for_and_fails_on_only_the_lint_errors_it_caused(
+    data_root: Path, capsys
+):
+    room_list = run_with_pages(data_root)
+    commit_by_hand(data_root, {PERSON: BROKEN_PERSON})
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    # The session leaves an error of its own on the wedding's page, and never fixes it.
+    malformed = [
+        {"write": TOPIC, "text": closed(room_list).replace("· asked", "· begged")},
+        reporting(APPLIED),
+    ]
+    script(data_root, dreaming=malformed, dreaming_resume=malformed[-1:])
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    attempts = sessions(data_root, "dreaming")
+    assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
+    for resumed in attempts[1:]:
+        assert "Lint found 1 errors" in resumed["prompt"]
+        assert f"{TOPIC}:16: malformed loop" in resumed["prompt"]
+        assert PERSON not in resumed["prompt"]
+    error = run_error(data_root)
+    assert "the dreaming session left 1 lint errors after 2 resumes:" in error
+    assert f"{TOPIC}:16: malformed loop" in error
+    assert PERSON not in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
 
 
 def test_a_dreaming_session_that_dates_a_page_another_day_is_resumed_to_date_it_today(

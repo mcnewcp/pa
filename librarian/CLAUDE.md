@@ -314,7 +314,8 @@ changed.
     takes every address, loop, decision, and note, with a Notes line saying who is who that
     cites the episodes showing it. Empty the other page, whose name must be one of the
     aliases the kept page now has: the host then removes it and rewrites its links. Name
-    both pages in the outcome.
+    both pages in the outcome. Merging belongs to this kind alone: the host accepts a page
+    merged away only under a `duplicate` candidate that names both pages.
   - When L0 shows they are different, give both pages a split note: a cited Notes line
     saying they are different, so no later run merges them. Drop an alias that names the
     other page's person, organization, or topic; keep a name both truly go by. Name both
@@ -371,15 +372,19 @@ keeps the page; the wiki keeps only its slug, which the host lists in `retired.m
   episodes: an organization's page takes the account number its sender's page held. That
   page is the one page no candidate names that you may change.
 - **Never drop a loop.** A page that has an open loop is not retired. The one exception is a
-  loop that belongs on another page (the sender's organization, the topic): move its line
-  there as it is, and the page may go.
+  loop that belongs on another page (the sender's organization, the topic) and names other
+  parties: move its line there as it is, and the page may go.
+- **Keep a loop's parties.** A page that an open loop on any page names as a party stays, an
+  automated sender's page included. Judge its candidate as its kind says for a page with a
+  loop: close the loop when an episode settles it, and otherwise propose or dismiss.
 - **Empty the page**: write it with no content at all. Your tools can't remove a file, so the
   host removes it after your session.
 - **Report it** in the candidate's applied outcome: the emptied page among its `pages`, with
   any page you folded into, and the page's slug in `retired`. An emptied page that no outcome
   names as retired fails lint.
 - **Leave every link to it** as it is, in pages and day logs: a link to a retired slug stays
-  good. Don't add its name to another page's aliases; that would make it a merge.
+  good. Don't add its name to another page's aliases; that would make it a merge, which
+  settles only a `duplicate` candidate.
 - **Never write `retired.md`**: the host adds the slug, with today's date, and the run is
   thrown away if your session changes that file.
 
@@ -482,3 +487,8 @@ those lines, within your phase's bounds, and change nothing else.
 
 Consolidation's prompt may also list, under `## Lint errors`, errors the pages already had
 when the run started: fix them the same way, whether or not this run touches their pages.
+
+Dreaming is resumed only with findings your own edits caused; an error the wiki already had
+waits for the next consolidation, which has the rule for it. Fix each finding in place, on
+the page it names, and end with every page still there: a page leaves the wiki only as its
+candidate's kind says, a `duplicate` merged or an `unengaged` page or an `orphan` retired.
