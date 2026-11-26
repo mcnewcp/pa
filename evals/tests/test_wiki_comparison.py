@@ -34,8 +34,22 @@ CATEGORIES: dict[str, Category] = {"r01": "open_loops"}
 """Each question's category, where it isn't single-fact recall."""
 
 
-def answer(question_id: str, *, correct: bool, tier: int | None = None) -> QuestionResult:
-    """An answer citing one of its two evidence episodes, the other never opened."""
+def answer(question_id: str, *, correct: bool | None, tier: int | None = None) -> QuestionResult:
+    """An answer citing one of its two evidence episodes, the other never opened. Or, with
+    `correct` None, a question whose agent failed, as the harness records one."""
+    if correct is None:
+        return QuestionResult(
+            id=question_id,
+            category=CATEGORIES.get(question_id, "single_fact_recall"),
+            tier=tier,
+            question=QUESTION,
+            as_of=AS_OF,
+            expected_answer=EXPECTED,
+            evidence=[FOUND, NEVER_FOUND],
+            status="failed",
+            error="agent: the session ended without an answer",
+            evidence_recall=0.0,
+        )
     return QuestionResult(
         id=question_id,
         category=CATEGORIES.get(question_id, "single_fact_recall"),
@@ -62,7 +76,7 @@ def answer(question_id: str, *, correct: bool, tier: int | None = None) -> Quest
 
 def runs(
     wiki: WikiResult | None,
-    correct: Sequence[bool] | Mapping[str, Sequence[bool]],
+    correct: Sequence[bool | None] | Mapping[str, Sequence[bool | None]],
     *,
     tiers: Mapping[str, int] | None = None,
     configuration: str = "files-plus-wiki",
@@ -70,7 +84,8 @@ def runs(
 ) -> list[RunResults]:
     """One run per entry of `correct`, each of two questions: r01 (open loops) answered
     `correct[n]` in run n, r02 (single-fact recall) always right. Or, given each question's
-    outcomes run by run, a run of those questions, each in the tier `tiers` gives it."""
+    outcomes run by run, a run of those questions, each in the tier `tiers` gives it. An
+    outcome of None (`FAILED`) is a question whose agent failed in that run."""
     if not isinstance(correct, Mapping):
         correct = {"r01": correct, "r02": [True] * len(correct)}
     made = []
@@ -101,7 +116,7 @@ def runs(
     return made
 
 
-Y, N = True, False
+Y, N, FAILED = True, False, None
 
 
 def compare(
@@ -168,15 +183,16 @@ def test_the_public_comparison_holds_numbers_only_and_says_whether_the_second_wi
     assert "| open_loops | 1 (few) | 0.83 | 1.00 | -0.167 | 0.333 | yes |" in public
     assert "| single_fact_recall | 1 (few) | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
     assert (
-        "**Passes**: the drop is no larger than the noise floor, overall (-0.083 against "
-        "0.167) and in every category."
+        "**Passes**: no question fell, and the drop is no larger than the noise floor, overall "
+        "(-0.083 against 0.167) and in every category."
     ) in public
     assert "**Fails**" not in public
     assert "| Evidence recall | 0.50 (0.50 to 0.50) | 0.50 (0.50 to 0.50) |" in public
 
 
 def test_a_drop_larger_than_the_noise_floor_fails_the_comparison(tmp_path: Path):
-    # The undreamed wiki's runs never differ, so its floor is 0 and any drop is beyond it.
+    # The undreamed wiki's runs never differ, so its floor is 0, and r01's two wrong answers
+    # are a drop of more than one.
     code, public, _ = compare(
         tmp_path, runs(UNDREAMED_WIKI, [Y] * 6), runs(DREAMED_WIKI, [Y, N, N])
     )
@@ -184,8 +200,14 @@ def test_a_drop_larger_than_the_noise_floor_fails_the_comparison(tmp_path: Path)
     assert code == 0
     assert "| Overall | 2 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
     assert "| open_loops | 1 (few) | 1.00 | 0.33 | 0.667 | 0.000 | no |" in public
-    assert "**Fails**: overall drops by 0.333, more than the noise floor of 0.000." in public
-    assert "**Fails**: open_loops drops by 0.667, more than the noise floor of 0.000." in public
+    assert (
+        "**Fails**: overall drops by 0.333, more than the noise floor of 0.000 and the "
+        "one-answer allowance of 0.167."
+    ) in public
+    assert (
+        "**Fails**: open_loops drops by 0.667, more than the noise floor of 0.000 and the "
+        "one-answer allowance of 0.333."
+    ) in public
     assert "**Passes**" not in public
 
 
@@ -200,8 +222,8 @@ def test_a_drop_inside_the_noise_floor_passes_the_comparison(tmp_path: Path):
     assert "| Overall | 2 (few) | 0.92 | 0.83 | 0.083 | 0.167 | yes |" in public
     assert "| open_loops | 1 (few) | 0.83 | 0.67 | 0.167 | 0.333 | yes |" in public
     assert (
-        "**Passes**: the drop is no larger than the noise floor, overall (0.083 against "
-        "0.167) and in every category."
+        "**Passes**: no question fell, and the drop is no larger than the noise floor, overall "
+        "(0.083 against 0.167) and in every category."
     ) in public
     assert "**Fails**" not in public
 
@@ -209,21 +231,25 @@ def test_a_drop_inside_the_noise_floor_passes_the_comparison(tmp_path: Path):
 def test_a_tier_that_drops_by_more_than_its_noise_floor_fails_though_overall_holds(
     tmp_path: Path,
 ):
-    # r01 (tier 1) falls from 6 of 6 to 2 of 3 and r02 (tier 0) rises from 4 of 6 to 3 of 3,
-    # so overall is level. The undreamed wiki's halves differ only on r02: 1 of 3 against 3 of 3.
+    # r01 (tier 1) falls from 6 of 6 to 1 of 3 and r02 (tier 0) rises from 4 of 6 to 3 of 3,
+    # so overall falls by 0.167. The undreamed wiki's halves differ only on r02, 1 of 3
+    # against 3 of 3, which is 0.333 overall.
     tiers = {"r01": 1, "r02": 0}
     code, public, _ = compare(
         tmp_path,
         runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [N, N, Y, Y, Y, Y]}, tiers=tiers),
-        runs(DREAMED_WIKI, {"r01": [Y, Y, N], "r02": [Y, Y, Y]}, tiers=tiers),
+        runs(DREAMED_WIKI, {"r01": [Y, N, N], "r02": [Y, Y, Y]}, tiers=tiers),
     )
 
     assert code == 0
     assert "overall and in every tier." in public
-    assert "| Overall | 2 (few) | 0.83 | 0.83 | 0.000 | 0.333 | yes |" in public
+    assert "| Overall | 2 (few) | 0.83 | 0.67 | 0.167 | 0.333 | yes |" in public
     assert "| Tier 0 | 1 (few) | 0.67 | 1.00 | -0.333 | 0.667 | yes |" in public
-    assert "| Tier 1 | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
-    assert "**Fails**: tier 1 drops by 0.333, more than the noise floor of 0.000." in public
+    assert "| Tier 1 | 1 (few) | 1.00 | 0.33 | 0.667 | 0.000 | no |" in public
+    assert (
+        "**Fails**: tier 1 drops by 0.667, more than the noise floor of 0.000 and the "
+        "one-answer allowance of 0.333."
+    ) in public
     assert "**Fails**: overall" not in public and "**Passes**" not in public
 
 
@@ -248,10 +274,230 @@ def test_with_tiers_the_categories_are_reported_beside_them_and_decide_nothing(t
     assert "| open_loops | 1 | 1.00 | 0.67 | 0.333 | 0.000 |" in by_category
     assert "| single_fact_recall | 1 | 0.67 | 1.00 | -0.333 | 0.667 |" in by_category
     assert (
-        "**Passes**: the drop is no larger than the noise floor, overall (0.000 against "
-        "0.333) and in every tier."
+        "**Passes**: no question fell, and the drop is no larger than the noise floor, overall "
+        "(0.000 against 0.333) and in every tier."
     ) in public
     assert "**Fails**" not in public
+
+
+FALLEN_TIERS = {"r01": 5, "r02": 5, "r03": 5, "r04": 0}
+FALLEN_FIRST = {
+    "r01": [Y] * 6,
+    "r02": [N, N, N, Y, Y, Y],
+    "r03": [N, N, N, Y, Y, Y],
+    "r04": [Y] * 6,
+}
+FALLEN_SECOND = {"r01": [N] * 3, "r02": [Y] * 3, "r03": [Y] * 3, "r04": [Y] * 3}
+"""A fallen question hidden in its tier's mean (#171): r01 is right in all 6 runs on the
+undreamed wiki and wrong in all 3 on the dreamed one. The rest of tier 5, r02 and r03, are each
+right in 3 of 6 and then 3 of 3, so the tier scores 12 of 18 and then 6 of 9, no drop at all."""
+
+
+def test_a_question_that_falls_in_every_run_fails_the_comparison_though_its_tier_holds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    code, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, FALLEN_FIRST, tiers=FALLEN_TIERS),
+        runs(DREAMED_WIKI, FALLEN_SECOND, tiers=FALLEN_TIERS),
+    )
+
+    assert code == 0
+    # No group drops: the undreamed wiki's own halves fall 0.667 from each other in tier 5.
+    assert "| Overall | 4 (few) | 0.75 | 0.75 | 0.000 | 0.500 | yes |" in public
+    assert "| Tier 0 | 1 (few) | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
+    assert "| Tier 5 | 3 (few) | 0.67 | 0.67 | 0.000 | 0.667 | yes |" in public
+    assert (
+        "- **A fallen question** is one that every run on the undreamed wiki got right and "
+        "every run on the dreamed wiki got wrong."
+    ) in public
+    # The public report counts it, by tier, and doesn't name it.
+    assert "**Fails**: 1 question fell: 1 in tier 5." in public
+    assert "**Passes**" not in public and "drops by" not in public
+    assert "r01" not in public
+    assert "compare-wikis: the dreamed wiki fails;" in capsys.readouterr().out
+
+
+def test_the_public_report_counts_fallen_questions_by_tier_lowest_first(tmp_path: Path):
+    tiers = {"r01": 9, "r02": 5, "r03": 5, "r04": 0}
+    _, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {question: [Y] * 6 for question in tiers}, tiers=tiers),
+        runs(
+            DREAMED_WIKI,
+            {"r01": [N] * 3, "r02": [N] * 3, "r03": [N] * 3, "r04": [Y] * 3},
+            tiers=tiers,
+        ),
+    )
+
+    assert "**Fails**: 3 questions fell: 2 in tier 5, 1 in tier 9." in public
+    # Beside the tiers they took beyond the floor.
+    assert "**Fails**: tier 5 drops by 1.000, more than the noise floor of 0.000" in public
+    for question in tiers:
+        assert question not in public
+
+
+def test_without_tiers_the_public_report_counts_fallen_questions_by_category(tmp_path: Path):
+    _, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [N, N, N, Y, Y, Y]}),
+        runs(DREAMED_WIKI, {"r01": [N] * 3, "r02": [Y] * 3}),
+    )
+
+    assert "**Fails**: 1 question fell: 1 in open_loops." in public
+
+
+def test_the_private_analysis_names_the_fallen_questions_first(tmp_path: Path):
+    _, _, private = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, FALLEN_FIRST, tiers=FALLEN_TIERS),
+        runs(DREAMED_WIKI, FALLEN_SECOND, tiers=FALLEN_TIERS),
+    )
+
+    sections = private.split("\n## ")
+    assert sections[1].startswith("The fallen questions\n")
+    assert (
+        "Right in every run on the undreamed wiki and wrong in every run on the dreamed wiki. "
+        "Any fails the comparison."
+    ) in sections[1]
+    assert "| Question | Category | Tier |" in sections[1]
+    assert "| r01 | open_loops | 5 |" in sections[1]
+    # r02 and r03 rose, and r04 held.
+    assert not any(question in sections[1] for question in ("r02", "r03", "r04"))
+    assert sections[2].startswith("The questions whose score fell\n")
+
+
+def test_the_private_analysis_says_when_no_question_fell_in_every_run(tmp_path: Path):
+    # r01 falls from 6 of 6 to 1 of 3: a long way, and not in every run.
+    _, public, private = compare(
+        tmp_path, runs(UNDREAMED_WIKI, [Y] * 6), runs(DREAMED_WIKI, [N, Y, N])
+    )
+
+    fallen = private[private.index("## The fallen questions") :].split("\n## ")[0]
+    assert "None." in fallen and "r01" not in fallen
+    assert " fell: " not in public
+
+
+def test_a_question_that_failed_to_run_on_the_first_wiki_was_not_right_in_every_run_there(
+    tmp_path: Path,
+):
+    # A failed answer isn't right, as in the question's score: r01 is right in 5 of the
+    # undreamed wiki's 6 runs, so it falls a long way and isn't a fallen question.
+    _, public, private = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {"r01": [Y, Y, FAILED, Y, Y, Y], "r02": [Y] * 6}),
+        runs(DREAMED_WIKI, {"r01": [N] * 3, "r02": [Y] * 3}),
+    )
+
+    assert "| open_loops | 1 (few) | 0.83 | 0.00 | 0.833 | 0.333 | no |" in public
+    assert " fell: " not in public
+    fallen = private[private.index("## The fallen questions") :].split("\n## ")[0]
+    assert "None." in fallen and "r01" not in fallen
+
+
+def test_a_question_that_failed_to_run_on_the_second_wiki_was_not_right_in_that_run(
+    tmp_path: Path,
+):
+    # The same reading on the second wiki: wrong twice and failed once is right in none of
+    # its 3 runs, a score of 0.00, so r01 fell.
+    _, public, private = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [Y] * 6}),
+        runs(DREAMED_WIKI, {"r01": [N, FAILED, N], "r02": [Y] * 3}),
+    )
+
+    assert "| open_loops | 1 (few) | 1.00 | 0.00 | 1.000 | 0.000 | no |" in public
+    assert "**Fails**: 1 question fell: 1 in open_loops." in public
+    assert "| Failed answers (agent or judge) | 0 | 1 |" in public
+    fallen = private[private.index("## The fallen questions") :].split("\n## ")[0]
+    assert "| r01 | open_loops | - |" in fallen
+
+
+ALLOWANCE_TIERS = {f"r{number:02}": 0 if number <= 6 else 9 for number in range(1, 13)}
+"""Twelve questions, r01 to r06 in tier 0 and r07 to r12 in tier 9: the dreamed wiki's 3 runs
+give 18 answers in each tier."""
+
+
+def all_right_but(wrong: Mapping[str, Sequence[bool | None]]) -> list[RunResults]:
+    """The dreamed wiki's 3 runs of `ALLOWANCE_TIERS`, every answer right but those given."""
+    outcomes = {**{question: [Y] * 3 for question in ALLOWANCE_TIERS}, **wrong}
+    return runs(DREAMED_WIKI, outcomes, tiers=ALLOWANCE_TIERS)
+
+
+def test_one_wrong_answer_in_a_tier_the_first_wiki_got_all_right_passes_by_the_allowance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    # The undreamed wiki's runs never differ, so every floor is 0. One wrong answer of the
+    # dreamed wiki's 18 in tier 9 is a drop of 0.056, and of its 36 overall, 0.028.
+    code, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {q: [Y] * 6 for q in ALLOWANCE_TIERS}, tiers=ALLOWANCE_TIERS),
+        all_right_but({"r07": [Y, N, Y]}),
+    )
+
+    assert code == 0
+    assert (
+        "- **The one-answer allowance** is what one of the dreamed wiki's answers moves a "
+        "group's drop by: 1 over the group's questions times the dreamed wiki's 3 runs. A drop "
+        "no larger than it is within, whatever the noise floor, so one answer never fails a "
+        "tier."
+    ) in public
+    assert (
+        "- **It passes** when no question fell and the drop is no larger than the noise floor "
+        "or the one-answer allowance, overall and in every tier."
+    ) in public
+    assert (
+        "| Overall | 12 | 1.00 | 0.97 | 0.028 | 0.000 | only by the allowance (0.028) |" in public
+    )
+    assert "| Tier 0 | 6 | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
+    assert "| Tier 9 | 6 | 1.00 | 0.94 | 0.056 | 0.000 | only by the allowance (0.056) |" in public
+    assert (
+        "**Passes**: no question fell, and the drop is no larger than the noise floor or the "
+        "one-answer allowance, overall and in every tier. Only by the allowance: overall, "
+        "tier 9."
+    ) in public
+    assert "**Fails**" not in public
+    assert "compare-wikis: the dreamed wiki passes;" in capsys.readouterr().out
+
+
+def test_two_wrong_answers_in_a_tier_the_first_wiki_got_all_right_fail_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    code, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, {q: [Y] * 6 for q in ALLOWANCE_TIERS}, tiers=ALLOWANCE_TIERS),
+        all_right_but({"r07": [Y, N, Y], "r08": [Y, Y, N]}),
+    )
+
+    assert code == 0
+    assert "| Overall | 12 | 1.00 | 0.94 | 0.056 | 0.000 | no |" in public
+    assert "| Tier 9 | 6 | 1.00 | 0.89 | 0.111 | 0.000 | no |" in public
+    assert (
+        "**Fails**: tier 9 drops by 0.111, more than the noise floor of 0.000 and the "
+        "one-answer allowance of 0.056."
+    ) in public
+    assert "**Passes**" not in public and " fell: " not in public
+    assert "compare-wikis: the dreamed wiki fails;" in capsys.readouterr().out
+
+
+def test_a_drop_within_the_noise_floor_isnt_marked_as_passing_by_the_allowance(tmp_path: Path):
+    # r07 is wrong in one of the undreamed wiki's 6 runs, so its halves fall one answer of 18
+    # from each other in tier 9. The dreamed wiki's one wrong answer there, 17 of 18 against
+    # 35 of 36, is inside that floor, and the allowance isn't called on.
+    first = {**{q: [Y] * 6 for q in ALLOWANCE_TIERS}, "r07": [N, Y, Y, Y, Y, Y]}
+    _, public, _ = compare(
+        tmp_path,
+        runs(UNDREAMED_WIKI, first, tiers=ALLOWANCE_TIERS),
+        all_right_but({"r08": [Y, N, Y]}),
+    )
+
+    assert "| Overall | 12 | 0.99 | 0.97 | 0.014 | 0.028 | yes |" in public
+    assert "| Tier 9 | 6 | 0.97 | 0.94 | 0.028 | 0.056 | yes |" in public
+    assert (
+        "**Passes**: no question fell, and the drop is no larger than the noise floor, overall "
+        "(0.014 against 0.028) and in every tier."
+    ) in public
+    assert "Only by the allowance" not in public
 
 
 def test_the_report_says_how_the_first_wikis_runs_were_halved(tmp_path: Path):
@@ -287,7 +533,7 @@ def test_a_tier_of_fewer_than_five_questions_is_marked_and_still_counts(tmp_path
     _, public, _ = compare(
         tmp_path,
         runs(UNDREAMED_WIKI, {question: [Y] * 6 for question in tiers}, tiers=tiers),
-        runs(DREAMED_WIKI, {**{q: [Y] * 3 for q in tiers}, "r01": [Y, Y, N]}, tiers=tiers),
+        runs(DREAMED_WIKI, {**{q: [Y] * 3 for q in tiers}, "r01": [Y, N, N]}, tiers=tiers),
     )
 
     # One answer of the dreamed wiki's 3 runs on 4 questions is 1/12 of that tier's score.
@@ -296,10 +542,10 @@ def test_a_tier_of_fewer_than_five_questions_is_marked_and_still_counts(tmp_path
         "of the dreamed wiki's answers moves its drop by 0.083 or more, so its result says "
         "little by itself."
     ) in public
-    assert "| Overall | 6 | 1.00 | 0.94 | 0.056 | 0.000 | no |" in public
+    assert "| Overall | 6 | 1.00 | 0.89 | 0.111 | 0.000 | no |" in public
     assert "| Tier 0 | 5 | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in public
-    assert "| Tier 1 | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in public
-    assert "**Fails**: tier 1 drops by 0.333, more than the noise floor of 0.000." in public
+    assert "| Tier 1 | 1 (few) | 1.00 | 0.33 | 0.667 | 0.000 | no |" in public
+    assert "**Fails**: tier 1 drops by 0.667, more than the noise floor of 0.000 and" in public
 
 
 def test_a_set_with_five_questions_in_every_group_marks_nothing(tmp_path: Path):

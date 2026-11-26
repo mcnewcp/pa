@@ -10,9 +10,10 @@ recorded.
 Two sets of runs that were each given one eval wiki, and not the same one, and asked the same
 questions, also get a wiki comparison (`compare_wikis`): the second wiki against the first,
 such as a dreamed copy against the wiki it was copied from. It is judged against a noise floor
-(#156):
+(#156), with a one-answer allowance and a check for fallen questions (#171):
 
-- **A question's score** on a wiki is the share of that wiki's runs that got it right.
+- **A question's score** on a wiki is the share of that wiki's runs that got it right. An
+  answer that failed (the agent or the judge raised) isn't right.
 - **The drop** is the mean over questions of the first wiki's score minus the second's:
   overall, for each tier, and for each category.
 - **The noise floor** is how far the first wiki falls from itself: the largest drop between
@@ -21,14 +22,22 @@ such as a dreamed copy against the wiki it was copied from. It is judged against
   round; where the first wiki was asked more than twice the second's runs, each pair leaves
   the rest out. Where it was asked fewer than twice, there is no floor, and the comparison
   isn't judged.
-- **The second wiki passes** when the drop is no larger than the noise floor, overall and in
-  every tier. An eval set without tiers is judged overall and in every category instead.
+- **The one-answer allowance** is what one of the second wiki's answers moves a group's drop
+  by: 1 over the group's questions times the second wiki's runs. A tier the first wiki gets
+  entirely right has a floor of zero, and the allowance keeps one wrong answer from failing it.
+- **A fallen question** is one that every run on the first wiki got right and every run on the
+  second got wrong. Its tier's mean can hide it, where other questions in the tier rose.
+- **The second wiki passes** when no question fell, and the drop is no larger than the noise
+  floor or the one-answer allowance, overall and in every tier. An eval set without tiers is
+  judged overall and in every category instead. A report marks a group that is within only by
+  the allowance.
 - **A tier or category of fewer than `FEW_QUESTIONS` questions** counts like any other, and
   the report marks it: one answer moves its drop a long way.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -283,6 +292,12 @@ class QuestionScore:
     def fall(self) -> float:
         return self.first - self.second
 
+    @property
+    def fallen(self) -> bool:
+        """Whether it is a fallen question: right in every run on the first wiki and in none
+        on the second. An answer that failed isn't right, as in its score."""
+        return self.first == 1 and self.second == 0
+
 
 @dataclass(frozen=True)
 class Drop:
@@ -297,6 +312,9 @@ class Drop:
     floor: float | None
     """The noise floor the drop is judged against: the largest drop between any two halves of
     the first wiki's own runs. None where the first wiki was asked too few runs to have one."""
+    allowance: float
+    """The one-answer allowance: what one of the second wiki's answers in the group moves the
+    drop by, 1 over its questions times the second wiki's runs."""
 
     @property
     def drop(self) -> float:
@@ -308,6 +326,20 @@ class Drop:
     def within_floor(self) -> bool | None:
         """Whether the drop is no larger than the noise floor, or None without a floor."""
         return None if self.floor is None else self.drop <= self.floor + EPSILON
+
+    @property
+    def within(self) -> bool | None:
+        """Whether the drop is no larger than the noise floor or the one-answer allowance, so
+        that one answer never fails a group. None without a floor."""
+        if self.within_floor is None:
+            return None
+        return self.within_floor or self.drop <= self.allowance + EPSILON
+
+    @property
+    def only_by_allowance(self) -> bool:
+        """Whether the drop is within by the one-answer allowance and beyond the noise
+        floor."""
+        return self.within is True and self.within_floor is False
 
     @property
     def few(self) -> bool:
@@ -341,15 +373,33 @@ class WikiComparison:
         return comb(asked, half) * comb(asked - half, half) // 2
 
     @property
+    def judged(self) -> tuple[Drop, ...]:
+        """The groups whose drop decides: OVERALL, then the deciding groups."""
+        return (self.overall, *self.deciding)
+
+    @property
     def beyond(self) -> tuple[Drop, ...]:
-        """The deciding groups, OVERALL first, whose drop is larger than the noise floor."""
-        return tuple(g for g in (self.overall, *self.deciding) if g.within_floor is False)
+        """The groups judged whose drop is larger than both the noise floor and the one-answer
+        allowance."""
+        return tuple(group for group in self.judged if group.within is False)
+
+    @property
+    def only_by_allowance(self) -> tuple[Drop, ...]:
+        """The groups judged whose drop is within by the one-answer allowance alone."""
+        return tuple(group for group in self.judged if group.only_by_allowance)
+
+    @property
+    def fallen(self) -> tuple[QuestionScore, ...]:
+        """The fallen questions, in eval set order: each right in every run on the first wiki
+        and wrong in every run on the second."""
+        return tuple(question for question in self.questions if question.fallen)
 
     @property
     def passed(self) -> bool | None:
-        """Whether the drop is no larger than the noise floor, overall and in every tier (or
-        category, without tiers). None where there is no floor to judge by."""
-        return None if self.overall.floor is None else not self.beyond
+        """Whether no question fell and the drop is no larger than the noise floor or the
+        one-answer allowance, overall and in every tier (or category, without tiers). None
+        where there is no floor to judge by."""
+        return None if self.overall.floor is None else not (self.fallen or self.beyond)
 
     @property
     def fell(self) -> tuple[QuestionScore, ...]:
@@ -361,8 +411,8 @@ class WikiComparison:
 def compare_wikis(
     first: Sequence[RunResults], second: Sequence[RunResults]
 ) -> WikiComparison | None:
-    """The second runs' eval wiki against the first's, by the noise-floor rule (see the
-    module's docstring).
+    """The second runs' eval wiki against the first's, by the noise floor, the one-answer
+    allowance and the fallen questions (see the module's docstring).
 
     None unless each set of runs was given one eval wiki throughout, and not the same one (a
     wiki is named by the librarian version that built it and the one that dreamed it), and
@@ -398,6 +448,7 @@ def compare_wikis(
             first=_score(right[0], members),
             second=_score(right[1], members),
             floor=None if floors is None else floors[group],
+            allowance=1 / (len(members) * half),
         )
         for group, members in groups.items()
     ]
@@ -455,7 +506,7 @@ def wiki_comparison_section(first: str, second: str, comparison: WikiComparison)
     first, second = table_cell(first), table_cell(second)
     asked, half = comparison.runs
     kind = "tier" if comparison.tiers else "category"
-    judged = (comparison.overall, *comparison.deciding)
+    judged = comparison.judged
     floor = f"- **The noise floor** is the largest drop between any two halves of {first}'s own "
     if comparison.passed is None:
         floor += (
@@ -481,8 +532,14 @@ def wiki_comparison_section(first: str, second: str, comparison: WikiComparison)
         f"- **The drop** is the mean over questions of {first}'s score minus {second}'s, so a "
         "rise is negative.",
         floor,
-        "- **It passes** when the drop is no larger than the noise floor, overall and in every "
+        f"- **The one-answer allowance** is what one of {second}'s answers moves a group's "
+        f"drop by: 1 over the group's questions times {second}'s {_count(half, 'run')}. A drop "
+        "no larger than it is within, whatever the noise floor, so one answer never fails a "
         f"{kind}.",
+        f"- **A fallen question** is one that every run on {first} got right and every run on "
+        f"{second} got wrong.",
+        "- **It passes** when no question fell and the drop is no larger than the noise floor "
+        f"or the one-answer allowance, overall and in every {kind}.",
     ]
     if any(group.few for group in judged):
         lines.append(
@@ -497,26 +554,40 @@ def wiki_comparison_section(first: str, second: str, comparison: WikiComparison)
         "|---|---|---|---|---|---|---|",
     ]
     for group in judged:
-        within = {None: "n/a", True: "yes", False: "no"}[group.within_floor]
+        within = {None: "n/a", True: "yes", False: "no"}[group.within]
+        if group.only_by_allowance:
+            within = f"only by the allowance ({_thousandths(group.allowance)})"
         few = " (few)" if group.few else ""
         lines.append(
             f"| {table_cell(group.group)} | {group.questions}{few} | {_cells(group)} | {within} |"
         )
     lines.append("")
-    if comparison.passed:
+    allowed = comparison.only_by_allowance
+    if comparison.passed and allowed:
+        lines.append(
+            "**Passes**: no question fell, and the drop is no larger than the noise floor or "
+            f"the one-answer allowance, overall and in every {kind}. Only by the allowance: "
+            f"{', '.join(_named(group) for group in allowed)}."
+        )
+    elif comparison.passed:
         overall = comparison.overall
         lines.append(
-            "**Passes**: the drop is no larger than the noise floor, overall "
-            f"({_thousandths(overall.drop)} against {_thousandths(overall.floor)}) and in every "
-            f"{kind}."
+            "**Passes**: no question fell, and the drop is no larger than the noise floor, "
+            f"overall ({_thousandths(overall.drop)} against {_thousandths(overall.floor)}) and "
+            f"in every {kind}."
         )
     if comparison.passed is None:
         lines.append("**Not judged**: without a noise floor, a drop can't be told from noise.")
+    elif comparison.fallen:
+        lines.append(
+            f"**Fails**: {_count(len(comparison.fallen), 'question')} fell: "
+            f"{_fallen_by_group(comparison)}."
+        )
     for group in comparison.beyond:
         lines.append(
-            f"**Fails**: {group.group[0].lower()}{group.group[1:]} drops by "
-            f"{_thousandths(group.drop)}, more than the noise floor of "
-            f"{_thousandths(group.floor)}."
+            f"**Fails**: {_named(group)} drops by {_thousandths(group.drop)}, more than the "
+            f"noise floor of {_thousandths(group.floor)} and the one-answer allowance of "
+            f"{_thousandths(group.allowance)}."
         )
     if comparison.tiers:
         lines += [
@@ -534,6 +605,22 @@ def wiki_comparison_section(first: str, second: str, comparison: WikiComparison)
             for group in comparison.categories
         ]
     return lines
+
+
+def _named(group: Drop) -> str:
+    """A group as a sentence names it: overall, tier 3, or the category."""
+    return f"{group.group[0].lower()}{group.group[1:]}"
+
+
+def _fallen_by_group(comparison: WikiComparison) -> str:
+    """How many questions fell in each tier that has one, lowest first; in each category, for
+    an eval set without tiers. Counts only: a report of numbers names no question."""
+    fallen = sorted(comparison.fallen, key=lambda question: question.tier or 0)
+    groups = Counter(
+        question.category if question.tier is None else f"tier {question.tier}"
+        for question in fallen
+    )
+    return ", ".join(f"{number} in {group}" for group, number in groups.items())
 
 
 def _cells(group: Drop) -> str:
