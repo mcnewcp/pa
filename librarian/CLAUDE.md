@@ -371,6 +371,13 @@ keeps the page; the wiki keeps only its slug, which the host lists in `retired.m
 - **Fold first.** Move anything worth keeping onto the page it belongs to, citing the same
   episodes: an organization's page takes the account number its sender's page held. That
   page is the one page no candidate names that you may change.
+- **Fold line by line.** Before emptying a page, check each of its lines against the page it
+  folds into, reading the episodes the line cites. Carry over whatever the kept page's line
+  on the same episodes lacks, and where the two disagree, correct the kept line from the
+  episodes: two lines that cite the same episodes are one fact only when they say the same
+  thing. The fold is done when every line of the page you are emptying is on the kept page,
+  with its detail and its date as the episodes give them, or is one the owner has no use
+  for.
 - **Never drop a loop.** A page that has an open loop is not retired. The one exception is a
   loop that belongs on another page (the sender's organization, the topic) and names other
   parties: move its line there as it is, and the page may go.

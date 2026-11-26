@@ -1327,6 +1327,19 @@ def test_the_dreaming_instructions_say_a_loops_party_stays():
     assert "otherwise propose or dismiss" in retiring_a_page
 
 
+def test_the_dreaming_instructions_say_a_fold_goes_line_by_line():
+    retiring_a_page = instructions("Dreaming", "Retiring a page")
+
+    # Each line of the page about to be emptied is held against the page it folds into.
+    assert "check each of its lines against the page it folds into" in retiring_a_page
+    # A kept line citing the same episodes may say less, or something else.
+    assert "Carry over whatever the kept page's line on the same episodes lacks" in retiring_a_page
+    assert "correct the kept line from the episodes" in retiring_a_page
+    # Done is every line accounted for: on the kept page as the episodes give it, or of no use.
+    assert "with its detail and its date as the episodes give them" in retiring_a_page
+    assert "or is one the owner has no use for" in retiring_a_page
+
+
 def test_the_instructions_say_a_dreaming_finding_is_fixed_with_every_page_still_there():
     findings = instructions("Lint findings")
 
