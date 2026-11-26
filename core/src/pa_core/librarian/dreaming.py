@@ -19,7 +19,8 @@ fails. It differs in what it asks and what it records:
 - the session may retire a page, by emptying it and naming its slug in an applied outcome: the
   host removes the page and lists the slug in `retired.md`, which only the host writes
   (`pa_core.librarian.retirement`). A page that an open loop on any page names as a party
-  is never retired;
+  is never retired, by the wiki as last committed and by the wiki as the session left it:
+  the loop is closed first, as its line stands, or the page stays;
 - the session may merge a page into another only to settle a duplicate candidate that names
   both. Those are the two ways a dreaming run takes a page out of the wiki: an emptied page
   that is neither fails lint, and a merge under any other candidate resumes the session to
@@ -118,6 +119,7 @@ from pa_core.librarian.wiki import (
     PAGE_FOLDERS,
     PROPOSALS,
     RETIRED,
+    Loop,
     Page,
     Proposal,
     citations,
@@ -611,22 +613,27 @@ class _Retirements:
 
         A retirement can't be carried out when its slug had no page as last committed, when
         the page still has content, when the page held an open loop that no page holds now,
-        open or closed, and when an open loop on any page, as the session left the wiki, names
-        the slug as a party. A loop is never dropped with its page, though it may move to the
-        page it belongs on, and a loop's party is never retired, wherever the loop is. The
-        page of such a retirement stays as the session left it. A retired page its outcome
-        doesn't name among its `pages` goes, and is a problem too.
+        open or closed, and when an open loop names the slug as a party: one on any page as
+        the session left the wiki, or one on any page as last committed that no page now
+        holds closed as its line stood. A loop is never dropped with its page, though it may
+        move to the page it belongs on; and a loop's party is never retired, wherever the
+        loop is, nor made retirable by rewriting the loop, since a loop keeps its parties
+        until an episode closes it. The page of such a retirement stays as the session left
+        it. A retired page its outcome doesn't name among its `pages` goes, and is a problem
+        too.
         """
         problems: list[str] = []
         retiring: list[str] = []
         left = pages(self._tree)
-        carried = [set(loop.citations) for page in left for loop in page.loops]
+        loops = [loop for page in left for loop in page.loops]
+        carried = [set(loop.citations) for loop in loops]
+        closed = [replace(loop, closed=None) for loop in loops if not loop.is_open]
         owed = open_loop_holders(left)
         for outcome in reported:
             if not isinstance(outcome, Applied):
                 continue
             for slug in outcome.retired:
-                found = self._retire(slug, carried, owed.get(slug, ()))
+                found = self._retire(slug, carried, owed.get(slug, ()), closed)
                 if isinstance(found, str):
                     problems.append(f"{outcome.candidate} retires `{slug}`, {found}")
                     continue
@@ -643,12 +650,13 @@ class _Retirements:
         return problems
 
     def _retire(
-        self, slug: str, carried: Sequence[set[str]], owed: Sequence[str]
+        self, slug: str, carried: Sequence[set[str]], owed: Sequence[str], closed: Sequence[Loop]
     ) -> list[str] | str:
         """Removes the emptied pages of `slug`, and returns their paths; or, when the
         retirement can't be carried out, why not. `carried` is the opening citations of each
-        loop the wiki's pages hold now, and `owed` the pages now holding an open loop that
-        names `slug` as a party."""
+        loop the wiki's pages hold now, `owed` the pages now holding an open loop that names
+        `slug` as a party, and `closed` each loop they now hold closed, as it was while
+        open."""
         paths = [path for folder in PAGE_FOLDERS if (path := f"{folder}/{slug}.md") in self._before]
         if not paths:
             return (
@@ -662,7 +670,7 @@ class _Retirements:
                 "content at all, and the host removes it"
             )
         for page in self._was:
-            for line in _open_loop_lines(page) if page.path in emptied else ():
+            for line, _ in _open_loops(page) if page.path in emptied else ():
                 if not any(set(citations(line)) <= held for held in carried):
                     return (
                         f"but {page.path} held an open loop that is now on no page: `{line}`. "
@@ -676,6 +684,16 @@ class _Retirements:
                 f"loop's party is never retired: write {emptied[0]} back as it was and propose "
                 "or dismiss the candidate"
             )
+        for page in self._was:
+            for line, loop in _open_loops(page):
+                if slug in (loop.owed_by, loop.owed_to) and loop not in closed:
+                    return (
+                        f"but an open loop on {page.path} named it as a party when this run "
+                        f"started, and no page holds that loop closed now: `{line}`. A loop's "
+                        "party is never retired, and a loop keeps its parties: write the loop "
+                        f"back as it was, and {emptied[0]} too, and propose or dismiss the "
+                        "candidate"
+                    )
         for path in emptied:
             file = self._tree / path
             if file.is_file():
@@ -688,11 +706,11 @@ def _has_content(file: Path) -> bool:
     return file.is_file() and bool(file.read_bytes().strip())
 
 
-def _open_loop_lines(page: Page) -> list[str]:
-    """The lines of `page`'s open loops, as written."""
+def _open_loops(page: Page) -> list[tuple[str, Loop]]:
+    """`page`'s open loops, each with its line as written."""
     section = page.section(OPEN_LOOPS)
     return [
-        line
+        (line, loop)
         for _, line in (section.lines if section else ())
         if (loop := parse_loop(line)) is not None and loop.is_open
     ]

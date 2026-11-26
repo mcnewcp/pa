@@ -617,6 +617,110 @@ def test_a_page_another_pages_open_loop_names_as_a_party_is_never_retired(data_r
     assert RETIRED not in before
 
 
+SETTLED = f"{PRICE_SHEET.replace('- [ ]', '- [x]')} · closed {days_ago(1)} [ep:{HOTEL}]"
+"""The listing's loop closed as its line stands: Nina is still the party who owed."""
+
+# A session that retires Nina's page and leaves the open loop naming her as someone else's:
+# the pages the wiki starts with and its links, the page it rewrites, the page that held the
+# loop and its line, and the outcome it reports for the agency's page, where the wiki has one.
+RENAMED_PARTIES = {
+    "on another page": (
+        pages_with_a_listing(),
+        LISTING_LINKS,
+        {
+            "write": LISTING,
+            "text": listing_page().replace("[[nina-park]] → me", "[[david-kim]] → me"),
+        },
+        (LISTING, PRICE_SHEET),
+        [],
+    ),
+    "on another page, and closed": (
+        pages_with_a_listing(),
+        LISTING_LINKS,
+        {
+            "write": LISTING,
+            "text": listing_page().replace(
+                PRICE_SHEET, SETTLED.replace("[[nina-park]] → me", "[[david-kim]] → me")
+            ),
+        },
+        (LISTING, PRICE_SHEET),
+        [],
+    ),
+    "on its own page, and moved to another": (
+        pages_with_a_loop(),
+        LINKS,
+        {
+            "write": LAKEVIEW,
+            "text": page(
+                "organization",
+                "Lakeview Realty",
+                loops=[ASK.replace("me → [[nina-park]]", "me → [[lakeview-realty]]")],
+            ),
+        },
+        (NINA, ASK),
+        [dismissed("c02")],
+    ),
+}
+
+
+@pytest.mark.parametrize("loop", RENAMED_PARTIES, ids=list(RENAMED_PARTIES))
+def test_a_page_isnt_retired_by_giving_the_loop_that_names_it_another_party(
+    data_root: Path, loop: str
+):
+    written, links, rewritten, (held, line), others = RENAMED_PARTIES[loop]
+    run_with_pages(data_root, written, links)
+    before = wiki_files(data_root)
+    # Resumed, the session writes every page back and dismisses the candidate.
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            rewritten,
+            reporting(retiring(pages=[NINA, rewritten["write"]]), *others),
+        ],
+        dreaming_resume=[
+            *({"write": path, "text": text} for path, text in written.items()),
+            reporting(dismissed(), *others),
+        ],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"c01 retires `nina-park`, but an open loop on {held} named it as a party when this run "
+        f"started, and no page holds that loop closed now: `{line}`. A loop's party is never "
+        f"retired, and a loop keeps its parties: write the loop back as it was, and {NINA} too, "
+        "and propose or dismiss the candidate"
+    ) in resumed["prompt"]
+    assert wiki_files(data_root) == before
+    assert RETIRED not in before
+
+
+def test_a_page_may_be_retired_once_the_loop_naming_it_is_closed_as_its_line_stands(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    # An episode settles what she owed: the loop is closed in this run, still in her name.
+    settled = listing_page().replace(PRICE_SHEET, SETTLED)
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": LISTING, "text": settled},
+            reporting(retiring(pages=[NINA, LISTING])),
+        ],
+    )
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    files = wiki_files(data_root)
+    assert NINA not in files
+    assert files[LISTING] == settled
+    assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+
+
 MERGED_LISTING = listing_page(
     aliases="[Nina Park]", notes=[f"Nina Park sends the listing's mail [ep:{HOTEL}]."]
 )
