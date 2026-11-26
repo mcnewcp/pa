@@ -25,6 +25,8 @@ NEVER_FOUND = "obsidian_d00dfeedfacecafe"
 PRIVATE = (QUESTION, EXPECTED, ANSWER, REASONING, FOUND, NEVER_FOUND, "r01", "r02")
 """What only the private analysis may hold."""
 
+COMMIT, LATER_COMMIT = "4377b4857b17", "9c0d1e2f3a4b"
+"""The commit of the workspace the runs' code came from, and a later one."""
 BUILT, DREAMED = "0d5e1a2b3c4d", "7f6e5d4c3b2a"
 UNDREAMED_WIKI = WikiResult(librarian_version=BUILT)
 DREAMED_WIKI = WikiResult(librarian_version=BUILT, dreaming_version=DREAMED)
@@ -81,11 +83,13 @@ def runs(
     tiers: Mapping[str, int] | None = None,
     configuration: str = "files-plus-wiki",
     cut: CutResult | None = CUT,
+    commit: str | None = COMMIT,
 ) -> list[RunResults]:
     """One run per entry of `correct`, each of two questions: r01 (open loops) answered
     `correct[n]` in run n, r02 (single-fact recall) always right. Or, given each question's
     outcomes run by run, a run of those questions, each in the tier `tiers` gives it. An
-    outcome of None (`FAILED`) is a question whose agent failed in that run."""
+    outcome of None (`FAILED`) is a question whose agent failed in that run. Each run
+    records `commit` as the commit it was run at, or none."""
     if not isinstance(correct, Mapping):
         correct = {"r01": correct, "r02": [True] * len(correct)}
     made = []
@@ -97,7 +101,7 @@ def runs(
         made.append(
             RunResults(
                 configuration=configuration,
-                setup={"commit": "4377b4857b17", "agent model": "sonnet"},
+                setup={**({"commit": commit} if commit else {}), "agent model": "sonnet"},
                 wiki=wiki,
                 as_of=AS_OF,
                 cut=cut,
@@ -378,39 +382,95 @@ def test_the_private_analysis_says_when_no_question_fell_in_every_run(tmp_path: 
     assert " fell: " not in public
 
 
-def test_a_question_that_failed_to_run_on_the_first_wiki_was_not_right_in_every_run_there(
-    tmp_path: Path,
+CUT_SHORT_TIERS = {f"r{number:02}": 0 for number in range(1, 7)}
+# Comparisons in which an answer failed to run: each wiki's outcomes, the tiers, what the
+# reports count, and a row of the public report's table.
+NOT_JUDGED = {
+    # A fallen question, had its one failed answer run and been right: failed, it isn't right
+    # in every run on the undreamed wiki, and its halves fall 0.333 from each other.
+    "an answer on the first wiki": (
+        {"r01": [Y, Y, FAILED, Y, Y, Y], "r02": [Y] * 6},
+        {"r01": [N] * 3, "r02": [Y] * 3},
+        None,
+        "1 of the undreamed wiki's 12 answers failed to run and 0 of the dreamed wiki's 6",
+        "| open_loops | 1 (few) | 0.83 | 0.00 | 0.833 | 0.333 | no |",
+    ),
+    "an answer on the second wiki": (
+        {"r01": [Y] * 6, "r02": [Y] * 6},
+        {"r01": [N, FAILED, N], "r02": [Y] * 3},
+        None,
+        "0 of the undreamed wiki's 12 answers failed to run and 1 of the dreamed wiki's 6",
+        "| open_loops | 1 (few) | 1.00 | 0.00 | 1.000 | 0.000 | no |",
+    ),
+    # A whole run of the undreamed wiki's cut short, as by a usage limit. It widens that
+    # wiki's noise floor to 0.333, which the dreamed wiki's drop of 5 answers in 18 is within,
+    # and keeps r01, wrong in every run on the dreamed wiki, from counting as fallen.
+    "a run cut short on the first wiki": (
+        {question: [Y, Y, FAILED, Y, Y, Y] for question in CUT_SHORT_TIERS},
+        {**{question: [Y] * 3 for question in CUT_SHORT_TIERS}, "r01": [N] * 3, "r02": [N, N, Y]},
+        CUT_SHORT_TIERS,
+        "6 of the undreamed wiki's 36 answers failed to run and 0 of the dreamed wiki's 18",
+        "| Tier 0 | 6 | 0.83 | 0.72 | 0.111 | 0.333 | yes |",
+    ),
+}
+
+
+@pytest.mark.parametrize("failed", NOT_JUDGED, ids=list(NOT_JUDGED))
+def test_a_comparison_holding_an_answer_that_failed_to_run_isnt_judged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], failed: str
 ):
-    # A failed answer isn't right, as in the question's score: r01 is right in 5 of the
-    # undreamed wiki's 6 runs, so it falls a long way and isn't a fallen question.
-    _, public, private = compare(
-        tmp_path,
-        runs(UNDREAMED_WIKI, {"r01": [Y, Y, FAILED, Y, Y, Y], "r02": [Y] * 6}),
-        runs(DREAMED_WIKI, {"r01": [N] * 3, "r02": [Y] * 3}),
+    first, second, tiers, counted, row = NOT_JUDGED[failed]
+
+    code, public, private = compare(
+        tmp_path, runs(UNDREAMED_WIKI, first, tiers=tiers), runs(DREAMED_WIKI, second, tiers=tiers)
     )
 
-    assert "| open_loops | 1 (few) | 0.83 | 0.00 | 0.833 | 0.333 | no |" in public
-    assert " fell: " not in public
-    fallen = private[private.index("## The fallen questions") :].split("\n## ")[0]
-    assert "None." in fallen and "r01" not in fallen
+    assert code == 0
+    assert (
+        f"**Not judged**: {counted}. An answer that failed to run is neither right nor wrong, so "
+        "those runs need running again."
+    ) in public
+    assert "**Passes**" not in public and "**Fails**" not in public
+    # The tables are still there to read, and name no question.
+    assert row in public
+    for question in (*first, *second):
+        assert question not in public
+    assert (
+        f"compare-wikis: the dreamed wiki isn't judged: {counted}, so those runs need running "
+        "again; public "
+    ) in capsys.readouterr().out
+    assert f"**Not judged**: {counted}." in private.split("\n## ")[1]
 
 
-def test_a_question_that_failed_to_run_on_the_second_wiki_was_not_right_in_that_run(
+def test_the_report_says_a_comparison_holding_an_answer_that_failed_to_run_isnt_judged(
     tmp_path: Path,
 ):
-    # The same reading on the second wiki: wrong twice and failed once is right in none of
-    # its 3 runs, a score of 0.00, so r01 fell.
-    _, public, private = compare(
-        tmp_path,
-        runs(UNDREAMED_WIKI, {"r01": [Y] * 6, "r02": [Y] * 6}),
-        runs(DREAMED_WIKI, {"r01": [N, FAILED, N], "r02": [Y] * 3}),
-    )
+    _, public, _ = compare(tmp_path, runs(UNDREAMED_WIKI, [Y] * 6), runs(DREAMED_WIKI, [Y] * 3))
 
-    assert "| open_loops | 1 (few) | 1.00 | 0.00 | 1.000 | 0.000 | no |" in public
-    assert "**Fails**: 1 question fell: 1 in open_loops." in public
-    assert "| Failed answers (agent or judge) | 0 | 1 |" in public
-    fallen = private[private.index("## The fallen questions") :].split("\n## ")[0]
-    assert "| r01 | open_loops | - |" in fallen
+    assert (
+        "- **An answer that failed to run** is neither right nor wrong: a comparison holding "
+        "one, on either wiki, isn't judged."
+    ) in public
+    assert "| Failed answers (agent or judge) | 0 | 0 |" in public
+    assert "**Not judged**" not in public
+
+
+def test_compare_doesnt_judge_two_wikis_when_an_answer_failed_to_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    first, second = tmp_path / "first", tmp_path / "second"
+    lay_runs(first, runs(UNDREAMED_WIKI, {"r01": [Y, Y, FAILED, Y, Y, Y], "r02": [Y] * 6}))
+    lay_runs(second, runs(DREAMED_WIKI, {"r01": [N] * 3, "r02": [Y] * 3}))
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert (
+        f"**Not judged**: 1 of {first}'s 12 answers failed to run and 0 of {second}'s 6. An "
+        "answer that failed to run is neither right nor wrong, so those runs need running again."
+    ) in comparison
+    assert "| open_loops | 1 (few) | 0.83 | 0.00 | 0.833 | 0.333 | no |" in comparison
+    assert "**Passes**" not in comparison and "**Fails**" not in comparison
 
 
 ALLOWANCE_TIERS = {f"r{number:02}": 0 if number <= 6 else 9 for number in range(1, 13)}
@@ -697,11 +757,33 @@ REFUSED = {
         runs(DREAMED_WIKI, {"r01": [Y] * 3, "r03": [Y] * 3}),
         "the runs didn't all ask the same questions",
     ),
+    "a wiki's runs at two commits": (
+        [*runs(UNDREAMED_WIKI, [Y] * 5), *runs(UNDREAMED_WIKI, [Y], commit=LATER_COMMIT)],
+        runs(DREAMED_WIKI, [Y] * 3),
+        f"--first holds runs at more than one commit ({COMMIT}, {LATER_COMMIT})",
+    ),
+    "a run that records no commit": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        [*runs(DREAMED_WIKI, [Y] * 2), *runs(DREAMED_WIKI, [Y], commit=None)],
+        "--second holds a run that doesn't record the commit it was run at",
+    ),
+    "each wiki's runs at a commit of its own": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3, commit=LATER_COMMIT),
+        f"the runs weren't all run at the same commit ({COMMIT}, {LATER_COMMIT})",
+    ),
+    # The commit alone doesn't say what such a run ran.
+    "a run with uncommitted changes among runs without": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3, commit=f"{COMMIT} (with uncommitted changes)"),
+        "the runs weren't all run at the same commit "
+        f"({COMMIT}, {COMMIT} (with uncommitted changes))",
+    ),
 }
 
 
 @pytest.mark.parametrize("refused", REFUSED, ids=list(REFUSED))
-def test_runs_that_dont_compare_two_wikis_over_one_cut_are_refused(
+def test_runs_that_dont_compare_two_wikis_over_one_cut_at_one_commit_are_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], refused: str
 ):
     first, second, reason = REFUSED[refused]

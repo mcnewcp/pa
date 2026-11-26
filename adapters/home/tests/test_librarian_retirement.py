@@ -617,6 +617,110 @@ def test_a_page_another_pages_open_loop_names_as_a_party_is_never_retired(data_r
     assert RETIRED not in before
 
 
+SETTLED = f"{PRICE_SHEET.replace('- [ ]', '- [x]')} · closed {days_ago(1)} [ep:{HOTEL}]"
+"""The listing's loop closed as its line stands: Nina is still the party who owed."""
+
+# A session that retires Nina's page and leaves the open loop naming her as someone else's:
+# the pages the wiki starts with and its links, the page it rewrites, the page that held the
+# loop and its line, and the outcome it reports for the agency's page, where the wiki has one.
+RENAMED_PARTIES = {
+    "on another page": (
+        pages_with_a_listing(),
+        LISTING_LINKS,
+        {
+            "write": LISTING,
+            "text": listing_page().replace("[[nina-park]] → me", "[[david-kim]] → me"),
+        },
+        (LISTING, PRICE_SHEET),
+        [],
+    ),
+    "on another page, and closed": (
+        pages_with_a_listing(),
+        LISTING_LINKS,
+        {
+            "write": LISTING,
+            "text": listing_page().replace(
+                PRICE_SHEET, SETTLED.replace("[[nina-park]] → me", "[[david-kim]] → me")
+            ),
+        },
+        (LISTING, PRICE_SHEET),
+        [],
+    ),
+    "on its own page, and moved to another": (
+        pages_with_a_loop(),
+        LINKS,
+        {
+            "write": LAKEVIEW,
+            "text": page(
+                "organization",
+                "Lakeview Realty",
+                loops=[ASK.replace("me → [[nina-park]]", "me → [[lakeview-realty]]")],
+            ),
+        },
+        (NINA, ASK),
+        [dismissed("c02")],
+    ),
+}
+
+
+@pytest.mark.parametrize("loop", RENAMED_PARTIES, ids=list(RENAMED_PARTIES))
+def test_a_page_isnt_retired_by_giving_the_loop_that_names_it_another_party(
+    data_root: Path, loop: str
+):
+    written, links, rewritten, (held, line), others = RENAMED_PARTIES[loop]
+    run_with_pages(data_root, written, links)
+    before = wiki_files(data_root)
+    # Resumed, the session writes every page back and dismisses the candidate.
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            rewritten,
+            reporting(retiring(pages=[NINA, rewritten["write"]]), *others),
+        ],
+        dreaming_resume=[
+            *({"write": path, "text": text} for path, text in written.items()),
+            reporting(dismissed(), *others),
+        ],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"c01 retires `nina-park`, but an open loop on {held} named it as a party when this run "
+        f"started, and no page holds that loop closed now: `{line}`. A loop's party is never "
+        f"retired, and a loop keeps its parties: write the loop back as it was, and {NINA} too, "
+        "and propose or dismiss the candidate"
+    ) in resumed["prompt"]
+    assert wiki_files(data_root) == before
+    assert RETIRED not in before
+
+
+def test_a_page_may_be_retired_once_the_loop_naming_it_is_closed_as_its_line_stands(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    # An episode settles what she owed: the loop is closed in this run, still in her name.
+    settled = listing_page().replace(PRICE_SHEET, SETTLED)
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": LISTING, "text": settled},
+            reporting(retiring(pages=[NINA, LISTING])),
+        ],
+    )
+
+    assert dream() == 0
+
+    assert len(sessions(data_root, "dreaming")) == 1
+    files = wiki_files(data_root)
+    assert NINA not in files
+    assert files[LISTING] == settled
+    assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+
+
 MERGED_LISTING = listing_page(
     aliases="[Nina Park]", notes=[f"Nina Park sends the listing's mail [ep:{HOTEL}]."]
 )
@@ -688,6 +792,40 @@ def test_a_merge_taken_back_only_by_its_alias_leaves_the_emptied_page_to_fail(
     assert f"{NINA}:1: bad frontmatter" in error
     assert "The dreaming run was discarded: the wiki is as last committed." in error
     assert tree_state(data_root / "wiki") == before
+
+
+def test_a_page_the_host_removed_as_retired_is_still_held_to_a_duplicate_when_merged_on_a_resume(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root)
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    # First her page is retired under an outcome that also names the wedding's page, which
+    # nothing changed: the host has removed her page when it resumes the session. Resumed, the
+    # session gives the wedding's page her name as an alias, and reports the same.
+    both = reporting(retiring(pages=[NINA, WEDDING]))
+    merged = page(
+        "topic", "Wedding", aliases="[Nina Park]", state="The hotel block closes on Oct 9"
+    )
+    script(
+        data_root,
+        dreaming=[EMPTIED, both],
+        dreaming_resume=[{"write": WEDDING, "text": merged}, both],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    attempts = sessions(data_root, "dreaming")
+    assert f"c01 names {WEDDING}, which this session didn't change" in attempts[1]["prompt"]
+    told = (
+        f"c01 merges {NINA} into {WEDDING}, but isn't a `duplicate` candidate that names both pages"
+    )
+    assert told in attempts[2]["prompt"]
+    error = run_error(data_root)
+    assert told in error
+    assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
 
 
 def test_a_page_merged_away_that_no_outcome_names_resumes_the_session(data_root: Path):
@@ -1103,6 +1241,31 @@ def test_the_hosts_own_writes_to_retired_md_are_never_blamed_on_a_resumed_sessio
     error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "retired.md" not in error
+
+
+def test_a_resumed_session_that_writes_retired_md_over_the_hosts_list_fails_the_run(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    before = tree_state(data_root / "wiki")
+    # Her page is retired, with no outcome for the agency's, so the host has listed her when
+    # it resumes the session. Resumed, the session lists the agency under her itself.
+    listed = retired_file(f"- nina-park · retired {TODAY}", f"- lakeview-realty · retired {TODAY}")
+    script(
+        data_root,
+        dreaming=[EMPTIED, reporting(retiring())],
+        dreaming_resume=[
+            {"write": RETIRED, "text": listed},
+            reporting(retiring(), dismissed("c02")),
+        ],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    assert len(sessions(data_root, "dreaming")) == 2
+    assert "the dreaming session changed retired.md, outside the pages" in run_error(data_root)
+    assert tree_state(data_root / "wiki") == before
 
 
 def retire_nina_at_the_threshold(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

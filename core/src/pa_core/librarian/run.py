@@ -13,7 +13,7 @@ asked the owner), and may change that file in one way: by resolving a proposal t
 answered. Then the host drops from `retired.md` each retired slug that has a page again,
 rewrites links to aliases, regenerates `index.md`,
 lints the whole wiki once more, and commits it with a message recording the run and lint's
-warnings. Nothing with a lint error is ever committed.
+warnings. A librarian run never commits a wiki with a lint error.
 
 A wiki can start a run with lint errors already committed (a rule tightened since, or a seeded
 wiki). Consolidation is handed those in the pages, and runs for them even when there's nothing

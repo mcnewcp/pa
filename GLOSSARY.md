@@ -223,11 +223,11 @@ A question's grade of difficulty in an eval set: a whole number from 0, the easi
 _Avoid_: Level, difficulty, bucket
 
 **Noise floor**:
-How far an eval wiki's score falls from itself: the largest drop between any two halves of its own runs, a half being as many runs as the wiki compared against it was asked. A second eval wiki, such as a dreamed one, passes its comparison with the first when no question fell and its drop is no larger than the first's noise floor, overall and in every tier. One answer never fails a tier: a drop no larger than the one-answer allowance, which is what one of the second wiki's answers moves that tier's drop by, is within whatever the floor, and the report marks it.
+How far an eval wiki's score falls from itself: the largest drop between any two halves of its own runs, a half being as many runs as the wiki compared against it was asked. A second eval wiki, such as a dreamed one, passes its comparison with the first when no question fell and its drop is no larger than the first's noise floor, overall and in every tier. One answer never fails a tier: a drop no larger than the one-answer allowance, which is what one of the second wiki's answers moves that tier's drop by, is within whatever the floor, and the report marks it. A comparison in which any answer failed to run, on either wiki, isn't judged: it neither passes nor fails until those runs are run again, since a failed answer on the first wiki would widen its noise floor.
 _Avoid_: Run-to-run spread (that's a score's lowest run to its highest, which a difference between eval configurations is read against), margin, tolerance
 
 **Fallen question**:
-A question that every run on the first eval wiki of a comparison got right and every run on the second got wrong. One fails the comparison whatever its tier's drop, since questions that rose in the same tier can hide it in the tier's mean. An answer that failed isn't right, as in a score. The public report counts fallen questions by tier, and the private one names them.
+A question that every run on the first eval wiki of a comparison got right and every run on the second got wrong. One fails the comparison whatever its tier's drop, since questions that rose in the same tier can hide it in the tier's mean. An answer that failed to run is neither right nor wrong, so a comparison holding one isn't judged, and none keeps a question from falling or makes one fall. The public report counts fallen questions by tier, and the private one names them.
 _Avoid_: Regression, flipped question, a question whose score fell (that's any lower score, by any amount)
 
 **Eval configuration**:
