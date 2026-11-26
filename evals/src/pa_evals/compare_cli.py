@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from pa_core.atomic import write_atomically
-from pa_evals.comparison import ComparisonError, load_runs, render_comparison
+from pa_evals.comparison import ComparisonError, failed_to_run, load_runs, render_comparison
 from pa_evals.real_data import require_private
 from pa_evals.wiki_comparison import check_wiki_runs, render_private, render_public, wiki_runs
 
@@ -42,7 +42,9 @@ def add_compare_wikis_command(commands: Any) -> None:
         "set (every category, for a set without tiers): the largest drop between any two "
         "halves of the first wiki's own runs. A drop of one of the second wiki's answers is "
         "allowed whatever the floor. So each wiki needs at least 3 runs, and the first at "
-        "least twice as many as the second. A wiki's runs may be in several run directories.",
+        "least twice as many as the second. A comparison in which any answer failed to run, "
+        "on either wiki, isn't judged: the reports are written and say how many failed, and "
+        "those runs need running again. A wiki's runs may be in several run directories.",
     )
     compare.add_argument("--first", type=Path, required=True, nargs="+", metavar="RUN_DIR")
     compare.add_argument("--second", type=Path, required=True, nargs="+", metavar="RUN_DIR")
@@ -65,7 +67,11 @@ def _compare_wikis(args: argparse.Namespace) -> int:
     public = render_public(runs)
     write_atomically(private, render_private(runs).encode(), mode=0o600)
     write_atomically(args.public, public.encode())
-    outcome = "passes" if runs.comparison.passed else "fails"
+    if runs.comparison.passed is None:
+        failed = failed_to_run(*runs.labels, runs.comparison)
+        outcome = f"isn't judged: {failed}, so those runs need running again"
+    else:
+        outcome = "passes" if runs.comparison.passed else "fails"
     print(f"compare-wikis: {runs.labels[1]} {outcome}; public {args.public}, private {private}")
     return 0
 

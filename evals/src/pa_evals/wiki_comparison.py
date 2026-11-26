@@ -10,6 +10,10 @@ it names the live wiki, never its commit. The private analysis, kept under the d
 names the fallen questions first, then holds the questions whose score fell, every question's
 outcome in every run, and each failed answer, with what its session never opened.
 
+A comparison in which any answer failed to run, on either wiki, isn't judged: both reports are
+still written, and each says so in place of a pass or a fail, with how many answers failed on
+each wiki, for those runs to be run again.
+
 Each wiki is asked over at least `MIN_RUNS` runs, and the first over at least twice as many as
 the second: the noise floor is taken between halves of the first wiki's own runs.
 """
@@ -24,6 +28,7 @@ from pa_evals.comparison import (
     WikiComparison,
     answers,
     compare_wikis,
+    failed_to_run,
     format_spread,
     same_questions,
     wiki_comparison_section,
@@ -108,7 +113,7 @@ def wiki_runs(first: Sequence[RunResults], second: Sequence[RunResults]) -> Wiki
         raise ComparisonError(
             "both sets of runs were given the same eval wiki: a comparison is of two wikis"
         )
-    if comparison.passed is None:
+    if comparison.overall.floor is None:
         raise ComparisonError(
             f"the first wiki was asked {len(first)} runs and the second {len(second)}; a noise "
             "floor needs the first asked at least twice as many as the second, "
@@ -177,7 +182,8 @@ def render_public(runs: WikiRuns) -> str:
 
 def render_private(runs: WikiRuns) -> str:
     """The private analysis: the fallen questions, the questions whose score fell, every
-    question's outcome in every run on each wiki, and each failed answer."""
+    question's outcome in every run on each wiki, and each failed answer. One that isn't
+    judged says so first."""
     first, second = (label.capitalize() for label in runs.labels)
     fallen = [
         "## The fallen questions",
@@ -186,6 +192,13 @@ def render_private(runs: WikiRuns) -> str:
         "Any fails the comparison.",
         "",
     ]
+    if any(runs.comparison.failed):
+        fallen += [
+            f"**Not judged**: {failed_to_run(*runs.labels, runs.comparison)}. An answer that "
+            "failed to run counts here as not right, so this list and the scores below wait "
+            "for those runs to be run again.",
+            "",
+        ]
     if runs.comparison.fallen:
         fallen += ["| Question | Category | Tier |", "|---|---|---|"]
         fallen += [
