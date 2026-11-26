@@ -492,11 +492,11 @@ ASK = f"- [ ] me → [[nina-park]]: a reply about the listing · asked {days_ago
 """An open loop on Nina's page."""
 
 
-def pages_with_a_loop() -> dict[str, str]:
+def pages_with_a_loop(loop: str = ASK) -> dict[str, str]:
     """The pages, with an open loop on Nina's and a page for her agency."""
     return {
         **pages(),
-        NINA: page("person", "Nina Park", loops=[ASK]),
+        NINA: page("person", "Nina Park", loops=[loop]),
         LAKEVIEW: page("organization", "Lakeview Realty"),
     }
 
@@ -523,10 +523,14 @@ def test_a_page_with_an_open_loop_is_never_retired(data_root: Path, capsys):
     assert commit_messages(data_root) == history
 
 
+CALL = f"- [ ] me → [[lakeview-realty]]: a call back · promised {days_ago(1)} [ep:{HOTEL}]"
+"""An open loop on Nina's page that is her agency's: it doesn't name her."""
+
+
 def test_a_page_whose_open_loop_moved_to_another_page_may_be_retired(data_root: Path):
-    run_with_pages(data_root, pages_with_a_loop())
+    run_with_pages(data_root, pages_with_a_loop(CALL))
     # The loop is the agency's to carry: its page takes the line, still open.
-    folded = page("organization", "Lakeview Realty", loops=[ASK])
+    folded = page("organization", "Lakeview Realty", loops=[CALL])
     script(
         data_root,
         dreaming=[
@@ -543,6 +547,259 @@ def test_a_page_whose_open_loop_moved_to_another_page_may_be_retired(data_root: 
     assert NINA not in files
     assert files[LAKEVIEW] == folded
     assert files[RETIRED] == retired_file(f"- nina-park · retired {TODAY}")
+
+
+def test_a_page_whose_own_loop_names_it_isnt_retired_by_moving_the_loop(data_root: Path):
+    written = pages_with_a_loop()
+    run_with_pages(data_root, written)
+    # The reply the owner owes her moves to her agency's page, and still names her.
+    moved = {"write": LAKEVIEW, "text": page("organization", "Lakeview Realty", loops=[ASK])}
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            moved,
+            reporting(retiring(pages=[NINA, LAKEVIEW]), dismissed("c02")),
+        ],
+        dreaming_resume=[
+            *({"write": path, "text": written[path]} for path in (NINA, LAKEVIEW)),
+            reporting(dismissed(), dismissed("c02")),
+        ],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    told = f"c01 retires `nina-park`, but an open loop on {LAKEVIEW} names it as a party"
+    assert told in resumed["prompt"]
+    files = wiki_files(data_root)
+    assert {path: files[path] for path in written} == written
+    assert RETIRED not in files
+
+
+LISTING = "topics/listing.md"
+LISTING_LINKS = {**LINKS, "Listing": ["nina-park", "lakeview-realty", "listing"]}
+"""The links of a wiki whose observations give Nina's mail a topic of its own."""
+PRICE_SHEET = f"- [ ] [[nina-park]] → me: the price sheet · asked {days_ago(1)} [ep:{HOTEL}]"
+"""An open loop on the listing's page that names Nina as the party owing."""
+
+
+def listing_page(*, aliases: str = "[]", notes: Sequence[str] = ()) -> str:
+    """The listing's page, which holds the loop Nina owes."""
+    return page("topic", "Listing", aliases=aliases, loops=[PRICE_SHEET], notes=notes)
+
+
+def pages_with_a_listing() -> dict[str, str]:
+    """The pages, with a topic for the listing Nina wrote about."""
+    return {**pages(), LISTING: listing_page()}
+
+
+def test_a_page_another_pages_open_loop_names_as_a_party_is_never_retired(data_root: Path):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    before = wiki_files(data_root)
+    # Her own page holds no loop, and the listing's holds one she owes. Resumed, the session
+    # writes her page back and dismisses the candidate.
+    script(
+        data_root,
+        dreaming=[EMPTIED, reporting(retiring())],
+        dreaming_resume=[{"write": NINA, "text": pages()[NINA]}, reporting(dismissed())],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"c01 retires `nina-park`, but an open loop on {LISTING} names it as a party. A loop's "
+        f"party is never retired: write {NINA} back as it was and propose or dismiss the "
+        "candidate"
+    ) in resumed["prompt"]
+    assert wiki_files(data_root) == before
+    assert RETIRED not in before
+
+
+MERGED_LISTING = listing_page(
+    aliases="[Nina Park]", notes=[f"Nina Park sends the listing's mail [ep:{HOTEL}]."]
+)
+"""The listing's page as a session leaves it that merges Nina's page into it: her name among
+its aliases, and a line saying who she is."""
+MERGED_AWAY = [EMPTIED, {"write": LISTING, "text": MERGED_LISTING}]
+MERGING = {"candidate": "c01", "outcome": "applied", "pages": [NINA, LISTING]}
+NOT_A_DUPLICATE = (
+    f"c01 merges {NINA} into {LISTING}, but isn't a `duplicate` candidate that names both pages"
+)
+
+
+def test_a_page_merged_away_under_a_candidate_that_isnt_a_duplicate_resumes_the_session(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    before = wiki_files(data_root)
+    # Her page is flagged as unengaged, and the session folds it into the listing's as if it
+    # were a duplicate. Resumed, it writes both pages back and dismisses the candidate.
+    script(
+        data_root,
+        dreaming=[*MERGED_AWAY, reporting(MERGING)],
+        dreaming_resume=[
+            {"write": NINA, "text": pages()[NINA]},
+            {"write": LISTING, "text": listing_page()},
+            reporting(dismissed()),
+        ],
+    )
+
+    assert dream() == 0
+
+    started, resumed = sessions(data_root, "dreaming")
+    assert [(c["id"], c["kind"], c["pages"]) for c in started["candidates"]] == [
+        ("c01", "unengaged", [NINA])
+    ]
+    assert NOT_A_DUPLICATE in resumed["prompt"]
+    assert (
+        f"Write {NINA} back as it was, take its name off {LISTING}'s aliases, and propose or "
+        "dismiss c01"
+    ) in resumed["prompt"]
+    # The page, the topic's aliases, and the loop are as they were.
+    assert wiki_files(data_root) == before
+    listed = commit_messages(data_root)[0].split("\n\n")[1].splitlines()
+    assert listed == ["Candidates:", f"- c01 · unengaged · {NINA} · dismissed"]
+
+
+def test_a_merge_taken_back_only_by_its_alias_leaves_the_emptied_page_to_fail(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    before = tree_state(data_root / "wiki")
+    # Resumed, the session takes her name off the listing's aliases, never writes her page
+    # back, and claims it as changed. The host has put the page back where the session emptied
+    # it, so it is an emptied page again, and never a page that is simply gone.
+    claimed = reporting({"candidate": "c01", "outcome": "applied", "pages": [NINA]})
+    script(
+        data_root,
+        dreaming=[*MERGED_AWAY, reporting(MERGING)],
+        dreaming_resume=[{"write": LISTING, "text": listing_page()}, claimed],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    attempts = sessions(data_root, "dreaming")
+    assert NOT_A_DUPLICATE in attempts[1]["prompt"]
+    assert f"{NINA}:1: bad frontmatter" in attempts[2]["prompt"]
+    error = run_error(data_root)
+    assert f"{NINA}:1: bad frontmatter" in error
+    assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert tree_state(data_root / "wiki") == before
+
+
+def test_a_page_merged_away_that_no_outcome_names_resumes_the_session(data_root: Path):
+    run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
+    before = wiki_files(data_root)
+    script(
+        data_root,
+        dreaming=[*MERGED_AWAY, reporting(dismissed())],
+        dreaming_resume=[
+            {"write": NINA, "text": pages()[NINA]},
+            {"write": LISTING, "text": listing_page()},
+            reporting(dismissed()),
+        ],
+    )
+
+    assert dream() == 0
+
+    _, resumed = sessions(data_root, "dreaming")
+    assert (
+        f"{NINA} was merged into {LISTING} (it is emptied, and its name is among that page's "
+        "aliases), under no `duplicate` candidate that names both pages"
+    ) in resumed["prompt"]
+    assert wiki_files(data_root) == before
+
+
+def pages_that_may_be_one() -> dict[str, str]:
+    """The pages, with Nina's name among the aliases of the listing's page, so the two are
+    flagged as a duplicate, and a page for her agency."""
+    return {
+        **pages(),
+        LISTING: listing_page(aliases="[Nina Park]"),
+        LAKEVIEW: page("organization", "Lakeview Realty"),
+    }
+
+
+MAY_BE_ONE = [("duplicate", [LISTING, NINA]), ("unengaged", [NINA]), ("unengaged", [LAKEVIEW])]
+"""The candidates of `pages_that_may_be_one`, c01 to c03, by kind and pages."""
+KEPT = listing_page(
+    aliases="[Nina Park]", notes=[f"Nina Park is the listing's own mailbox [ep:{HOTEL}]."]
+)
+"""The listing's page once it has taken Nina's in."""
+
+
+def test_a_page_merged_away_under_a_duplicate_candidate_naming_both_pages_is_accepted(
+    data_root: Path,
+):
+    run_with_pages(data_root, pages_that_may_be_one(), LISTING_LINKS)
+    script(
+        data_root,
+        dreaming=[
+            EMPTIED,
+            {"write": LISTING, "text": KEPT},
+            reporting(MERGING, dismissed("c02"), dismissed("c03")),
+        ],
+    )
+
+    assert dream() == 0
+
+    [session] = sessions(data_root, "dreaming")
+    assert [(c["kind"], c["pages"]) for c in session["candidates"]] == MAY_BE_ONE
+    files = wiki_files(data_root)
+    assert NINA not in files
+    # The host rewrote the loop's link to her as a link to the page that took her name.
+    assert files[LISTING] == KEPT.replace("[[nina-park]]", "[[listing|nina-park]]")
+
+
+# How a session merges Nina's page away in a wiki where the listing's page is flagged as her
+# duplicate, the outcomes it reports, and the merge the host names.
+NOT_ITS_DUPLICATE = {
+    "under the page's unengaged candidate": (
+        [EMPTIED, {"write": LISTING, "text": KEPT}],
+        [dismissed("c01"), {**MERGING, "candidate": "c02"}, dismissed("c03")],
+        f"c02 merges {NINA} into {LISTING}",
+    ),
+    "into a page its duplicate candidate doesn't name": (
+        [
+            EMPTIED,
+            {"write": LISTING, "text": listing_page()},
+            {
+                "write": LAKEVIEW,
+                "text": page("organization", "Lakeview Realty", aliases="[Nina Park]"),
+            },
+        ],
+        [{**MERGING, "pages": [NINA, LISTING, LAKEVIEW]}, dismissed("c02"), dismissed("c03")],
+        f"c01 merges {NINA} into {LAKEVIEW}",
+    ),
+}
+
+
+@pytest.mark.parametrize("merge", NOT_ITS_DUPLICATE, ids=list(NOT_ITS_DUPLICATE))
+def test_a_merge_no_duplicate_candidate_naming_both_pages_settles_resumes_the_session(
+    data_root: Path, merge: str
+):
+    written = pages_that_may_be_one()
+    run_with_pages(data_root, written, LISTING_LINKS)
+    actions, outcomes, told = NOT_ITS_DUPLICATE[merge]
+    script(
+        data_root,
+        dreaming=[*actions, reporting(*outcomes)],
+        dreaming_resume=[
+            *({"write": path, "text": text} for path, text in written.items()),
+            reporting(dismissed("c01"), dismissed("c02"), dismissed("c03")),
+        ],
+    )
+
+    assert dream() == 0
+
+    started, resumed = sessions(data_root, "dreaming")
+    assert [(c["kind"], c["pages"]) for c in started["candidates"]] == MAY_BE_ONE
+    assert f"{told}, but isn't a `duplicate` candidate that names both pages" in resumed["prompt"]
+    files = wiki_files(data_root)
+    assert {path: files[path] for path in written} == written
 
 
 def gift() -> dict[str, bytes]:
@@ -1052,6 +1309,33 @@ def test_the_dreaming_instructions_say_an_orphan_may_be_retired_and_how_to_retir
     assert "Never write `retired.md`" in retiring_a_page
     # The day logs aren't rewritten, and links stay.
     assert "Leave every link to it" in retiring_a_page
+
+
+def test_the_dreaming_instructions_say_a_merge_settles_only_a_duplicate():
+    # Under the kind whose fix it is, and where retiring is told apart from it.
+    assert "Merging belongs to this kind alone" in judging("duplicate")
+    retiring_a_page = instructions("Dreaming", "Retiring a page")
+    assert "a merge, which settles only a `duplicate` candidate" in retiring_a_page
+
+
+def test_the_dreaming_instructions_say_a_loops_party_stays():
+    retiring_a_page = instructions("Dreaming", "Retiring a page")
+
+    assert "A page that an open loop on any page names as a party stays" in retiring_a_page
+    assert "an automated sender's page included" in retiring_a_page
+    # Its candidate is still judged, without retiring the page.
+    assert "otherwise propose or dismiss" in retiring_a_page
+
+
+def test_the_instructions_say_a_dreaming_finding_is_fixed_with_every_page_still_there():
+    findings = instructions("Lint findings")
+
+    # Dreaming is resumed only for what it caused, and the rest is consolidation's.
+    assert "only with findings your own edits caused" in findings
+    assert "waits for the next consolidation" in findings
+    # A finding is no reason to merge or retire.
+    assert "Fix each finding in place" in findings
+    assert "every page still there" in findings
 
 
 def test_the_instructions_example_outcomes_show_a_retirement():

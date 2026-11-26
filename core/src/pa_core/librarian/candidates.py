@@ -312,7 +312,7 @@ def unengaged_without_loops(tree: Path, *, l0: L0Metadata, owner: Owner) -> dict
     """
     found = pages(tree)
     engaged = engaged_days(tree, l0, owner)
-    owed = _open_loop_holders(found)
+    owed = open_loop_holders(found)
     counts = {PERSON.type: 0, ORGANIZATION.type: 0}
     for candidate in _unengaged(found, engaged):
         [page] = [page for page in found if page.path == candidate.path]
@@ -427,7 +427,7 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
     loop on another page that names it as a party. Every status but `active` says the matter
     is over, for good or for now (`settled`, `dormant`, `inactive`), so either the status is
     wrong or the loop is no longer owed; L0 says which."""
-    holding = _open_loop_holders(pages)
+    holding = open_loop_holders(pages)
     for page in pages:
         status = page.fields.get("status")
         held = holding.get(page.slug)
@@ -444,7 +444,7 @@ def _status_mismatches(pages: Sequence[Page]) -> Iterator[Candidate]:
         )
 
 
-def _open_loop_holders(pages: Sequence[Page]) -> dict[str, list[str]]:
+def open_loop_holders(pages: Sequence[Page]) -> dict[str, list[str]]:
     """For each slug with an open loop, the page holding each one, once per loop: a loop is
     its page's, and each of its parties'."""
     holding: dict[str, list[str]] = defaultdict(list)

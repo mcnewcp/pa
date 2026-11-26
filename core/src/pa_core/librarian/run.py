@@ -17,7 +17,9 @@ warnings. Nothing with a lint error is ever committed.
 
 A wiki can start a run with lint errors already committed (a rule tightened since, or a seeded
 wiki). Consolidation is handed those in the pages, and runs for them even when there's nothing
-new to fold in; a run that fails only on errors its last commit already had says so. If
+new to fold in; a run that fails only on errors its last commit already had says so. A
+dreaming run leaves them to this one: it commits over an error its last commit already had,
+and is held only to those it caused. If
 anything fails, the wiki goes back to its last commit, so the cursor (kept in the
 commit messages) doesn't move and the batch stays new for the next run.
 
