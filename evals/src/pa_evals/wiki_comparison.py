@@ -225,7 +225,7 @@ def render_private(runs: WikiRuns) -> str:
         ]
     else:
         fallen.append("None.")
-    fell = [
+    lower = [
         "",
         "## The questions whose score fell",
         "",
@@ -233,20 +233,20 @@ def render_private(runs: WikiRuns) -> str:
         f"These are lower on {runs.labels[1]}, the furthest fall first.",
         "",
     ]
-    if runs.comparison.fell:
-        fell += [
+    if runs.comparison.scored_lower:
+        lower += [
             f"| Question | Category | Tier | {first} | {second} | Fall |",
             "|---|---|---|---|---|---|",
         ]
-        fell += [
+        lower += [
             f"| {q.id} | {q.category} | {'-' if q.tier is None else q.tier} | {q.first:.2f} | "
-            f"{q.second:.2f} | {q.fall:.2f} |"
-            for q in runs.comparison.fell
+            f"{q.second:.2f} | {q.drop:.2f} |"
+            for q in runs.comparison.scored_lower
         ]
     else:
-        fell.append("None fell.")
+        lower.append("None fell.")
     return failure_analysis(
         "# Wiki against wiki on real data, private: the failure analysis",
         runs.by_label(),
-        before=[*fallen, *fell],
+        before=[*fallen, *lower],
     )

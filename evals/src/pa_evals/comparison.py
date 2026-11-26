@@ -293,7 +293,8 @@ class QuestionScore:
     second: float
 
     @property
-    def fall(self) -> float:
+    def drop(self) -> float:
+        """The first wiki's score minus the second's, as a group's drop is taken."""
         return self.first - self.second
 
     @property
@@ -413,10 +414,11 @@ class WikiComparison:
         return not (self.fallen or self.beyond)
 
     @property
-    def fell(self) -> tuple[QuestionScore, ...]:
-        """The questions whose score is lower on the second wiki, the furthest fall first."""
-        fallen = [question for question in self.questions if question.fall > EPSILON]
-        return tuple(sorted(fallen, key=lambda question: -question.fall))
+    def scored_lower(self) -> tuple[QuestionScore, ...]:
+        """The questions whose score is lower on the second wiki, by any amount, the largest
+        drop first. Few of them are fallen questions (`fallen`)."""
+        lower = [question for question in self.questions if question.drop > EPSILON]
+        return tuple(sorted(lower, key=lambda question: -question.drop))
 
 
 def compare_wikis(
