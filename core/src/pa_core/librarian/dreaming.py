@@ -105,8 +105,8 @@ from pa_core.librarian.session import (
     fields_paragraph,
     findings_text,
     in_pages,
-    merged_pages,
     open_proposals_section,
+    remove_merged_pages,
     run_reporting_session,
     session_fields,
     tree_state,
@@ -548,14 +548,18 @@ class _Merges:
     def remove(self) -> None:
         """Removes the pages the session's last attempt merged away, after putting back those
         removed for the attempt before it, unless the session has written them again."""
-        for file in self._removed:
-            if not file.exists():
-                file.write_bytes(b"")
-        found = merged_pages(self._tree)
+        _put_back(self._removed)
+        found = remove_merged_pages(self._tree)
         self._removed = [self._tree / path for path in found]
-        for file in self._removed:
-            file.unlink()
         self.merged = {path: into for path, into in found.items() if path in self._before}
+
+
+def _put_back(removed: Sequence[Path]) -> None:
+    """Makes each emptied page the host `removed` for a session's last attempt an emptied
+    file again, unless the session has written it back."""
+    for file in removed:
+        if not file.exists():
+            file.write_bytes(b"")
 
 
 class _Retirements:
@@ -597,9 +601,7 @@ class _Retirements:
         """Puts the wiki back as the session left it: each page removed for the last attempt
         is an emptied file again, unless the session has written it back, and `retired.md`
         is as last committed."""
-        for file in self._removed:
-            if not file.exists():
-                file.write_bytes(b"")
+        _put_back(self._removed)
         self._removed.clear()
         if self._listed is not None:
             (self._tree / RETIRED).write_bytes(self._listed)

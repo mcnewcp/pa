@@ -169,7 +169,7 @@ def run_session(
     linter: Linter,
     committed: Committed,
     *,
-    tidy: Callable[[], None] = lambda: None,
+    tidy: Callable[[], object] = lambda: None,
 ) -> SessionResult:
     """Runs `phase`'s session on `prompt`, then `tidy`s the wiki, checks its bounds, and lints
     it. A session that leaves lint errors it can fix (those `judged` picks) is resumed with
@@ -212,7 +212,7 @@ def run_reporting_session[Accepted](
     committed: Committed,
     *,
     act_on_report: Callable[[SessionResult], Accepted | Refused],
-    tidy: Callable[[], None] = lambda: None,
+    tidy: Callable[[], object] = lambda: None,
     reminder: str = "",
 ) -> tuple[SessionResult, Accepted]:
     """Runs the session of a `phase` that must report something in its final message
@@ -220,8 +220,9 @@ def run_reporting_session[Accepted](
     host accepted of its last report.
 
     After each attempt's bounds hold, `act_on_report` reads the attempt's report and does the
-    host's part of what it says, which may change the wiki (dreaming removes the pages an
-    outcome retires), before lint sees it. It returns what it accepted, or `Refused` with
+    host's part of what it says, which may change the wiki (dreaming undoes what it did for
+    the attempt before, then removes the pages this one merged away and those an outcome
+    retires), before lint sees it. It returns what it accepted, or `Refused` with
     what's wrong, or raises when the attempt can't be put right. What is refused resumes the
     session, as lint errors do and within the same limit. Every resume's prompt ends with
     `reminder`.
@@ -384,16 +385,19 @@ def merged_pages(tree: Path) -> dict[str, tuple[str, ...]]:
     }
 
 
-def remove_merged_pages(tree: Path) -> None:
-    """Removes the pages a session merged away (`merged_pages`).
+def remove_merged_pages(tree: Path) -> dict[str, tuple[str, ...]]:
+    """Removes the pages a session merged away (`merged_pages`), and returns them as it found
+    them.
 
     Any other emptied file stays for lint to fail (an empty page no merge explains, a
     dotfile, a `CLAUDE.md`), so the session is resumed to fix it, or the run is discarded.
     A dreaming run holds a merge to more (`pa_core.librarian.dreaming`): there a page is
     merged away only to settle a duplicate candidate.
     """
-    for path in merged_pages(tree):
+    merged = merged_pages(tree)
+    for path in merged:
         (tree / path).unlink()
+    return merged
 
 
 def as_json(value: object) -> str:
