@@ -440,10 +440,15 @@ def _dream(
             )
 
     def carry_out(attempt: SessionResult) -> tuple[Outcome, ...] | Refused:
-        """Carries out the retirements an attempt's outcomes report, in place of those of the
-        attempt before it, and returns the outcomes, or what's wrong with them and with the
-        proposals the attempt left."""
+        """Carries out the merges an attempt left and the retirements its outcomes report, in
+        place of those of the attempt before it, and returns the outcomes, or what's wrong
+        with them and with the proposals the attempt left."""
+        # Everything the host did for the attempt before is undone before anything of this
+        # one is looked for: a page removed as retired is an emptied file again, or a merge
+        # of it would go unseen. So every attempt is checked as the first is, the wiki as
+        # last committed against the wiki as the session left it.
         retirements.undo()
+        merges.remove()
         left = read_proposals(tree)
         problems = _proposal_problems(as_committed, left, caps)
         try:
@@ -501,7 +506,6 @@ def _dream(
         now,
         linter,
         committed,
-        tidy=merges.remove,
         act_on_report=carry_out,
         reminder=OUTCOMES_REMINDER,
     )
@@ -524,6 +528,10 @@ class _Merges:
     wiki as the session left it, and a session resumed to take a merge back finds its page
     where it emptied it. Left emptied with its name off the other page's aliases, it fails
     lint, as any emptied file does.
+
+    The retirements of the attempt before are undone first (`_Retirements.undo`), since a
+    merged page is looked for among the files: a page the host removed as retired, whose
+    name a resumed session then gives another page as an alias, is merged away all the same.
     """
 
     def __init__(self, tree: Path, before: Mapping[str, tuple[str, ...]]) -> None:

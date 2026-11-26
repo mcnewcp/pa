@@ -690,6 +690,40 @@ def test_a_merge_taken_back_only_by_its_alias_leaves_the_emptied_page_to_fail(
     assert tree_state(data_root / "wiki") == before
 
 
+def test_a_page_the_host_removed_as_retired_is_still_held_to_a_duplicate_when_merged_on_a_resume(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root)
+    before, history = tree_state(data_root / "wiki"), commit_messages(data_root)
+    # First her page is retired under an outcome that also names the wedding's page, which
+    # nothing changed: the host has removed her page when it resumes the session. Resumed, the
+    # session gives the wedding's page her name as an alias, and reports the same.
+    both = reporting(retiring(pages=[NINA, WEDDING]))
+    merged = page(
+        "topic", "Wedding", aliases="[Nina Park]", state="The hotel block closes on Oct 9"
+    )
+    script(
+        data_root,
+        dreaming=[EMPTIED, both],
+        dreaming_resume=[{"write": WEDDING, "text": merged}, both],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    attempts = sessions(data_root, "dreaming")
+    assert f"c01 names {WEDDING}, which this session didn't change" in attempts[1]["prompt"]
+    told = (
+        f"c01 merges {NINA} into {WEDDING}, but isn't a `duplicate` candidate that names both pages"
+    )
+    assert told in attempts[2]["prompt"]
+    error = run_error(data_root)
+    assert told in error
+    assert "The dreaming run was discarded: the wiki is as last committed." in error
+    assert tree_state(data_root / "wiki") == before
+    assert commit_messages(data_root) == history
+
+
 def test_a_page_merged_away_that_no_outcome_names_resumes_the_session(data_root: Path):
     run_with_pages(data_root, pages_with_a_listing(), LISTING_LINKS)
     before = wiki_files(data_root)
@@ -1103,6 +1137,31 @@ def test_the_hosts_own_writes_to_retired_md_are_never_blamed_on_a_resumed_sessio
     error = run_error(data_root)
     assert "holds no outcomes" in error
     assert "retired.md" not in error
+
+
+def test_a_resumed_session_that_writes_retired_md_over_the_hosts_list_fails_the_run(
+    data_root: Path, capsys
+):
+    run_with_pages(data_root, {**pages(), LAKEVIEW: page("organization", "Lakeview Realty")})
+    before = tree_state(data_root / "wiki")
+    # Her page is retired, with no outcome for the agency's, so the host has listed her when
+    # it resumes the session. Resumed, the session lists the agency under her itself.
+    listed = retired_file(f"- nina-park · retired {TODAY}", f"- lakeview-realty · retired {TODAY}")
+    script(
+        data_root,
+        dreaming=[EMPTIED, reporting(retiring())],
+        dreaming_resume=[
+            {"write": RETIRED, "text": listed},
+            reporting(retiring(), dismissed("c02")),
+        ],
+    )
+    capsys.readouterr()
+
+    assert dream() != 0
+
+    assert len(sessions(data_root, "dreaming")) == 2
+    assert "the dreaming session changed retired.md, outside the pages" in run_error(data_root)
+    assert tree_state(data_root / "wiki") == before
 
 
 def retire_nina_at_the_threshold(data_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
