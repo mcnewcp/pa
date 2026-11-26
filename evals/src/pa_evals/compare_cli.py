@@ -36,11 +36,13 @@ def add_compare_wikis_command(commands: Any) -> None:
         description="Compare files plus wiki over the same cut with two eval wikis, the second "
         "against the first (such as a dreamed copy of the cut's wiki against the cut's own), "
         "and write the public report (numbers only) and the private one (the failure analysis, "
-        "refused inside the repository). The second wiki passes when its drop from the first "
-        "is no larger than the noise floor, overall and in every tier of the eval set (every "
-        "category, for a set without tiers): the largest drop between any two halves of the "
-        "first wiki's own runs. So each wiki needs at least 3 runs, and the first at least "
-        "twice as many as the second. A wiki's runs may be in several run directories.",
+        "refused inside the repository). The second wiki passes when no question fell (right "
+        "in every run on the first wiki, wrong in every run on the second) and its drop from "
+        "the first is no larger than the noise floor, overall and in every tier of the eval "
+        "set (every category, for a set without tiers): the largest drop between any two "
+        "halves of the first wiki's own runs. A drop of one of the second wiki's answers is "
+        "allowed whatever the floor. So each wiki needs at least 3 runs, and the first at "
+        "least twice as many as the second. A wiki's runs may be in several run directories.",
     )
     compare.add_argument("--first", type=Path, required=True, nargs="+", metavar="RUN_DIR")
     compare.add_argument("--second", type=Path, required=True, nargs="+", metavar="RUN_DIR")

@@ -799,29 +799,55 @@ def test_compare_puts_two_wikis_side_by_side_and_says_whether_the_second_passes(
     assert "| canary | 1 (few) | 1.00 | 1.00 | 0.000 | 0.000 | yes |" in wikis
     assert "| Overall | 2 (few) | 0.92 | 0.83 | 0.083 | 0.167 | yes |" in wikis
     assert (
-        "**Passes**: the drop is no larger than the noise floor, overall (0.083 against "
-        "0.167) and in every category."
+        "**Passes**: no question fell, and the drop is no larger than the noise floor, overall "
+        "(0.083 against 0.167) and in every category."
     ) in wikis
 
 
 def test_a_drop_larger_than_the_first_wikis_noise_floor_fails_the_second(tmp_path, capsys):
     # The first wiki's runs never differ, so its floor is 0. The second's do, which excuses
-    # nothing.
+    # nothing beyond one answer.
     first, second = two_wikis(
         tmp_path,
         undreamed={"deadline": [Y] * 6, "canary": [Y] * 6},
-        dreamed={"deadline": [Y, Y, N], "canary": [Y] * 3},
+        dreamed={"deadline": [Y, N, N], "canary": [Y] * 3},
     )
     capsys.readouterr()
 
     assert main(["compare", str(first), str(second)]) == 0
 
     comparison = capsys.readouterr().out
-    assert "| single_fact_recall | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | no |" in comparison
-    assert "**Fails**: overall drops by 0.167, more than the noise floor of 0.000." in comparison
+    assert "| single_fact_recall | 1 (few) | 1.00 | 0.33 | 0.667 | 0.000 | no |" in comparison
     assert (
-        "**Fails**: single_fact_recall drops by 0.333, more than the noise floor of 0.000."
+        "**Fails**: overall drops by 0.333, more than the noise floor of 0.000 and the "
+        "one-answer allowance of 0.167."
     ) in comparison
+    assert (
+        "**Fails**: single_fact_recall drops by 0.667, more than the noise floor of 0.000 and "
+        "the one-answer allowance of 0.333."
+    ) in comparison
+    assert "**Passes**" not in comparison
+
+
+def test_compare_passes_a_drop_of_one_answer_and_fails_a_question_that_fell(tmp_path, capsys):
+    # One wrong answer of the second wiki's 3 on the deadline is beyond a floor of 0 and
+    # within the one-answer allowance. The canary, right in all 6 runs and then in none, fell.
+    first, second = two_wikis(
+        tmp_path,
+        undreamed={"deadline": [Y] * 6, "canary": [Y] * 6},
+        dreamed={"deadline": [Y, Y, N], "canary": [N] * 3},
+    )
+    capsys.readouterr()
+
+    assert main(["compare", str(first), str(second)]) == 0
+
+    comparison = capsys.readouterr().out
+    assert (
+        "| single_fact_recall | 1 (few) | 1.00 | 0.67 | 0.333 | 0.000 | "
+        "only by the allowance (0.333) |"
+    ) in comparison
+    assert "| canary | 1 (few) | 1.00 | 0.00 | 1.000 | 0.000 | no |" in comparison
+    assert "**Fails**: 1 question fell: 1 in canary." in comparison
     assert "**Passes**" not in comparison
 
 

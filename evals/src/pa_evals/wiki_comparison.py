@@ -3,11 +3,12 @@ such as the cut's own wiki and a dreamed copy of it.
 
 Like the real-data verdict (`pa_evals.verdict`), it comes in two parts. The public report,
 which can be committed, holds numbers only: the second wiki's drop from the first and the noise
-floor it is judged against, overall, by tier and by category, whether it passes
-(`pa_evals.comparison.compare_wikis`), evidence recall, citation validity, and cost. Nothing
-from the real-data eval set reaches it, and it names the live wiki, never its commit. The
-private analysis, kept under the data root, holds the questions whose score fell, every
-question's outcome in every run, and each failed answer, with what its session never opened.
+floor it is judged against, overall, by tier and by category, how many questions fell in each
+tier, whether it passes (`pa_evals.comparison.compare_wikis`), evidence recall, citation
+validity, and cost. Nothing from the real-data eval set reaches it, not a question's id, and
+it names the live wiki, never its commit. The private analysis, kept under the data root,
+names the fallen questions first, then holds the questions whose score fell, every question's
+outcome in every run, and each failed answer, with what its session never opened.
 
 Each wiki is asked over at least `MIN_RUNS` runs, and the first over at least twice as many as
 the second: the noise floor is taken between halves of the first wiki's own runs.
@@ -175,10 +176,26 @@ def render_public(runs: WikiRuns) -> str:
 
 
 def render_private(runs: WikiRuns) -> str:
-    """The private analysis: the questions whose score fell, every question's outcome in
-    every run on each wiki, and each failed answer."""
+    """The private analysis: the fallen questions, the questions whose score fell, every
+    question's outcome in every run on each wiki, and each failed answer."""
     first, second = (label.capitalize() for label in runs.labels)
+    fallen = [
+        "## The fallen questions",
+        "",
+        f"Right in every run on {runs.labels[0]} and wrong in every run on {runs.labels[1]}. "
+        "Any fails the comparison.",
+        "",
+    ]
+    if runs.comparison.fallen:
+        fallen += ["| Question | Category | Tier |", "|---|---|---|"]
+        fallen += [
+            f"| {q.id} | {q.category} | {'-' if q.tier is None else q.tier} |"
+            for q in runs.comparison.fallen
+        ]
+    else:
+        fallen.append("None.")
     fell = [
+        "",
         "## The questions whose score fell",
         "",
         "A question's score on a wiki is the share of that wiki's runs that got it right. "
@@ -200,5 +217,5 @@ def render_private(runs: WikiRuns) -> str:
     return failure_analysis(
         "# Wiki against wiki on real data, private: the failure analysis",
         runs.by_label(),
-        before=fell,
+        before=[*fallen, *fell],
     )
