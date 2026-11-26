@@ -15,7 +15,9 @@ still written, and each says so in place of a pass or a fail, with how many answ
 each wiki, for those runs to be run again.
 
 Each wiki is asked over at least `MIN_RUNS` runs, and the first over at least twice as many as
-the second: the noise floor is taken between halves of the first wiki's own runs.
+the second: the noise floor is taken between halves of the first wiki's own runs. Every run of
+both is at one commit of the workspace, as each records it (#152), so the wikis are all that
+differ between them.
 """
 
 from __future__ import annotations
@@ -80,7 +82,7 @@ def _dreamed(runs: Sequence[RunResults]) -> bool:
 
 def check_wiki_runs(name: str, runs: Sequence[RunResults]) -> None:
     """Refuse runs (given by the option `name`) that aren't all files plus wiki over a cut
-    with one eval wiki, or that are fewer than MIN_RUNS."""
+    with one eval wiki, run at one commit, or that are fewer than MIN_RUNS."""
     others = sorted({run.configuration or "unnamed" for run in runs} - {FILES_PLUS_WIKI})
     if others:
         raise ComparisonError(f"{name} holds runs of {', '.join(others)}, not {FILES_PLUS_WIKI}")
@@ -89,6 +91,10 @@ def check_wiki_runs(name: str, runs: Sequence[RunResults]) -> None:
     given = {(run.wiki.librarian_version, run.wiki.dreaming_version) for run in runs if run.wiki}
     if len(given) != 1 or any(run.wiki is None for run in runs):
         raise ComparisonError(f"{name} holds runs given more than one eval wiki, or none")
+    if any(COMMIT not in run.setup for run in runs):
+        raise ComparisonError(f"{name} holds a run that doesn't record the commit it was run at")
+    if len(commits := _commits(runs)) != 1:
+        raise ComparisonError(f"{name} holds runs at more than one commit ({', '.join(commits)})")
     if len(runs) < MIN_RUNS:
         raise ComparisonError(
             f"{name} holds {len(runs)} run{'s' if len(runs) != 1 else ''}; a comparison needs "
@@ -96,14 +102,26 @@ def check_wiki_runs(name: str, runs: Sequence[RunResults]) -> None:
         )
 
 
+COMMIT = "commit"
+"""The setting of a run's setup that holds the commit of the workspace it was run at, flagged
+where tracked files had uncommitted changes (`pa_evals.run_cli.workspace_commit`)."""
+
+
+def _commits(runs: Sequence[RunResults]) -> list[str]:
+    """Each commit the runs were run at, as they record it."""
+    return sorted({run.setup[COMMIT] for run in runs if COMMIT in run.setup})
+
+
 def wiki_runs(first: Sequence[RunResults], second: Sequence[RunResults]) -> WikiRuns:
     """The two sets of runs as a comparison of `second`'s eval wiki against `first`'s, each
     set already checked (`check_wiki_runs`). Refused unless they were asked the same
-    questions over the same cut, and given different wikis, the first over at least twice as
-    many runs as the second."""
+    questions over the same cut at the same commit, and given different wikis, the first
+    over at least twice as many runs as the second."""
     cuts = sorted({run.cut.name for run in (*first, *second) if run.cut is not None})
     if len(cuts) != 1:
         raise ComparisonError(f"the runs weren't all asked over the same cut ({', '.join(cuts)})")
+    if len(commits := _commits([*first, *second])) != 1:
+        raise ComparisonError(f"the runs weren't all run at the same commit ({', '.join(commits)})")
     if not same_questions([*first, *second]):
         raise ComparisonError(
             "the runs didn't all ask the same questions: a comparison is question by question"

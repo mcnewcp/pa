@@ -44,7 +44,8 @@ def add_compare_wikis_command(commands: Any) -> None:
         "allowed whatever the floor. So each wiki needs at least 3 runs, and the first at "
         "least twice as many as the second. A comparison in which any answer failed to run, "
         "on either wiki, isn't judged: the reports are written and say how many failed, and "
-        "those runs need running again. A wiki's runs may be in several run directories.",
+        "those runs need running again. Every run of both wikis must be at one commit of "
+        "this workspace. A wiki's runs may be in several run directories.",
     )
     compare.add_argument("--first", type=Path, required=True, nargs="+", metavar="RUN_DIR")
     compare.add_argument("--second", type=Path, required=True, nargs="+", metavar="RUN_DIR")

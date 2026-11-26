@@ -25,6 +25,8 @@ NEVER_FOUND = "obsidian_d00dfeedfacecafe"
 PRIVATE = (QUESTION, EXPECTED, ANSWER, REASONING, FOUND, NEVER_FOUND, "r01", "r02")
 """What only the private analysis may hold."""
 
+COMMIT, LATER_COMMIT = "4377b4857b17", "9c0d1e2f3a4b"
+"""The commit of the workspace the runs' code came from, and a later one."""
 BUILT, DREAMED = "0d5e1a2b3c4d", "7f6e5d4c3b2a"
 UNDREAMED_WIKI = WikiResult(librarian_version=BUILT)
 DREAMED_WIKI = WikiResult(librarian_version=BUILT, dreaming_version=DREAMED)
@@ -81,11 +83,13 @@ def runs(
     tiers: Mapping[str, int] | None = None,
     configuration: str = "files-plus-wiki",
     cut: CutResult | None = CUT,
+    commit: str | None = COMMIT,
 ) -> list[RunResults]:
     """One run per entry of `correct`, each of two questions: r01 (open loops) answered
     `correct[n]` in run n, r02 (single-fact recall) always right. Or, given each question's
     outcomes run by run, a run of those questions, each in the tier `tiers` gives it. An
-    outcome of None (`FAILED`) is a question whose agent failed in that run."""
+    outcome of None (`FAILED`) is a question whose agent failed in that run. Each run
+    records `commit` as the commit it was run at, or none."""
     if not isinstance(correct, Mapping):
         correct = {"r01": correct, "r02": [True] * len(correct)}
     made = []
@@ -97,7 +101,7 @@ def runs(
         made.append(
             RunResults(
                 configuration=configuration,
-                setup={"commit": "4377b4857b17", "agent model": "sonnet"},
+                setup={**({"commit": commit} if commit else {}), "agent model": "sonnet"},
                 wiki=wiki,
                 as_of=AS_OF,
                 cut=cut,
@@ -753,11 +757,33 @@ REFUSED = {
         runs(DREAMED_WIKI, {"r01": [Y] * 3, "r03": [Y] * 3}),
         "the runs didn't all ask the same questions",
     ),
+    "a wiki's runs at two commits": (
+        [*runs(UNDREAMED_WIKI, [Y] * 5), *runs(UNDREAMED_WIKI, [Y], commit=LATER_COMMIT)],
+        runs(DREAMED_WIKI, [Y] * 3),
+        f"--first holds runs at more than one commit ({COMMIT}, {LATER_COMMIT})",
+    ),
+    "a run that records no commit": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        [*runs(DREAMED_WIKI, [Y] * 2), *runs(DREAMED_WIKI, [Y], commit=None)],
+        "--second holds a run that doesn't record the commit it was run at",
+    ),
+    "each wiki's runs at a commit of its own": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3, commit=LATER_COMMIT),
+        f"the runs weren't all run at the same commit ({COMMIT}, {LATER_COMMIT})",
+    ),
+    # The commit alone doesn't say what such a run ran.
+    "a run with uncommitted changes among runs without": (
+        runs(UNDREAMED_WIKI, [Y] * 6),
+        runs(DREAMED_WIKI, [Y] * 3, commit=f"{COMMIT} (with uncommitted changes)"),
+        "the runs weren't all run at the same commit "
+        f"({COMMIT}, {COMMIT} (with uncommitted changes))",
+    ),
 }
 
 
 @pytest.mark.parametrize("refused", REFUSED, ids=list(REFUSED))
-def test_runs_that_dont_compare_two_wikis_over_one_cut_are_refused(
+def test_runs_that_dont_compare_two_wikis_over_one_cut_at_one_commit_are_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], refused: str
 ):
     first, second, reason = REFUSED[refused]
