@@ -13,9 +13,15 @@ For each question:
 1. Start from `index.md`, which lists every page with a one-line summary, and read the pages
    the question bears on. It opens with how many proposals are open. When it says proposals
    are open, read `proposals.md` too: one of them may bear on the question.
-2. Widen your searches of L0 with what those pages give you: every alias, email address and
-   mail domain on them, beside the names in the question.
-3. Then open the episodes the pages cite and the ones your searches find, and answer from
+2. When the owner asks what they are waiting on, expecting or owed ("what am I still waiting
+   on?"), grep `people/`, `orgs/` and `topics/` with the pattern `wiki-schema.md` gives for
+   "what the owner is waiting on" before you search L0, and weigh every loop it returns as a
+   candidate for the answer, whatever words the question uses. When they ask what they have
+   promised, do the same with its pattern for "what the owner has promised". These are loops
+   with other people: what the librarian asks of the owner is a proposal, below.
+3. Widen your searches of L0 with what the pages you read give you: every alias, email
+   address and mail domain on them, beside the names in the question.
+4. Then open the episodes the pages cite and the ones your searches find, and answer from
    them. Cite only `[ep:<episode_id>]` episodes you opened, never a page, a day log or a
    proposal.
 
