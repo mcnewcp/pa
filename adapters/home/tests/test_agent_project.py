@@ -115,6 +115,24 @@ def test_a_rendered_project_differs_from_the_source_only_where_instance_values_g
                 assert "${" not in rendered, f"{path}: {rendered!r} left a placeholder"
 
 
+@pytest.mark.parametrize("with_wiki", [False, True])
+def test_asked_what_someone_needs_from_the_owner_the_answer_covers_every_request_still_ahead(
+    tmp_path: Path, instance, with_wiki: bool
+):
+    """Things to send in or bring count beside forms, fees and replies (#170)."""
+    wiki = tmp_path / "data" / "wiki" if with_wiki else None
+    claude_md = " ".join((_render(instance, wiki=wiki) / "CLAUDE.md").read_text().split())
+    answering = claude_md.split("## How to answer")[1].split("## ")[0]
+
+    for value in (
+        "what a person or an organization needs from the owner",
+        "every request of theirs that is still ahead of now",
+        "things to send in or bring as well as forms, fees and replies",
+        "the soonest dated one first",
+    ):
+        assert value in answering, value
+
+
 def test_with_a_wiki_the_rendered_claude_md_says_how_to_navigate_with_it(tmp_path: Path, instance):
     wiki = tmp_path / "data" / "wiki"
 
@@ -166,6 +184,70 @@ def test_with_a_wiki_the_rendered_claude_md_says_how_to_ask_and_answer_the_propo
     # It still cites only episodes: a proposal is a question, never evidence.
     for value in ("never a page, a day log or a proposal", "Never cite a proposal"):
         assert value in claude_md, value
+
+
+def _schema_searches(schema: Path) -> dict[str, tuple[str, str]]:
+    """The rows of the schema's "Searching the wiki" table: what each finds, with its pattern
+    and where to run it."""
+    table = schema.read_text().split("## Searching the wiki")[1]
+    rows = (line.strip("|").split(" | ") for line in table.splitlines() if line.startswith("| "))
+    return {find.strip(): (pattern.strip(), where.strip()) for find, pattern, where in rows}
+
+
+def test_with_a_wiki_a_question_about_what_the_owner_awaits_starts_from_the_open_loops(
+    tmp_path: Path, instance
+):
+    """A loop owed to the owner answers such a question whatever words its mail used, and only
+    the schema's pattern finds every one of them (#170)."""
+    target = _render(instance, wiki=tmp_path / "data" / "wiki")
+    claude_md = " ".join((target / "CLAUDE.md").read_text().split())
+    searches = _schema_searches(target / "wiki-schema.md")
+    steps = claude_md[
+        claude_md.index("For each question:") : claude_md.index("The librarian builds")
+    ]
+
+    # The questions it is for, and the mirror: what the owner has promised.
+    assert "what they are waiting on, expecting or owed" in steps
+    assert "what they have promised" in steps
+    # It names the schema's rows, and the schema keeps the patterns.
+    pointers = {
+        "what the owner is waiting on": "the pattern `wiki-schema.md` gives for",
+        "what the owner has promised": "its pattern for",
+    }
+    for find, pointer in pointers.items():
+        pattern, where = searches[find]
+        assert f'{pointer} "{find}"' in steps, find
+        assert pattern.strip("`") not in claude_md, "the schema's pattern was copied"
+        for directory in where.strip("`").split():
+            assert f"`{directory}`" in steps, directory
+    # Before L0 is searched, and every loop found is a candidate.
+    assert steps.index("what they are waiting on") < steps.index("Widen your searches of L0")
+    assert "before you search L0" in steps
+    assert "weigh every loop it returns as a candidate for the answer" in steps
+    assert "whatever words the question uses" in steps
+
+
+def test_with_a_wiki_each_kind_of_question_about_needs_and_waits_has_its_own_rule(
+    tmp_path: Path, instance
+):
+    """Three questions sound alike and point different ways: what the librarian asks of the
+    owner (proposals), what others owe the owner (open loops), and what one of them needs from
+    the owner (their requests). Each rule gives its own example question (#170)."""
+    text = (_render(instance, wiki=tmp_path / "data" / "wiki") / "CLAUDE.md").read_text()
+    claude_md = " ".join(text.split())
+
+    rule_of = {
+        '"what do you need from me?"': "give every open proposal",
+        '"anything waiting on me?"': "give every open proposal",
+        '"what am I still waiting on?"': "weigh every loop it returns",
+        '"what does the clinic need from me?"': "cover every request of theirs",
+    }
+    for question, rule in rule_of.items():
+        assert claude_md.count(question) == 1, question
+        sentence = claude_md[claude_md.index(question) :].split(". ")[0]
+        assert rule in sentence, question
+    # The loops step says which of the two the proposals are.
+    assert "what the librarian asks of the owner is a proposal" in claude_md
 
 
 def test_with_a_wiki_the_settings_attach_it_after_l0_and_scratch(tmp_path: Path, instance):
@@ -321,7 +403,7 @@ def test_without_a_wiki_the_project_says_nothing_of_one(instance):
     target = _render(instance)
 
     claude_md = (target / "CLAUDE.md").read_text()
-    for value in ("index.md", "wiki-schema.md", "librarian", "proposal"):
+    for value in ("index.md", "wiki-schema.md", "librarian", "proposal", "loop", "waiting on"):
         assert value not in claude_md, value
     assert not (target / "wiki-schema.md").exists()
     settings = json.loads((target / SETTINGS).read_text())
