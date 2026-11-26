@@ -919,11 +919,11 @@ def check_outcomes(
                     f"{outcome.candidate} names {page}, which this session didn't change: name "
                     "only pages you changed, by their paths relative to the wiki"
                 )
-    kinds = {candidate.id: candidate for candidate in offered}
+    by_id = {candidate.id: candidate for candidate in offered}
     for path, into in merged.items():
         naming = [o for o in outcomes if isinstance(o, Applied) and path in o.pages]
         if any(
-            (candidate := kinds.get(outcome.candidate)) is not None
+            (candidate := by_id.get(outcome.candidate)) is not None
             and candidate.kind is CandidateKind.DUPLICATE
             and path in candidate.pages
             and any(page in candidate.pages for page in into)
