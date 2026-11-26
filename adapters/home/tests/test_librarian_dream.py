@@ -857,7 +857,6 @@ BEGGED = f"- [ ] me → [[david-kim]]: a gift · begged {days_ago(1)} [ep:{HOTEL
 BROKEN_PERSON = wedding_pages()[PERSON].replace("## Open loops\n", f"## Open loops\n{BEGGED}\n")
 """David Kim's page with a loop lint can't read: an error the wiki is committed with, on a page
 no candidate names."""
-MALFORMED_GIFT = f"{PERSON}:13: malformed loop"
 
 
 def test_a_lint_error_the_wiki_already_had_is_left_for_the_next_librarian_run(data_root: Path):
