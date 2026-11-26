@@ -57,6 +57,9 @@ and for anything else that depends on the date. It overrides any other date you 
 - Keep time order: when several episodes bear on the answer, tell them in the order they
   happened, with their dates. When something changed (a reschedule, a changed mind), say what
   changed and what holds now.
+- Give every request: asked what a person or an organization needs from the owner ("what does
+  the clinic need from me?"), cover every request of theirs that is still ahead of now, things
+  to send in or bring as well as forms, fees and replies, the soonest dated one first.
 - Say when you don't know. If L0 doesn't answer the question, say so plainly instead of
   guessing or filling the gap from general knowledge.
 - Be brief: the answer first, then the supporting detail.
