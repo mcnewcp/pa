@@ -38,11 +38,30 @@ ends: a JSON object per line, with these keys in this order.
 
 Entries written before `resumes`, `lint_warnings` and `window_start` were recorded read with
 them null.
+
+A copy of a replay target, of a cut's wiki, or of a wiki no librarian built can be dreamed
+(`pa_core.librarian.dream_copy`).
+Each dreaming run that had candidates to judge is appended to the copy's run log as an entry of
+its own shape (`DreamingLogEntry`), told apart by its first key, `run`:
+
+- `run`: `dreaming`.
+- `status`, `commit`, `model`, `effort`, `sessions`, `cost_usd`, `lint_warnings`, `error`: as
+  above. `model` and `effort` are those of the librarian that dreamed.
+- `as_of`: the copy's as-of time, UTC ISO 8601, which the session was told is now.
+- `librarian_version`: the version of the librarian whose runs built the wiki, or null when
+  nothing names it (a cut whose wiki commit names none, or a wiki no librarian built).
+- `dreaming_version`: the version of the librarian that dreamed.
+- `candidates`: how many candidates the run judged; `outcomes`: how many got each outcome, by
+  the outcome's name. Both null when the run failed.
+
+So a run log holds a replay's runs, then the dreaming runs of its copy; the log of a copy of a
+cut's wiki, or of a wiki no librarian built, holds dreaming runs alone.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+import re
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
@@ -60,13 +79,16 @@ from pa_core.librarian.run import (
     PAGE_THRESHOLD,
     VERSION_FIELD,
     Librarian,
+    RunOutcome,
+    WikiRepository,
+    last_standing_fields,
+    run_librarian,
+)
+from pa_core.librarian.session import (
     LibrarianRunError,
     Phase,
-    RunOutcome,
+    SessionResult,
     SessionRunner,
-    WikiRepository,
-    commit_fields,
-    run_librarian,
 )
 from pa_core.librarian.wiki import GIT_DIR, TREE
 from pa_core.owner import Owner
@@ -138,18 +160,46 @@ class RunLogEntry(BaseModel):
     error: str | None
 
 
+class DreamingLogEntry(BaseModel):
+    """A run log entry for one dreaming run of a copy, committed or failed (see the module
+    docstring)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run: Literal["dreaming"]
+    status: Literal["committed", "failed"]
+    commit: str | None
+    as_of: _Utc
+    librarian_version: str | None
+    dreaming_version: str
+    model: str
+    effort: str
+    sessions: tuple[RunLogSession, ...]
+    cost_usd: float | None
+    candidates: int | None
+    outcomes: dict[str, int] | None
+    lint_warnings: int | None
+    error: str | None
+
+
 class RunLogError(PaError):
     """A run log that can't be read."""
 
 
-def read_run_log(path: Path) -> list[RunLogEntry]:
-    """The entries of the run log at `path`, in order."""
-    entries: list[RunLogEntry] = []
+_DREAMING_ENTRY = re.compile(r'\s*\{\s*"run"\s*:\s*"dreaming"')
+"""How a dreaming run's entry starts: `run` is its first key."""
+
+
+def read_run_log(path: Path) -> list[RunLogEntry | DreamingLogEntry]:
+    """The entries of the run log at `path`, in order: a replay's runs, and its copy's
+    dreaming runs."""
+    entries: list[RunLogEntry | DreamingLogEntry] = []
     for number, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
+        entry = DreamingLogEntry if _DREAMING_ENTRY.match(line) else RunLogEntry
         try:
-            entries.append(RunLogEntry.model_validate_json(line))
+            entries.append(entry.model_validate_json(line))
         except ValidationError as error:
             raise RunLogError(
                 f"{path}:{number} isn't a run log entry: {error.errors()[0]['msg']}"
@@ -157,12 +207,78 @@ def read_run_log(path: Path) -> list[RunLogEntry]:
     return entries
 
 
+def replay_runs(entries: Iterable[RunLogEntry | DreamingLogEntry]) -> list[RunLogEntry]:
+    """The replay's runs among a run log's `entries`, in order."""
+    return [entry for entry in entries if isinstance(entry, RunLogEntry)]
+
+
+@dataclass(frozen=True)
+class RunHistory:
+    """The runs a run log records of the wiki beside it: a finished replay's, then its
+    copy's dreaming runs."""
+
+    replays: tuple[RunLogEntry, ...]
+    """The replay's runs, all of one librarian version and the last one committed; none in the
+    log of a copy of a cut's wiki."""
+    dreams: tuple[DreamingLogEntry, ...]
+    """The dreaming runs, all by one librarian version."""
+
+    @property
+    def dreaming_version(self) -> str | None:
+        """The version of the librarian that dreamed the wiki; None when no dreaming run
+        committed, so the wiki is as the replay (or the cut) left it."""
+        committed = [entry for entry in self.dreams if entry.status == "committed"]
+        return committed[-1].dreaming_version if committed else None
+
+    def dreamed_otherwise(
+        self, *, as_of: datetime, librarian_version: str | None
+    ) -> DreamingLogEntry | None:
+        """The first dreaming run that isn't of the wiki told `as_of` as now and built by
+        `librarian_version`, or None when every one is. One wiki is dreamed as of one time,
+        so a log with such a run is another wiki's."""
+        for entry in self.dreams:
+            if entry.as_of != as_of or entry.librarian_version != librarian_version:
+                return entry
+        return None
+
+
+def run_history(path: Path) -> RunHistory:
+    """The runs in the run log at `path`. Raises RunLogError for any mix but a finished
+    replay's runs of one librarian version, then dreaming runs of one version: a replay run
+    after a dreaming run, a replay that never committed or that stopped on a failed run, or
+    two versions of either."""
+    entries = read_run_log(path)
+    replays = tuple(replay_runs(entries))
+    dreams = tuple(entry for entry in entries if isinstance(entry, DreamingLogEntry))
+    if list(entries) != [*replays, *dreams]:
+        raise RunLogError(
+            f"{path} has a replay run after a dreaming run: a dreamed copy isn't replayed on"
+        )
+    if replays and not any(entry.status == "committed" for entry in replays):
+        raise RunLogError(f"{path} has no committed run")
+    versions = sorted({entry.librarian_version for entry in replays})
+    if len(versions) > 1:
+        raise RunLogError(f"{path} names more than one librarian version: {versions}")
+    if replays and replays[-1].status != "committed":
+        raise RunLogError(f"{path} ends with a failed run: finish the replay with --resume first")
+    for entry in dreams:
+        if versions and entry.librarian_version != versions[0]:
+            raise RunLogError(
+                f"{path} has a dreaming run of a wiki built by librarian version "
+                f"{entry.librarian_version}, not {versions[0]}, the replay's"
+            )
+    dreamers = sorted({entry.dreaming_version for entry in dreams})
+    if len(dreamers) > 1:
+        raise RunLogError(f"{path} names more than one dreaming version: {dreamers}")
+    return RunHistory(replays, dreams)
+
+
 def cost_per_offered(run_log: Path) -> float | None:
     """What the replay whose run log is at `run_log` cost per offered episode, over its
     committed runs that reported a cost; None when it has none that offered anything."""
     runs = [
         entry
-        for entry in read_run_log(run_log)
+        for entry in replay_runs(read_run_log(run_log))
         if entry.status == "committed" and entry.cost_usd is not None
     ]
     offered = sum(entry.episodes for entry in runs)
@@ -249,9 +365,9 @@ def replay_librarian(
                 batch=batch,
             )
         except LibrarianRunError as error:
-            _log(run_log, _entry(batch, librarian, window_start, error=error))
+            append_to_run_log(run_log, _entry(batch, librarian, window_start, error=error))
             raise
-        _log(run_log, _entry(batch, librarian, window_start, outcome=outcome))
+        append_to_run_log(run_log, _entry(batch, librarian, window_start, outcome=outcome))
         runs.append(outcome)
         progress(outcome)
     return ReplayOutcome(tuple(runs))
@@ -262,7 +378,7 @@ def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
     only repeat it), else `given`."""
     if not run_log.exists():
         return given
-    entries = read_run_log(run_log)
+    entries = replay_runs(read_run_log(run_log))
     if not entries:
         return given
     recorded = entries[0].window_start
@@ -276,8 +392,9 @@ def _window_start(run_log: Path, given: datetime | None) -> datetime | None:
 
 
 def _resume_point(repository: WikiRepository, librarian: Librarian) -> datetime | None:
-    """Where the last committed replay run's window ended, or None in a fresh wiki."""
-    fields = commit_fields(repository.last_commit_message() or "")
+    """Where the last committed replay run's window ended, or None in a fresh wiki. The
+    wiki's last run must be a replay's: a wiki that was dreamed since isn't replayed on."""
+    fields = last_standing_fields(repository)
     if OCCURRED_TO_FIELD not in fields:
         if fields:
             raise ReplayError(
@@ -347,13 +464,6 @@ def _entry(
     `error`."""
     assert batch.window is not None
     sessions = outcome.sessions if outcome else error.sessions if error else ()
-    costs = [result.cost_usd for _, result in sessions]
-    known = [cost for cost in costs if cost is not None]
-    if outcome is not None:
-        cost = None if None in costs else round(sum(known), 6)
-    else:
-        # What a failed run cost is what its sessions reported, never a made-up zero.
-        cost = round(sum(known), 6) if known else None
     return RunLogEntry(
         status="committed" if outcome else "failed",
         commit=outcome.commit if outcome else None,
@@ -365,23 +475,42 @@ def _entry(
         librarian_version=librarian.version,
         model=librarian.model,
         effort=librarian.effort,
-        sessions=tuple(
-            RunLogSession(
-                phase=phase,
-                session_id=result.session_id,
-                cost_usd=result.cost_usd,
-                turns=result.turns,
-                resumes=result.resumes,
-            )
-            for phase, result in sessions
-        ),
-        cost_usd=cost,
+        sessions=logged_sessions(sessions),
+        cost_usd=run_cost(sessions, committed=outcome is not None),
         lint_warnings=len(outcome.warnings) if outcome else None,
         error=str(error) if error else None,
     )
 
 
-def _log(run_log: Path, entry: RunLogEntry) -> None:
+def logged_sessions(
+    sessions: Sequence[tuple[Phase, SessionResult]],
+) -> tuple[RunLogSession, ...]:
+    """A run's `sessions` as a run log entry lists them, in order."""
+    return tuple(
+        RunLogSession(
+            phase=phase,
+            session_id=result.session_id,
+            cost_usd=result.cost_usd,
+            turns=result.turns,
+            resumes=result.resumes,
+        )
+        for phase, result in sessions
+    )
+
+
+def run_cost(sessions: Sequence[tuple[Phase, SessionResult]], *, committed: bool) -> float | None:
+    """What a run log entry says a run of `sessions` cost: a `committed` run's total, or None
+    if a session didn't report its cost; a failed run's total of the costs that were reported,
+    or None if none was. What a failed run cost is what its sessions reported, never a made-up
+    zero."""
+    costs = [result.cost_usd for _, result in sessions]
+    known = [cost for cost in costs if cost is not None]
+    if committed:
+        return None if None in costs else round(sum(known), 6)
+    return round(sum(known), 6) if known else None
+
+
+def append_to_run_log(run_log: Path, entry: RunLogEntry | DreamingLogEntry) -> None:
     run_log.parent.mkdir(parents=True, exist_ok=True)
     with run_log.open("a", encoding="utf-8") as log:
         log.write(entry.model_dump_json() + "\n")

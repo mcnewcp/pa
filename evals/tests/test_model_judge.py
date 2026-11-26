@@ -1,4 +1,8 @@
+import json
 import os
+import stat
+import sys
+import textwrap
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -61,6 +65,41 @@ def test_the_model_judge_shows_the_model_the_question_answer_and_cited_episodes(
     ):
         assert expected in sent.prompt
     assert sent.schema == Verdict.model_json_schema()
+
+
+def test_the_rubric_asks_for_the_reasoning_before_the_ruling():
+    backend = FakeModelBackend({"reasoning": "ok", "correct": True, "relevant_citations": []})
+
+    ModelJudge(ModelClient(backend)).judge(request())
+
+    [sent] = backend.requests
+    assert sent.prompt.index("`reasoning`") < sent.prompt.index("`correct`")
+
+
+def test_the_judge_is_asked_for_its_reasoning_before_its_ruling(tmp_path: Path):
+    """A model fills in a structured answer in the order the schema lists its properties, so
+    the schema `claude` is handed has to ask for the reasoning ahead of the ruling."""
+    sent = tmp_path / "schema.json"
+    claude = tmp_path / "claude"
+    claude.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent(
+            f"""\
+            import json, sys
+            argv = sys.argv[1:]
+            open({str(sent)!r}, "w").write(argv[argv.index("--json-schema") + 1])
+            verdict = {{"correct": True, "reasoning": "Same date.", "relevant_citations": []}}
+            print(json.dumps({{"type": "result", "is_error": False, "structured_output": verdict}}))
+            """
+        )
+    )
+    claude.chmod(claude.stat().st_mode | stat.S_IXUSR)
+
+    ModelJudge(ModelClient(ClaudeCliBackend(executable=str(claude)))).judge(request())
+
+    asked_for = json.loads(sent.read_text(), object_pairs_hook=list)
+    [properties] = [value for key, value in asked_for if key == "properties"]
+    assert [name for name, _ in properties] == ["reasoning", "correct", "relevant_citations"]
 
 
 def test_the_model_judge_raises_when_the_model_keeps_replying_badly():

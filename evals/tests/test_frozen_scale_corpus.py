@@ -297,8 +297,12 @@ def test_the_scale_eval_set_adds_connection_and_where_things_stand_questions(eva
 
 
 def test_the_v0_12_questions_are_asked_unchanged_and_v0_12_1s_follow_them(eval_set: EvalSet):
-    v0_12 = [question.model_dump(mode="json") for question in eval_set.questions[:40]]
+    # The digest was taken before a question could carry a tier, and these carry none.
+    v0_12 = [
+        question.model_dump(mode="json", exclude={"tier"}) for question in eval_set.questions[:40]
+    ]
     digest = hashlib.sha256(json.dumps(v0_12, sort_keys=True).encode()).hexdigest()
 
     assert digest == V0_12_QUESTIONS_SHA256
+    assert {question.tier for question in eval_set.questions[:40]} == {None}
     assert [question.id for question in eval_set.questions[40:]] == V0_12_1_QUESTIONS

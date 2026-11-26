@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
@@ -14,9 +14,14 @@ from pa_core.errors import PaError
 from pa_core.ingest import ingest
 from pa_core.inspection import FORMATS, format_for, inspect_structure
 from pa_core.librarian.replay import BATCH_DAYS, RUN_LOG, ReplayError
-from pa_core.librarian.run import LibrarianRunError, RunOutcome
+from pa_core.librarian.run import (
+    RunOutcome,
+)
+from pa_core.librarian.session import (
+    LibrarianRunError,
+)
 from pa_core.renormalize import renormalize
-from pa_core.status import Failure, read_status
+from pa_core.status import DreamingRun, Failure, read_status
 from pa_home import librarian
 from pa_home.agent_project import render_agent_project
 from pa_home.backfill_estimate import estimate_backfill, estimate_lines
@@ -28,8 +33,10 @@ from pa_home.collectors.calendar_server import CalDavServer, CalendarServer
 from pa_home.collectors.gmail import GmailClient, GmailCollector, count_by_category
 from pa_home.collectors.vault import VaultCollector
 from pa_home.config import (
+    DREAMING_INTERVAL_DAYS,
     GMAIL_CLIENT_VAR,
     GMAIL_TOKEN_VAR,
+    LIBRARIAN_DREAMING_INTERVAL_VAR,
     CaptureConfig,
     ConfigError,
     DataRoot,
@@ -43,7 +50,7 @@ from pa_home.config import (
     load_time_zone,
     require_outside_repository,
 )
-from pa_home.cut import take_cut
+from pa_home.cut import load_cut, take_cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.gmail_api import DEFAULT_AUTH_PORT, GoogleGmailClient, authorize
 from pa_home.librarian_project import render_librarian_project
@@ -152,13 +159,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands.add_parser(
         "nightly",
         help="Run the nightly job under the data root's lock: a capture cycle with "
-        "reconciliation, then the librarian run, then the backup, each recorded in the status. "
-        "A step that fails doesn't stop the next. Skips if another job holds the lock.",
+        "reconciliation, then the librarian run, then a dreaming run when one is due "
+        f"(every {LIBRARIAN_DREAMING_INTERVAL_VAR} days, {DREAMING_INTERVAL_DAYS} unless set; "
+        "0 for never), then the "
+        "backup, each recorded in the status. A step that fails doesn't stop the next. Skips "
+        "if another job holds the lock.",
     )
     commands.add_parser(
         "status",
         help="Print how current the PA is: each source's watermark, cadence, and failures, and "
-        "the last ingest, librarian run, and backup. Prints no content.",
+        "the last ingest, librarian run, dreaming run, and backup, with how many proposals "
+        "are open. Prints no content.",
     )
     commands.add_parser(
         "cut",
@@ -171,9 +182,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     catalog_commands.add_parser("rebuild", help="Delete the catalog and rebuild it from L0.")
     commands.add_parser(
         "backup",
-        help="Back up L0, the wiki's git directory, and the private eval directory to the "
-        "configured restic repository, and record the outcome in the status. Skips if another "
-        "run holds the data root's lock.",
+        help="Back up L0, the wiki's git directory, the private eval directory, and the "
+        "private diagnoses directory to the configured restic repository, and record the "
+        "outcome in the status. Skips if another run holds the data root's lock.",
     )
     commands.add_parser(
         "renormalize", help="Rebuild every envelope in L0 from its raw payload, then the catalog."
@@ -240,6 +251,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         "run",
         help="Observe the episodes captured since the last run into the wiki, and fold them "
         "into pages.",
+    )
+    dream = librarian_commands.add_parser(
+        "dream",
+        help="Review the whole wiki once: judge the candidate problems the host flags, fix "
+        "what L0 settles, and commit. With TARGET, review a copy instead of the data root's "
+        "wiki, at the copy's as-of time.",
+    )
+    dream.add_argument(
+        "target",
+        type=Path,
+        nargs="?",
+        help="A copy to dream instead of the data root's wiki: a directory holding a copy of "
+        f"a replay target's wiki/ and {RUN_LOG} (an eval wiki), with --corpus, or a copy of a "
+        "cut's wiki as wiki/, with --cut. Its git directory (wiki.git/) is made beside it "
+        f"and kept, and the run is appended to its {RUN_LOG}.",
+    )
+    dream.add_argument(
+        "--count",
+        action="store_true",
+        help="Run nothing: count what a run over the data root's wiki would find now. Prints "
+        "counts only: the candidates flagged, by kind; how many a run would be offered, how "
+        "many are held back, and how many are over the cap; and the unengaged people and "
+        "organization pages with no open loop.",
+    )
+    dream.add_argument(
+        "--cut",
+        type=Path,
+        metavar="DIR",
+        help="With TARGET, a copy of this cut's wiki (`pa cut`): dream it over the cut's L0, "
+        "at the cut's as-of time. The copy holds the owner's data, so it is refused inside "
+        "the repository: keep it under the data root.",
+    )
+    dream.add_argument(
+        "--corpus",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="With TARGET, a copy of a replay target: the raw payloads it was replayed over "
+        "(one directory per source, as in the inbox), ingested into a throwaway data root. "
+        "Repeat for a corpus in several directories. The copy's as-of time is the end of the "
+        "replay's last run.",
     )
     replay = librarian_commands.add_parser(
         "replay",
@@ -330,6 +383,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resume=args.resume,
             )
             return 0
+        if (
+            args.command == "librarian"
+            and args.librarian_command == "dream"
+            and (args.target or args.corpus or args.cut)
+        ):
+            if args.count:
+                raise PaError(
+                    "--count counts the data root's wiki: give it without a TARGET, --corpus, "
+                    "or --cut"
+                )
+            # Before the data root is loaded: a copy over a corpus needs none.
+            _dream_copy(args.target, args.corpus, args.cut)
+            return 0
         if args.command == "gmail" and args.gmail_command == "auth":
             _gmail_auth(args.port)
             return 0
@@ -369,6 +435,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "librarian" and args.librarian_command == "seed":
             with data_root_lock(data_root):
                 _seed(data_root, args.eval_wiki, args.captured_through)
+        elif args.command == "librarian" and args.librarian_command == "dream":
+            if args.count:
+                _count_candidates(data_root)
+            else:
+                _dream(data_root)
         elif args.command == "librarian":
             _run_librarian(data_root)
     except PaError as error:
@@ -508,6 +579,10 @@ def _nightly(data_root: DataRoot) -> int:
         _report_run(outcome.librarian, "nightly: librarian")
     if outcome.librarian_failure is not None:
         print(f"pa: nightly: librarian: {outcome.librarian_failure}", file=sys.stderr)
+    if outcome.dreaming is not None:
+        print(f"nightly: dreaming: {librarian.dreaming_report(outcome.dreaming)}")
+    if outcome.dreaming_failure is not None:
+        print(f"pa: nightly: dreaming: {outcome.dreaming_failure}", file=sys.stderr)
     if outcome.snapshot is not None:
         print(f"nightly: backup: took snapshot {outcome.snapshot[:8]}")
     if outcome.backup_failure is not None:
@@ -614,6 +689,10 @@ def _print_status(data_root: DataRoot) -> None:
         outcome = "succeeded" if run.succeeded else f"failed ({run.reason})"
         last_run = f"{moment(run.at)} {outcome}{cost}{warnings}"
     print(f"wiki: current through {moment(status.wiki.current_through)}; last run {last_run}")
+    dreamed = status.wiki.last_dreaming
+    print(f"dreaming: last run {'never' if dreamed is None else _dreamed(dreamed, moment)}")
+    waiting = status.wiki.open_proposals
+    print(f"proposals: {'not counted yet' if waiting is None else f'{waiting} open'}")
     print(
         f"backup: last success {moment(status.backup.last_success)}; "
         f"last failure {failure(status.backup.last_failure)}"
@@ -628,6 +707,22 @@ def _print_status(data_root: DataRoot) -> None:
             f"assistant login: {ends} (checked {moment(login.checked_at)})"
             f"{again if status.login_ending(now=now) else ''}"
         )
+
+
+def _dreamed(run: DreamingRun, moment: Callable[[datetime], str]) -> str:
+    """The status's last dreaming run, as `pa status` shows it: counts and a reason."""
+    cost = "" if run.cost_usd is None else f", cost ${run.cost_usd:.2f}"
+    if not run.succeeded:
+        return f"{moment(run.at)} failed ({run.reason}){cost}"
+    held_back = f", {run.held_back} held back" if run.held_back else ""
+    if not run.candidates:
+        return f"{moment(run.at)} succeeded, nothing to judge{held_back}"
+    counts = librarian.outcome_counts(run.outcomes)
+    left_over = f", {run.left_over} over the cap" if run.left_over else ""
+    return (
+        f"{moment(run.at)} succeeded{cost}, judged {run.candidates} candidates ({counts})"
+        f"{held_back}{left_over}"
+    )
 
 
 def _moment(value: datetime, time_zone: ZoneInfo) -> str:
@@ -674,7 +769,16 @@ def _run_librarian(data_root: DataRoot) -> None:
     except LockHeld:
         print(skipped("librarian"))
         return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.RUN_ERROR) from None
     _report_run(outcome, "librarian")
+
+
+def _failed_run(error: LibrarianRunError, kept: Path) -> PaError:
+    """What a failed run over the data root prints: where it failed, and that its error is in
+    `kept`. The error quotes pages and lint findings, which no command prints (CLAUDE.md, Real
+    content): `pa_home.librarian` keeps it under the data root, for the owner."""
+    return PaError(f"{librarian.run_failure_reason(error)}; its error is in {kept}")
 
 
 def _report_run(outcome: RunOutcome, name: str) -> None:
@@ -687,6 +791,94 @@ def _report_run(outcome: RunOutcome, name: str) -> None:
         f"{name}: offered {len(batch.episodes)} of {batch.captured} new episodes; "
         f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings"
     )
+
+
+def _dream(data_root: DataRoot) -> None:
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    try:
+        with data_root_lock(data_root):
+            outcome = librarian.dream(data_root, owner=owner, time_zone=time_zone, config=config)
+    except LockHeld:
+        print(skipped("librarian dream"))
+        return
+    except LibrarianRunError as error:
+        raise _failed_run(error, data_root.run_errors / librarian.DREAMING_ERROR) from None
+    print(f"librarian dream: {librarian.dreaming_report(outcome)}")
+
+
+def _count_candidates(data_root: DataRoot) -> None:
+    """Print what a dreaming run over the data root's wiki would find now: counts, never
+    content."""
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    name = "librarian dream"
+    try:
+        with data_root_lock(data_root):
+            counts = librarian.count_candidates(
+                data_root, owner=owner, time_zone=time_zone, config=config
+            )
+    except LockHeld:
+        print(skipped(name))
+        return
+    kinds = ", ".join(f"{count} {kind}" for kind, count in counts.flagged.items())
+    print(
+        f"{name}: {sum(counts.flagged.values())} candidates flagged{f' ({kinds})' if kinds else ''}"
+    )
+    print(
+        f"{name}: a run now would be offered {counts.offered}, with {counts.held_back} held "
+        f"back and {counts.left_over} over the cap of {counts.cap}"
+    )
+    people, organizations = counts.unengaged_without_loops.values()
+    print(
+        f"{name}: {people + organizations} unengaged pages with no open loop ({people} people, "
+        f"{organizations} organizations)"
+    )
+
+
+def _dream_copy(target: Path | None, corpus: list[Path], cut: Path | None) -> None:
+    """Dream the copy in `target`, of a replay target replayed over `corpus` or of the wiki
+    of the cut in `cut`: no data root is loaded, and none is locked."""
+    if target is None:
+        option = "--corpus" if corpus else "--cut"
+        raise PaError(
+            f"{option} goes with a TARGET, the copy to dream: without one, pa librarian dream "
+            "reviews the data root's wiki"
+        )
+    if bool(corpus) == (cut is not None):
+        raise PaError(
+            "a copy is dreamed over the L0 its wiki was built over: give --corpus DIR or "
+            "--cut DIR with TARGET, one or the other"
+        )
+    owner, time_zone, config = load_owner(), load_time_zone(), load_librarian_config()
+    target = target.expanduser().resolve()
+    taken = None
+    if cut is not None:
+        reason = (
+            "A cut and a copy of its wiki hold the owner's data, so they must live outside "
+            "the repository: keep the copy under the data root."
+        )
+        require_outside_repository(target, "The copy of the cut's wiki", reason)
+        cut = cut.expanduser().resolve()
+        require_outside_repository(cut, "--cut", reason)
+        taken = load_cut(cut)
+    try:
+        outcome = librarian.dream_copy(
+            target,
+            corpus=[directory.expanduser().resolve() for directory in corpus],
+            cut=taken,
+            owner=owner,
+            time_zone=time_zone,
+            config=config,
+        )
+    except LibrarianRunError as error:
+        if taken is None:
+            raise
+        # A failed run's error quotes pages, and a cut's copy is the owner's data, dreamed by
+        # a session that reads counts and exit codes only: it says where the run failed, and
+        # the error stays in the copy's run log, under the data root.
+        raise PaError(
+            f"{librarian.run_failure_reason(error)}; its error is in {target / RUN_LOG}"
+        ) from None
+    print(f"librarian dream: {librarian.dreaming_report(outcome)}")
 
 
 def _seed(data_root: DataRoot, eval_wiki: Path, captured_through: datetime | None) -> None:

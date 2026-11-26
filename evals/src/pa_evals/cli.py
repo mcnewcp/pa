@@ -11,10 +11,14 @@ import sys
 from collections.abc import Sequence
 
 from pa_core.errors import PaError
-from pa_evals.compare_cli import add_compare_command
+from pa_evals.compare_cli import add_compare_command, add_compare_wikis_command
 from pa_evals.corpus_cli import add_corpus_command
+from pa_evals.diagnose_cli import add_diagnose_command
 from pa_evals.draft_cli import add_draft_command
+from pa_evals.history_cli import add_wiki_history_command
 from pa_evals.questions_cli import add_eval_set_command
+from pa_evals.release_cli import add_release_command
+from pa_evals.reproduction_cli import add_reproduction_command
 from pa_evals.run_cli import add_run_command
 from pa_evals.verdict_cli import add_verdict_command
 
@@ -26,7 +30,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     add_eval_set_command(commands)
     add_run_command(commands)
     add_compare_command(commands)
+    add_compare_wikis_command(commands)
     add_draft_command(commands)
+    add_wiki_history_command(commands)
+    add_diagnose_command(commands)
+    add_release_command(commands)
+    add_reproduction_command(commands)
     add_verdict_command(commands)
     args = parser.parse_args(argv)
     try:

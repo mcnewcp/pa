@@ -26,8 +26,12 @@ from pa_core.envelope import Source
 STATUS_VERSION = 1
 STALE_AFTER_CADENCES = 2
 """A source is stale once its watermark is more than this many cadences behind now."""
-NIGHTLY_BOUND = timedelta(hours=3)
-"""How long the nightly job may run before it stops holding staleness off."""
+NIGHTLY_BOUND = timedelta(hours=4)
+"""How long the nightly job may run before it stops holding staleness off: an hour for each of
+a night's three sessions (the librarian run's two and a dreaming run's one, each at the
+librarian's default timeout), and an hour for the capture cycle and the backup. A night that
+resumes sessions near their timeouts can still outlast it, and is then called stale while it
+runs, which is true of its sources and worth the owner's hearing."""
 LOGIN_WARNING = timedelta(days=7)
 """How long before the assistant's login ends that the owner is told to log in again."""
 
@@ -79,11 +83,40 @@ class LibrarianRun(_Model):
     """How many lint warnings the run left."""
 
 
+class DreamingRun(_Model):
+    """The outcome of the last dreaming run, the librarian's review of the whole wiki, by the
+    nightly job or by hand: counts and a reason, never a page, a proposal, or what a
+    candidate was about."""
+
+    at: AwareDatetime
+    succeeded: bool
+    reason: str | None = None
+    """Why it failed, without content."""
+    cost_usd: float | None = None
+    candidates: int | None = None
+    """How many candidate problems the run judged: 0 when it found nothing to judge, and so
+    ran no session and made no commit. None for a failed run."""
+    outcomes: dict[str, int] = {}
+    """How many of those candidates got each outcome (`applied`, `proposed`, `dismissed`).
+    Empty for a failed run."""
+    held_back: int | None = None
+    """How many candidates the wiki had that the run didn't offer, because an earlier run
+    dismissed them or a proposal about them is still open. None for a failed run."""
+    left_over: int | None = None
+    """How many more the run didn't offer because of the cap on a run's candidates: they wait
+    for the next run. None for a failed run, and in a record written before it was kept."""
+
+
 class WikiStatus(_Model):
     current_through: AwareDatetime | None = None
     """The librarian's cursor after its last committed run: episodes captured after this
     aren't in the wiki yet, so they're only in L0."""
     last_run: LibrarianRun | None = None
+    last_dreaming: DreamingRun | None = None
+    """None until dreaming first runs."""
+    open_proposals: int | None = None
+    """How many proposals are open in the wiki as last committed: what the librarian is
+    waiting on the owner for. None until a run first counts them."""
 
 
 class NightlyStatus(_Model):

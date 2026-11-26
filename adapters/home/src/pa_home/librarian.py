@@ -3,10 +3,11 @@ wired to its home adapters.
 
 A run's wiki and its git directory live in the data root. A replay's live in its target
 directory (`ReplayTarget`), beside its run log, and it replays either
-the data root's L0 or a corpus ingested into a throwaway data root. Each run (each replay)
-renders the librarian project as committed (the project its librarian version names) into a
-temporary directory, the sessions' working directory, and runs the sessions with the configured
-command.
+the data root's L0 or a corpus ingested into a throwaway data root. A dreaming run reviews the
+data root's wiki (`dream`), or a copy of a replay target, of a cut's wiki, or of a wiki no
+librarian built, laid out as a replay's target is (`dream_copy`). Each run (each replay) renders
+the librarian project as committed (the project its librarian version names) into a temporary
+directory, the sessions' working directory, and runs the sessions with the configured command.
 
 With a sandbox configured (the librarian's VM), each run (each replay) is wrapped in it:
 
@@ -28,35 +29,53 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
+from pa_core.atomic import write_atomically
 from pa_core.catalog import open_catalog
 from pa_core.errors import PaError
 from pa_core.ingest import ingest, is_hidden
+from pa_core.librarian import dreaming
+from pa_core.librarian.dream_copy import (
+    DreamCopyError,
+    replayed_source,
+    run_copy_dreaming,
+    stated_source,
+)
+from pa_core.librarian.dreaming import (
+    CandidateCounts,
+    DreamingOutcome,
+    last_dreaming_at,
+    run_dreaming,
+)
 from pa_core.librarian.replay import BATCH_DAYS, ReplayOutcome, ReplayTarget, replay_librarian
 from pa_core.librarian.run import (
     Librarian,
-    LibrarianRunError,
-    Phase,
     RunOutcome,
-    SessionPaths,
-    SessionResult,
     WikiSeedError,
     last_cursor,
     run_librarian,
     seed_wiki,
 )
+from pa_core.librarian.session import (
+    LibrarianRunError,
+    Phase,
+    SessionPaths,
+    SessionResult,
+)
 from pa_core.librarian.version import librarian_version
+from pa_core.librarian.wiki import open_proposals
 from pa_core.owner import Owner
-from pa_core.status import LibrarianRun, WikiStatus, read_status, write_status
+from pa_core.status import DreamingRun, LibrarianRun, read_status, write_status
 from pa_home.agent import wall_clock
 from pa_home.capture import failure_reason
 from pa_home.claude_session import ClaudeSessionRunner
 from pa_home.config import DataRoot, LibrarianConfig
+from pa_home.cut import Cut
 from pa_home.filesystem_l0 import FilesystemL0
 from pa_home.git_wiki import GitWikiRepository
 from pa_home.librarian_project import (
@@ -112,14 +131,221 @@ def run(
         failed = LibrarianRun(
             at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
         )
-        _record_run(data_root, repository, failed, now)
+        _record(data_root, repository, now, failed)
+        _keep_error(data_root.run_errors / RUN_ERROR, error, started)
         raise
     warnings = None if outcome.batch is None else len(outcome.warnings)
     succeeded = LibrarianRun(
         at=started, succeeded=True, cost_usd=_cost(outcome.sessions), warnings=warnings
     )
-    _record_run(data_root, repository, succeeded, now)
+    _record(data_root, repository, now, succeeded)
     return outcome
+
+
+def dream(
+    data_root: DataRoot,
+    *,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    project: Path = LIBRARIAN_PROJECT,
+    now: Callable[[], datetime] = wall_clock,
+) -> DreamingOutcome:
+    """Runs dreaming once over the data root's wiki, telling its session `now`'s time as
+    "now": the librarian's review of the whole wiki, as one commit of its own. `project` is the
+    librarian project's source, run as committed (`project_files`), in the sandbox a nightly
+    run's sessions run in, with the same model, effort, turn limit, and timeout.
+
+    Whatever happens, the run is recorded in the status as the last dreaming run, in counts
+    and a failure's reason without content, beside the librarian run's own record. A run that
+    found nothing to judge is recorded too: the review happened. The caller holds the data
+    root's lock, as for `run`.
+    """
+    started = now()
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    try:
+        files = project_files(project)
+        with _runner(data_root.l0, data_root.wiki, owner, config, files) as runner:
+            outcome = run_dreaming(
+                store=FilesystemL0(data_root.l0),
+                owner=owner,
+                repository=repository,
+                runner=runner,
+                librarian=_librarian(config, files),
+                now=started.astimezone(time_zone),
+                settings=config.dreaming,
+            )
+    except Exception as error:
+        sessions = error.sessions if isinstance(error, LibrarianRunError) else ()
+        failed = DreamingRun(
+            at=started, succeeded=False, reason=run_failure_reason(error), cost_usd=_cost(sessions)
+        )
+        _record(data_root, repository, now, failed)
+        _keep_error(data_root.run_errors / DREAMING_ERROR, error, started)
+        raise
+    succeeded = DreamingRun(
+        at=started,
+        succeeded=True,
+        cost_usd=_cost(outcome.sessions),
+        candidates=len(outcome.candidates),
+        outcomes=outcome.counts,
+        held_back=outcome.held_back,
+        left_over=outcome.left_over,
+    )
+    _record(data_root, repository, now, succeeded)
+    return outcome
+
+
+def count_candidates(
+    data_root: DataRoot,
+    *,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> CandidateCounts:
+    """Counts what a dreaming run at `now` would find in the data root's wiki, as `dream`
+    would flag it, without running a session, committing, or recording anything. The caller
+    holds the data root's lock, so no run is part way through the wiki."""
+    return dreaming.count_candidates(
+        store=FilesystemL0(data_root.l0),
+        owner=owner,
+        repository=GitWikiRepository.open(data_root.wiki, data_root.wiki_git),
+        now=now().astimezone(time_zone),
+        settings=config.dreaming,
+    )
+
+
+def dreaming_due(
+    data_root: DataRoot,
+    *,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    now: Callable[[], datetime] = wall_clock,
+) -> bool:
+    """Whether the nightly job should dream at `now`: dreaming is on (an interval of 0 turns
+    it off), and the wiki's last review is at least `config.dreaming_interval_days` old, or it
+    has had none.
+
+    The last review is the last dreaming run whose commit still stands (`last_dreaming_at`),
+    by hand or by the job. A run that found nothing to judge commits nothing, so it is known
+    by the status's record of it alone, and counts too: the candidates it weighed are the same
+    ones the next night, and a review that judged nothing is still that week's review. A failed
+    run counts for nothing, so the next night tries again, and neither does a reverted one, so
+    its candidates are judged again the next night.
+
+    The interval is in days of `time_zone`'s calendar, the owner's, so a night that starts a
+    few minutes earlier than last week's is still a week later.
+    """
+    if config.dreaming_interval_days == 0:
+        return False
+    repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
+    reviews = [last_dreaming_at(repository)]
+    recorded = read_status(data_root.status).wiki.last_dreaming
+    if recorded is not None and recorded.succeeded and recorded.candidates == 0:
+        reviews.append(recorded.at)
+    last = max((review for review in reviews if review is not None), default=None)
+    if last is None:
+        return True
+    today = now().astimezone(time_zone).date()
+    return (today - last.astimezone(time_zone).date()).days >= config.dreaming_interval_days
+
+
+def outcome_counts(counts: Mapping[str, int]) -> str:
+    """A dreaming run's count per outcome, as a run's report and `pa status` both show it."""
+    return ", ".join(f"{count} {outcome}" for outcome, count in counts.items())
+
+
+def dreaming_report(outcome: DreamingOutcome) -> str:
+    """What a dreaming run did, as the command that ran it prints it after its own name:
+    counts, never content."""
+    if outcome.commit is None and outcome.held_back:
+        return f"nothing to judge; every candidate is held back ({outcome.held_back})"
+    if outcome.commit is None:
+        return "no candidates in the wiki"
+    left_over = f"; {outcome.left_over} over the cap" if outcome.left_over else ""
+    return (
+        f"judged {len(outcome.candidates)} candidates ({outcome_counts(outcome.counts)}); "
+        f"committed {outcome.commit[:8]}; {len(outcome.warnings)} lint warnings{left_over}"
+    )
+
+
+def dream_copy(
+    target: Path,
+    *,
+    corpus: Sequence[Path] = (),
+    cut: Cut | None = None,
+    as_of: datetime | None = None,
+    owner: Owner,
+    time_zone: ZoneInfo,
+    config: LibrarianConfig,
+    project: Path = LIBRARIAN_PROJECT,
+) -> DreamingOutcome:
+    """Runs dreaming once over the copy in `target`, at the copy's as-of time, which its
+    session is told is now, and appends the run to the copy's run log.
+
+    `target` is laid out as a replay's target is (`ReplayTarget`), and its `wiki/` is a copy
+    of one of three things:
+
+    - a replay target's wiki, with its run log beside it, replayed over `corpus`: directories
+      of raw payloads, ingested into a throwaway data root as a replay ingests them. Its as-of
+      time is the end of the replay's last run.
+    - `cut`'s wiki. It is dreamed over the cut's L0, at the cut's as-of time, and gets a run
+      log with its first run.
+    - a wiki no librarian built, over `corpus`. It is dreamed over the corpus, ingested the
+      same way, as of `as_of`, the time given for it, and gets a run log with its first run
+      too. Nothing here tells such a copy from any other wiki: the caller answers for what
+      `target` holds.
+
+    The copy's git directory is made beside it on its first run and kept, so a later run
+    finds the earlier ones. The run is `dream`'s otherwise: the same project, sandbox, model,
+    and thresholds.
+    """
+    layout = ReplayTarget(target)
+    if not layout.tree.is_dir():
+        raise DreamCopyError(
+            f"{target} has no {layout.tree.name}/: it isn't a copy of a replay target, of a "
+            "cut's wiki, or of a wiki no librarian built"
+        )
+    if as_of is not None:
+        if cut is not None or not corpus:
+            raise DreamCopyError(
+                f"{target} is dreamed as of a time given for it only as a copy of a wiki no "
+                "librarian built, over a corpus: give the corpus, and no cut, whose as-of time "
+                "is its own"
+            )
+        source = stated_source(layout.run_log, as_of=as_of)
+    elif cut is not None:
+        if cut.manifest.wiki is None:
+            raise DreamCopyError(f"the cut {cut.name} holds no wiki, so {target} isn't its copy")
+        source = stated_source(
+            layout.run_log,
+            as_of=cut.as_of,
+            librarian_version=cut.manifest.wiki.librarian_version,
+            cursor=cut.manifest.wiki.cursor,
+        )
+    elif not layout.run_log.is_file():
+        raise DreamCopyError(
+            f"{target} has no {layout.run_log.name}: it isn't a copy of a replay target, "
+            "whose run log says which librarian built the wiki, and as of when"
+        )
+    else:
+        source = replayed_source(layout.run_log)
+    with nullcontext(cut.l0) if cut else _l0(None, corpus, owner, source.as_of) as l0:
+        repository = GitWikiRepository.open(layout.tree, layout.git_dir)
+        files = project_files(project)
+        with _runner(l0, layout.tree, owner, config, files) as runner:
+            return run_copy_dreaming(
+                store=FilesystemL0(l0),
+                owner=owner,
+                time_zone=time_zone,
+                repository=repository,
+                runner=runner,
+                librarian=_librarian(config, files),
+                run_log=layout.run_log,
+                source=source,
+                settings=config.dreaming,
+            )
 
 
 def record_run_not_made(
@@ -129,20 +355,29 @@ def record_run_not_made(
     held back or one with no configuration, with `reason`, which must hold no content."""
     at = now()
     repository = GitWikiRepository.open(data_root.wiki, data_root.wiki_git)
-    _record_run(data_root, repository, LibrarianRun(at=at, succeeded=False, reason=reason), now)
+    _record(data_root, repository, now, LibrarianRun(at=at, succeeded=False, reason=reason))
 
 
-def _record_run(
+def _record(
     data_root: DataRoot,
     repository: GitWikiRepository,
-    run: LibrarianRun,
     now: Callable[[], datetime],
+    run: LibrarianRun | DreamingRun,
 ) -> None:
-    """Writes `run` into the status as the wiki's last run, with the time the wiki is current
-    through as last committed."""
+    """Writes into the status's part for the wiki the `run` that just ended (a librarian run
+    as its `last_run`, a dreaming run as its `last_dreaming`), with what the wiki as last
+    committed says: the time it is current through and how many proposals are open. Everything
+    else there stands, so a librarian run keeps the last dreaming run's record, and a dreaming
+    run the librarian run's."""
     cursor = last_cursor(repository)
-    wiki = WikiStatus(current_through=None if cursor is None else cursor.captured_at, last_run=run)
     status = read_status(data_root.status)
+    wiki = status.wiki.model_copy(
+        update={
+            "current_through": None if cursor is None else cursor.captured_at,
+            "open_proposals": len(open_proposals(repository.tree)),
+            "last_run" if isinstance(run, LibrarianRun) else "last_dreaming": run,
+        }
+    )
     write_status(data_root.status, status.model_copy(update={"wiki": wiki}), at=now())
 
 
@@ -152,6 +387,23 @@ def _cost(sessions: Sequence[tuple[Phase, SessionResult]]) -> float | None:
     if any(cost is None for cost in costs):
         return None
     return sum(cost for cost in costs if cost is not None)
+
+
+RUN_ERROR = "librarian-run.txt"
+"""The file, in the data root's `run_errors`, holding the last failed librarian run's error."""
+DREAMING_ERROR = "dreaming-run.txt"
+"""The same for the last failed dreaming run."""
+
+
+def _keep_error(file: Path, error: Exception, at: datetime) -> None:
+    """Keeps a failed run's whole `error` in `file`, readable by the owner alone, in place of
+    the last one kept there. A run's error quotes pages, lint findings, and what the session
+    said, so it is the owner's to read, under the data root: a command prints only where the
+    run failed (`run_failure_reason`). Any other error quotes none, and is printed whole."""
+    if not isinstance(error, LibrarianRunError):
+        return
+    file.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(file, f"{at.isoformat()}\n{error}\n".encode(), mode=0o600)
 
 
 def run_failure_reason(error: Exception) -> str:

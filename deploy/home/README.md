@@ -46,20 +46,21 @@ The scripts that both VMs share take `--vm assistant|librarian`, and work on the
 | `update.sh --vm librarian` | Snapshots the librarian's VM, then installs the pinned Claude Code and the managed settings (`install-librarian-claude.sh`) |
 | `rollback.sh [--vm] [snapshot]` | Restores the VM to a snapshot, by default the latest one `update.sh` took |
 | `ingest.sh` | Ingests the instance's inbox on the devbox, landing the exchanges the VM captured |
-| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root |
+| `run-evals.sh [options]` | Runs `pa-eval run` in the VM and copies the run back to `evals/runs/` (or `$PA_EVAL_RUNS_DIR`); a run over a cut pushes the cut once and comes back under the data root; a run over a released reproduction pushes the reproduction each time |
 | `draft-evals.sh --cut DIR [--revise DRAFT --notes FILE]` | Has a session in the VM draft the real-data eval set from a cut (or revise a draft by the owner's notes), and brings the draft back under the data root |
+| `diagnose.sh --referral FILE --name NAME --cut DIR [case parts]` | Runs a diagnosis through the VM (ADR-0010): pushes the case (the cut once), has a diagnostician's session answer the referral, brings what it left back to `diagnoses/` under the data root, and runs the release check on the devbox (`pa-eval release`). Exits 0 when the findings are released, 3 when the check refuses them, 4 when the session fails, and 1 otherwise ([Diagnoses](#diagnoses)) |
 | `check-isolation.sh` | Probes the fences from inside the VM: the network (only the API reachable, no DNS, no Tailscale), the OS's updates and Claude Code's pin, the managed settings, the read-only project, a session's tools, and the sandbox, by running a command in it |
 | `check-store.sh` | Checks the store's mounts from inside the VM |
 | `librarian-sandbox.sh start\|stop\|claude\|kill` | The librarian's VM as the sandbox its sessions run in: `PA_LIBRARIAN_SANDBOX` |
-| `librarian.sh run\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM |
+| `librarian.sh run\|dream\|replay\|seed …` | Runs `pa librarian` on the devbox over the data root, its sessions in the librarian's VM: a librarian run, a dreaming run (of the wiki, or of a copy of an eval wiki, a cut's wiki, or a released reproduction's starting wiki), a replay, or a seed |
 | `check-librarian.sh` | Checks the librarian VM's fences from inside it |
 | `install-vault-sync.sh [--enable]` | Installs Obsidian's headless Sync client at its pinned version on a pinned Node 22, and `pa-vault-sync.service`; `--enable` starts it once the vault is set up pull-only ([The vault copy](#the-vault-copy)) |
 | `check-vault-sync.sh` | Checks the vault copy: the pins, pull-only, the service, no VM shared it, and the daily notes arriving, by counts and times |
 | `gmail.sh auth\|dry-run …` | Runs `pa gmail` on the devbox: the consent (and re-auth), and the dry run's counts ([Gmail](#gmail)) |
 | `install-backup-drive.sh <UUID>` | Mounts the USB SSD with that filesystem UUID at `/mnt/pa-backup`, at every boot, and makes its `restic/` directory the owner's (needs sudo) |
-| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory and the private eval directory, on the USB SSD ([The backup](#the-backup)) |
+| `backup.sh` | Runs `pa backup` on the devbox: one restic snapshot of L0, the wiki's git directory, the private eval directory and the private diagnoses directory, on the USB SSD ([The backup](#the-backup)) |
 | `capture.sh [--backfill W \| --reconcile]` | Runs a capture cycle on the devbox with the instance's configuration, as `pa-capture.service` does every 15 minutes ([The live schedule](#the-live-schedule)) |
-| `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, the backup, as `pa-nightly.service` does overnight |
+| `nightly.sh` | Runs the nightly job on the devbox: a capture cycle with reconciliation, the librarian run, a dreaming run when one is due, the backup, as `pa-nightly.service` does overnight |
 | `install-schedules.sh [--enable]` | Installs the schedules' units and timers (`schedules/`, needs sudo); `--enable` starts both timers once the wiki is seeded |
 | `check-schedules.sh` | Checks the schedules: each timer enabled, its last and next start, each job's last result, then `pa status` |
 
@@ -112,7 +113,7 @@ What the assistant can't write is root's, outside its home, so no directory abov
 | `/var/lib/pa-capture` | capture, 0700 | The helper's pending prompts |
 | `~/.claude/settings.json` | root, 0644 | `{}`, since no setting turns user settings off |
 | `/srv/pa/scratch` | assistant, 0700 | The one directory the assistant's shell and file tools write |
-| `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
+| `/srv/pa/eval` | assistant, 0700 | Evals' cuts, sets, runs, drafts and throwaway data roots, and a diagnosis's case and what its session left, outside the home directory, whose `CLAUDE.md` files the managed settings exclude |
 
 The home directory is the assistant's, so only the managed settings' deny rules and the sandbox keep its tools out of it; Claude Code itself still writes its state there. `install-assistant-fences.sh` also removes any auto-memory directory left under `~/.claude/projects/`.
 
@@ -224,14 +225,14 @@ Once the go-live backfill is replayed and the wiki seeded, the PA runs on its ow
 | Timer | When | Runs |
 |---|---|---|
 | `pa-capture.timer` | Every 15 minutes, on the quarter hour | `pa-capture.service` → `capture.sh` → `pa capture`: each configured source collected into the inbox, ingest, and each watermark published once its payloads have landed |
-| `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then the backup |
+| `pa-nightly.timer` | At 03:00, the devbox's time | `pa-nightly.service` → `nightly.sh` → `pa nightly`: a capture cycle that also reconciles the calendars, then the librarian run, then a dreaming run on the nights one is due ([Dreaming and proposals](#dreaming-and-proposals)), then the backup |
 
 - **One lock.** Every job that writes the store takes the data root's lock (`pa.lock`): the capture cycle from its first collector through ingest and publication, the nightly job throughout, and `pa ingest`, `pa librarian run` and `pa backup` by hand. A job that finds it held skips and exits 0 (`… skipped: another job holds the data root's lock`); `pa cut`, `pa renormalize`, `pa catalog rebuild` and `pa librarian seed` refuse instead. So the librarian never runs between a collection and its ingest, and every note or calendar resource collected before a run (stamped with when it was read) is offered by that run.
-- **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. The one exception: when the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. The 15-minute cycles skip while the job runs.
-- **Staleness.** A source is stale once its watermark is more than twice its cadence behind (30 minutes for a 15-minute cadence). The nightly job records in the status when it started (`nightly.running_since`), and while it runs neither `pa status` nor the assistant calls a source stale, since the job holds the cycles back. A nightly job running past 3 hours has stopped holding staleness off.
+- **The nightly job** is one process holding the lock throughout, so nothing lands between its steps. Each step records its outcome in the status, and a step that fails doesn't stop the next: the backup runs whatever the librarian did. Two exceptions. When the night's cycle failed to ingest, the librarian run is held back and recorded as failed, since what's waiting in the inbox would be passed over; the next night takes it. And dreaming runs only on a night whose librarian run succeeded, since it reviews the wiki that run left. The 15-minute cycles skip while the job runs.
+- **Staleness.** A source is stale once its watermark is more than twice its cadence behind (30 minutes for a 15-minute cadence). The nightly job records in the status when it started (`nightly.running_since`), and while it runs neither `pa status` nor the assistant calls a source stale, since the job holds the cycles back. A nightly job running past 4 hours has stopped holding staleness off: that is an hour for each of the night's three sessions at the librarian's default timeout, and an hour for the rest. A night that has to resume sessions that long can outlast it, and its sources are then called stale while it still runs.
 - **Catching up.** Both timers are `Persistent=`: after the devbox was off, each starts its job once at boot for what it missed, the nightly job after the capture cycle starting then. A timer never starts a second job while its last one runs (the services are oneshot), and neither the nightly job nor a cycle piles up behind the other: whichever finds the lock held skips. A capture cycle that hangs is stopped after 30 minutes.
 - **Confinement.** `pa-capture.service` can write only the inbox, L0, the catalog, collector state (`state/`), the status, and the lock; it reads the credentials in `~/.config/pa`, the vault copy and the code without being able to write them (`ProtectSystem=strict`, `ProtectHome=read-only`), with a private `/tmp` and no privileges. `pa-nightly.service` can write those too, and the wiki and its git directory, the backup repository on the drive and restic's cache, and `/tmp`, which stays the host's: the librarian run renders its project there and Incus shares it into the librarian's VM. It wants the backup drive's mount but runs without it, and the status records the backup that found no repository.
-- **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox and the drive's repository, whatever the environment says.
+- **Configuration** comes from the instance's files (`lib.sh job_environment`): `owner.env`, and each source once its setup has written it: `vault.env`, `icloud.env` and the app-specific password, and Gmail's token. The nightly job uses the librarian's VM as its sandbox, the drive's repository, and the deployment's dreaming interval (`PA_DREAMING_INTERVAL_DAYS` in `lib.sh`), whatever the environment says.
 
 To check them, with times, counts and reasons only, never content:
 
@@ -245,7 +246,7 @@ To run either job by hand, as its timer does: `deploy/home/capture.sh` (with `--
 
 ## The backup
 
-The nightly job backs up once the schedules are on ([The live schedule](#the-live-schedule)), and `backup.sh` runs `pa backup` by hand. Each takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, and the private eval directory `evals/` (real-data eval sets, cuts, runs and verdicts). `wiki.git/` and `evals/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
+The nightly job backs up once the schedules are on ([The live schedule](#the-live-schedule)), and `backup.sh` runs `pa backup` by hand. Each takes one restic snapshot of what can't be rebuilt cheaply: the data root's `l0/`, the wiki's git directory `wiki.git/`, the private eval directory `evals/` (real-data eval sets, runs and verdicts), and the private diagnoses directory `diagnoses/` (each diagnosis's referral, private analysis, raw output and check notes: [Diagnoses](#diagnoses)). `wiki.git/`, `evals/` and `diagnoses/` are left out until they exist. Nothing else goes in: the catalog is rebuilt from L0, the wiki's files are checked out from `wiki.git/`, and the inbox and collector state are captured again (a payload captured twice collapses on ingest). Cuts (`cuts/`) and dreamed copies (`replays/`) aren't in it, so a restored diagnosis keeps its private analysis and not the case it read. `owner.env` isn't in it either; it's yours to write again. Nothing is ever pruned in v0.13. L0 only grows, and restic stores each file's content once, so a snapshot costs only what changed since the last.
 
 - **The drive.** The USB SSD is mounted at `/mnt/pa-backup` by its filesystem's UUID, so no other drive is ever mounted there, whatever device name it gets. `install-backup-drive.sh` writes the mount unit, `mnt-pa\x2dbackup.mount`. The unit is wanted at boot, never required: without the drive the devbox still boots, and the mount point stays empty.
 - **The repository** is `/mnt/pa-backup/restic`. It's encrypted with the password in `~/.config/pa/restic.password`, mode 0600. Keep a copy of the password in your password manager: without it no backup can be restored, and the devbox's copy goes with the devbox. The wizard's backup stages (`setup-wizard.sh --backup`) mount the drive, make the password once, offer to show it so you can save it, and initialize the repository.
@@ -260,7 +261,7 @@ Restic needs the repository and its password. On a new devbox, first install res
 ```sh
 export RESTIC_REPOSITORY=/mnt/pa-backup/restic RESTIC_PASSWORD_FILE=~/.config/pa/restic.password
 restic snapshots                                   # one per backup; the newest is "latest"
-restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/ and evals/, as backed up
+restic restore latest --target /tmp/pa-restore     # l0/, wiki.git/, evals/ and diagnoses/, as backed up
 ```
 
 To bring back a whole data root, start from an empty one. Move the old one aside if it's still there, and stop anything that runs against it.
@@ -350,9 +351,51 @@ deploy/home/ingest.sh && deploy/home/librarian.sh run
 ```
 
 - The run takes what's been captured since its cursor, so each chat is offered once. A correction the owner made in chat ("Okie is Ben Okafor") shows up in the wiki after this. The assistant reads the wiki at `/srv/pa/wiki` as soon as the run commits.
-- `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run. It's the owner's to read: a development session never prints it.
+- `git --git-dir ~/.local/share/pa-home/wiki.git log` is the operations log. Each commit records its batch, cursor, librarian version, cost and turns, and lint's warnings. `git revert` of one run's commit undoes exactly that run: its pages and what it recorded, so after the last night's librarian run is reverted the next run takes that night's episodes again, whether or not a dreaming commit sits on top of it (a dreaming commit carries the cursor forward, and the cursor is never read from one). Keep git's `This reverts commit …` line in the message; it is how the host knows. It's the owner's to read: a development session never prints it.
 - A failed run leaves the wiki as it was, and its episodes stay new for the next run.
 - `pa librarian run` takes the data root's lock, and skips (exiting 0) while a capture cycle or another job holds it. Every run, failed or not, records in the status the time the wiki is current through (its cursor's capture time) and the run's outcome: when it ran, its cost and lint warnings, and a failure's reason, which names only the session it failed in. The assistant reads it at `/srv/pa/status/status.json`, and searches L0 directly for anything captured after that time.
+
+### Dreaming and proposals
+
+Dreaming is the librarian's review of the whole wiki, where a librarian run only folds in what's new. The host flags candidates mechanically (lint's warnings, stale pages, a status that disagrees with its loops, quiet pages, pages the owner never engaged with), and one session judges each against L0 and gives it one outcome: **applied** (L0 settles it, so the session fixed the pages), **proposed** (only the owner knows, so it asks), or **dismissed** (not a problem). A run is one commit of its own in the wiki's history.
+
+- **Proposals** are what the librarian asks the owner: lines in `proposals.md` at the wiki's root, open ones first, each with an id (`P12`), the pages it is about, and the episodes behind it. `index.md` opens with how many are open. The owner reads them in Obsidian, or asks the assistant what the PA is waiting on, and answers in chat. The answer is a correction like any other: the next librarian run applies it and moves the proposal under `## Answered`. A run adds at most 5 proposals, and none while 15 are open.
+- **Retirement.** Dreaming may retire the page of a person or organization the owner never engaged with, once a re-read of L0 shows nothing owed either way: the page goes, anything worth keeping is folded into the page it belongs to, and the host lists the slug with the date in `retired.md` at the wiki's root. One with an open loop is proposed, never retired. A retired slug gets no page again until the owner engages with it, a loop or decision names it, or the owner says "keep a page for X" in chat; any run that gives it a page takes it off the list.
+- **Memory.** Each dreaming commit's message lists its candidates with their outcomes, and the next run reads them back. A dismissed candidate isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits while its proposal is open. One dismissed only because the run had no proposal left to give it (`dismissed: no room` in the commit) is offered again by the next run. A run is offered at most 30 candidates, in a fixed order of kinds; the rest wait for the next run.
+- **In the nightly job.** Dreaming is a step between the librarian run and the backup, under the same lock, on the nights it is due: when the wiki's last review is at least `PA_DREAMING_INTERVAL_DAYS` days old (`lib.sh`), counted in days of the owner's calendar. **It is 0 here, which turns the step off: the home deployment doesn't dream on its own until dreaming goes live (#153), which sets it to 7.** It runs only on a night whose librarian run succeeded. A dreaming run that fails leaves the wiki as it was, doesn't stop the backup, and is tried again the next night.
+- **By hand**, whatever the interval says:
+
+  ```sh
+  deploy/home/librarian.sh dream
+  ```
+
+  It takes the data root's lock (and skips, exiting 0, while another job holds it), runs its session in the librarian's VM, and prints counts only: `librarian dream: judged 7 candidates (3 applied, 1 proposed, 3 dismissed); committed 1a2b3c4d; 12 lint warnings`. `pa librarian dream --count` runs nothing and prints three lines of counts: the candidates flagged in the wiki, by kind; how many a run now would be offered, how many are held back, and how many are over the cap; and the unengaged people and organization pages with no open loop, the pages dreaming may retire. A run that fails prints only where it failed (`the run failed in its dreaming session and was discarded`) and keeps its whole error, which quotes pages, in `run-errors/dreaming-run.txt` under the data root, for the owner to read; `pa librarian run` keeps its own in `run-errors/librarian-run.txt`. A run by hand counts as the wiki's last review, so the nightly job waits the interval from it.
+- **Nothing to judge.** A wiki with no candidates, or with every candidate held back, gets no session and no commit: `librarian dream: no candidates in the wiki`, or `nothing to judge; every candidate is held back (4)`. The status records it as a run that judged 0 candidates, and it counts as that week's review, so the job doesn't weigh the same candidates again every night.
+- **The status** holds the last dreaming run, by the job or by hand, in counts: when it ran, whether it succeeded, a failure's reason (which names only the session it failed in), its cost, the candidates judged, a count per outcome, how many were held back, how many were left over the cap for the next run, and how many proposals are open. `pa status` prints it as two lines, `dreaming: last run …` and `proposals: 3 open`, and the assistant reports it when asked. It never holds a page's name, a proposal's text, or what a candidate was about; those are in the wiki and its history, which are the owner's to read.
+- **Configuration.** The nightly job's interval is `PA_DREAMING_INTERVAL_DAYS` in `lib.sh`. The rest is `pa`'s own, and the deployment sets none of it, so home runs on the defaults: `PA_LIBRARIAN_CANDIDATE_CAP` (30), `PA_LIBRARIAN_NEW_PROPOSALS` (5), `PA_LIBRARIAN_OPEN_PROPOSALS` (15). Dreaming uses the librarian's model, effort, turn limit and timeout. Outside the deployment, `pa nightly` reads the interval from `PA_LIBRARIAN_DREAMING_INTERVAL_DAYS`, and dreams weekly when it's unset.
+
+#### Reverting a dreaming run
+
+A dreaming run is one commit, so one `git revert` undoes one review and leaves the nights around it alone. Whether to revert is the owner's call, from reading the wiki in Obsidian. The commit to revert is the one the run reported (`committed 1a2b3c4d`, in the terminal for a run by hand, or in the nightly job's journal, which holds counts only). Not while the nightly job is running:
+
+```sh
+wiki() { git --git-dir ~/.local/share/pa-home/wiki.git --work-tree ~/.local/share/pa-home/wiki "$@"; }
+wiki revert --no-edit 1a2b3c4d > /dev/null
+```
+
+- **What it undoes**: the pages the run changed, the proposals it added (their ids are free again), and what it remembered, so its candidates are offered again. The cursor and the librarian version stay those of the last librarian run, so the next librarian run offers only what's new.
+- **How the host knows**: by the line git itself writes in the revert's message, `This reverts commit <the full id>.` Keep it (`--no-edit` does). A revert whose message lost that line isn't recognised, and the run it undid is still remembered.
+- **A run that changed no file**, such as one that dismissed every candidate, can't be reverted in one step: git stops with "nothing to commit", so the command above exits 1 and prints nothing. Conclude it with git's own message, and the run is forgotten the same way:
+
+  ```sh
+  wiki commit --allow-empty --no-edit > /dev/null
+  ```
+
+- **A conflict**, when later runs changed the same pages, is the other way it exits 1, and git says so on stderr. Take it back with `wiki revert --abort`, and correct the pages in chat instead.
+
+- **Afterwards** the reverted run no longer counts as a review, so the nightly job dreams again the next night, and judges those candidates again. To hold it off, set `PA_DREAMING_INTERVAL_DAYS=0` first. The status keeps showing the reverted run as the last one until the next.
+- **Reverting the revert** makes the run stand again: its pages, its proposals, and its decisions at their original age.
+- The commands above print nothing, on purpose: git's own output names the pages it touched. The log, a diff and the pages are the owner's to read; a development session never prints them.
 
 ### The Obsidian view
 
@@ -465,6 +508,9 @@ The suite skips the tests that call a real model unless asked, since they cost m
 ```sh
 PA_SMOKE_CLAUDE=1 uv run pytest -k smoke                 # the claude CLI on the host (Haiku unless PA_SMOKE_CLAUDE_MODEL)
 PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_corrections_fixture.py   # the corrections fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_page_creation_fixture.py # the page-creation fixture in pa-librarian
+PA_SMOKE_LIBRARIAN=1 PA_SMOKE_CLAUDE_MODEL=sonnet uv run pytest -s deploy/home/tests/test_proposal_answer_fixture.py # the proposal-answer fixture: the assistant on the host, then pa-librarian
+PA_SMOKE_LIBRARIAN=1 uv run pytest -s deploy/home/tests/test_dreaming_fixture.py      # the dreaming fixture: three dreaming runs in pa-librarian
 ```
 
 The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the owner correcting the wiki by chat. It seeds a data root with a starting wiki, then makes two real librarian runs in `pa-librarian`, as `librarian.sh run` does, each with a fixed "now":
@@ -473,6 +519,32 @@ The corrections fixture (`deploy/home/tests/fixtures/corrections/`) shows the ow
 2. After new mail and a note from both Chris Lees and from Okie. The test checks that the split still holds and the merge too.
 
 The data root goes under `replays/` (or `PA_SMOKE_CORRECTIONS_DIR`, which must be on that filesystem too) and is kept for reading. The test prints each run's cost: the two runs come to about $1 on Opus 5.5 at medium effort.
+
+The page-creation fixture (`deploy/home/tests/fixtures/page-creation/`) is one night that would clutter the wiki, over a wiki an earlier rule already cluttered. It seeds a data root with a starting wiki in which a no-reply mailbox has a person page holding an open loop, which lint now fails, so the run can't commit until its consolidation merges that page away. The night is three more days of delivery updates from the mailbox, three requests for a call from a salesman the owner never engaged with, a shop's request about an order the owner placed, and a friend the owner wrote to. The test makes one real librarian run, with a fixed "now", and checks that:
+
+- the mailbox's person page is gone, its loop is on an organization's or a topic's page, and no link to its slug is left without a page;
+- the salesman has no person page and his request opened no loop;
+- the shop's request is an open loop;
+- the friend has a page and a loop.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PAGE_CREATION_DIR`).
+
+The proposal-answer fixture (`deploy/home/tests/fixtures/proposal-answer/`) shows the owner answering a proposal from chat. Its starting wiki has JR and Jordan Reyes on two pages and two open proposals: P1 asks whether they are the same person, and P2 asks about a remodeler's quote. The fictional owner's two turns are in the test, and the assistant's replies are real:
+
+1. The real assistant, on the host as `PA_SMOKE_CLAUDE` tests run it, is asked "What do you need from me?" and then told "On P1: yes, JR is Jordan Reyes." Each turn is a session of its own. The test checks that the first reply gives both proposals, that one sentence of the second names P1 and both names and that it says the wiki will show it after the next run, and that neither cites anything but an episode.
+2. Both exchanges are captured as the assistant replied, and one real librarian run in `pa-librarian` takes them. The test checks that P1 is under Answered as accepted, citing the owner's answer last; that one page goes by both names, keeps both loops, and cites the answer; that no link to the other slug is left; and that P2 is open as it was.
+
+Its data root goes under `replays/` too (or `PA_SMOKE_PROPOSAL_ANSWER_DIR`). With `PA_SMOKE_CLAUDE=1` alone, the file runs only the assistant's two turns, in a temporary directory.
+
+The dreaming fixture (`deploy/home/tests/fixtures/dreaming/`) checks dreaming's judgment against known answers. Its wiki lints clean and has 26 pages over 49 fictional episodes, with defects planted on pages of their own: a stale person page, a settled topic with an open loop, a loop L0 closed and one it can't, routine loops months past due, three pairs of duplicate candidates (one person, two people, and one L0 can't settle), a quiet topic, an unengaged sender, an unengaged credit union, the unengaged employer of the owner's wife, an unengaged page with an open loop, an unengaged no-reply sender that a topic's two open loops name as the party owing, whose person page lists no address (lint refuses a person page that lists only automated mailboxes), and an unengaged sender whose page holds a detail her organization's page lacks. The no-reply sender's page may be neither retired nor merged into the topic: its row is right when its candidate is proposed or dismissed and the page, the topic's aliases, and both loops are as they were. The last sender is a community garden's coordinator. Her page says how a thing she asked of its plot holders is to be done, and the day she asked. The garden's page has a line on the same ask, citing the same two mails, that says neither, and gives another day. Her row is right when her page is retired and the garden's page says how and gives the day she asked, without the line that gave the other. It also holds an email that asks for two pages to be merged and for a question to be put to the owner, and three control pages. A first dreaming run is offered 18 candidates. The test's `ROWS` gives the outcome each should get and how the wiki shows it.
+
+The test dreams a fresh copy of the fixture three times in `pa-librarian`, as `librarian.sh dream` does, each from the same start and told the same "now". It scores each run on the wiki it leaves, not on what its session reported, and prints one table: a row for each planted defect with what each run did, then each run's cost, turns, and resumes. It passes when:
+
+- each planted defect got its expected outcome in at least 2 of the 3 runs;
+- the control pages are untouched in all 3;
+- in all 3, the email changed no page, and no proposal cites it or repeats what it asks.
+
+A run that fails is discarded, so it counts as a miss for every planted defect. The three data roots go under `replays/dreaming-<time>/` as `run-1` to `run-3` (or under `PA_SMOKE_DREAMING_DIR`, which must be on that filesystem too) and are kept for reading.
 
 ## Evals in the VM
 
@@ -496,10 +568,54 @@ The run uses the code and agent project at the VM's deployed commit, under the V
 PA_DATA_DIR=<data root> uv run pa cut          # cuts/<as-of>/ under the data root, as of now
 deploy/home/run-evals.sh --agent claude --judge model --agent-model sonnet --judge-model sonnet \
   --cut <data root>/cuts/<as-of> --eval-set <data root>/evals/<set>.json --runs 3 \
-  [--configuration files-plus-wiki]           # the cut's own wiki; no --wiki
+  [--configuration files-plus-wiki]           # the cut's own wiki, without --wiki
 ```
 
 A cut holds every episode captured by the moment it was taken (hard-linked from L0), the live wiki at its last commit, and a copy of the status file. `pa cut` takes the data root's lock, so it's refused while a capture cycle or librarian run holds it. `run-evals.sh` pushes the cut into the VM once (`/srv/pa/eval/cuts/<as-of>`) and reuses that copy on later runs; the eval set is pushed every run. The run asks the cut as it is, with no ingest, and its directory comes back to `<data root>/evals/runs/` (or `$PA_EVAL_RUNS_DIR`). The cut, the eval set, and the run directory are refused inside this checkout, by `run-evals.sh` and again by `pa-eval run`. A set naming an episode that isn't in the cut, or asked at another time than the cut was taken (its `as_of`), is refused before anything runs; so is a second drafting pass over such a draft.
+
+### Dreamed eval wikis
+
+Dreaming's effect is measured against the same wiki without it: dream a copy, ask the same questions with each, and compare.
+
+```sh
+# A copy of an eval wiki, dreamed over its corpus as the corpus's owner, at the replay's as-of time.
+mkdir <replays>/<name> && cp -r evals/wikis/scale/<librarian version>/{wiki,run-log.jsonl} <replays>/<name>/
+PA_LIBRARIAN_OWNER_ENV=evals/corpus/owner.env deploy/home/librarian.sh dream <replays>/<name> \
+  --corpus evals/corpus/payloads --corpus evals/corpus/payloads-scale
+deploy/home/run-evals.sh --agent claude --judge model --corpus scale --runs 3 \
+  --configuration files-plus-wiki --wiki <replays>/<name>
+
+# A copy of a cut's wiki, dreamed over the cut's L0 as the instance's owner, at the cut's as-of time.
+mkdir <replays>/<name> && cp -r <data root>/cuts/<as-of>/wiki <replays>/<name>/wiki
+deploy/home/librarian.sh dream <replays>/<name> --cut <data root>/cuts/<as-of>
+deploy/home/run-evals.sh --agent claude --judge model --cut <data root>/cuts/<as-of> \
+  --eval-set <data root>/evals/<set>.json --runs 3 --configuration files-plus-wiki --wiki <replays>/<name>
+
+# The wiki the copy was made from is asked twice the copy's runs (--runs 6 against --runs 3): the comparison's noise floor.
+uv run pa-eval compare <runs with the wiki> <runs with its dreamed copy>   # by tier and category, with fallen questions and a pass or fail
+
+# Over a cut: the same comparison as two files, numbers for the repository and the failure analysis under the data root.
+uv run pa-eval compare-wikis --first <runs with the cut's wiki> [<more of them> ...] \
+  --second <runs with its dreamed copy> [<more of them> ...] \
+  --public <a path in this checkout>.md --private <data root>/evals/<name>-private.md
+```
+
+- **The copy** is laid out as a replay target is, under `replays/`, the one filesystem beside the live wiki that the librarian's VM takes a wiki from. Its first dreaming run makes `wiki.git/` beside it and commits the tree as copied; a copy of a cut's wiki also gets its `run-log.jsonl` then. Each run that had candidates is appended to the run log, and running `dream` again carries on in the same history (one run judges only so many candidates).
+- **The owner**: `librarian.sh` runs as the data root's owner, who isn't a corpus's. `PA_LIBRARIAN_OWNER_ENV` names a file like `owner.env` to take the owner from instead, and `evals/corpus/owner.env` is the frozen corpora's. The script takes it only with `--corpus`, so the data root's own L0 and wiki are never run as someone else.
+- **The session is told the copy's as-of time** as now: the end of the replay's last run, or the moment the cut was taken.
+- **The eval run** names both versions in its report: the librarian that built the wiki, and the one that dreamed it. It refuses a run log that mixes anything else, and over a cut it refuses a copy that wasn't dreamed as of that cut. Its injection checks cover `proposals.md`.
+- **A copy of a cut's wiki is the owner's data**, as the cut is: `pa librarian dream`, `run-evals.sh`, and `pa-eval run` refuse it inside this checkout, and a development session never prints it or its run log.
+- **Over a cut, `pa-eval compare-wikis`** writes the comparison as `pa-eval verdict` writes the verdict: a public report of numbers only (the drop and the noise floor overall, by tier and by category, how many questions fell in each tier, the pass or fail, recall, citations, cost), and a private analysis that names the fallen questions first, then the questions whose score fell, every question run by run, and each failed answer. It needs files plus wiki over the same cut and the same questions, every run at the same commit of this checkout: at least 3 runs with the second wiki, and at least twice as many with the first. A wiki's runs may be in several run directories. It refuses the run directories and the private file inside this checkout. It prints only whether the second wiki passes, fails, or isn't judged, with how many answers failed to run where that is why, and the two paths.
+- **The comparison passes** when every answer ran, no question fell, and the second wiki's drop is no larger than the noise floor or the one-answer allowance, overall and in every tier of the eval set. A set without tiers is judged overall and in every category instead; with tiers, the categories are reported and decide nothing.
+  - **A question's score** on a wiki is the share of that wiki's runs that got it right.
+  - **An answer that failed to run** (its session or the judge raised, as when a batch is cut off by a usage limit) is neither right nor wrong. A comparison holding one, on either wiki, isn't judged: the reports are written with their tables, and in place of a pass or a fail they say how many answers failed on each wiki. Run those runs again, and compare again. A score counts a failed answer as not right, which on the first wiki would widen the noise floor and keep a question from counting as fallen.
+  - **The drop** is the mean over questions of the first wiki's score minus the second's.
+  - **The noise floor** is the largest drop between any two halves of the first wiki's own runs: how far that wiki falls from itself. A half is as many runs as the second wiki was asked. Every pair of halves that share no run is tried, each way round, and runs beyond twice the second's sit each pair out.
+  - **The one-answer allowance** is what one of the second wiki's answers moves a group's drop by: 1 over the group's questions times the second wiki's runs. A drop no larger than it is within, whatever the floor, so one wrong answer never fails a tier the first wiki got entirely right. The report's row says `only by the allowance` where a group is beyond its floor and within the allowance.
+  - **A fallen question** is one that every run on the first wiki got right and every run on the second got wrong. Any fails the comparison, whatever its tier's drop: questions that rose in the same tier can hide it in the tier's mean. The public report counts them by tier (by category, for a set without tiers) and names none.
+  - **Too few runs:** with the first wiki asked fewer than twice the second's runs there is no floor. `compare-wikis` refuses, and `compare` reports the drop as not judged.
+  - **A tier with fewer than 5 questions** counts like any other, and the report marks it (few): one answer moves its drop a long way.
+- **A question's tier** is an optional whole number from 0 in the eval set (`"tier": 3`), on every question or none. A run's report and `pa-eval compare` give correctness by tier beside correctness by category.
 
 ### Drafting the real-data eval set
 
@@ -514,6 +630,130 @@ deploy/home/draft-evals.sh --cut <data root>/cuts/<as-of> \
 A headless session in the assistant's VM reads the cut's L0 (a read-only copy, never the cut's wiki), with exchange capture off, and drafts about 25 questions (`--questions N`), each with an expected answer and evidence episode ids. It's asked at the cut's as-of time, as the owner in the VM's `owner.env`, with the prompt versioned in `evals/src/pa_evals/draft_prompts/`. Questions get opaque ids (`r01`, `r02`, ...), and a draft naming an episode that isn't in the cut is thrown away whole. The draft comes back mode 0600 under `<data root>/evals/drafts/<as-of>/` (or `$PA_EVAL_DRAFTS_DIR/<as-of>/`), and is never written over.
 
 The owner corrects the draft in place, adds questions of their own, and, for a second pass, writes their notes beside it. The second pass revises the draft as the owner left it, keeps the ids of the questions it keeps, and numbers new ones after the last. Drafts and notes are refused inside this checkout, by `draft-evals.sh` and again by `pa-eval draft`; what either prints says how much was drafted, never what. The session may take up to an hour (`--timeout` seconds) before it fails.
+
+## Diagnoses
+
+A development session never reads real content, so it refers a question about it to a diagnostician ([ADR-0010](../../docs/adr/0010-fenced-diagnostician.md)). `diagnose.sh` runs the whole diagnosis with no hand-off to the owner: a session in the assistant's VM reads the case and answers the referral, and a release check on the devbox decides whether its findings and reproductions reach a development session.
+
+```sh
+deploy/home/diagnose.sh --referral <referral>.md --name dreamed-drop \
+  --cut <data root>/cuts/<as-of> --eval-set <data root>/evals/<set>.json \
+  --runs own=<runs with the cut's wiki> --runs dreamed=<runs with its dreamed copy> \
+  --wiki own=<data root>/cuts/<as-of> --wiki dreamed=<replays>/<name> \
+  [--earlier <data root>/diagnoses/<an earlier diagnosis>]
+                                              # private:  <data root>/diagnoses/<UTC time>-dreamed-drop/
+                                              # released: ~/.local/share/pa-released/<UTC time>-dreamed-drop/
+uv run pa-eval reproduction resolve <a copy of a released reproduction>   # after renaming or trimming it
+```
+
+The session uses the code and the diagnostician's project (`diagnostician/`) at the VM's deployed commit, so `update.sh` comes first. It runs as the assistant, under the VM's managed settings and sandbox like every session there, with exchange capture off, and the diagnosis fails if `inbox/assistant_chat/` changed while it ran. It isn't the assistant: its role and instructions are `diagnostician/CLAUDE.md`'s, and its prompts are in `evals/src/pa_evals/diagnose_prompts/`. Claude Code in the VM must be logged in.
+
+### Referring a question
+
+- **The referral** is a Markdown file that holds the question and nothing real: no name, address, question, or answer from the data root. It can ask anything from why some questions' scores fell to whether each change a dreaming run applied was right. It speaks of each set of runs and each wiki by the label the command gives it (`own`, `dreamed`), and the findings count runs under the same labels. The release check passes a run of words that the referral itself holds, so a referral that quoted real content would let the quote out. For the same reason the check reads the devbox's own copy, as it was when the diagnosis started, and never the one that comes back from the VM: a referral that comes back changed fails the diagnosis, with nothing checked.
+- **The name** is a short one: letters, digits, and hyphens, at most 63. The diagnosis's name is the UTC time and that (`20261124T165821Z-dreamed-drop`), so no diagnosis is ever written over.
+- **The session's model, effort, turn limit, and timeout** are `PA_DIAGNOSTICIAN_MODEL` (`claude-opus-5-5`), `PA_DIAGNOSTICIAN_EFFORT` (`high`), `PA_DIAGNOSTICIAN_MAX_TURNS` (200), and `PA_DIAGNOSTICIAN_TIMEOUT_SECONDS` (3600) in the script's environment, or `--agent-model`, `--effort`, `--max-turns`, and `--timeout`, which the script passes on to `pa-eval diagnose`. The turn limit and the timeout bound the session each time it's started or resumed, not the whole diagnosis.
+- **It refuses to start** while the nightly job runs (its unit is active, or its mark in the status file is fresh), since a diagnosis spends the usage limit the librarian does, and while another diagnosis runs. It checks once, at the start, so start one with time to finish before the nightly job. A dreaming run, an eval run, or a drafting session started by hand spends the same limit and isn't detected. It never takes the data root's lock: a cut holds still.
+
+### The case
+
+The case is what the session reads, all of it frozen. Each part is named by where the devbox holds it:
+
+| Option | Part |
+|---|---|
+| `--cut DIR` | The cut the question is about (`pa cut`); always needed. The live data root is never a case: a directory that isn't named as a cut is, or holds what only a live store does, is refused |
+| `--eval-set FILE` | The eval set asked over the cut, with its expected answers |
+| `--runs LABEL=DIR` | A run directory of eval runs over the cut. Repeat it; several under one label make one set of runs. Only each run's `results.json` goes |
+| `--wiki LABEL=DIR` | A wiki: `DIR` is the cut, for the cut's own wiki, or a dreamed copy of it under `replays/`. One wiki a label. A data root holds a `wiki/` and a `wiki.git/` too, and is refused |
+| `--earlier DIR` | An earlier diagnosis's private directory, of which only the private analysis is read |
+
+- **A label** is lowercase letters, digits, and hyphens, at most 32.
+- **Each wiki's history goes as files**, a file for each run with its commit message and what it changed, since the session has no git directory. The script exports them itself (`pa-eval wiki-history`): the cut's own from the live `wiki.git/` up to the commit the cut holds, a dreamed copy's from its own. So `--history` is refused, and so is `--out`.
+- **A follow-up** names the earlier diagnosis with `--earlier`, and the session builds on its private analysis. That is also how a reproduction that didn't fail goes back: the referral says what was run and what happened.
+- **Every part is refused inside this checkout**, by `diagnose.sh` and again by `pa-eval diagnose` and `pa-eval release`. So is the released directory, which is also refused inside the data root.
+- **The live store is refused as any part**, by `diagnose.sh` and again by `pa-eval diagnose`, `pa-eval release`, and `pa-eval wiki-history`: a directory with an inbox, the lock, the catalog, the capture cycle's state, or a store beside a wiki's git directory is a data root in use, whatever else it holds.
+- **In the VM** the cut is pushed once (`/srv/pa/eval/cuts/<as-of>`) and reused, and the referral and the other parts go to `/srv/pa/eval/case`, replacing the last diagnosis's. `pa-eval diagnose` lays the case read-only in a throwaway directory for the session, which also reads the deployed code in `/opt/pa` and writes only its output. The diagnostician's project denies its tools the case and everything a diagnosis keeps beside the output; ADR-0010 says what that holds in the VM, and that a session can spoil only its own copy.
+
+### What comes out
+
+| Where | Holds | For |
+|---|---|---|
+| `<data root>/diagnoses/<name>/`, mode 0700, files 0600 | `referral.md`, the devbox's own copy (`referral-from-the-vm.md` beside it, if one came back changed); `output/` as the last session left it (`analysis.md`, the private analysis, with `findings.json` and `reproductions/` unchecked); `reply.md`; `session.json` (the cut, the case's parts, the deployed commit, the revisions, and every pass's cost, turns, and resumes together); `check-notes.md` after a refusal; `refused/<n>/` for each pass that was refused and then revised (its `output/`, the check's notes on it, its `reply.md` and `session.json`); `session-error.txt` or `output-problems.md` after a failed session | The owner. A development session never reads it. The backup takes it |
+| `~/.local/share/pa-released/<name>/` (or `$PA_RELEASED_DIR/<name>/`) | `findings.json`; `release.json` (the name, the cut, the deployed commit, and every count printed); `reproductions/<finding>/` for each finding that has one | A development session |
+| The VM | The session's own copy in `/srv/pa/eval/diagnoses/<name>/`, and its transcript; after a revision, the refused output and the check's notes in `/srv/pa/eval/case/refused/`, until the next diagnosis | Nobody: they stay there |
+
+- **The findings** fit a fixed schema (`evals/src/pa_evals/findings.py`): whether the referral was answered fully, partly, or not, a summary, and at most 10 findings. Each names its kind, the component at fault, the questions and episodes involved by opaque id, the runs affected of those asked under each label, the mechanism, the repository paths it blames, a suggestion, a confidence, and its reproduction or why it has none (`needs-scale`, `variance`, `question-defect`).
+- **A reproduction** is fictional: raw payloads in a directory per source, an optional starting wiki, an eval set, and one line of expectation (what should happen, and what happens instead), all the synthetic corpus's fictional owner's. Its payloads are released byte for byte, so the check reads every decoding of every part and header of each (a base64 or quoted-printable part, an HTML part as it shows, an encoded header, a folded calendar line), and a payload holding what can't be decoded to text is refused. Its evidence and citations are resolved to the episodes its payloads ingest to, so it is run from the released directory, with nothing written by hand (Running a reproduction, below). It is released untested (`reproduction.json`), since the diagnostician can't run the librarian or the assistant. Running it and seeing it fail is the first step of a fix.
+- **What the script prints** is the diagnosis's name and its cut, the case's parts, the session's cost, turns, resumes, and revisions, where the diagnosis was left, and what the release check reports: released or refused, the released directory, the findings by kind, the reproductions and their payloads, and each rule's name with how many problems it found. A revised diagnosis prints all of it once for each pass, so every check's counts show, and the cost, turns, and resumes are every pass's together. It never prints a line of the findings or of the check's notes. Anything else a command printed (a traceback can quote the case) is kept in the private directory, and the script says only how many lines.
+- **A session that left a malformed output** is resumed with what's wrong, at most twice: findings off the schema, a missing private analysis, a reproduction over its caps, one that doesn't ingest or lint, or one that holds what can't be decoded to text. `resumes:` says how often.
+
+### Exit codes
+
+| Code | Means | What is left |
+|---|---|---|
+| 0 | The findings were released | Both directories |
+| 3 | The release check refused them, and refused both revisions | The private directory, with every pass and the check's notes on each. Nothing is released |
+| 4 | A session, the first or a revision's, failed, ran out of time or turns, or left an output still malformed after its resumes | What that session left, in the private directory, with any pass refused before it. It wasn't checked |
+| 1 | Anything else: a bad option, a path inside this checkout, the nightly job or another diagnosis running, a case that isn't what its options say or holds the live store, a chat inbox that changed while a session ran, a referral that came back from the VM changed, or a release check that couldn't run | Whatever the sessions left, if one ran. Nothing is released |
+
+### A refusal
+
+The release check runs on the devbox, never in the VM, since whatever ran in the VM could have been steered by what it read. It releases the findings and every reproduction together, or nothing: one problem under any rule refuses the diagnosis. A refusal prints each rule's name with how many problems it found, and never what it found. That is in `check-notes.md`, for the owner. The script runs it on every pass as `pa-eval release --name <name> --referral <the devbox's copy> --cut <cut>` with the case's other parts, each the devbox's copy.
+
+| Rule | Counts |
+|---|---|
+| `shape` | A file in the output that isn't a regular file of an expected name and kind within the caps, or a link |
+| `schema` | A place where the findings don't fit the schema |
+| `paths` | A path a finding blames that isn't in the repository |
+| `episodes`, `questions`, `labels` | An episode or question id that isn't in the case, one of the case's episode ids in a reproduction, or a count of runs under a label the case doesn't give or over what it holds |
+| `names` | A name of two or more words that the case holds for a person or an organization, or one of the owner's |
+| `addresses` | An address, a link, or a domain outside the reserved example domains. In the findings a dotted name the repository or the referral holds is code or a file's name and passes, unless it is written as a link. In a reproduction only the names of its own files pass |
+| `quotes` | Six or more words in a row that the case holds and neither the repository nor the referral does |
+| `digits` | Seven or more digits, in a row or in the groups a phone number is written in. A date isn't one, nor is a time in a reproduction's payload |
+| `reproductions`, `owner` | A reproduction that is missing, unnamed by a finding, or not in form, or whose owner isn't the fictional one |
+| `one-word-names` | In a reproduction, a one-word name the case holds, in the letter case it holds it |
+| `encodings` | In a reproduction, anything that can't be decoded to text and so can't be checked: a part of a mail that isn't text, an encoding or a character set nobody knows, a calendar property in an encoding of its own, data in a `data:` link |
+| `ingest`, `lint` | A reproduction's payload that quarantines, or an error in its wiki |
+
+- **A refused diagnosis is revised automatically**, at most twice. The script pushes the refused output and the check's notes into the VM, and a new session there (`pa-eval diagnose --revise`, a revision over the same referral and case) finds that output where it writes and puts right what the notes name: it renames what they name, rewrites what they quote, and changes nothing else. The same check runs again on what it leaves, over the same case. The notes hold real content, which is why they go only into the VM, on stdin, and are never printed. A diagnosis still refused after two revisions ends unreleased with exit code 3, so retries never wear the check down. Every pass is kept in the private directory: `output/` and `check-notes.md` are the last pass's, and `refused/<n>/` holds each pass before it with the notes on it. `revisions:` says how many were made, and `release.json` records it. So `--revise` and `--notes` are refused, as `--out` is.
+- **After a refusal** a development session has the counts and nothing else. It can refer the question again, more narrowly, or leave a note for the owner, who has the private analysis whether or not anything was released. It never reads the notes.
+- **The check catches identifiers and quoted text, never meaning.** A paraphrase passes, and so does a one-word name in the findings. That is why a reproduction is read before it's committed.
+
+### Running a reproduction
+
+A released reproduction is named as a reproduction, the way a cut is named as a cut. One command asks its questions in the assistant's VM, and one dreams its starting wiki in the librarian's VM.
+
+```sh
+# Its questions, over its payloads; with files-plus-wiki, over its starting wiki too.
+deploy/home/run-evals.sh --agent claude --judge model \
+  --reproduction <released>/<name>/reproductions/<finding> [--configuration files-plus-wiki]
+
+# For a fault in dreaming: dream a copy of its starting wiki, then ask with the copy.
+deploy/home/librarian.sh dream <replays>/<copy> --reproduction <released>/<name>/reproductions/<finding>
+deploy/home/run-evals.sh --agent claude --judge model \
+  --reproduction <released>/<name>/reproductions/<finding> \
+  --configuration files-plus-wiki --wiki <replays>/<copy>
+```
+
+- **`run-evals.sh --reproduction <dir>`** pushes the reproduction into the VM (`/srv/pa/eval/reproduction`, replacing the last run's) and runs `pa-eval run --reproduction` there. The run asks the reproduction's own eval set over its own payloads, so `--corpus`, `--cut`, and `--eval-set` are refused with it, before the VM is touched. A reproduction is fictional, so the run directory comes back to `evals/runs/` in this checkout (or `$PA_EVAL_RUNS_DIR`), and its report names the reproduction by its finding.
+- **A reproduction holds regular files and directories only.** One that holds a symbolic link is refused, so nothing is read, copied, or pushed through a link.
+- **Files plus wiki** asks with the reproduction's starting wiki, which needs no `run-log.jsonl`. The diagnostician wrote that wiki, so the report names no librarian version for it. A reproduction with no starting wiki is refused for that configuration.
+- **`librarian.sh dream <copy> --reproduction <dir>`** runs `pa-eval reproduction dream <dir> <copy>` on the devbox, with its sessions in the librarian's VM. The corpus is the reproduction's payloads, and the owner, the time zone, and the as-of time the session is told as now are its eval set's. So this form reads no `owner.env`, and `PA_LIBRARIAN_OWNER_ENV` is refused. A reproduction with no starting wiki is refused too.
+- **The command makes the copy**, on its first run: `<copy>` must not exist yet, or be an empty directory. It is built whole beside `<copy>` and moved into place, so a copy that stopped part way is never dreamed. A later run dreams the copy as it stands.
+- **The copy carries the reproduction's record**, `reproduction.json`, byte for byte, beside `wiki/`, `wiki.git/`, and a `run-log.jsonl` that holds its dreaming runs alone. A directory without that record is never dreamed or asked with as a copy: not another reproduction's copy, not a cut's, and not a live wiki. A `<copy>` or a `<copy>/wiki` that is a symbolic link is refused. A reproduction that was resolved again has a new record, so it takes a new copy.
+- **A dreamed copy goes under `replays/`**, as every copy does. `librarian.sh` refuses any other place before anything is copied, and gives the command the resolved path it checked. The command prints counts, as `librarian.sh dream` does for any copy.
+- **`--wiki <copy>` with `--reproduction`** pushes the copy's `wiki/`, `run-log.jsonl`, and `reproduction.json` as an eval wiki is pushed, never its `wiki.git/`. The report then names the librarian version that dreamed the copy. The run refuses a copy whose record isn't the reproduction's, and one whose run log holds a replay's runs, no committed dreaming run, or a dreaming run as of another time than the eval set's.
+- **A starting wiki that fails lint is never released.** The release check's `lint` rule refuses it, so a fault that starts from a page lint fails today can't be released as a reproduction, and its finding describes the state instead.
+
+### Committing a reproduction
+
+A reproduction becomes a fixture: the fault is fixed against it, test-first, and it stays in the repository. Copy `<released>/<name>/reproductions/<finding>/` into this checkout, then:
+
+- **Read every file**, and rename or trim whatever reads like a real matter. This is the last check before publication, and nothing reruns the release check's rules on an edited copy: they need the case.
+- **Resolve it again** with `uv run pa-eval reproduction resolve <copy>`. An edited payload can ingest to another episode (a daily note's id comes from its text, a mail's from its `Message-ID`), and the eval set and the wiki would still name the old one. The command works out which payload each id was from `reproduction.json`, then writes `eval_set.json`, the wiki's citations and index, and `reproduction.json` again, in place. It prints how many payloads have a new episode id.
+- **A payload is recognized** by its file's name, or by an episode id that didn't change. So rename a file or edit it, and resolve between the two. Evidence and citations may also name a payload by its file (`gmail/order.eml`, `{ep:gmail/order.eml}`), as the diagnostician writes them, and are resolved the same way.
+- **A copy that is out of form is refused and left as it was**, with what is wrong and where: evidence or a citation left naming a payload that was removed, a payload that quarantines, a wiki that fails lint, a file that isn't a reproduction's.
+- **The findings' opaque ids stay out** of the fixture, the commit, and the issue. A reproduction's own episode ids are its fictional payloads', and go in with it.
 
 ## Updating and rolling back
 

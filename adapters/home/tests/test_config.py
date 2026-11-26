@@ -6,11 +6,15 @@ import pytest
 from pa_core.owner import Owner
 from pa_home.config import (
     ConfigError,
+    DataRoot,
+    DiagnosticianConfig,
     load_capture_config,
+    load_diagnostician_config,
     load_icloud_calendars,
     load_icloud_credentials,
     load_librarian_config,
     load_owner,
+    load_released_directory,
 )
 
 
@@ -43,6 +47,52 @@ def test_the_librarians_turn_cap_is_a_whole_number_of_at_least_one(value: str):
         load_librarian_config({"PA_LIBRARIAN_MAX_TURNS": value})
 
     assert load_librarian_config({"PA_LIBRARIAN_MAX_TURNS": "40"}).max_turns == 40
+
+
+@pytest.mark.parametrize("value", ["2.5", "0", "many"])
+def test_dreamings_candidate_cap_is_thirty_or_a_configured_whole_number_of_at_least_one(
+    value: str,
+):
+    with pytest.raises(ConfigError, match="PA_LIBRARIAN_CANDIDATE_CAP must be a whole number"):
+        load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": value})
+
+    assert load_librarian_config({}).dreaming.candidate_cap == 30
+    assert load_librarian_config({"PA_LIBRARIAN_CANDIDATE_CAP": "12"}).dreaming.candidate_cap == 12
+
+
+def test_dreaming_is_due_every_seven_days_unless_configured_and_zero_turns_it_off():
+    assert load_librarian_config({}).dreaming_interval_days == 7
+    configured = load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": "14"})
+    assert configured.dreaming_interval_days == 14
+    off = load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": "0"})
+    assert off.dreaming_interval_days == 0
+
+
+@pytest.mark.parametrize("value", ["2.5", "-1", "weekly"])
+def test_the_dreaming_interval_is_a_whole_number_of_days(value: str):
+    with pytest.raises(
+        ConfigError, match="PA_LIBRARIAN_DREAMING_INTERVAL_DAYS must be a whole number"
+    ):
+        load_librarian_config({"PA_LIBRARIAN_DREAMING_INTERVAL_DAYS": value})
+
+
+def test_a_dreaming_run_may_add_five_proposals_up_to_fifteen_open_unless_configured():
+    caps = load_librarian_config({}).dreaming.proposal_caps
+
+    assert (caps.new, caps.open) == (5, 15)
+
+    configured = load_librarian_config(
+        {"PA_LIBRARIAN_NEW_PROPOSALS": "3", "PA_LIBRARIAN_OPEN_PROPOSALS": "8"}
+    ).dreaming.proposal_caps
+
+    assert (configured.new, configured.open) == (3, 8)
+
+
+@pytest.mark.parametrize("var", ["PA_LIBRARIAN_NEW_PROPOSALS", "PA_LIBRARIAN_OPEN_PROPOSALS"])
+@pytest.mark.parametrize("value", ["2.5", "0", "few"])
+def test_a_proposal_cap_is_a_whole_number_of_at_least_one(var: str, value: str):
+    with pytest.raises(ConfigError, match=f"{var} must be a whole number"):
+        load_librarian_config({var: value})
 
 
 # The iCloud credential: an Apple ID, and an app-specific password in a file only the owner can
@@ -130,3 +180,51 @@ def test_icloud_calendar_isnt_captured_until_its_calendars_are_named():
     assert load_capture_config({}).icloud_calendars == ()
     with pytest.raises(ConfigError, match="PA_ICLOUD_CALENDARS is not set"):
         load_icloud_calendars({})
+
+
+def test_the_released_directory_is_beside_the_data_root_unless_configured(tmp_path: Path):
+    data_root = DataRoot(tmp_path / "pa-home")
+
+    assert load_released_directory(data_root, {}) == Path("~/.local/share/pa-released").expanduser()
+    configured = load_released_directory(data_root, {"PA_RELEASED_DIR": str(tmp_path / "out")})
+    assert configured == tmp_path / "out"
+
+
+def test_a_released_directory_inside_the_data_root_is_refused(tmp_path: Path):
+    data_root = DataRoot(tmp_path / "pa-home")
+
+    with pytest.raises(ConfigError, match=r"PA_RELEASED_DIR .* must be apart"):
+        load_released_directory(data_root, {"PA_RELEASED_DIR": str(data_root.path / "released")})
+
+
+def test_the_diagnosticians_model_effort_turn_limit_and_timeout_are_configuration():
+    configured = load_diagnostician_config(
+        {
+            "PA_DIAGNOSTICIAN_MODEL": " claude-fable-5-2 ",
+            "PA_DIAGNOSTICIAN_EFFORT": "xhigh",
+            "PA_DIAGNOSTICIAN_MAX_TURNS": "400",
+            "PA_DIAGNOSTICIAN_TIMEOUT_SECONDS": "7200",
+        }
+    )
+
+    assert configured == DiagnosticianConfig(
+        model="claude-fable-5-2", effort="xhigh", max_turns=400, timeout_seconds=7200
+    )
+    # Unconfigured, a diagnosis runs on the librarian's model, at a higher effort.
+    assert load_diagnostician_config({}) == DiagnosticianConfig(
+        model="claude-opus-5-5", effort="high", max_turns=200, timeout_seconds=3600
+    )
+
+
+@pytest.mark.parametrize(
+    "var, value",
+    [
+        ("PA_DIAGNOSTICIAN_MAX_TURNS", "0"),
+        ("PA_DIAGNOSTICIAN_MAX_TURNS", "2.5"),
+        ("PA_DIAGNOSTICIAN_TIMEOUT_SECONDS", "0"),
+        ("PA_DIAGNOSTICIAN_TIMEOUT_SECONDS", "an hour"),
+    ],
+)
+def test_a_diagnosticians_turn_limit_or_timeout_that_isnt_one_is_refused(var: str, value: str):
+    with pytest.raises(ConfigError, match=f"{var} must be a "):
+        load_diagnostician_config({var: value})

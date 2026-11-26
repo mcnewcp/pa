@@ -78,7 +78,7 @@ def render_report(results: RunResults) -> str:
     if results.configuration is not None:
         lines.append(f"- Configuration: {results.configuration}")
     if results.wiki is not None:
-        lines.append(f"- Wiki: librarian version {results.wiki.librarian_version}")
+        lines.append(f"- Wiki: {results.wiki.versions}")
     if results.injection_checks is not None:
         lines.append(f"- Injection checks: {_injection_text(results.injection_checks)}")
     lines += [f"- {name.capitalize()}: {value}" for name, value in results.setup.items()]
@@ -99,6 +99,9 @@ def render_report(results: RunResults) -> str:
         "|---|---|---|---|---|---|",
     ]
     lines += [f"| {_cell(name)} | {_score_cells(s)} |" for name, s in results.categories.items()]
+    if results.tiers:
+        lines += ["", "## By tier", "", f"| Tier | {_SCORE_COLUMNS} |", "|---|---|---|---|---|---|"]
+        lines += [f"| {tier} | {_score_cells(s)} |" for tier, s in results.tiers.items()]
     lines += [
         "",
         "## Efficiency by category",

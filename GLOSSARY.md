@@ -43,7 +43,7 @@ One pass of every collector, then ingest, then publishing each watermark whose p
 _Avoid_: Sync, poll, run
 
 **Nightly job**:
-The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends and steps the assistant's VM clock to the devbox's if it has drifted, then runs a capture cycle with reconciliation, the librarian, and the backup, in that order, recording each in the status.
+The overnight job that holds the data root's lock throughout while it records when the assistant's Claude login ends and steps the assistant's VM clock to the devbox's if it has drifted, then runs a capture cycle with reconciliation, the librarian, dreaming on the nights it is due, and the backup, in that order, recording each in the status.
 _Avoid_: Cron, batch, nightly run
 
 **Raw payload**:
@@ -150,16 +150,32 @@ _Avoid_: Fact, note, entry
 The second phase of every librarian run: folding that run's new observations into pages, and creating pages for the people, organizations, and topics that have come up often enough to need one.
 _Avoid_: Dreaming, compaction
 
+**Engagement**:
+The owner's own hand in a person, organization, or topic: an observation linking it cites an episode the owner sent, wrote, organized, or attends. A person gets a page only once engaged; being written to is not engagement, and neither is the exchange in which the owner answers a proposal.
+_Avoid_: Interaction, activity, relevance
+
 **Replay**:
 Rebuilding a wiki from scratch by running L0 through the librarian a week of occurrence at a time, each week one run told its end as now. It is the rebuild for recovery, and it builds each eval wiki.
 _Avoid_: Rebuild run, backfill
 
 **Dreaming**:
-A separate, periodic librarian run over the whole wiki. It judges candidate problems (duplicate pages, contradictions, stale loops), fixes what a re-read of L0 settles, and turns the rest into proposals for the owner.
+The librarian's weekly review of the whole wiki, a step of the nightly job and one commit of its own. It judges each candidate against a re-read of L0 and gives it one outcome: applied (L0 settles it, so the wiki is fixed), proposed (it needs the owner's knowledge), or dismissed (it isn't a problem). It takes a page out of the wiki in two ways only: merging two pages a duplicate candidate names, and retiring one. It is held to what it changed: a lint error the wiki already had is left for the next librarian run.
 _Avoid_: Consolidation, cleanup
 
+**Candidate**:
+Something in the wiki that may be wrong, flagged mechanically by the host for dreaming to judge: a duplicate page, an orphan page, a loop past due or long open. A candidate is a question, not a finding; dreaming decides whether it is a problem. It is the same candidate from run to run by its kind, its pages, and for a loop the episode its line cites: a dismissed one isn't offered again until one of its pages changes or 30 days pass, and a proposed one waits for the owner's answer.
+_Avoid_: Issue, defect, finding, warning
+
+**Proposal**:
+Something the librarian asks the owner because L0 can't settle it: a proposed change the owner accepts or declines, or a question only the owner can answer. Dreaming adds each as one line of `proposals.md` at the wiki's root, with an id, links to the pages it is about, and the episodes behind it. The owner answers in chat, and the answer is what settles it; a proposal is never evidence.
+_Avoid_: Request, task, ticket, to-do
+
+**Retired page**:
+A page dreaming cleared from the wiki because the owner has no use for it: a person or organization the owner never engaged with, with nothing owed either way. The day logs keep its facts and git keeps the page. Its slug is listed in `retired.md` at the wiki's root, links to it stay valid, and it gets no page again until the owner engages with it, a loop or decision names it, or the owner asks for one.
+_Avoid_: Deleted page, archived page, hidden page
+
 **Correction**:
-An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. Like every episode it is never an edit; the librarian applies it on its next run.
+An owner turn saying that something the PA remembers is wrong, such as two pages for one person or a loop that has already closed. The owner's answer to a proposal is a correction too. Like every episode it is never an edit; the librarian applies it on its next run, which also resolves the proposal it answers.
 _Avoid_: Fix, override
 
 ## Assistant
@@ -199,15 +215,27 @@ The hand-written description of the synthetic corpus's people, storylines, and d
 _Avoid_: Scenario, script
 
 **Eval set**:
-The fixed questions, with expected answers and required evidence episodes, that each milestone is scored against.
+The fixed questions, with expected answers and required evidence episodes, that each milestone is scored against. A set may grade its questions into tiers.
 _Avoid_: Test suite, benchmark
+
+**Tier**:
+A question's grade of difficulty in an eval set: a whole number from 0, the easiest, on a scale the set defines. A set gives every question a tier or none. Reports give correctness by tier beside correctness by category.
+_Avoid_: Level, difficulty, bucket
+
+**Noise floor**:
+How far an eval wiki's score falls from itself: the largest drop between any two halves of its own runs, a half being as many runs as the wiki compared against it was asked. A second eval wiki, such as a dreamed one, passes its comparison with the first when no question fell and its drop is no larger than the first's noise floor, overall and in every tier. One answer never fails a tier: a drop no larger than the one-answer allowance, which is what one of the second wiki's answers moves that tier's drop by, is within whatever the floor, and the report marks it. A comparison in which any answer failed to run, on either wiki, isn't judged: it neither passes nor fails until those runs are run again, since a failed answer on the first wiki would widen its noise floor.
+_Avoid_: Run-to-run spread (that's a score's lowest run to its highest, which a difference between eval configurations is read against), margin, tolerance
+
+**Fallen question**:
+A question that every run on the first eval wiki of a comparison got right and every run on the second got wrong. One fails the comparison whatever its tier's drop, since questions that rose in the same tier can hide it in the tier's mean. An answer that failed to run is neither right nor wrong, so a comparison holding one isn't judged, and none keeps a question from falling or makes one fall. The public report counts fallen questions by tier, and the private one names them.
+_Avoid_: Regression, flipped question, a question whose score fell (that's any lower score, by any amount)
 
 **Eval configuration**:
 What the assistant is given besides L0's files in an eval run: nothing (files alone), or the wiki (files plus wiki).
 _Avoid_: Mode, variant, arm
 
 **Eval wiki**:
-The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log.
+The wiki a files-plus-wiki run gives the assistant: a replay of a frozen corpus, built once per librarian version and kept in the evals tree with its run log. A dreamed eval wiki is a copy of one, of a cut's wiki, or of a reproduction's starting wiki, that dreaming has run over at the copy's as-of time, so that dreaming's effect is measured against the same wiki without it. Its run log names both the librarian version that built it, where one did, and the one that dreamed it.
 _Avoid_: Test wiki, fixture wiki
 
 **Cut**:
@@ -224,3 +252,53 @@ _Avoid_: Eval date, reference date
 
 **Baseline**:
 The assistant answering by plain file search over L0, with no derived layers. The first score that later milestones are compared against.
+
+## Diagnosis
+
+**Diagnostician**:
+The session that reads real content to say why the PA got something wrong, on behalf of a development session, which never reads it.
+_Avoid_: Analyst, debugger, outside session
+
+**Diagnosis**:
+One referral answered over one case. It leaves a private analysis for the owner, findings, and a reproduction.
+_Avoid_: Investigation, debug run, report
+
+**Referral**:
+The question a development session puts to the diagnostician, such as why two eval questions fail more often on a dreamed eval wiki. It holds nothing real.
+_Avoid_: Brief (that's the morning brief), prompt, ticket
+
+**Case**:
+The real material a diagnosis reads, all of it frozen: a cut, with the eval set, eval runs, dreamed copies of its wiki, and earlier private analyses the referral is about.
+_Avoid_: Evidence (that's an eval question's), dataset, context
+
+**Findings**:
+What a diagnosis tells a development session: where the fault lies and how it happens, naming questions and episodes only by their opaque ids. Findings are released only after a check that they hold nothing real.
+_Avoid_: Report, scrubbed report, results
+
+**Reproduction**:
+Fictional raw payloads, wiki pages, and eval questions that fail the way the case did, released with the findings. Committed, it becomes a fixture.
+_Avoid_: Repro case, synthetic copy, anonymized data
+
+**Starting wiki**:
+The wiki pages a reproduction holds, when its fault needs a wiki to start from. The diagnostician wrote them, so no librarian built it. A run over the reproduction asks with it, and a fault in dreaming is shown by dreaming a copy of it.
+_Avoid_: Seed wiki, initial wiki, fixture wiki
+
+**Label**:
+The name a referral gives a set of eval runs, or a wiki, in the case. Findings count runs under labels, so they say which runs without naming anything real.
+_Avoid_: Tag, alias, run name
+
+**Release check**:
+The check, made outside the diagnostician's reach and never where it ran, that a diagnosis's findings and reproductions are in form and hold nothing real. It releases all of them or refuses all of them.
+_Avoid_: Scrub, review, filter, verdict (that's the wiki's judgement on the real-data eval set)
+
+**Check's notes**:
+What a release check found, and where, when it refused. They quote real content, so they are the owner's, and go back only to the diagnostician.
+_Avoid_: Refusal report, check log, feedback
+
+**Revision**:
+A new diagnostician session's correction of a diagnosis the release check refused, made from the refused output and the check's notes. The first session's go at a diagnosis and each revision are its passes; a diagnosis is revised at most twice.
+_Avoid_: Second pass (a third pass is a revision too), retry, resume (that's the same session told its output isn't in form)
+
+**Released directory**:
+Where a release check puts the findings and reproductions it releases, for a development session to read. It is outside the repository and outside the data root.
+_Avoid_: Output directory, public directory, findings directory

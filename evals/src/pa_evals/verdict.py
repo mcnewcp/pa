@@ -23,7 +23,7 @@ confirm.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from pa_core.errors import PaError
@@ -227,7 +227,7 @@ def render_public(real: ConfigurationRuns, scale: ConfigurationRuns) -> str:
         lines.append(f"| {label} | {' | '.join(cells)} |")
     rows = {
         "Cited episodes opened": lambda runs: format_score(cited_opened(answers(runs))),
-        "Total cost": lambda runs: _dollars(_total_cost(answers(runs))),
+        "Total cost": lambda runs: format_dollars(total_cost(answers(runs))),
         "Per answer, median cost": lambda runs: format_cost(
             median([q.cost_usd for q in answers(runs)])
         ),
@@ -281,24 +281,44 @@ def render_public(real: ConfigurationRuns, scale: ConfigurationRuns) -> str:
 
 def render_private(real: ConfigurationRuns) -> str:
     """The private verdict: every question's outcome in every run, and each failed answer."""
-    lines = [
+    return failure_analysis(
         "# v0.13 verdict, private: the failure analysis",
+        real.by_name(),
+        columns=[_label(name) for name in real.by_name()],
+    )
+
+
+def failure_analysis(
+    title: str,
+    compared: Mapping[str, Sequence[RunResults]],
+    *,
+    columns: Sequence[str] | None = None,
+    before: Sequence[str] = (),
+) -> str:
+    """A private failure analysis under `title`, of the sets of runs `compared`, each by its
+    name: every question's outcome in every run of each set, in a column per set (headed by
+    `columns`, else by the names), then each answer that wasn't correct, with what its
+    session never opened. The lines `before` are a section of the caller's, put first. It
+    quotes questions and answers: it is kept under the data root."""
+    headed = columns or [name.capitalize() for name in compared]
+    lines = [
+        title,
         "",
         "Real data: keep this under the data root.",
         "",
+        *before,
+        *([""] if before else []),
         "## Each question, run by run (correct?)",
         "",
-        "| Question | Category | Files alone | Files plus wiki | Asked |",
-        "|---|---|---|---|---|",
+        f"| Question | Category | {' | '.join(headed)} | Asked |",
+        f"|---|---|{'---|' * len(headed)}---|",
     ]
-    for q in real.files_alone[0].questions:
-        outcomes = [
-            ", ".join(_outcome(run, q.id) for run in runs) for runs in real.by_name().values()
-        ]
+    for q in next(iter(compared.values()))[0].questions:
+        outcomes = [", ".join(_outcome(run, q.id) for run in runs) for runs in compared.values()]
         lines.append(
             f"| {q.id} | {q.category} | {' | '.join(outcomes)} | {table_cell(q.question)} |"
         )
-    for name, runs in real.by_name().items():
+    for name, runs in compared.items():
         for number, run in enumerate(runs, start=1):
             for q in run.questions:
                 if q.correct is True:
@@ -376,7 +396,7 @@ def _outcome(run: RunResults, question_id: str) -> str:
     return "yes" if asked[0].correct is True else "no"
 
 
-def _total_cost(results: Sequence[QuestionResult]) -> float | None:
+def total_cost(results: Sequence[QuestionResult]) -> float | None:
     costs = [q.cost_usd for q in results if q.cost_usd is not None]
     return sum(costs) if costs else None
 
@@ -385,6 +405,6 @@ def _label(configuration: str) -> str:
     return {FILES_ALONE: "Files alone", FILES_PLUS_WIKI: "Files plus wiki"}[configuration]
 
 
-def _dollars(value: float | None) -> str:
+def format_dollars(value: float | None) -> str:
     """A total in dollars to the cent (an answer's cost, format_cost, is to the tenth of one)."""
     return "n/a" if value is None else f"${value:.2f}"

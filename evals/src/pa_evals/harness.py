@@ -76,7 +76,8 @@ def run_eval(
     throwaway L0 with nothing in it writable, and its path goes to the agent with every question.
     Before any question is asked, the copy must pass the injection checks over the eval set's
     adversarial episodes (`pa_evals.injection`), or the run stops with InjectionCheckError. The
-    results record the librarian version that built it and the checks it passed. `setup`
+    results record the librarian version that built it, the one that dreamed it if one did,
+    and the checks it passed. `setup`
     describes the run (for example which agent runner and judge) and is carried into the
     results as it is.
     """
@@ -128,13 +129,21 @@ def run_eval(
     return RunResults(
         configuration=configuration.name,
         setup=dict(setup or {}),
-        wiki=None if wiki is None else WikiResult(librarian_version=wiki.librarian_version),
+        wiki=None
+        if wiki is None
+        else WikiResult(
+            librarian_version=wiki.librarian_version, dreaming_version=wiki.dreaming_version
+        ),
         injection_checks=checks,
         as_of=eval_set.as_of,
         ingest=counts,
         cut=_cut_result(corpus) if isinstance(corpus, Cut) else None,
         overall=Scores.over(questions),
         categories={name: Scores.over(results) for name, results in categories.items()},
+        tiers={
+            tier: Scores.over([q for q in questions if q.tier == tier])
+            for tier in sorted({q.tier for q in questions if q.tier is not None})
+        },
         questions=questions,
     )
 
@@ -155,6 +164,7 @@ def _ask(
     result = QuestionResult(
         id=question.id,
         category=question.category,
+        tier=question.tier,
         question=question.question,
         as_of=as_of,
         expected_answer=question.expected_answer,
@@ -247,7 +257,7 @@ def _lay_wiki(wiki: EvalWiki, target: Path) -> Path:
     """Copy the eval wiki's tree to `target`, beside the throwaway L0, with nothing in it
     writable."""
     shutil.copytree(wiki.tree, target)
-    _make_read_only(target)
+    make_read_only(target)
     return target
 
 
@@ -284,7 +294,7 @@ def _lay_statuses(eval_set: EvalSet, directory: Path, *, wiki: bool) -> dict[dat
         write_status(path, status, at=as_of)
         statuses[as_of] = path
     if statuses:
-        _make_read_only(directory)
+        make_read_only(directory)
     return statuses
 
 
@@ -296,11 +306,11 @@ def lay_cut(cut: Cut, data_root: DataRoot) -> None:
         shutil.copytree(cut.l0, data_root.l0)
     else:
         data_root.l0.mkdir()
-    _make_read_only(data_root.l0)
+    make_read_only(data_root.l0)
     if cut.status is not None:
         data_root.status.parent.mkdir()
         shutil.copyfile(cut.status, data_root.status)
-        _make_read_only(data_root.status.parent)
+        make_read_only(data_root.status.parent)
 
 
 def _cut_result(cut: Cut) -> CutResult:
@@ -313,7 +323,7 @@ def _cut_result(cut: Cut) -> CutResult:
     )
 
 
-def _make_read_only(top: Path) -> None:
+def make_read_only(top: Path) -> None:
     """Leave nothing under `top` writable: no file can be changed, and no directory can take a
     new file."""
     for directory, _, files in top.walk(top_down=False):

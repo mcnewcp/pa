@@ -13,17 +13,38 @@ committed when a reported result uses it, so a failure can be diagnosed from the
 
 The run log names the librarian version that built the wiki; the results record it.
 
+A dreamed eval wiki is a copy of one that dreaming has run over
+(`pa librarian dream TARGET --corpus DIR`), so that dreaming's effect can be measured against
+the same wiki without it. Its run log holds the replay's runs, then the copy's dreaming runs,
+which name the librarian version that dreamed it; the results record both. Any other mix is
+refused (`pa_core.librarian.replay.run_history`). Its tree may also hold what dreaming leaves
+at a wiki's root: `proposals.md`, what it asked the owner, and `retired.md`, the slugs of the
+pages it retired. The assistant is given both with the rest of the tree.
+
 A run over a cut (`pa_home.cut`) is given the cut's own wiki instead: the live wiki at its last
 commit when the cut was taken (`cut_wiki`). Its librarian version is the one that commit names.
+Or it is given a dreamed copy of the cut's wiki (`dreamed_cut_wiki`,
+`pa librarian dream TARGET --cut DIR`), whose run log holds the copy's dreaming runs alone. The
+copy is the owner's data, as the cut is, and is kept under the data root.
+
+A run over a released reproduction (`pa_evals.reproduction`) is given the reproduction's
+starting wiki (`reproduction_wiki`). The diagnostician wrote it, so it has no run log, and the
+results name no librarian version for it (`NO_VERSION`). Or it is given a dreamed copy of that
+wiki (`dreamed_reproduction_wiki`, `pa-eval reproduction dream DIR COPY`), which carries the
+reproduction's record, and whose run log holds the copy's dreaming runs alone, as of the
+reproduction's eval set's as-of time.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from pa_core.errors import PaError
-from pa_core.librarian.replay import ReplayTarget, RunLogEntry, RunLogError, read_run_log
+from pa_core.librarian.replay import ReplayTarget, RunHistory, RunLogError, run_history
+from pa_core.librarian.session import utc
+from pa_evals.reproduction import ReleasedReproduction, copied_wiki
 from pa_home.cut import Cut
 
 
@@ -37,13 +58,17 @@ class EvalWiki:
     """The wiki's tree, laid beside the throwaway L0 for the run."""
     librarian_version: str
     """The librarian version that built it, from its run log."""
+    dreaming_version: str | None = None
+    """The librarian version that dreamed it, from its run log; None for a wiki no dreaming
+    run has changed."""
 
 
 def load_eval_wiki(directory: Path) -> EvalWiki:
-    """The eval wiki in `directory`: its tree, and the librarian version its run log names.
+    """The eval wiki in `directory`: its tree, and the librarian versions its run log names.
 
-    Refused unless the run log has a committed run, every run in it is of one librarian version,
-    and its last run committed (a replay that stopped on a failed run isn't finished).
+    Refused unless the run log holds a replay's runs, with a committed one, all of one
+    librarian version, and the last one committed (a replay that stopped on a failed run
+    isn't finished); then, for a dreamed eval wiki, dreaming runs of one version.
     """
     if not directory.is_dir():
         raise EvalWikiError(f"eval wiki not found: {directory}")
@@ -53,17 +78,12 @@ def load_eval_wiki(directory: Path) -> EvalWiki:
         raise EvalWikiError(f"{directory} has no {tree.name}/: it isn't an eval wiki")
     if not run_log.is_file():
         raise EvalWikiError(f"{directory} has no {run_log.name}: it isn't an eval wiki")
-    entries = _entries(run_log)
-    if not any(entry.status == "committed" for entry in entries):
-        raise EvalWikiError(f"{run_log} has no committed run")
-    versions = sorted({entry.librarian_version for entry in entries})
-    if len(versions) > 1:
-        raise EvalWikiError(f"{run_log} names more than one librarian version: {versions}")
-    if entries[-1].status != "committed":
+    history = _history(run_log)
+    if not history.replays:
         raise EvalWikiError(
-            f"{run_log} ends with a failed run: finish the replay with --resume first"
+            f"{run_log} has no replay run" if history.dreams else f"{run_log} has no committed run"
         )
-    return EvalWiki(tree, versions[0])
+    return EvalWiki(tree, history.replays[-1].librarian_version, history.dreaming_version)
 
 
 UNNAMED_VERSION = "unnamed (the cut's wiki commit names none)"
@@ -77,8 +97,116 @@ def cut_wiki(cut: Cut) -> EvalWiki:
     return EvalWiki(cut.wiki, cut.manifest.wiki.librarian_version or UNNAMED_VERSION)
 
 
-def _entries(run_log: Path) -> list[RunLogEntry]:
+def dreamed_cut_wiki(cut: Cut, directory: Path) -> EvalWiki:
+    """The dreamed copy of `cut`'s wiki in `directory`, which a files-plus-wiki run over the
+    cut is given in place of the cut's own: its tree, the librarian version the cut names, and
+    the one that dreamed the copy, from its run log.
+
+    Refused unless it is laid out as `pa librarian dream DIR --cut CUT` leaves it, a `wiki/`
+    and a run log, and the run log holds only dreaming runs, a committed one among them, all
+    by one version, of this cut's wiki: as of the cut's as-of time, and of a wiki built by the
+    librarian version the cut names.
+    """
+    if cut.wiki is None or cut.manifest.wiki is None:
+        raise EvalWikiError(f"the cut {cut.name} holds no wiki: the data root had none")
+    built_by = cut.manifest.wiki.librarian_version
+    tree, dreaming_version = _dreamed_alone(
+        directory,
+        as_of=cut.as_of,
+        built_by=built_by,
+        whose_time="the cut's",
+        named=f"not {built_by}, which the cut names",
+        not_a_copy="it isn't a dreamed copy of the cut's wiki "
+        f"(pa librarian dream DIR --cut {cut.path})",
+    )
+    return EvalWiki(tree, built_by or UNNAMED_VERSION, dreaming_version)
+
+
+NO_VERSION = "none (the diagnostician wrote a reproduction's starting wiki)"
+"""What stands for the librarian version of a reproduction's starting wiki: no librarian built
+it, so results asked over it name none."""
+
+
+def reproduction_wiki(reproduction: ReleasedReproduction) -> EvalWiki:
+    """The starting wiki a released reproduction holds, as a files-plus-wiki run over the
+    reproduction is given it. It has no run log, and needs none. Raises StartingWikiError for
+    a reproduction with none."""
+    return EvalWiki(reproduction.starting_wiki(), NO_VERSION)
+
+
+def dreamed_reproduction_wiki(reproduction: ReleasedReproduction, directory: Path) -> EvalWiki:
+    """The dreamed copy of `reproduction`'s starting wiki in `directory`, which a
+    files-plus-wiki run over the reproduction is given in place of the starting wiki: its
+    tree, and the librarian version that dreamed the copy, from its run log. No librarian
+    built the wiki, so no version is named for that.
+
+    Refused (StartingWikiError) unless `pa-eval reproduction dream DIR COPY` made it as a
+    copy of this reproduction's wiki (`pa_evals.reproduction.copied_wiki`), and unless its
+    run log holds only dreaming runs, a committed one among them, all by one version, as of
+    the reproduction's eval set's as-of time and of a wiki no librarian built.
+    """
+    copied_wiki(reproduction, directory)
+    tree, dreaming_version = _dreamed_alone(
+        directory,
+        as_of=reproduction.eval_set.as_of,
+        built_by=None,
+        whose_time="the eval set's",
+        named="and no librarian built a reproduction's starting wiki",
+        not_a_copy="it isn't a dreamed copy of the reproduction's starting wiki "
+        "(pa-eval reproduction dream DIR COPY)",
+    )
+    return EvalWiki(tree, NO_VERSION, dreaming_version)
+
+
+def _dreamed_alone(
+    directory: Path,
+    *,
+    as_of: datetime,
+    built_by: str | None,
+    whose_time: str,
+    named: str,
+    not_a_copy: str,
+) -> tuple[Path, str]:
+    """The tree of the copy in `directory`, which was dreamed and never replayed, and the
+    librarian version that dreamed it.
+
+    Refused, as `not_a_copy`, unless it is laid out as a dreaming run leaves a copy, a `wiki/`
+    and a run log, and the run log holds only dreaming runs, a committed one among them, of
+    the one wiki: as of `as_of`, which is `whose_time` as-of time, and built by `built_by`,
+    which `named` says of a run that wasn't.
+    """
+    layout = ReplayTarget(directory)
+    tree, run_log = layout.tree, layout.run_log
+    if not tree.is_dir():
+        raise EvalWikiError(f"{directory} has no {tree.name}/: {not_a_copy}")
+    if not run_log.is_file():
+        raise EvalWikiError(f"{directory} has no {run_log.name}: {not_a_copy}")
+    history = _history(run_log)
+    if history.replays:
+        raise EvalWikiError(f"{run_log} has a replay's runs: {not_a_copy}")
+    dreaming_version = history.dreaming_version
+    if dreaming_version is None:
+        raise EvalWikiError(f"{run_log} has no committed dreaming run: {not_a_copy}")
+    other = history.dreamed_otherwise(as_of=as_of, librarian_version=built_by)
+    if other is not None and other.as_of != as_of:
+        raise EvalWikiError(
+            f"{run_log} has a dreaming run as of {utc(other.as_of)}, not {whose_time} as-of "
+            f"time ({utc(as_of)}): {not_a_copy}"
+        )
+    if other is not None:
+        built = (
+            "no librarian built"
+            if other.librarian_version is None
+            else f"built by librarian version {other.librarian_version}"
+        )
+        raise EvalWikiError(
+            f"{run_log} has a dreaming run of a wiki {built}, {named}: {not_a_copy}"
+        )
+    return tree, dreaming_version
+
+
+def _history(run_log: Path) -> RunHistory:
     try:
-        return read_run_log(run_log)
+        return run_history(run_log)
     except RunLogError as error:
         raise EvalWikiError(str(error)) from error

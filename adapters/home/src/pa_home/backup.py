@@ -1,11 +1,11 @@
-"""Backing up with restic what can't be rebuilt cheaply: L0, the wiki's git directory, and the
-private eval directory, in one snapshot.
+"""Backing up with restic what can't be rebuilt cheaply: L0, the wiki's git directory, the
+private eval directory, and the private diagnoses directory, in one snapshot.
 
 The snapshot's root is the data root, so restoring it to a directory reproduces `l0/`,
-`wiki.git/` and `evals/` there. Nothing else is backed up: the catalog is derived from L0, the
-wiki's working tree is checked out from its git directory, collector state is rebuilt by
-capturing again (which collapses on ingest), and neither is an envelope tree an interrupted
-renormalize left behind. Nothing is ever pruned.
+`wiki.git/`, `evals/` and `diagnoses/` there. Nothing else is backed up: the catalog is derived
+from L0, the wiki's working tree is checked out from its git directory, collector state is
+rebuilt by capturing again (which collapses on ingest), and neither is an envelope tree an
+interrupted renormalize left behind. Nothing is ever pruned.
 """
 
 from __future__ import annotations
@@ -71,10 +71,10 @@ def _snapshot(data_root: DataRoot, environ: Mapping[str, str]) -> str:
     if not data_root.l0.is_dir():
         raise BackupError("There is no L0 to back up; run `pa ingest` first.")
     FilesystemL0(data_root.l0)  # repairs an interrupted envelope swap, so only leftovers remain
-    # The wiki and the evals come later than L0 on a fresh data root.
+    # The wiki, the evals and the diagnoses come later than L0 on a fresh data root.
     paths = [
         str(path.relative_to(data_root.path))
-        for path in (data_root.l0, data_root.wiki_git, data_root.evals)
+        for path in (data_root.l0, data_root.wiki_git, data_root.evals, data_root.diagnoses)
         if path.exists()
     ]
     # Relative paths from inside the data root make it the root of the snapshot.

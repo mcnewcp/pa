@@ -2,8 +2,9 @@
 # Runs the nightly job on the devbox over the instance's data root, with this checkout's code and
 # the instance's configuration (lib.sh job_environment): one process holding the data root's lock
 # throughout, which runs a capture cycle with reconciliation, the librarian run (its sessions in
-# the librarian's VM, librarian-sandbox.sh), and the backup to the USB SSD's restic repository,
-# each recorded in the status, and when the assistant's Claude login ends. It also steps the
+# the librarian's VM, librarian-sandbox.sh), a dreaming run on the nights one is due (every
+# PA_DREAMING_INTERVAL_DAYS days, lib.sh; 0 is never), and the backup to the USB SSD's restic
+# repository, each recorded in the status, and when the assistant's Claude login ends. It also steps the
 # assistant's clock to the devbox's if it has drifted (lib.sh step_vm_clock). It skips if another
 # job holds the lock. pa-nightly.service runs it overnight (pa-nightly.timer,
 # install-schedules.sh); run it by hand too.
@@ -15,6 +16,9 @@ job_environment
 # from the environment could run claude elsewhere, or point the backup elsewhere.
 unset PA_LIBRARIAN_COMMAND RESTIC_PASSWORD RESTIC_PASSWORD_COMMAND RESTIC_REPOSITORY_FILE
 export PA_LIBRARIAN_SANDBOX=$DEPLOY_DIR/librarian-sandbox.sh
+# How often the job dreams is the deployment's to say (lib.sh), never the environment's: unset,
+# `pa nightly` would dream weekly.
+export PA_LIBRARIAN_DREAMING_INTERVAL_DAYS=$PA_DREAMING_INTERVAL_DAYS
 export RESTIC_REPOSITORY=$PA_BACKUP_REPOSITORY RESTIC_PASSWORD_FILE=$PA_BACKUP_PASSWORD_FILE
 # systemd gives the job the system's PATH alone, and restic's release binary installs without
 # sudo in ~/.local/bin: after the system's directories, so a packaged restic wins (#99).

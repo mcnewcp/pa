@@ -13,7 +13,11 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path, PurePath
 
-from pa_core.librarian.run import Phase, SessionPaths, SessionResult
+from pa_core.librarian.session import (
+    Phase,
+    SessionPaths,
+    SessionResult,
+)
 from pa_home.claude_cli import (
     ClaudeCliError,
     ClaudeCliTimeoutError,
@@ -130,10 +134,11 @@ class ClaudeSessionRunner:
             )
         except ClaudeCliError as error:
             return SessionResult(ok=False, error=str(error))
-        session_id = result.get("session_id")
+        session_id, final_message = result.get("session_id"), result.get("result")
         return SessionResult(
             ok=True,
             session_id=session_id if isinstance(session_id, str) else None,
             cost_usd=result_number(result, "total_cost_usd", float),
             turns=result_number(result, "num_turns", int),
+            final_message=final_message if isinstance(final_message, str) else None,
         )

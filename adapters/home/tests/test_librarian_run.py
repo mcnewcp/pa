@@ -60,6 +60,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Sent late on 30 Sep in Chicago, which is already 1 Oct in UTC.
 HOTEL_EMAIL_ID = "gmail_9ff7394d0df8584d"
+OWNER_ADDRESS = "Argus McNevans <argus@example.com>"
+"""The sender of the owner's own mail, which carries the Sent label."""
 
 
 def email(
@@ -128,6 +130,13 @@ def run_librarian() -> int:
     return main(["librarian", "run"])
 
 
+def run_error(data_root: Path) -> str:
+    """The whole error of the last run that failed, librarian or dreaming, as the command
+    keeps it under the data root: it prints only where the run failed."""
+    kept = sorted((data_root / "run-errors").glob("*.txt"), key=lambda file: file.stat().st_mtime)
+    return kept[-1].read_text()
+
+
 def git(data_root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", f"--git-dir={data_root / 'wiki.git'}", *args],
@@ -164,7 +173,7 @@ def wiki_files(data_root: Path) -> dict[str, str]:
     }
 
 
-NO_PAGES_INDEX = "# Index\n\nNo pages yet.\n"
+NO_PAGES_INDEX = "# Index\n\nOpen proposals: 0\n\nNo pages yet.\n"
 """The index the host generates for a wiki without pages."""
 
 
@@ -374,7 +383,14 @@ def test_a_failed_run_leaves_the_wiki_as_last_committed_and_the_cursor_where_it_
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    # The command says where the run failed, and nothing a page or the session said: the
+    # whole error is kept under the data root, for the owner.
+    kept = data_root / "run-errors" / "librarian-run.txt"
+    assert capsys.readouterr().err == (
+        f"pa: the run failed in its observation session and was discarded; its error is in {kept}\n"
+    )
+    assert reason in run_error(data_root)
+    assert kept.stat().st_mode & 0o777 == 0o600
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     # The episode is still new for the next run.
@@ -626,8 +642,8 @@ WEDDING = {
 }
 
 
-def wedding_mail(subject: str, date: str) -> dict[str, bytes]:
-    message = email(message_id=f"{subject}@example.net", subject=subject, date=date)
+def wedding_mail(subject: str, date: str, **fields: str) -> dict[str, bytes]:
+    message = email(message_id=f"{subject}@example.net", subject=subject, date=date, **fields)
     return {f"gmail/{subject}.eml": message}
 
 
@@ -663,11 +679,12 @@ def test_consolidation_gets_the_runs_new_observations_and_the_reference_counts(
             f"[ep:{gift['id']}]",
         }
     ]
-    # Distinct days over all day logs: the two lines on 2 Oct count once.
+    # Distinct days over all day logs: the two lines on 2 Oct count once. All of it is mail
+    # David sent, so the owner has engaged with none of them.
     assert counts == [
-        {"slug": "david-kim", "days": 3, "reaches_threshold": True},
-        {"slug": "wedding", "days": 3, "reaches_threshold": True},
-        {"slug": "kitchen", "days": 1, "reaches_threshold": False},
+        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "wedding", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "kitchen", "days": 1, "reaches_threshold": False, "engaged": False},
     ]
     fields = trailers(commit_messages(data_root)[0])
     assert fields["Consolidation-Cost-USD"] == "0.0421"
@@ -695,8 +712,8 @@ def test_the_page_threshold_is_configurable_and_starts_at_three(
     [consolidation] = sessions(data_root, "consolidation")
     _, counts = consolidation["inputs"]
     assert counts == [
-        {"slug": "david-kim", "days": 2, "reaches_threshold": reached},
-        {"slug": "wedding", "days": 2, "reaches_threshold": reached},
+        {"slug": "david-kim", "days": 2, "reaches_threshold": reached, "engaged": False},
+        {"slug": "wedding", "days": 2, "reaches_threshold": reached, "engaged": False},
     ]
 
 
@@ -828,6 +845,8 @@ def test_consolidation_creates_and_edits_pages_and_the_host_regenerates_the_inde
         """\
         # Index
 
+        Open proposals: 0
+
         ## People
 
         - [[david-kim]]: Old friend, getting married on Oct 24.
@@ -858,13 +877,15 @@ def test_consolidation_creates_and_edits_pages_and_the_host_regenerates_the_inde
     assert run_librarian() == 0
 
     _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
-    assert counts[:2] == [
-        {"slug": "wedding", "days": 4, "reaches_threshold": True, "page": "topics/wedding.md"},
-        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "page": "people/david-kim.md"},
+    assert [(count["slug"], count["days"], count["page"]) for count in counts[:2]] == [
+        ("wedding", 4, "topics/wedding.md"),
+        ("david-kim", 3, "people/david-kim.md"),
     ]
     assert wiki_files(data_root)["index.md"] == textwrap.dedent(
         """\
         # Index
+
+        Open proposals: 0
 
         ## People
 
@@ -1058,7 +1079,7 @@ def test_a_consolidation_out_of_bounds_or_failing_lint_fails_the_run(
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    assert reason in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     # The episode is still new for the next run.
@@ -1381,6 +1402,32 @@ def test_a_session_that_leaves_lint_errors_is_resumed_with_the_findings_and_fixe
     assert fields[f"{name}-Turns"] == "12"
 
 
+def test_a_new_page_dated_after_the_run_resumes_the_session_to_date_it_the_runs_date(
+    data_root: Path,
+):
+    """How the machine's date reads in a replay, which is told an earlier one."""
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    pages = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)
+    today = datetime.now(ZoneInfo("America/Chicago")).date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    ahead = pages[TOPIC].replace("updated: 2026-10-02", f"updated: {tomorrow}")
+    script(
+        data_root,
+        observation=[{"observe": True}],
+        consolidation=[{"write": TOPIC, "text": ahead}],
+        consolidation_resume=[{"write": TOPIC, "text": pages[TOPIC]}],
+    )
+
+    assert run_librarian() == 0
+
+    _, resumed = sessions(data_root, "consolidation")
+    assert (
+        f"{TOPIC}: `updated` was set to {tomorrow}, and this run's date is {today.isoformat()}"
+        in resumed["prompt"]
+    )
+    assert wiki_files(data_root)[TOPIC] == pages[TOPIC]
+
+
 @pytest.mark.parametrize("phase", ["observation", "consolidation"])
 def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
     data_root: Path, capsys, phase: str
@@ -1413,9 +1460,9 @@ def test_lint_errors_that_remain_after_two_resumes_discard_the_run(
     assert ["--resume" in s["argv"] for s in attempts] == [False, True, True]
     # The first run's two sessions, then this run's: no third resume.
     assert len(sessions(data_root)) == 2 + (3 if phase == "observation" else 4)
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "lint errors after 2 resumes" in error
-    assert worse.get("append", worse.get("write")) in error
+    assert str(worse.get("append", worse.get("write"))) in error
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
     script(data_root)
@@ -1540,7 +1587,14 @@ def run_with_wedding_pages(data_root: Path, edit=None) -> None:
         {
             "gmail/hotel.eml": email(),
             **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
-            **wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"),
+            # The owner's own mail, so the owner has engaged with the wedding.
+            **wedding_mail(
+                "Menu",
+                "Mon, 5 Oct 2026 09:00:00 -0500",
+                labels="Sent",
+                sender=OWNER_ADDRESS,
+                to="David Kim <dkim@example.net>",
+            ),
         },
     )
     pages = current_wedding_pages()
@@ -1672,7 +1726,8 @@ def test_after_a_merge_links_to_an_alias_are_rewritten_to_its_pages_slug(data_ro
     script(data_root, observation=[{"observe": True, "links": {"Menu": ["wedding"]}}])
     assert run_librarian() == 0
     _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
-    assert {"slug": "david-kim", "days": 2, "reaches_threshold": False, "page": PERSON} in counts
+    [david] = [count for count in counts if count["slug"] == "david-kim"]
+    assert (david["days"], david["page"]) == (2, PERSON)
     assert "dave" not in {count["slug"] for count in counts}
     assert git(data_root, f"--work-tree={data_root / 'wiki'}", "status", "--porcelain") == ""
 
@@ -1703,7 +1758,7 @@ def test_an_emptied_file_no_merge_explains_is_left_for_lint_and_fails_the_run(
 
     assert run_librarian() != 0
 
-    assert reason in capsys.readouterr().err
+    assert reason in run_error(data_root)
     assert tree_state(data_root / "wiki") == before
     assert commit_messages(data_root) == history
 
@@ -1723,7 +1778,7 @@ def commit_by_hand(data_root: Path, files: dict[str, str]) -> None:
     for path, text in files.items():
         (data_root / "wiki" / path).parent.mkdir(parents=True, exist_ok=True)
         (data_root / "wiki" / path).write_text(text)
-    repository.commit(repository.last_commit_message() or "")
+    repository.commit(repository.commits()[0].message)
 
 
 NEW_EPISODES = {
@@ -1804,7 +1859,7 @@ def test_a_run_failing_only_on_errors_already_committed_says_so(
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "all of them already in the wiki's last commit" in error
     assert next(iter(files)) in error
     # Observation is never resumed over them; consolidation only over the pages it can fix.
@@ -1822,7 +1877,7 @@ def test_a_run_failing_on_its_own_errors_doesnt_blame_the_last_commit(data_root:
 
     assert run_librarian() != 0
 
-    error = capsys.readouterr().err
+    error = run_error(data_root)
     assert "malformed decision" in error
     assert "already in the wiki's last commit" not in error
 
@@ -2426,6 +2481,428 @@ def test_a_wiki_seeded_from_a_windowed_replay_carries_on_from_the_backfills_capt
     assert run_librarian() == 0
     assert observed_subjects(data_root) == [["RSVP"], ["Menu"]]
     assert wiki_files(data_root)["days/2026-10-07.md"].count("[ep:") == 1
+
+
+# Engagement and the page-creation rules (#142)
+
+DAVID = "CN=David Kim:mailto:dkim@example.net"
+
+# One episode each, and whether the slug its observation links is engaged: the owner sent,
+# wrote, organized, or attends it.
+ENGAGEMENT = {
+    "mail the owner sent": (
+        {
+            "gmail/sent.eml": email(
+                labels="Sent", sender=OWNER_ADDRESS, to="David Kim <dkim@example.net>"
+            )
+        },
+        True,
+    ),
+    "mail to the owner": ({"gmail/received.eml": email()}, False),
+    "mail copying the owner": (
+        {
+            "gmail/copied.eml": email(to="Mara McNevans <mara@example.com>").replace(
+                b"Subject:", f"Cc: {OWNER_ADDRESS}\r\nSubject:".encode()
+            )
+        },
+        False,
+    ),
+    # Mail from the owner's address that the owner's mailbox never sent isn't the owner's.
+    "forged mail": (
+        {"gmail/forged.eml": email(sender=OWNER_ADDRESS, to="Denise Hart <denise@example.org>")},
+        False,
+    ),
+    "a daily note": (
+        {"obsidian/note.md": daily_note("2026-10-05T21:00:00-05:00", "Called Dave about it.")},
+        True,
+    ),
+    "a chat": ({"assistant_chat/chat.json": CHAT.read_bytes()}, True),
+    "an event the owner organized": (
+        {
+            "icloud_calendar/lunch.ics": captured_event(
+                "lunch@example.com",
+                "Lunch",
+                "20261006T120000",
+                "20261006T130000",
+                "ORGANIZER;CN=Argus McNevans:mailto:Argus@Example.com",
+                f"ATTENDEE;{DAVID}",
+            )
+        },
+        True,
+    ),
+    "an event the owner attends": (
+        {
+            "icloud_calendar/lunch.ics": captured_event(
+                "lunch@example.com",
+                "Lunch",
+                "20261006T120000",
+                "20261006T130000",
+                f"ORGANIZER;{DAVID}",
+                "ATTENDEE;CN=Argus McNevans:mailto:argus@example.com",
+            )
+        },
+        True,
+    ),
+    # An event with no organizer and no attendee lists no one, the owner included.
+    "an event listing no one": (
+        {
+            "icloud_calendar/dentist.ics": captured_event(
+                "dentist@example.com", "Dentist", "20261006T090000", "20261006T100000"
+            )
+        },
+        False,
+    ),
+    "an event among other people": (
+        {
+            "icloud_calendar/recital.ics": captured_event(
+                "recital@example.com",
+                "Recital",
+                "20261006T180000",
+                "20261006T190000",
+                f"ORGANIZER;{DAVID}",
+                "ATTENDEE;CN=Mara McNevans:mailto:mara@example.com",
+            )
+        },
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("episode", ENGAGEMENT, ids=list(ENGAGEMENT))
+def test_a_slug_is_engaged_when_the_owner_sent_wrote_organized_or_attends_an_episode_linking_it(
+    data_root: Path, episode: str
+):
+    payloads, engaged = ENGAGEMENT[episode]
+    ingest(data_root, payloads)
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    _, counts = consolidation["inputs"]
+    assert counts == [
+        {"slug": "someone", "days": 1, "reaches_threshold": False, "engaged": engaged}
+    ]
+
+
+def engaged_slugs(data_root: Path) -> dict[str, bool]:
+    """Whether each slug is engaged, as the last consolidation was told."""
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    return {count["slug"]: count["engaged"] for count in counts}
+
+
+def test_engagement_goes_by_any_episode_an_observation_cites_and_reaches_every_slug_it_links(
+    data_root: Path,
+):
+    sent = email(
+        message_id="rsvp@example.com",
+        labels="Sent",
+        sender=OWNER_ADDRESS,
+        to="David Kim <dkim@example.net>",
+        subject="RSVP",
+    )
+    ingest(data_root, {"gmail/hotel.eml": email(), "gmail/rsvp.eml": sent})
+    links = {"Hotel block": ["north-shore-lodge"], "RSVP": ["david-kim", "wedding"]}
+    script(data_root, observation=[{"observe": True, "links": links}])
+    assert run_librarian() == 0
+    assert engaged_slugs(data_root) == {
+        "david-kim": True,
+        "wedding": True,
+        "north-shore-lodge": False,
+    }
+    # The session is told what the flag means for a slug without a page.
+    prompt = " ".join(sessions(data_root, "consolidation")[-1]["prompt"].split())
+    assert "`engaged` says whether the owner has engaged with the slug" in prompt
+    assert "A person gets a page at the threshold only when `engaged`" in prompt
+
+    # A later observation of the lodge cites the hotel mail and the owner's RSVP together.
+    ids = observed_ids(data_root)
+    ingest(data_root, wedding_mail("Menu", "Mon, 5 Oct 2026 09:00:00 -0500"))
+    cited = f"[ep:{HOTEL_EMAIL_ID}] [ep:{ids['RSVP']}]"
+    both = f"- the lodge holds the block [[north-shore-lodge]] {cited}\n"
+    script(data_root, observation=[{"write": "days/2026-10-05.md", "text": both}])
+    assert run_librarian() == 0
+
+    assert engaged_slugs(data_root)["north-shore-lodge"] is True
+
+
+def test_only_an_engaged_slug_at_the_threshold_is_warned_about_for_having_no_page(
+    data_root: Path,
+):
+    # Three days of mail from David, and on the third the owner's own mail about the wedding.
+    ingest(
+        data_root,
+        {
+            **wedding_mail("Hotel block", "Wed, 30 Sep 2026 09:00:00 -0500"),
+            **wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"),
+            **wedding_mail("Gift", "Mon, 5 Oct 2026 09:00:00 -0500"),
+            **wedding_mail(
+                "Menu",
+                "Mon, 5 Oct 2026 17:00:00 -0500",
+                labels="Sent",
+                sender=OWNER_ADDRESS,
+                to="Lakeside Catering <events@lakesidecatering.example>",
+            ),
+        },
+    )
+    links = {subject: ["david-kim", "wedding"] for subject in ("Hotel block", "RSVP")}
+    links |= {"Gift": ["david-kim"], "Menu": ["wedding"]}
+    script(data_root, observation=[{"observe": True, "links": links}])
+
+    assert run_librarian() == 0
+
+    _, counts = sessions(data_root, "consolidation")[-1]["inputs"]
+    assert counts == [
+        {"slug": "david-kim", "days": 3, "reaches_threshold": True, "engaged": False},
+        {"slug": "wedding", "days": 3, "reaches_threshold": True, "engaged": True},
+    ]
+    _, warnings, _ = commit_messages(data_root)[0].split("\n\n")
+    assert warnings == (
+        "Lint warnings:\n"
+        "- days/2026-10-05.md: `wedding` is linked on 3 days, reaching the page threshold of 3, "
+        "but has no page"
+    )
+
+
+AUTOMATED_MAILBOXES = (
+    "noreply@birchwood.example",
+    "no-reply@parcelpost.example",
+    "No_Reply@lakeside.example",
+    "donotreply@cityutilities.example",
+    "do-not-reply@greatplains.example",
+    "billing-noreply@summitroofing.example",
+    "noreply+orders@cedarbooks.example",
+    "noreply2@riverbank.example",
+    "notifications@forum.example",
+    "notification@harborgym.example",
+    "notify@pinecrest.example",
+    "alerts@firstprairie.example",
+    "account-alerts@lakeshorebank.example",
+    "mailer-daemon@example.net",
+    "postmaster@example.org",
+    "bounces@lists.example",
+)
+# Mailboxes people read, and a name that only looks like one.
+OTHER_MAILBOXES = (
+    "hannah.lee@birchwood.example",
+    "info@harrow.example",
+    "billing@summitroofing.example",
+    "reply@cedarbooks.example",
+    "nino.reply@example.net",
+    "notary@lakeside.example",
+    "bounce.house@lindenparties.example",
+)
+
+
+def test_the_identity_table_marks_automated_mailboxes_by_their_local_part(data_root: Path):
+    ingest(
+        data_root,
+        {
+            f"gmail/{number}.eml": email(
+                message_id=f"{number}@example.net", sender=address, subject=f"Mail {number}"
+            )
+            for number, address in enumerate((*AUTOMATED_MAILBOXES, *OTHER_MAILBOXES))
+        },
+    )
+
+    assert run_librarian() == 0
+
+    [consolidation] = sessions(data_root, "consolidation")
+    people = consolidation["identity"]["people"]
+    automated = [p["addresses"] for p in people if p.get("automated")]
+    assert sorted(automated) == sorted([address.lower()] for address in AUTOMATED_MAILBOXES)
+    # The mark is given only when it says something, and the session is told what it means.
+    assert {p.get("automated") for p in people} == {True, None}
+    assert "`automated`" in consolidation["prompt"]
+
+
+def test_a_group_is_automated_only_when_every_one_of_its_addresses_is(data_root: Path):
+    ingest(
+        data_root,
+        {
+            "gmail/own.eml": email(sender="Hannah Lee <hannah.lee@birchwood.example>"),
+            "gmail/forum.eml": email(
+                message_id="forum@forum.example",
+                sender="Hannah Lee <notifications@forum.example>",
+                subject="Hannah Lee replied to your post",
+            ),
+            "gmail/one.eml": email(
+                message_id="one@parcelpost.example",
+                sender="Parcel Tracking <no-reply@parcelpost.example>",
+                subject="Out for delivery",
+            ),
+            "gmail/two.eml": email(
+                message_id="two@parcelpost.example",
+                sender="Parcel Tracking <notifications@parcelpost.example>",
+                subject="Delivered",
+            ),
+        },
+    )
+
+    assert run_librarian() == 0
+
+    people = {person["slug"]: person for person in identity(data_root)["people"]}
+    assert people["hannah-lee"]["addresses"] == [
+        "hannah.lee@birchwood.example",
+        "notifications@forum.example",
+    ]
+    assert "automated" not in people["hannah-lee"]
+    assert people["parcel-tracking"]["automated"] is True
+
+
+# A person page's `emails`, and whether lint fails the page for them.
+PERSON_PAGE_EMAILS = {
+    "one automated mailbox": ("noreply@birchwood.example", True),
+    "only automated mailboxes": ("NoReply@birchwood.example, notifications@forum.example", True),
+    "a person's address beside an automated one": (
+        "dkim@example.net, notifications@forum.example",
+        False,
+    ),
+    "no address at all": ("", False),
+}
+
+
+@pytest.mark.parametrize("emails", PERSON_PAGE_EMAILS, ids=list(PERSON_PAGE_EMAILS))
+def test_a_person_page_whose_only_addresses_are_automated_mailboxes_fails_the_run(
+    data_root: Path, capsys, emails: str
+):
+    listed, fails = PERSON_PAGE_EMAILS[emails]
+    ingest(
+        data_root,
+        {
+            "gmail/hotel.eml": email(),
+            "gmail/survey.eml": email(
+                message_id="survey@birchwood.example",
+                sender="noreply@birchwood.example",
+                subject="How did we do?",
+            ),
+            "gmail/forum.eml": email(
+                message_id="forum@forum.example",
+                sender="David Kim <notifications@forum.example>",
+                subject="David Kim replied to your post",
+            ),
+        },
+    )
+    page = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON]
+    page = page.replace("emails: [dkim@example.net]", f"emails: [{listed}]")
+    script(data_root, consolidation=[{"write": PERSON, "text": page}])
+
+    code = run_librarian()
+
+    if fails:
+        assert code != 0
+        error = run_error(data_root)
+        assert f"{PERSON}:1: `emails` lists only automated mailboxes ({listed})" in error
+        assert "never gets a person page" in error
+        assert wiki_files(data_root) == {}
+    else:
+        assert code == 0
+        assert wiki_files(data_root)[PERSON] == page
+
+
+def test_a_committed_person_page_for_an_automated_mailbox_is_merged_into_its_organization(
+    data_root: Path,
+):
+    # A wiki from before the rule: the clinic's no-reply mailbox has a person page of its own.
+    survey = email(
+        message_id="survey@birchwood.example",
+        sender="noreply@birchwood.example",
+        subject="How did we do?",
+    )
+    ingest(data_root, {"gmail/survey.eml": survey})
+    script(
+        data_root,
+        observation=[{"observe": True, "links": {"How did we do?": ["noreply-birchwood"]}}],
+    )
+    assert run_librarian() == 0
+    survey_id = observed_ids(data_root)["How did we do?"]
+    pages = wedding_pages(survey_id, survey_id)
+    mailbox = pages[PERSON].replace("[dkim@example.net]", "[noreply@birchwood.example]")
+    mailbox = mailbox.replace("[[david-kim]]", "[[noreply-birchwood]]")
+    clinic = pages[ORG].replace("domains: []", "domains: [birchwood.example]")
+    before = {"people/noreply-birchwood.md": mailbox, "orgs/birchwood.md": clinic}
+    commit_by_hand(data_root, before)
+    history = commit_messages(data_root)
+
+    # The next run's consolidation moves the loop to the clinic's page, which takes the
+    # mailbox's name as an alias, and empties the mailbox's page.
+    loop = f"- [ ] [[birchwood]] → me: send the reading text · promised 2026-10-02 [ep:{survey_id}]"
+    merged = clinic.replace("aliases: []", "aliases: [noreply-birchwood]")
+    merged = merged.replace("## Open loops\n", f"## Open loops\n{loop}\n")
+    ingest(data_root, wedding_mail("RSVP", "Fri, 2 Oct 2026 09:00:00 -0500"))
+    script(
+        data_root,
+        consolidation=[
+            {"write": "orgs/birchwood.md", "text": merged},
+            {"write": "people/noreply-birchwood.md", "text": ""},
+        ],
+    )
+
+    assert run_librarian() == 0
+
+    consolidation = sessions(data_root, "consolidation")[-1]
+    assert consolidation["errors"] == [
+        {
+            "path": "people/noreply-birchwood.md",
+            "line": 1,
+            "message": "`emails` lists only automated mailboxes (noreply@birchwood.example): an "
+            "automated mailbox never gets a person page; what it sends belongs on its "
+            "organization's page or its topic's",
+        }
+    ]
+    assert "--resume" not in consolidation["argv"]
+    assert len(commit_messages(data_root)) == len(history) + 1
+    files = wiki_files(data_root)
+    assert "people/noreply-birchwood.md" not in files
+    assert files["orgs/birchwood.md"] == merged
+    # Links to the mailbox now go to the clinic, still showing the name they were written with.
+    assert files["days/2026-09-30.md"] == (
+        f"- email about How did we do? with [[birchwood|noreply-birchwood]] [ep:{survey_id}]\n"
+    )
+    assert "noreply-birchwood" not in files["index.md"]
+
+
+def test_the_index_lists_active_pages_newest_first_then_the_rest_by_slug(data_root: Path):
+    def topic(status: str, updated: str) -> str:
+        page = KITCHEN.replace("status: active", f"status: {status}")
+        return page.replace("updated: 2026-10-02", f"updated: {updated}")
+
+    person = wedding_pages(HOTEL_EMAIL_ID, HOTEL_EMAIL_ID)[PERSON]
+    former = person.replace("status: active", "status: inactive")
+    pages = {
+        "topics/attic.md": topic("dormant", "2026-10-07"),
+        "topics/basement.md": topic("settled", "2026-10-06"),
+        "topics/garden.md": topic("active", "2026-10-02"),
+        "topics/kitchen.md": topic("active", "2026-10-05"),
+        "topics/wedding.md": topic("active", "2026-10-02"),
+        "people/amy-park.md": former.replace("updated: 2026-10-02", "updated: 2026-10-09"),
+        PERSON: person,
+    }
+    pages["people/amy-park.md"] = pages["people/amy-park.md"].replace("[dkim@example.net]", "[]")
+    ingest(data_root, {"gmail/hotel.eml": email()})
+    script(data_root, consolidation=[{"write": p, "text": text} for p, text in pages.items()])
+
+    assert run_librarian() == 0
+
+    assert wiki_files(data_root)["index.md"] == textwrap.dedent(
+        """\
+        # Index
+
+        Open proposals: 0
+
+        ## People
+
+        - [[david-kim]]: Old friend, getting married on Oct 24.
+        - [[amy-park]]: Old friend, getting married on Oct 24.
+
+        ## Topics
+
+        - [[kitchen]]: The kitchen remodel.
+        - [[garden]]: The kitchen remodel.
+        - [[wedding]]: The kitchen remodel.
+        - [[attic]]: The kitchen remodel.
+        - [[basement]]: The kitchen remodel.
+        """
+    )
 
 
 # The librarian's sandbox (#66)
